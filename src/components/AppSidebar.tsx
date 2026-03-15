@@ -4,7 +4,7 @@ import {
   BookOpen, Package, ArrowRightLeft, AlertTriangle, Printer, Hammer,
   BarChart3, ShoppingCart, FileText, Store, Link2, Building, UserCog,
   FileText as LogsIcon, ChevronLeft, ChevronRight, ChevronDown,
-  LogOut, Factory, X,
+  LogOut, Factory, X, Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
