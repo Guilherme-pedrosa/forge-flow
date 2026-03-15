@@ -445,7 +445,7 @@ Deno.serve(async (req) => {
       }
 
       const models: any[] = [];
-      let strategyUsed: "api_internal" | "firecrawl" | "direct_html" | null = null;
+      let strategyUsed: "api_internal" | "firecrawl" | "firecrawl_json" | "direct_html" | "direct_html_parsed" | null = null;
       const modelMatch = url.match(/\/models\/(\d+)/);
       const hashProfileId = url.match(/profileId-(\d+)/i)?.[1] || null;
       const queryProfileId = url.match(/[?&]profileId=(\d+)/i)?.[1] || null;
@@ -461,8 +461,14 @@ Deno.serve(async (req) => {
         try {
           const apiRes = await fetch(`https://makerworld.com/api/v1/design/detail/${modelId}`, {
             headers: {
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-              "Accept": "application/json",
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+              "Accept": "application/json, text/plain, */*",
+              "Accept-Language": "en-US,en;q=0.9",
+              "Referer": `https://makerworld.com/en/models/${modelId}`,
+              "Origin": "https://makerworld.com",
+              "Sec-Fetch-Dest": "empty",
+              "Sec-Fetch-Mode": "cors",
+              "Sec-Fetch-Site": "same-origin",
             },
           });
           const apiText = await apiRes.text();
@@ -470,11 +476,9 @@ Deno.serve(async (req) => {
             try {
               const data = JSON.parse(apiText);
               const design = data?.design || data;
-              // Validate we actually got meaningful data (not empty object)
               const hasContent = design?.id || design?.title || design?.profileList?.length > 0 || design?.profiles?.length > 0;
               if (hasContent) {
                 const parsed = parseDesignToModel(design, selectedProfileId);
-                // Verify the parsed result has meaningful data (weight or time > 0)
                 const firstProfile = parsed.profiles?.[0];
                 const hasWeight = firstProfile?.weight_grams > 0;
                 const hasTime = firstProfile?.time_seconds > 0;
@@ -483,7 +487,7 @@ Deno.serve(async (req) => {
                   strategyUsed = "api_internal";
                   console.log(`Strategy 1 OK: weight=${firstProfile?.weight_grams}g, time=${firstProfile?.time_seconds}s`);
                 } else {
-                  console.warn("Strategy 1 returned 0 weight and 0 time, falling through to Strategy 2");
+                  console.warn("Strategy 1 returned 0 weight and 0 time, falling through");
                 }
               } else {
                 console.warn("Strategy 1 returned empty/minimal data:", apiText.slice(0, 200));
@@ -545,9 +549,14 @@ Deno.serve(async (req) => {
                 formats: [
                   { type: "json", schema: jsonSchema, prompt: "Extract 3D model info: title, description, thumbnail image URL, and for each print profile extract name, number of plates, total weight in grams, total print time in minutes, and list of filaments with type (PLA/PETG/ABS etc), color name, and weight in grams." },
                 ],
-                waitFor: 5000,
+                onlyMainContent: false,
+                waitFor: 8000,
               }),
             });
+            if (!fcJsonRes.ok) {
+              console.warn("Strategy 1.5: Firecrawl returned", fcJsonRes.status, await fcJsonRes.text().catch(() => ""));
+              throw new Error(`Firecrawl HTTP ${fcJsonRes.status}`);
+            }
             const fcJsonData = await fcJsonRes.json();
             const extracted = fcJsonData?.data?.json || fcJsonData?.json;
 
@@ -600,12 +609,17 @@ Deno.serve(async (req) => {
               body: JSON.stringify({
                 url: `https://makerworld.com/en/models/${modelId}${hashSuffix}`,
                 formats: ["html", "markdown"],
-                waitFor: 5000,
+                onlyMainContent: false,
+                waitFor: 8000,
               }),
             });
+            if (!firecrawlRes.ok) {
+              console.warn("Strategy 2: Firecrawl returned", firecrawlRes.status, await firecrawlRes.text().catch(() => ""));
+              throw new Error(`Firecrawl HTTP ${firecrawlRes.status}`);
+            }
             const fcData = await firecrawlRes.json();
             
-            if (firecrawlRes.ok && fcData.success !== false) {
+            if (fcData.success !== false) {
               const html = fcData.data?.html || fcData.html || "";
               const markdown = fcData.data?.markdown || fcData.markdown || "";
               
@@ -907,20 +921,90 @@ Deno.serve(async (req) => {
           }
         }
 
-        // Strategy 3: Direct HTML fetch (last resort, usually blocked)
+        // Strategy 3: Direct HTML fetch with full browser headers
         if (models.length === 0) {
           try {
+            console.log("Strategy 3: Direct HTML fetch for model:", modelId);
             const pageRes = await fetch(`https://makerworld.com/en/models/${modelMatch[1]}`, {
               headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Accept": "text/html",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Sec-Fetch-Dest": "document",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Site": "none",
+                "Sec-Fetch-User": "?1",
+                "Upgrade-Insecure-Requests": "1",
               },
             });
+            console.log("Strategy 3: HTTP status:", pageRes.status, "content-length:", pageRes.headers.get("content-length"));
             const html = await pageRes.text();
+            console.log("Strategy 3: HTML length:", html.length);
+            
+            // First try __NEXT_DATA__
             const extracted = extractFromHtml(html, selectedProfileId);
-            if (extracted) {
+            if (extracted && extracted.profiles?.length > 0 && (extracted.profiles[0]?.weight_grams > 0 || extracted.profiles[0]?.time_seconds > 0)) {
               models.push(extracted);
               strategyUsed = "direct_html";
+              console.log("Strategy 3 OK via __NEXT_DATA__");
+            } else {
+              // Fallback: parse from SSR HTML content directly
+              const titleMatch = html.match(/<h1[^>]*>([^<]+)<\/h1>/) || html.match(/property="og:title"\s+content="([^"]+)"/);
+              const ogImage = html.match(/property="og:image"\s+content="([^"]+)"/);
+              const ogDesc = html.match(/property="og:description"\s+content="([^"]+)"/);
+              const title = titleMatch?.[1]?.trim() || "Modelo MakerWorld";
+              const thumbnail = ogImage?.[1] || null;
+
+              // Extract time: patterns like "3.1 h", "2h 30min", "45min"
+              const timeMatch = html.match(/(\d+(?:\.\d+)?)\s*h(?:\s*(\d+)\s*min)?/i) || html.match(/(\d+)\s*min/i);
+              let timeSeconds = 0;
+              if (timeMatch) {
+                if (timeMatch[0].includes('h')) {
+                  timeSeconds = Math.round(parseFloat(timeMatch[1]) * 3600);
+                  if (timeMatch[2]) timeSeconds += parseInt(timeMatch[2]) * 60;
+                } else {
+                  timeSeconds = parseInt(timeMatch[1]) * 60;
+                }
+              }
+
+              // Extract plates: "1plate", "2 plates"
+              const platesMatch = html.match(/(\d+)\s*plates?/i);
+              const plates = platesMatch ? parseInt(platesMatch[1]) : 1;
+
+              // Extract weight from HTML: look for grams near profile data
+              let weightGrams = 0;
+              const weightMatches = [...html.matchAll(/(\d+(?:\.\d+)?)\s*g(?:rams?)?\b/gi)]
+                .map(m => parseFloat(m[1]))
+                .filter(n => n > 1 && n < 5000);
+              if (weightMatches.length > 0) {
+                weightGrams = Math.max(...weightMatches);
+              }
+
+              // Extract filament type
+              const materialMatch = html.match(/\b(PLA|PETG|ABS|ASA|TPU|PC|PA|PVA)\b/i);
+              const filaments = materialMatch ? [{ type: materialMatch[1].toUpperCase(), color: "", grams: weightGrams }] : [];
+
+              if (title && title !== "Modelo MakerWorld") {
+                models.push({
+                  id: modelId,
+                  title,
+                  thumbnail,
+                  description: ogDesc?.[1] || "",
+                  gallery: [],
+                  plates,
+                  profiles: [{
+                    name: "Opção 1",
+                    profile_id: selectedProfileId || null,
+                    weight_grams: weightGrams,
+                    time_seconds: timeSeconds,
+                    plates,
+                    filaments,
+                  }],
+                });
+                strategyUsed = "direct_html_parsed";
+                console.log(`Strategy 3 OK via HTML parsing: title=${title}, time=${timeSeconds}s, weight=${weightGrams}g, plates=${plates}`);
+              }
             }
           } catch (e) {
             console.error("Direct HTML fetch error:", e);
