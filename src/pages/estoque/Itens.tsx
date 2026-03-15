@@ -66,6 +66,7 @@ export default function Itens() {
   const [avgCost, setAvgCost] = useState("");
   const [lossCoefficient, setLossCoefficient] = useState("0.05");
   const [notes, setNotes] = useState("");
+  const [currentStock, setCurrentStock] = useState("");
 
   const { data: items = [], isLoading } = useQuery({
     queryKey: ["inventory_items"],

@@ -1573,6 +1573,154 @@ export type Database = {
           },
         ]
       }
+      purchase_order_items: {
+        Row: {
+          cfop: string | null
+          created_at: string
+          description: string
+          id: string
+          inventory_item_id: string | null
+          ncm: string | null
+          notes: string | null
+          purchase_order_id: string
+          quantity: number
+          tenant_id: string
+          total: number
+          unit_price: number
+        }
+        Insert: {
+          cfop?: string | null
+          created_at?: string
+          description: string
+          id?: string
+          inventory_item_id?: string | null
+          ncm?: string | null
+          notes?: string | null
+          purchase_order_id: string
+          quantity?: number
+          tenant_id: string
+          total?: number
+          unit_price?: number
+        }
+        Update: {
+          cfop?: string | null
+          created_at?: string
+          description?: string
+          id?: string
+          inventory_item_id?: string | null
+          ncm?: string | null
+          notes?: string | null
+          purchase_order_id?: string
+          quantity?: number
+          tenant_id?: string
+          total?: number
+          unit_price?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "purchase_order_items_inventory_item_id_fkey"
+            columns: ["inventory_item_id"]
+            isOneToOne: false
+            referencedRelation: "inventory_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "purchase_order_items_purchase_order_id_fkey"
+            columns: ["purchase_order_id"]
+            isOneToOne: false
+            referencedRelation: "purchase_orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "purchase_order_items_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      purchase_orders: {
+        Row: {
+          code: string
+          created_at: string
+          created_by: string | null
+          discount: number
+          expected_date: string | null
+          id: string
+          nfe_key: string | null
+          nfe_number: string | null
+          nfe_xml: string | null
+          notes: string | null
+          order_date: string
+          received_date: string | null
+          shipping: number
+          status: string
+          subtotal: number
+          tenant_id: string
+          total: number
+          updated_at: string
+          vendor_id: string | null
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          created_by?: string | null
+          discount?: number
+          expected_date?: string | null
+          id?: string
+          nfe_key?: string | null
+          nfe_number?: string | null
+          nfe_xml?: string | null
+          notes?: string | null
+          order_date?: string
+          received_date?: string | null
+          shipping?: number
+          status?: string
+          subtotal?: number
+          tenant_id: string
+          total?: number
+          updated_at?: string
+          vendor_id?: string | null
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          created_by?: string | null
+          discount?: number
+          expected_date?: string | null
+          id?: string
+          nfe_key?: string | null
+          nfe_number?: string | null
+          nfe_xml?: string | null
+          notes?: string | null
+          order_date?: string
+          received_date?: string | null
+          shipping?: number
+          status?: string
+          subtotal?: number
+          tenant_id?: string
+          total?: number
+          updated_at?: string
+          vendor_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "purchase_orders_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "purchase_orders_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       tenants: {
         Row: {
           created_at: string
