@@ -546,9 +546,11 @@ Deno.serve(async (req) => {
               },
               body: JSON.stringify({
                 url: `https://makerworld.com/en/models/${modelId}${hashSuffix}`,
-                formats: [
-                  { type: "json", schema: jsonSchema, prompt: "Extract 3D model info: title, description, thumbnail image URL, and for each print profile extract name, number of plates, total weight in grams, total print time in minutes, and list of filaments with type (PLA/PETG/ABS etc), color name, and weight in grams." },
-                ],
+                formats: ["extract"],
+                extract: {
+                  schema: jsonSchema,
+                  prompt: "Extract 3D model info: title, description, thumbnail image URL, and for each print profile extract name, number of plates, total weight in grams, total print time in minutes, and list of filaments with type (PLA/PETG/ABS etc), color name, and weight in grams. IMPORTANT: weight should be the PRINT weight, not the filament spool size. Ignore 1kg/250g spool sizes from the Bill of Materials section.",
+                },
                 onlyMainContent: false,
                 waitFor: 8000,
               }),
