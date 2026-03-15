@@ -147,6 +147,13 @@
     --info: 217 100% 60%;
     --info-foreground: 0 0% 100%;
 
+    --argus-surface: 217 100% 10%;
+    --argus-border: 217 100% 20%;
+
+    --surface-raised: 216 60% 12%;
+    --surface-sunken: 216 60% 4%;
+    --surface-overlay: 216 60% 14%;
+
     --chart-1: 217 100% 55%;
     --chart-2: 160 84% 45%;
     --chart-3: 38 92% 55%;
