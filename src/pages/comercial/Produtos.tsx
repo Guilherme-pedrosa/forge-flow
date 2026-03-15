@@ -75,10 +75,10 @@ export default function Produtos() {
 
   // Marketplace fee config
   const [channelConfig, setChannelConfig] = useState([
-    { key: "shopee", name: "Shopee", fee: 20, freeShipping: false, freeShippingExtra: 6, enabled: true },
-    { key: "ml", name: "Mercado Livre", fee: 16, freeShipping: true, freeShippingExtra: 5, enabled: true },
-    { key: "tiktok", name: "TikTok Shop", fee: 8, freeShipping: false, freeShippingExtra: 0, enabled: true },
-    { key: "particular", name: "Particular", fee: 0, freeShipping: false, freeShippingExtra: 0, enabled: true },
+    { key: "shopee", name: "Shopee", fee: 20, freeShipping: false, freeShippingExtra: 6, freeShippingType: "percent" as "percent" | "fixed", enabled: true },
+    { key: "ml", name: "Mercado Livre", fee: 16, freeShipping: true, freeShippingExtra: 5, freeShippingType: "percent" as "percent" | "fixed", enabled: true },
+    { key: "tiktok", name: "TikTok Shop", fee: 8, freeShipping: false, freeShippingExtra: 0, freeShippingType: "percent" as "percent" | "fixed", enabled: true },
+    { key: "particular", name: "Particular", fee: 0, freeShipping: false, freeShippingExtra: 0, freeShippingType: "percent" as "percent" | "fixed", enabled: true },
   ]);
   const [showChannelConfig, setShowChannelConfig] = useState(false);
 
