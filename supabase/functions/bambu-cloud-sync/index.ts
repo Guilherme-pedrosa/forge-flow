@@ -768,8 +768,11 @@ Deno.serve(async (req) => {
               },
             });
             const html = await pageRes.text();
-            const extracted = extractFromHtml(html);
-            if (extracted) models.push(extracted);
+            const extracted = extractFromHtml(html, selectedProfileId);
+            if (extracted) {
+              models.push(extracted);
+              strategyUsed = "direct_html";
+            }
           } catch (e) {
             console.error("Direct HTML fetch error:", e);
           }
