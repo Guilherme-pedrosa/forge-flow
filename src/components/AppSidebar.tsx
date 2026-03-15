@@ -72,6 +72,7 @@ const menuGroups: MenuGroup[] = [
   {
     label: "Comercial",
     items: [
+      { title: "Clientes", icon: Users, href: "/comercial/clientes" },
       { title: "Produtos", icon: ShoppingCart, href: "/comercial/produtos" },
       { title: "Pedidos", icon: FileText, href: "/comercial/pedidos" },
       { title: "Marketplaces", icon: Store, href: "/comercial/marketplaces" },
