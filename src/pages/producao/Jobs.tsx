@@ -471,7 +471,7 @@ function CreateJobDialog({
       const code = `OI-${datePart}-${seq}`;
 
       const grams = estGrams ? Number(estGrams) : null;
-      const minutes = estTimeMinutes ? Number(estTimeMinutes) : null;
+      const minutes = estTimeMinutes ? Math.round(Number(estTimeMinutes) * 60) : null;
       const colors = parseInt(numColors) || 1;
       const purge = parseFloat(purgeWasteGrams) || 0;
 
