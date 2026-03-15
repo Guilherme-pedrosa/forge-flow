@@ -698,6 +698,7 @@ Deno.serve(async (req) => {
                       }
                     }
 
+                    console.log("MakerWorld weight candidates:", uniqueCandidates.join(","), "picked:", picked);
                     weightGrams = picked;
                   }
                 }
