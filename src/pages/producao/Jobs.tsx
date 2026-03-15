@@ -142,6 +142,17 @@ export default function Jobs() {
     enabled: !!profile,
   });
 
+  // ── Fetch products for selects ──
+  const { data: products = [] } = useQuery({
+    queryKey: ["products"],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("products").select("*").eq("is_active", true).order("name");
+      if (error) throw error;
+      return data as ProductRow[];
+    },
+    enabled: !!profile,
+  });
+
   // ── Delete job ──
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
