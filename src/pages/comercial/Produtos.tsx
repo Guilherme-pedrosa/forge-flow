@@ -70,6 +70,7 @@ export default function Produtos() {
   const [notes, setNotes] = useState("");
   const [printerId, setPrinterId] = useState("");
   const [numColors, setNumColors] = useState("1");
+  const [printsPerPlate, setPrintsPerPlate] = useState("1");
 
   const { data: products = [], isLoading } = useQuery({
     queryKey: ["products"],
@@ -168,26 +169,33 @@ export default function Produtos() {
     // Labor cost
     const laborCost = laborHours * tenantSettings.labor_cost_hour;
 
-    const subtotal = materialCost + energyCost + machineCost + laborCost;
-    const overhead = subtotal * (tenantSettings.overhead_percent / 100);
-    const total = subtotal + overhead;
+    const subtotalPlate = materialCost + energyCost + machineCost + laborCost;
+    const overheadPlate = subtotalPlate * (tenantSettings.overhead_percent / 100);
+    const totalPlate = subtotalPlate + overheadPlate;
+
+    // Divide by prints per plate
+    const ppp = Math.max(1, parseInt(printsPerPlate) || 1);
+    const total = totalPlate / ppp;
+    const overhead = overheadPlate / ppp;
 
     // Suggested sale price
     const margin = tenantSettings.target_margin || 40;
     const suggestedPrice = margin < 100 ? total / (1 - margin / 100) : total * 2;
 
     return {
-      materialCost,
-      energyCost,
-      machineCost,
-      laborCost,
+      materialCost: materialCost / ppp,
+      energyCost: energyCost / ppp,
+      machineCost: machineCost / ppp,
+      laborCost: laborCost / ppp,
       overhead,
       total,
+      totalPlate,
+      printsPerPlate: ppp,
       suggestedPrice,
       selectedPrinterName: selectedPrinter?.name || null,
       hasMachineRate: (depreciationPerHour + maintenancePerHour) > 0,
     };
-  }, [estGrams, estTime, postMinutes, materialId, printerId, materials, printers, tenantSettings]);
+  }, [estGrams, estTime, postMinutes, materialId, printerId, printsPerPlate, materials, printers, tenantSettings]);
 
   const applyCalculatedCost = () => {
     setCostEstimate(costBreakdown.total.toFixed(2));
@@ -240,7 +248,7 @@ export default function Produtos() {
 
   const resetForm = () => {
     setName(""); setDescription(""); setSku(""); setCategory("printed_part"); setMaterialId("");
-    setEstGrams(""); setEstTime(""); setPostMinutes(""); setCostEstimate(""); setSalePrice(""); setPhotoUrl(""); setExtraPhotos([]); setNotes(""); setPrinterId(""); setNumColors("1");
+    setEstGrams(""); setEstTime(""); setPostMinutes(""); setCostEstimate(""); setSalePrice(""); setPhotoUrl(""); setExtraPhotos([]); setNotes(""); setPrinterId(""); setNumColors("1"); setPrintsPerPlate("1");
   };
 
   const openEdit = (p: any) => {
@@ -248,7 +256,7 @@ export default function Produtos() {
     setCategory(p.category); setMaterialId(p.material_id || ""); setEstGrams(p.est_grams?.toString() || "");
     setEstTime(p.est_time_minutes?.toString() || ""); setPostMinutes(p.post_process_minutes?.toString() || "");
     setCostEstimate(p.cost_estimate?.toString() || ""); setSalePrice(p.sale_price?.toString() || "");
-    setPhotoUrl(p.photo_url || ""); setNotes(p.notes || ""); setPrinterId(""); setNumColors(String((p as any).num_colors || 1));
+    setPhotoUrl(p.photo_url || ""); setNotes(p.notes || ""); setPrinterId(""); setNumColors(String((p as any).num_colors || 1)); setPrintsPerPlate(String((p as any).prints_per_plate || 1));
     // Load extra photos
     if (p.id) {
       supabase.from("product_photos").select("url").eq("product_id", p.id).order("sort_order").then(({ data }) => {
@@ -399,6 +407,7 @@ export default function Produtos() {
         est_time_minutes: estTime ? parseInt(estTime) : 0, post_process_minutes: postMinutes ? parseInt(postMinutes) : 0,
         cost_estimate: cost, sale_price: price, margin_percent: margin, notes: notes || null,
         photo_url: photoUrl || null, num_colors: parseInt(numColors) || 1,
+        prints_per_plate: parseInt(printsPerPlate) || 1,
       } as any).select("id").single();
       if (error) throw error;
       if (inserted) await saveExtraPhotos(inserted.id);
@@ -419,6 +428,7 @@ export default function Produtos() {
         est_time_minutes: estTime ? parseInt(estTime) : 0, post_process_minutes: postMinutes ? parseInt(postMinutes) : 0,
         cost_estimate: cost, sale_price: price, margin_percent: margin, notes: notes || null,
         photo_url: photoUrl || null, num_colors: parseInt(numColors) || 1,
+        prints_per_plate: parseInt(printsPerPlate) || 1,
       } as any).eq("id", editItem.id);
       if (error) throw error;
       await saveExtraPhotos(editItem.id);
@@ -529,6 +539,13 @@ export default function Produtos() {
             </SelectContent>
           </Select>
         </div>
+        <div>
+          <Label>Impressões por Prato</Label>
+          <Input type="number" min="1" value={printsPerPlate} onChange={(e) => setPrintsPerPlate(e.target.value)} placeholder="1" />
+          {parseInt(printsPerPlate) > 1 && (
+            <p className="mt-1 text-[11px] text-muted-foreground">Custo será dividido por {printsPerPlate} peças por impressão.</p>
+          )}
+        </div>
       </div>
 
       {/* Cost breakdown */}
@@ -542,18 +559,21 @@ export default function Produtos() {
               Aplicar Custo Calculado
             </Button>
           </div>
+          {costBreakdown.printsPerPlate > 1 && (
+            <p className="text-[11px] text-primary font-medium">📐 Custo por peça (÷ {costBreakdown.printsPerPlate} peças/prato) — Prato total: {fmtCurrency(costBreakdown.totalPlate)}</p>
+          )}
           <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-            <span className="text-muted-foreground">Material</span>
+            <span className="text-muted-foreground">Material{costBreakdown.printsPerPlate > 1 ? " /peça" : ""}</span>
             <span className="text-right font-mono">{fmtCurrency(costBreakdown.materialCost)}</span>
-            <span className="text-muted-foreground">Energia</span>
+            <span className="text-muted-foreground">Energia{costBreakdown.printsPerPlate > 1 ? " /peça" : ""}</span>
             <span className="text-right font-mono">{fmtCurrency(costBreakdown.energyCost)}</span>
-            <span className="text-muted-foreground">Máquina (depr. + manutenção)</span>
+            <span className="text-muted-foreground">Máquina{costBreakdown.printsPerPlate > 1 ? " /peça" : ""}</span>
             <span className="text-right font-mono">{fmtCurrency(costBreakdown.machineCost)}</span>
-            <span className="text-muted-foreground">Mão de Obra</span>
+            <span className="text-muted-foreground">Mão de Obra{costBreakdown.printsPerPlate > 1 ? " /peça" : ""}</span>
             <span className="text-right font-mono">{fmtCurrency(costBreakdown.laborCost)}</span>
             <span className="text-muted-foreground">Overhead ({tenantSettings.overhead_percent}%)</span>
             <span className="text-right font-mono">{fmtCurrency(costBreakdown.overhead)}</span>
-            <span className="font-semibold text-foreground border-t pt-1 mt-1">Custo Total</span>
+            <span className="font-semibold text-foreground border-t pt-1 mt-1">Custo por Peça</span>
             <span className="text-right font-mono font-semibold text-foreground border-t pt-1 mt-1">{fmtCurrency(costBreakdown.total)}</span>
             <span className="text-muted-foreground">Preço Sugerido ({tenantSettings.target_margin}% margem)</span>
             <span className="text-right font-mono text-primary">{fmtCurrency(costBreakdown.suggestedPrice)}</span>
