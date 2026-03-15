@@ -1041,6 +1041,7 @@ export default function Compras() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>Descrição</TableHead>
+                        <TableHead>Vincular ao Estoque</TableHead>
                         <TableHead className="text-right">Qtd</TableHead>
                         <TableHead className="text-right">Unit.</TableHead>
                         <TableHead className="text-right">Total</TableHead>
@@ -1049,7 +1050,33 @@ export default function Compras() {
                     <TableBody>
                       {orderItems.map((item: any) => (
                         <TableRow key={item.id}>
-                          <TableCell className="text-sm">{item.description}</TableCell>
+                          <TableCell className="text-sm max-w-[160px] truncate">{item.description}</TableCell>
+                          <TableCell>
+                            {detailOrder?.status !== "received" ? (
+                              <Select
+                                value={item.inventory_item_id || "none"}
+                                onValueChange={async (val) => {
+                                  const invId = val === "none" ? null : val;
+                                  await supabase.from("purchase_order_items").update({ inventory_item_id: invId }).eq("id", item.id);
+                                  qc.invalidateQueries({ queryKey: ["purchase_order_items", detailOrder?.id] });
+                                }}
+                              >
+                                <SelectTrigger className="h-8 text-xs w-[180px]"><SelectValue placeholder="Vincular..." /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="none">— Não vincular —</SelectItem>
+                                  {inventoryItems.map((inv: any) => (
+                                    <SelectItem key={inv.id} value={inv.id}>{inv.name}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">
+                                {item.inventory_item_id
+                                  ? inventoryItems.find((inv: any) => inv.id === item.inventory_item_id)?.name || "Vinculado"
+                                  : "—"}
+                              </span>
+                            )}
+                          </TableCell>
                           <TableCell className="text-right text-sm">{item.quantity}</TableCell>
                           <TableCell className="text-right text-sm">{fmtCurrency(item.unit_price)}</TableCell>
                           <TableCell className="text-right text-sm font-mono">{fmtCurrency(item.total)}</TableCell>
@@ -1059,6 +1086,20 @@ export default function Compras() {
                   </Table>
                 )}
               </div>
+
+              {/* Receive button */}
+              {detailOrder?.status !== "received" && detailOrder?.status !== "cancelled" && (
+                <div className="flex justify-end pt-2 border-t">
+                  <Button
+                    onClick={() => { receiveOrderMut.mutate(detailOrder.id); setDetailOrder(null); }}
+                    disabled={receiveOrderMut.isPending}
+                    className="gap-2"
+                  >
+                    {receiveOrderMut.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+                    <CheckCircle2 className="h-4 w-4" /> Receber e Dar Entrada no Estoque
+                  </Button>
+                </div>
+              )}
             </div>
           )}
         </DialogContent>
