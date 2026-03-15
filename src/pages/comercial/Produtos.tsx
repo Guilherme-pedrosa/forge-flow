@@ -87,6 +87,81 @@ export default function Produtos() {
     enabled: !!profile,
   });
 
+  const { data: printers = [] } = useQuery({
+    queryKey: ["printers_for_cost"],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("printers").select("id, name, power_watts, depreciation_per_hour, maintenance_cost_per_hour").eq("is_active", true).order("name");
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!profile,
+  });
+
+  const { data: tenant } = useQuery({
+    queryKey: ["tenant"],
+    queryFn: async () => {
+      if (!profile) return null;
+      const { data, error } = await supabase.from("tenants").select("*").eq("id", profile.tenant_id).single();
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!profile,
+  });
+
+  const tenantSettings = useMemo(() => {
+    const s = (tenant?.settings as any) || {};
+    return {
+      energy_cost_kwh: s.energy_cost_kwh || 0,
+      labor_cost_hour: s.labor_cost_hour || 0,
+      overhead_percent: s.overhead_percent || 0,
+      target_margin: s.target_margin || 0,
+    };
+  }, [tenant]);
+
+  // Cost breakdown calculation
+  const costBreakdown = useMemo(() => {
+    const grams = parseFloat(estGrams) || 0;
+    const printMinutes = parseInt(estTime) || 0;
+    const postMin = parseInt(postMinutes) || 0;
+    const printHours = printMinutes / 60;
+    const laborHours = postMin / 60;
+
+    // Material cost
+    const selectedMaterial = materials.find((m) => m.id === materialId);
+    const materialCostPerGram = selectedMaterial ? selectedMaterial.avg_cost / 1000 : 0;
+    const materialCost = grams * materialCostPerGram;
+
+    // Energy cost
+    const selectedPrinter = printers.find((p) => p.id === printerId);
+    const powerKw = (selectedPrinter?.power_watts || 200) / 1000;
+    const energyCost = powerKw * printHours * tenantSettings.energy_cost_kwh;
+
+    // Machine cost (depreciation + maintenance)
+    const depreciationPerHour = selectedPrinter?.depreciation_per_hour || 0;
+    const maintenancePerHour = selectedPrinter?.maintenance_cost_per_hour || 0;
+    const machineCost = (depreciationPerHour + maintenancePerHour) * printHours;
+
+    // Labor cost
+    const laborCost = laborHours * tenantSettings.labor_cost_hour;
+
+    const subtotal = materialCost + energyCost + machineCost + laborCost;
+    const overhead = subtotal * (tenantSettings.overhead_percent / 100);
+    const total = subtotal + overhead;
+
+    // Suggested sale price
+    const margin = tenantSettings.target_margin || 40;
+    const suggestedPrice = margin < 100 ? total / (1 - margin / 100) : total * 2;
+
+    return { materialCost, energyCost, machineCost, laborCost, overhead, total, suggestedPrice };
+  }, [estGrams, estTime, postMinutes, materialId, printerId, materials, printers, tenantSettings]);
+
+  const applyCalculatedCost = () => {
+    setCostEstimate(costBreakdown.total.toFixed(2));
+    if (!salePrice || parseFloat(salePrice) === 0) {
+      setSalePrice(costBreakdown.suggestedPrice.toFixed(2));
+    }
+  };
+
   // Fetch Bambu tasks for import
   const { data: bambuTasks = [], isLoading: bambuTasksLoading } = useQuery({
     queryKey: ["bambu_tasks_for_import"],
