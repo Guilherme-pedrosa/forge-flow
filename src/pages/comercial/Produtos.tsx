@@ -398,8 +398,8 @@ export default function Produtos() {
         category, material_id: materialId || null, est_grams: estGrams ? parseFloat(estGrams) : 0,
         est_time_minutes: estTime ? parseInt(estTime) : 0, post_process_minutes: postMinutes ? parseInt(postMinutes) : 0,
         cost_estimate: cost, sale_price: price, margin_percent: margin, notes: notes || null,
-        photo_url: photoUrl || null,
-      }).select("id").single();
+        photo_url: photoUrl || null, num_colors: parseInt(numColors) || 1,
+      } as any).select("id").single();
       if (error) throw error;
       if (inserted) await saveExtraPhotos(inserted.id);
     },
