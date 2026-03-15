@@ -357,24 +357,35 @@ export default function Produtos() {
       const gallery = model.gallery.filter((u: string) => u !== model.thumbnail);
       setExtraPhotos(gallery.slice(0, 5));
     }
+
+    // Set plates count (all plates = 1 SKU, so printsPerPlate stays 1)
+    const plates = model.plates || model.profiles?.[0]?.plates || 0;
+
     // Use first profile data if available
+    const noteParts: string[] = [`Importado do MakerWorld — ID: ${model.id}`];
+
     if (model.profiles?.length > 0) {
       const p = model.profiles[0];
       if (p.weight_grams) setEstGrams(p.weight_grams.toString());
       if (p.time_seconds) setEstTime(Math.round(p.time_seconds / 60).toString());
-      // Set number of colors from filaments count
+
+      // Set number of colors from filaments count (unique colors across all plates)
       if (p.filaments?.length > 0) {
         setNumColors(String(p.filaments.length));
+        const filInfo = p.filaments.map((f: any) => `${f.color || "?"} (${f.type})`).join(", ");
+        noteParts.push(`Cores: ${p.filaments.length} — ${filInfo}`);
       }
-      const filInfo = p.filaments?.map((f: any) => `${f.type} ${f.grams}g`).join(", ") || "";
-      setNotes(`Importado do MakerWorld — ID: ${model.id}${filInfo ? `\nFilamentos: ${filInfo}` : ""}`);
-    } else {
-      setNotes(`Importado do MakerWorld — ID: ${model.id}`);
+
+      if (plates > 0) {
+        noteParts.push(`Placas de impressão: ${plates}`);
+      }
     }
+
+    setNotes(noteParts.join("\n"));
     setDescription(model.description || "");
     setBambuImportOpen(false);
     setCreateOpen(true);
-    toast({ title: "Dados importados do MakerWorld" });
+    toast({ title: "Dados importados do MakerWorld", description: plates > 0 ? `${plates} placas, ${model.profiles?.[0]?.filaments?.length || "?"} cores` : undefined });
   };
 
   const fetchMakerWorld = async () => {
@@ -959,9 +970,11 @@ export default function Produtos() {
                         <div className="min-w-0 flex-1">
                           <p className="text-sm font-medium text-foreground truncate">{m.title}</p>
                           {m.description && <p className="text-xs text-muted-foreground truncate">{m.description}</p>}
-                          <div className="flex items-center gap-3 mt-1 text-[11px] text-muted-foreground">
-                            {m.profiles?.[0]?.weight_grams > 0 && <span>{m.profiles[0].weight_grams}g</span>}
-                            {m.profiles?.[0]?.time_seconds > 0 && <span>{fmtDuration(m.profiles[0].time_seconds)}</span>}
+                          <div className="flex items-center gap-3 mt-1 text-[11px] text-muted-foreground flex-wrap">
+                            {m.plates > 0 && <span>📋 {m.plates} placas</span>}
+                            {m.profiles?.[0]?.filaments?.length > 0 && <span>🎨 {m.profiles[0].filaments.length} cores</span>}
+                            {m.profiles?.[0]?.weight_grams > 0 && <span>⚖ {m.profiles[0].weight_grams}g</span>}
+                            {m.profiles?.[0]?.time_seconds > 0 && <span>⏱ {fmtDuration(m.profiles[0].time_seconds)}</span>}
                             {m.print_count && <span>🖨 {m.print_count}</span>}
                           </div>
                         </div>
