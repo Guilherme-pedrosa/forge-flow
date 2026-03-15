@@ -51,9 +51,12 @@ export default function Produtos() {
   const [editItem, setEditItem] = useState<any>(null);
   const [bambuImportOpen, setBambuImportOpen] = useState(false);
   const [bambuTab, setBambuTab] = useState<"projects" | "tasks" | "makerworld">("projects");
-  const [makerWorldUrl, setMakerWorldUrl] = useState(""); 
+  const [makerWorldUrl, setMakerWorldUrl] = useState("");
   const [makerWorldLoading, setMakerWorldLoading] = useState(false);
   const [makerWorldModels, setMakerWorldModels] = useState<any[]>([]);
+  const [makerOptionOpen, setMakerOptionOpen] = useState(false);
+  const [makerModelToImport, setMakerModelToImport] = useState<any | null>(null);
+  const [makerOptionIndex, setMakerOptionIndex] = useState("0");
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
