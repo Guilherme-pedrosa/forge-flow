@@ -63,9 +63,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    // Set up auth state listener FIRST
+    let mounted = true;
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, newSession) => {
+        if (!mounted) return;
+
         setSession(newSession);
 
         if (!newSession) {
@@ -77,9 +80,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return;
         }
 
+        // On token refresh, just update the session — don't re-fetch profile or navigate
+        if (event === "TOKEN_REFRESHED") {
+          return;
+        }
+
         // Fetch profile with setTimeout to avoid Supabase auth deadlock
         setTimeout(async () => {
+          if (!mounted) return;
           const p = await fetchProfile(newSession.user.id);
+          if (!mounted) return;
           setProfile(p);
           setLoading(false);
 
@@ -94,6 +104,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     // Then check existing session
     supabase.auth.getSession().then(({ data: { session: s } }) => {
+      if (!mounted) return;
       if (!s) {
         setLoading(false);
         if (!PUBLIC_ROUTES.includes(locationRef.current)) {
@@ -103,7 +114,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // onAuthStateChange will handle the rest
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
