@@ -335,14 +335,29 @@ export default function Compras() {
         const { error: ie } = await supabase.from("purchase_order_items").insert(rows);
         if (ie) throw ie;
       }
+
+      // Create accounts_payable for NFe
+      if (nfeData.total > 0) {
+        await supabase.from("accounts_payable").insert({
+          tenant_id: profile.tenant_id,
+          description: `NFe ${nfeData.nfeNumber} - ${nfeData.vendorName || "Fornecedor"}`,
+          amount: nfeData.total,
+          due_date: nfeData.issueDate || new Date().toISOString().slice(0, 10),
+          vendor_id: vid,
+          status: "open",
+          notes: `Ref. NFe ${nfeData.nfeNumber} - Pedido ${code}`,
+          created_by: profile.user_id,
+        });
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
       qc.invalidateQueries({ queryKey: ["vendors"] });
+      qc.invalidateQueries({ queryKey: ["accounts_payable"] });
       setXmlImportOpen(false);
       setNfeData(null);
       setXmlRaw("");
-      toast({ title: "NFe importada com sucesso!" });
+      toast({ title: "NFe importada e conta a pagar gerada!" });
     },
     onError: (e: any) => toast({ title: "Erro ao importar", description: e.message, variant: "destructive" }),
   });
