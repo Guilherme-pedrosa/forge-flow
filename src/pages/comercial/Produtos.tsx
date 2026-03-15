@@ -222,6 +222,55 @@ export default function Produtos() {
     setEstTime(p.est_time_minutes?.toString() || ""); setPostMinutes(p.post_process_minutes?.toString() || "");
     setCostEstimate(p.cost_estimate?.toString() || ""); setSalePrice(p.sale_price?.toString() || "");
     setPhotoUrl(p.photo_url || ""); setNotes(p.notes || ""); setPrinterId("");
+    // Load extra photos
+    if (p.id) {
+      supabase.from("product_photos").select("url").eq("product_id", p.id).order("sort_order").then(({ data }) => {
+        setExtraPhotos((data || []).map((d: any) => d.url));
+      });
+    } else {
+      setExtraPhotos([]);
+    }
+  };
+
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || !profile) return;
+    setUploadingPhoto(true);
+    try {
+      for (const file of Array.from(files)) {
+        const ext = file.name.split(".").pop();
+        const path = `${profile.tenant_id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+        const { error: uploadError } = await supabase.storage.from("product-photos").upload(path, file);
+        if (uploadError) throw uploadError;
+        const { data: urlData } = supabase.storage.from("product-photos").getPublicUrl(path);
+        const publicUrl = urlData.publicUrl;
+        if (!photoUrl) {
+          setPhotoUrl(publicUrl);
+        } else {
+          setExtraPhotos(prev => [...prev, publicUrl]);
+        }
+      }
+      toast({ title: "Foto(s) adicionada(s)" });
+    } catch (err: any) {
+      toast({ title: "Erro no upload", description: err.message, variant: "destructive" });
+    } finally {
+      setUploadingPhoto(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const removePhoto = (url: string) => {
+    if (url === photoUrl) {
+      // Promote first extra photo to main, or clear
+      if (extraPhotos.length > 0) {
+        setPhotoUrl(extraPhotos[0]);
+        setExtraPhotos(prev => prev.slice(1));
+      } else {
+        setPhotoUrl("");
+      }
+    } else {
+      setExtraPhotos(prev => prev.filter(u => u !== url));
+    }
   };
 
   const importFromBambuTask = (task: any) => {
