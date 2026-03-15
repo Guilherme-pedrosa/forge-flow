@@ -117,6 +117,7 @@ export default function Itens() {
     setAvgCost(item.avg_cost?.toString() || "");
     setLossCoefficient(item.loss_coefficient?.toString() || "0.05");
     setNotes(item.notes || "");
+    setCurrentStock(item.current_stock?.toString() || "0");
   };
 
   const createMut = useMutation({
