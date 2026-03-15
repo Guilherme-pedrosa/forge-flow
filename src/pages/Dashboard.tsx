@@ -106,7 +106,7 @@ export default function Dashboard() {
         // Recent jobs (last 10)
         supabase
           .from("jobs")
-          .select("id, code, name, status, est_grams, est_time_minutes, printer_id, printers(name), inventory_items(name)")
+          .select("id, code, name, status, est_grams, est_time_minutes, printer_id, printers(name), inventory_items!jobs_material_id_fkey(name)")
           .order("created_at", { ascending: false })
           .limit(5),
         // Pending payables

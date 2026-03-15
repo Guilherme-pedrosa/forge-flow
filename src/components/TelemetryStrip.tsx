@@ -90,7 +90,7 @@ export function TelemetryStrip() {
               </>
             )}
 
-            {nozzle != null && p.status !== "offline" && (
+            {nozzle != null && liveStatus !== "offline" && (
               <span className="text-muted-foreground font-mono flex items-center gap-0.5">
                 <Thermometer className="w-3 h-3" />{Math.round(nozzle)}°
               </span>
