@@ -592,6 +592,46 @@ export default function Produtos() {
         <div><Label>Custo Estimado (R$)</Label><Input type="number" step="0.01" value={costEstimate} onChange={(e) => setCostEstimate(e.target.value)} placeholder="12.50" /></div>
         <div><Label>Preço de Venda (R$)</Label><Input type="number" step="0.01" value={salePrice} onChange={(e) => setSalePrice(e.target.value)} placeholder="39.90" /></div>
       </div>
+
+      {/* Marketplace fee simulator */}
+      {parseFloat(salePrice) > 0 && parseFloat(costEstimate) > 0 && (() => {
+        const price = parseFloat(salePrice);
+        const cost = parseFloat(costEstimate);
+        const channels = [
+          { name: "Shopee", fee: 0.20, fixed: 0, color: "text-orange-600" },
+          { name: "Mercado Livre", fee: 0.16, fixed: 0, color: "text-yellow-600" },
+          { name: "TikTok Shop", fee: 0.08, fixed: 0, color: "text-foreground" },
+          { name: "Particular", fee: 0, fixed: 0, color: "text-green-600" },
+        ];
+        return (
+          <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Simulação por Canal de Venda</p>
+            <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-3 gap-y-1 text-xs items-center">
+              <span className="font-medium text-muted-foreground">Canal</span>
+              <span className="font-medium text-muted-foreground text-right">Taxa</span>
+              <span className="font-medium text-muted-foreground text-right">Líquido</span>
+              <span className="font-medium text-muted-foreground text-right">Lucro</span>
+              {channels.map(ch => {
+                const feeAmount = price * ch.fee + ch.fixed;
+                const net = price - feeAmount;
+                const profit = net - cost;
+                const profitPct = cost > 0 ? ((profit / cost) * 100) : 0;
+                return (
+                  <div key={ch.name} className="contents">
+                    <span className={cn("font-medium", ch.color)}>{ch.name}</span>
+                    <span className="text-right font-mono">{ch.fee > 0 ? `${(ch.fee * 100).toFixed(0)}% = ${fmtCurrency(feeAmount)}` : "—"}</span>
+                    <span className="text-right font-mono">{fmtCurrency(net)}</span>
+                    <span className={cn("text-right font-mono font-semibold", profit > 0 ? "text-green-600" : "text-destructive")}>
+                      {fmtCurrency(profit)} <span className="text-muted-foreground font-normal">({profitPct.toFixed(0)}%)</span>
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="text-[11px] text-muted-foreground">Taxas aproximadas. Shopee ~20%, ML ~16%, TikTok ~8%. Não inclui frete.</p>
+          </div>
+        );
+      })()}
       <div><Label>Observações</Label><Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} /></div>
     </div>
   );
