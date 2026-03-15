@@ -605,7 +605,8 @@ Deno.serve(async (req) => {
               body: JSON.stringify({
                 url: `https://makerworld.com/en/models/${modelId}${hashSuffix}`,
                 formats: ["html", "markdown"],
-                waitFor: 5000,
+                onlyMainContent: false,
+                waitFor: 8000,
               }),
             });
             const fcData = await firecrawlRes.json();
