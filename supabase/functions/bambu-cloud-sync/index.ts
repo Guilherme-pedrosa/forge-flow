@@ -460,6 +460,165 @@ Deno.serve(async (req) => {
       );
     }
 
+    // ── Fetch models from my MakerWorld collections (using Bambu account token) ──
+    if (action === "makerworld_my_collections") {
+      const { data: conn } = await supabase
+        .from("bambu_connections")
+        .select("*")
+        .eq("tenant_id", profile.tenant_id)
+        .eq("is_active", true)
+        .maybeSingle();
+
+      if (!conn || !conn.access_token_encrypted) {
+        return new Response(
+          JSON.stringify({ error: "Nenhuma conexão Bambu Lab ativa." }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const apiHeaders = {
+        Authorization: `Bearer ${conn.access_token_encrypted}`,
+        "Accept": "application/json, text/plain, */*",
+        "Content-Type": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      };
+
+      const prefRes = await fetch(`${BAMBU_API}/v1/design-user-service/my/preference`, {
+        headers: apiHeaders,
+      });
+
+      if (prefRes.status === 401 || prefRes.status === 403) {
+        await supabase
+          .from("bambu_connections")
+          .update({ is_active: false, updated_at: new Date().toISOString() })
+          .eq("id", conn.id);
+
+        return new Response(
+          JSON.stringify({
+            error: "Token Bambu expirado. Vá em Integrações → Bambu Lab e reconecte sua conta.",
+            token_expired: true,
+            models: [],
+          }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      if (!prefRes.ok) {
+        return new Response(
+          JSON.stringify({ error: `Erro ao consultar perfil Bambu (${prefRes.status})`, models: [] }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const prefJson = await prefRes.json().catch(() => null);
+      const pref = prefJson?.data || prefJson || {};
+      const rawHandle = String(pref?.handle || pref?.name || pref?.username || "").trim();
+      const handle = rawHandle.replace(/^@/, "").replace(/\s+/g, "");
+
+      if (!handle) {
+        return new Response(
+          JSON.stringify({ error: "Não foi possível identificar seu usuário MakerWorld pela API.", models: [] }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const collectionUrls = [
+        `https://makerworld.com/pt/@${handle}/collections/models`,
+        `https://makerworld.com/en/@${handle}/collections/models`,
+      ];
+
+      let selectedCollectionUrl = collectionUrls[0];
+      let modelIds: string[] = [];
+
+      for (const collectionUrl of collectionUrls) {
+        try {
+          const pageRes = await fetch(collectionUrl, {
+            headers: {
+              "User-Agent": apiHeaders["User-Agent"],
+              "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+              "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+              "Referer": "https://makerworld.com/",
+            },
+          });
+
+          if (!pageRes.ok) continue;
+          const html = await pageRes.text();
+
+          const ids = Array.from(
+            new Set(
+              [...html.matchAll(/(?:https?:\/\/makerworld\.com)?\/(?:[a-z]{2}\/)?models\/(\d+)/gi)]
+                .map((m) => m[1])
+                .filter(Boolean)
+            )
+          );
+
+          if (ids.length > 0) {
+            modelIds = ids;
+            selectedCollectionUrl = collectionUrl;
+            break;
+          }
+        } catch (e) {
+          console.warn("Collection page fetch failed:", collectionUrl, e);
+        }
+      }
+
+      if (modelIds.length === 0) {
+        return new Response(
+          JSON.stringify({
+            error: "Não encontrei modelos nas suas coleções (apenas coleções públicas ficam visíveis por API/web).",
+            models: [],
+            handle,
+            collection_url: selectedCollectionUrl,
+          }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const details = await Promise.all(
+        modelIds.slice(0, 24).map(async (modelId) => {
+          try {
+            const detailRes = await fetch(`https://makerworld.com/api/v1/design/detail/${modelId}`, {
+              headers: {
+                "User-Agent": apiHeaders["User-Agent"],
+                "Accept": "application/json, text/plain, */*",
+                "Accept-Language": "en-US,en;q=0.9",
+                "Referer": `https://makerworld.com/en/models/${modelId}`,
+                "Origin": "https://makerworld.com",
+                "Sec-Fetch-Dest": "empty",
+                "Sec-Fetch-Mode": "cors",
+                "Sec-Fetch-Site": "same-origin",
+              },
+            });
+
+            if (!detailRes.ok) return null;
+            const detailText = await detailRes.text();
+            if (!detailText || !detailText.trim()) return null;
+
+            const detailJson = JSON.parse(detailText);
+            const design = detailJson?.design || detailJson;
+            const hasContent = design?.id || design?.title || design?.profileList?.length > 0 || design?.profiles?.length > 0;
+            if (!hasContent) return null;
+
+            return parseDesignToModel(design);
+          } catch (e) {
+            console.warn(`Failed to parse collection model ${modelId}:`, e);
+            return null;
+          }
+        })
+      );
+
+      const models = details.filter(Boolean);
+
+      return new Response(
+        JSON.stringify({
+          handle,
+          collection_url: selectedCollectionUrl,
+          models,
+        }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     // ── Fetch MakerWorld models ──
     if (action === "makerworld") {
       const { url, selected_profile_id } = body;
