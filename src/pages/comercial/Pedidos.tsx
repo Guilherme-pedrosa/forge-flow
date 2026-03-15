@@ -193,8 +193,25 @@ export default function Pedidos() {
   const grandTotal = subtotal + shippingVal - discountNum;
 
   // Print PDF
-  const handlePrint = () => {
+  const handlePrint = async () => {
     if (!printRef.current) return;
+
+    // Pre-fetch logo as base64 so it renders in the print window
+    let logoBase64 = "";
+    if (tenant?.logo_url) {
+      try {
+        const res = await fetch(tenant.logo_url);
+        const blob = await res.blob();
+        logoBase64 = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result as string);
+          reader.readAsDataURL(blob);
+        });
+      } catch {
+        console.warn("Failed to fetch logo for PDF");
+      }
+    }
+
     const printWindow = window.open("", "_blank");
     if (!printWindow) return;
 
@@ -252,7 +269,7 @@ export default function Pedidos() {
       ${tenantSettings.email ? `<div class="company-detail">${tenantSettings.email}</div>` : ""}
       ${companyAddress ? `<div class="company-detail">${companyAddress}</div>` : ""}
     </div>
-    ${tenant?.logo_url ? `<img src="${tenant.logo_url}" class="logo" />` : ""}
+    ${logoBase64 ? `<img src="${logoBase64}" class="logo" />` : ""}
   </div>
 
   <div class="doc-title">
