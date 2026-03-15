@@ -527,37 +527,92 @@ Deno.serve(async (req) => {
                 
                 console.log("Extracted title:", title, "thumbnail:", thumbnail?.substring(0, 80));
                 
-                // Extract weight and time from HTML/markdown
-                let weightGrams = 0;
+                // Extract plates, time, colors, weight from markdown
+                let totalPlates = 0;
                 let timeSeconds = 0;
+                let weightGrams = 0;
+                const filaments: Array<{ type: string; color: string; grams: number }> = [];
                 
-                // Look for structured data in JS objects within HTML
+                // Parse profiles section: "25.3 h" and "4plates"
+                const profileBlocks = markdown.split(/\* \* \*/);
+                for (const block of profileBlocks) {
+                  const platesMatch = block.match(/(\d+)\s*plates?/i);
+                  const timeHMatch = block.match(/(\d+(?:\.\d+)?)\s*h\b/);
+                  if (platesMatch && !totalPlates) {
+                    totalPlates = parseInt(platesMatch[1]);
+                  }
+                  if (timeHMatch && !timeSeconds) {
+                    timeSeconds = Math.round(parseFloat(timeHMatch[1]) * 3600);
+                  }
+                }
+                
+                // Fallback time from HTML
+                if (timeSeconds === 0) {
+                  const timeMatch = html.match(/"estimatedTime"\s*:\s*(\d+)/);
+                  const predictionMatch = html.match(/"prediction"\s*:\s*(\d+)/);
+                  if (timeMatch) timeSeconds = parseInt(timeMatch[1]);
+                  else if (predictionMatch) timeSeconds = parseInt(predictionMatch[1]);
+                }
+                
+                // Extract weight from HTML JS objects
                 const weightMatch = html.match(/"weight"\s*:\s*(\d+(?:\.\d+)?)/);
-                const timeMatch = html.match(/"estimatedTime"\s*:\s*(\d+)/);
-                const predictionMatch = html.match(/"prediction"\s*:\s*(\d+)/);
                 if (weightMatch) weightGrams = parseFloat(weightMatch[1]);
-                if (timeMatch) timeSeconds = parseInt(timeMatch[1]);
-                else if (predictionMatch) timeSeconds = parseInt(predictionMatch[1]);
-                
-                // Fallback: parse from markdown text
+                // Fallback: parse from markdown (but skip small numbers that might be magnets)
                 if (weightGrams === 0) {
-                  const weightM = markdown.match(/(\d+(?:\.\d+)?)\s*g(?:rams?)?/i);
+                  const weightM = markdown.match(/(\d{2,}(?:\.\d+)?)\s*g(?:rams?)?/i);
                   if (weightM) weightGrams = parseFloat(weightM[1]);
                 }
-                if (timeSeconds === 0) {
-                  const timeM = markdown.match(/(\d+)\s*[hH](?:ours?)?\s*(\d+)?\s*[mM]?/);
-                  if (timeM) timeSeconds = (parseInt(timeM[1]) || 0) * 3600 + (parseInt(timeM[2]) || 0) * 60;
+                
+                // Extract filament colors from Bill of Materials section
+                const bomSection = markdown.split(/### Bill of Materials/i)[1]?.split(/### Description/i)[0] || "";
+                // Match "Bambu Filaments" section entries like "Red (10200)", "Black (10101)", "Jade White (10100)"
+                const filColorRegex = /!\[.*?\].*?([A-Za-z\s]+)\s*\(\d{4,}\)/g;
+                let filMatch;
+                const seenColors = new Set<string>();
+                while ((filMatch = filColorRegex.exec(bomSection)) !== null) {
+                  const color = filMatch[1].trim();
+                  if (color && !seenColors.has(color.toLowerCase())) {
+                    seenColors.add(color.toLowerCase());
+                    // Try to find material type near this entry
+                    const nearbyPLA = bomSection.slice(Math.max(0, filMatch.index - 200), filMatch.index + 200);
+                    const matType = nearbyPLA.match(/\b(PLA|PETG|ABS|ASA|TPU|PC|PA|PVA)\b/i)?.[1] || "PLA";
+                    filaments.push({ type: matType.toUpperCase(), color, grams: 0 });
+                  }
+                }
+                
+                // Fallback: count unique filament entries from BOM links
+                if (filaments.length === 0) {
+                  const filLinkRegex = /\[PLA|PETG|ABS|ASA|TPU/gi;
+                  const filLinks = bomSection.match(filLinkRegex);
+                  if (filLinks) {
+                    // Count unique filament product links
+                    const uniqueLinks = new Set(bomSection.match(/\[(?:PLA|PETG|ABS|ASA|TPU)[^\]]*\]/gi) || []);
+                    for (const link of uniqueLinks) {
+                      filaments.push({ type: link.match(/PLA|PETG|ABS|ASA|TPU/i)?.[0]?.toUpperCase() || "PLA", color: "", grams: 0 });
+                    }
+                  }
                 }
                 
                 // Also try to get all gallery images
                 const allImages: string[] = [];
                 const imgRegex = /src="(https:\/\/makerworld\.bblmw\.com[^"]*\.(?:png|jpg|jpeg|webp)[^"]*)"/gi;
-                let match;
-                while ((match = imgRegex.exec(html)) !== null) {
-                  if (!allImages.includes(match[1]) && !match[1].includes('/w_60/') && !match[1].includes('avatar')) {
-                    allImages.push(match[1]);
+                let imgMatch;
+                while ((imgMatch = imgRegex.exec(html)) !== null) {
+                  if (!allImages.includes(imgMatch[1]) && !imgMatch[1].includes('/w_60/') && !imgMatch[1].includes('avatar') && !imgMatch[1].includes('/w_100/')) {
+                    allImages.push(imgMatch[1]);
                   }
                 }
+                
+                // Also extract gallery from markdown (higher quality images)
+                const mdImgRegex = /!\[.*?\]\((https:\/\/makerworld\.bblmw\.com[^)]*w_1000[^)]*)\)/g;
+                let mdImg;
+                while ((mdImg = mdImgRegex.exec(markdown)) !== null) {
+                  if (!allImages.includes(mdImg[1])) {
+                    allImages.unshift(mdImg[1]); // prepend higher quality
+                  }
+                }
+                
+                console.log(`MakerWorld parsed: plates=${totalPlates}, time=${timeSeconds}s, weight=${weightGrams}g, colors=${filaments.length}, images=${allImages.length}`);
                 
                 models.push({
                   id: modelId,
@@ -565,12 +620,14 @@ Deno.serve(async (req) => {
                   thumbnail,
                   description: ogDesc?.[1] || "",
                   gallery: allImages.slice(0, 10),
-                  profiles: weightGrams > 0 ? [{
+                  plates: totalPlates,
+                  profiles: [{
                     name: "Default",
                     weight_grams: weightGrams,
                     time_seconds: timeSeconds,
-                    filaments: [],
-                  }] : [],
+                    plates: totalPlates,
+                    filaments,
+                  }],
                 });
               }
             } else {
