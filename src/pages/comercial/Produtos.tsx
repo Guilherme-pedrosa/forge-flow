@@ -1,10 +1,10 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageHeader } from "@/components/shared/PageHeader";
 import {
-  Plus, Search, MoreHorizontal, Package, Edit, Trash2, Loader2, Image, CloudDownload, FolderOpen, History, Globe, Link,
+  Plus, Search, MoreHorizontal, Package, Edit, Trash2, Loader2, Image, CloudDownload, FolderOpen, History, Globe, Link, Calculator,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -65,6 +65,7 @@ export default function Produtos() {
   const [salePrice, setSalePrice] = useState("");
   const [photoUrl, setPhotoUrl] = useState("");
   const [notes, setNotes] = useState("");
+  const [printerId, setPrinterId] = useState("");
 
   const { data: products = [], isLoading } = useQuery({
     queryKey: ["products"],
@@ -85,6 +86,81 @@ export default function Produtos() {
     },
     enabled: !!profile,
   });
+
+  const { data: printers = [] } = useQuery({
+    queryKey: ["printers_for_cost"],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("printers").select("id, name, power_watts, depreciation_per_hour, maintenance_cost_per_hour").eq("is_active", true).order("name");
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!profile,
+  });
+
+  const { data: tenant } = useQuery({
+    queryKey: ["tenant"],
+    queryFn: async () => {
+      if (!profile) return null;
+      const { data, error } = await supabase.from("tenants").select("*").eq("id", profile.tenant_id).single();
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!profile,
+  });
+
+  const tenantSettings = useMemo(() => {
+    const s = (tenant?.settings as any) || {};
+    return {
+      energy_cost_kwh: s.energy_cost_kwh || 0,
+      labor_cost_hour: s.labor_cost_hour || 0,
+      overhead_percent: s.overhead_percent || 0,
+      target_margin: s.target_margin || 0,
+    };
+  }, [tenant]);
+
+  // Cost breakdown calculation
+  const costBreakdown = useMemo(() => {
+    const grams = parseFloat(estGrams) || 0;
+    const printMinutes = parseInt(estTime) || 0;
+    const postMin = parseInt(postMinutes) || 0;
+    const printHours = printMinutes / 60;
+    const laborHours = postMin / 60;
+
+    // Material cost
+    const selectedMaterial = materials.find((m) => m.id === materialId);
+    const materialCostPerGram = selectedMaterial ? selectedMaterial.avg_cost / 1000 : 0;
+    const materialCost = grams * materialCostPerGram;
+
+    // Energy cost
+    const selectedPrinter = printers.find((p) => p.id === printerId);
+    const powerKw = (selectedPrinter?.power_watts || 200) / 1000;
+    const energyCost = powerKw * printHours * tenantSettings.energy_cost_kwh;
+
+    // Machine cost (depreciation + maintenance)
+    const depreciationPerHour = selectedPrinter?.depreciation_per_hour || 0;
+    const maintenancePerHour = selectedPrinter?.maintenance_cost_per_hour || 0;
+    const machineCost = (depreciationPerHour + maintenancePerHour) * printHours;
+
+    // Labor cost
+    const laborCost = laborHours * tenantSettings.labor_cost_hour;
+
+    const subtotal = materialCost + energyCost + machineCost + laborCost;
+    const overhead = subtotal * (tenantSettings.overhead_percent / 100);
+    const total = subtotal + overhead;
+
+    // Suggested sale price
+    const margin = tenantSettings.target_margin || 40;
+    const suggestedPrice = margin < 100 ? total / (1 - margin / 100) : total * 2;
+
+    return { materialCost, energyCost, machineCost, laborCost, overhead, total, suggestedPrice };
+  }, [estGrams, estTime, postMinutes, materialId, printerId, materials, printers, tenantSettings]);
+
+  const applyCalculatedCost = () => {
+    setCostEstimate(costBreakdown.total.toFixed(2));
+    if (!salePrice || parseFloat(salePrice) === 0) {
+      setSalePrice(costBreakdown.suggestedPrice.toFixed(2));
+    }
+  };
 
   // Fetch Bambu tasks for import
   const { data: bambuTasks = [], isLoading: bambuTasksLoading } = useQuery({
@@ -124,7 +200,7 @@ export default function Produtos() {
 
   const resetForm = () => {
     setName(""); setDescription(""); setSku(""); setCategory("printed_part"); setMaterialId("");
-    setEstGrams(""); setEstTime(""); setPostMinutes(""); setCostEstimate(""); setSalePrice(""); setPhotoUrl(""); setNotes("");
+    setEstGrams(""); setEstTime(""); setPostMinutes(""); setCostEstimate(""); setSalePrice(""); setPhotoUrl(""); setNotes(""); setPrinterId("");
   };
 
   const openEdit = (p: any) => {
@@ -132,7 +208,7 @@ export default function Produtos() {
     setCategory(p.category); setMaterialId(p.material_id || ""); setEstGrams(p.est_grams?.toString() || "");
     setEstTime(p.est_time_minutes?.toString() || ""); setPostMinutes(p.post_process_minutes?.toString() || "");
     setCostEstimate(p.cost_estimate?.toString() || ""); setSalePrice(p.sale_price?.toString() || "");
-    setPhotoUrl(p.photo_url || ""); setNotes(p.notes || "");
+    setPhotoUrl(p.photo_url || ""); setNotes(p.notes || ""); setPrinterId("");
   };
 
   const importFromBambuTask = (task: any) => {
@@ -280,13 +356,53 @@ export default function Produtos() {
         <div><Label>Material</Label>
           <Select value={materialId || "none"} onValueChange={(v) => setMaterialId(v === "none" ? "" : v)}>
             <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-            <SelectContent><SelectItem value="none">Nenhum</SelectItem>{materials.map((m) => <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>)}</SelectContent>
+            <SelectContent><SelectItem value="none">Nenhum</SelectItem>{materials.map((m) => <SelectItem key={m.id} value={m.id}>{m.name} ({fmtCurrency(m.avg_cost)}/kg)</SelectItem>)}</SelectContent>
           </Select>
         </div>
         <div><Label>Gramas Estimadas</Label><Input type="number" value={estGrams} onChange={(e) => setEstGrams(e.target.value)} placeholder="45" /></div>
+        <div><Label>Impressora</Label>
+          <Select value={printerId || "none"} onValueChange={(v) => setPrinterId(v === "none" ? "" : v)}>
+            <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+            <SelectContent><SelectItem value="none">Padrão (200W)</SelectItem>{printers.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent>
+          </Select>
+        </div>
         <div><Label>Tempo Impressão (min)</Label><Input type="number" value={estTime} onChange={(e) => setEstTime(e.target.value)} placeholder="120" /></div>
         <div><Label>Pós-Processo (min)</Label><Input type="number" value={postMinutes} onChange={(e) => setPostMinutes(e.target.value)} placeholder="15" /></div>
       </div>
+
+      {/* Cost breakdown */}
+      {(parseFloat(estGrams) > 0 || parseInt(estTime) > 0) && (
+        <div className="rounded-lg border border-dashed bg-muted/30 p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+              <Calculator className="h-3.5 w-3.5" /> Composição de Custo
+            </p>
+            <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={applyCalculatedCost}>
+              Aplicar Custo Calculado
+            </Button>
+          </div>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+            <span className="text-muted-foreground">Material</span>
+            <span className="text-right font-mono">{fmtCurrency(costBreakdown.materialCost)}</span>
+            <span className="text-muted-foreground">Energia</span>
+            <span className="text-right font-mono">{fmtCurrency(costBreakdown.energyCost)}</span>
+            <span className="text-muted-foreground">Máquina (depr. + manutenção)</span>
+            <span className="text-right font-mono">{fmtCurrency(costBreakdown.machineCost)}</span>
+            <span className="text-muted-foreground">Mão de Obra</span>
+            <span className="text-right font-mono">{fmtCurrency(costBreakdown.laborCost)}</span>
+            <span className="text-muted-foreground">Overhead ({tenantSettings.overhead_percent}%)</span>
+            <span className="text-right font-mono">{fmtCurrency(costBreakdown.overhead)}</span>
+            <span className="font-semibold text-foreground border-t pt-1 mt-1">Custo Total</span>
+            <span className="text-right font-mono font-semibold text-foreground border-t pt-1 mt-1">{fmtCurrency(costBreakdown.total)}</span>
+            <span className="text-muted-foreground">Preço Sugerido ({tenantSettings.target_margin}% margem)</span>
+            <span className="text-right font-mono text-primary">{fmtCurrency(costBreakdown.suggestedPrice)}</span>
+          </div>
+          {tenantSettings.energy_cost_kwh === 0 && tenantSettings.labor_cost_hour === 0 && (
+            <p className="text-[11px] text-amber-600">⚠ Configure custos de energia/mão de obra em Configurações → Empresa</p>
+          )}
+        </div>
+      )}
+
       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Precificação</p>
       <div className="grid grid-cols-2 gap-3">
         <div><Label>Custo Estimado (R$)</Label><Input type="number" step="0.01" value={costEstimate} onChange={(e) => setCostEstimate(e.target.value)} placeholder="12.50" /></div>
