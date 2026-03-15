@@ -292,6 +292,110 @@ Deno.serve(async (req) => {
       );
     }
 
+    // ── Fetch user projects (saved models / collections) ──
+    if (action === "projects") {
+      const { data: conn } = await supabase
+        .from("bambu_connections")
+        .select("*")
+        .eq("tenant_id", profile.tenant_id)
+        .eq("is_active", true)
+        .maybeSingle();
+
+      if (!conn || !conn.access_token_encrypted) {
+        return new Response(
+          JSON.stringify({ error: "Nenhuma conexão Bambu Lab ativa." }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const projectsRes = await fetch(`${BAMBU_API}/v1/iot-service/api/user/project`, {
+        headers: { Authorization: `Bearer ${conn.access_token_encrypted}` },
+      });
+      const projectsData = await projectsRes.json();
+
+      if (!projectsRes.ok || projectsData.message !== "success") {
+        return new Response(
+          JSON.stringify({ error: projectsData.message || "Falha ao buscar projetos" }),
+          { status: projectsRes.status, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const projects = projectsData.projects || [];
+
+      // Fetch details for each project to get thumbnails and plate data
+      const detailedProjects = [];
+      for (const proj of projects) {
+        try {
+          const detailRes = await fetch(
+            `${BAMBU_API}/v1/iot-service/api/user/project/${proj.project_id}`,
+            { headers: { Authorization: `Bearer ${conn.access_token_encrypted}` } }
+          );
+          const detailData = await detailRes.json();
+
+          if (detailRes.ok && detailData.message === "success") {
+            // Extract plate info (thumbnails, weight, time, filaments)
+            const profiles = detailData.profiles || [];
+            let thumbnail = null;
+            let totalWeight = 0;
+            let totalTime = 0;
+            const filaments: Array<{ type: string; color: string; grams: number }> = [];
+
+            for (const p of profiles) {
+              const ctx = p.context;
+              if (!ctx) continue;
+              const plates = ctx.plates || [];
+              for (const plate of plates) {
+                if (!thumbnail && plate.thumbnail?.url) {
+                  thumbnail = plate.thumbnail.url;
+                }
+                if (plate.weight) totalWeight += Number(plate.weight);
+                if (plate.prediction) totalTime += Number(plate.prediction);
+                for (const fil of (plate.filaments || [])) {
+                  filaments.push({
+                    type: fil.type || "Unknown",
+                    color: fil.color || "",
+                    grams: Number(fil.used_g) || 0,
+                  });
+                }
+              }
+            }
+
+            detailedProjects.push({
+              project_id: proj.project_id,
+              model_id: proj.model_id,
+              name: proj.name || detailData.name || "Sem nome",
+              status: proj.status,
+              created_at: proj.create_time,
+              updated_at: proj.update_time,
+              thumbnail,
+              total_weight_grams: totalWeight,
+              total_time_seconds: totalTime,
+              filaments,
+            });
+          }
+        } catch (e) {
+          console.warn(`Failed to get project detail for ${proj.project_id}:`, e);
+          detailedProjects.push({
+            project_id: proj.project_id,
+            model_id: proj.model_id,
+            name: proj.name || "Sem nome",
+            status: proj.status,
+            created_at: proj.create_time,
+            updated_at: proj.update_time,
+            thumbnail: null,
+            total_weight_grams: 0,
+            total_time_seconds: 0,
+            filaments: [],
+          });
+        }
+      }
+
+      return new Response(
+        JSON.stringify({ projects: detailedProjects }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     return new Response(JSON.stringify({ error: "Unknown action" }), {
       status: 400,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
