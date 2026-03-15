@@ -1072,14 +1072,18 @@ export type Database = {
           margin_percent: number | null
           material_id: string | null
           name: string
+          num_colors: number
           order_id: string | null
           post_minutes: number | null
           prep_minutes: number | null
           printer_id: string | null
           priority: number
+          product_id: string | null
+          purge_waste_grams: number | null
           qc_minutes: number | null
           reprint_of: string | null
           sale_price: number | null
+          secondary_material_id: string | null
           started_at: string | null
           status: Database["public"]["Enums"]["job_status"]
           tenant_id: string
@@ -1116,14 +1120,18 @@ export type Database = {
           margin_percent?: number | null
           material_id?: string | null
           name: string
+          num_colors?: number
           order_id?: string | null
           post_minutes?: number | null
           prep_minutes?: number | null
           printer_id?: string | null
           priority?: number
+          product_id?: string | null
+          purge_waste_grams?: number | null
           qc_minutes?: number | null
           reprint_of?: string | null
           sale_price?: number | null
+          secondary_material_id?: string | null
           started_at?: string | null
           status?: Database["public"]["Enums"]["job_status"]
           tenant_id: string
@@ -1160,14 +1168,18 @@ export type Database = {
           margin_percent?: number | null
           material_id?: string | null
           name?: string
+          num_colors?: number
           order_id?: string | null
           post_minutes?: number | null
           prep_minutes?: number | null
           printer_id?: string | null
           priority?: number
+          product_id?: string | null
+          purge_waste_grams?: number | null
           qc_minutes?: number | null
           reprint_of?: string | null
           sale_price?: number | null
+          secondary_material_id?: string | null
           started_at?: string | null
           status?: Database["public"]["Enums"]["job_status"]
           tenant_id?: string
@@ -1197,10 +1209,24 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "jobs_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "jobs_reprint_of_fkey"
             columns: ["reprint_of"]
             isOneToOne: false
             referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "jobs_secondary_material_id_fkey"
+            columns: ["secondary_material_id"]
+            isOneToOne: false
+            referencedRelation: "inventory_items"
             referencedColumns: ["id"]
           },
           {
@@ -1516,6 +1542,7 @@ export type Database = {
           material_id: string | null
           name: string
           notes: string | null
+          num_colors: number
           photo_url: string | null
           post_process_minutes: number | null
           sale_price: number | null
@@ -1536,6 +1563,7 @@ export type Database = {
           material_id?: string | null
           name: string
           notes?: string | null
+          num_colors?: number
           photo_url?: string | null
           post_process_minutes?: number | null
           sale_price?: number | null
@@ -1556,6 +1584,7 @@ export type Database = {
           material_id?: string | null
           name?: string
           notes?: string | null
+          num_colors?: number
           photo_url?: string | null
           post_process_minutes?: number | null
           sale_price?: number | null
