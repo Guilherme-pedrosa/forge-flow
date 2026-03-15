@@ -913,6 +913,7 @@ function parseDesignToModel(d: any, selectedProfileId?: string | null) {
     );
 
     return {
+      profile_id: p.profile_id || p.profileId || p.id || p.profile_id_str || null,
       name: profileDisplayName(p, idx),
       weight_grams: maxMetric(declaredWeight, summedPlateWeight, filamentWeightSum),
       time_seconds: maxMetric(declaredTime, summedPlateTime),
