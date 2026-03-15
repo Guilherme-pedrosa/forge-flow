@@ -350,45 +350,66 @@ export default function Produtos() {
     toast({ title: "Dados importados", description: "Preencha custo e preço para finalizar o cadastro." });
   };
 
-  const importFromMakerWorld = (model: any) => {
+  const importFromMakerWorld = (model: any, selectedProfileIndex?: number) => {
+    const profiles = Array.isArray(model.profiles) ? model.profiles : [];
+
+    if (selectedProfileIndex == null && profiles.length > 1) {
+      setMakerModelToImport(model);
+      setMakerOptionIndex("0");
+      setMakerOptionOpen(true);
+      return;
+    }
+
+    const profileIdx = selectedProfileIndex ?? 0;
+    const selectedProfile = profiles[profileIdx] || profiles[0] || null;
+
     resetForm();
     setName(model.title || "Produto MakerWorld");
     setPhotoUrl(model.thumbnail || "");
     setCategory("printed_part");
-    // Set gallery photos
+
     if (model.gallery?.length > 0) {
       const gallery = model.gallery.filter((u: string) => u !== model.thumbnail);
       setExtraPhotos(gallery.slice(0, 5));
     }
 
-    // Set plates count (all plates = 1 SKU, so printsPerPlate stays 1)
-    const plates = model.plates || model.profiles?.[0]?.plates || 0;
+    const plates = selectedProfile?.plates || model.plates || 0;
+    const noteParts: string[] = [
+      `Importado do MakerWorld — ID: ${model.id}`,
+      selectedProfile?.name ? `Opção selecionada: ${selectedProfile.name}` : "",
+    ].filter(Boolean);
 
-    // Use first profile data if available
-    const noteParts: string[] = [`Importado do MakerWorld — ID: ${model.id}`];
+    if (selectedProfile) {
+      if (selectedProfile.weight_grams) setEstGrams(selectedProfile.weight_grams.toString());
+      if (selectedProfile.time_seconds) setEstTime(Math.round(selectedProfile.time_seconds / 60).toString());
 
-    if (model.profiles?.length > 0) {
-      const p = model.profiles[0];
-      if (p.weight_grams) setEstGrams(p.weight_grams.toString());
-      if (p.time_seconds) setEstTime(Math.round(p.time_seconds / 60).toString());
-
-      // Set number of colors from filaments count (unique colors across all plates)
-      if (p.filaments?.length > 0) {
-        setNumColors(String(p.filaments.length));
-        const filInfo = p.filaments.map((f: any) => `${f.color || "?"} (${f.type})`).join(", ");
-        noteParts.push(`Cores: ${p.filaments.length} — ${filInfo}`);
+      if (selectedProfile.filaments?.length > 0) {
+        setNumColors(String(selectedProfile.filaments.length));
+        const filInfo = selectedProfile.filaments
+          .map((f: any) => `${f.color || "?"} (${f.type})`)
+          .join(", ");
+        noteParts.push(`Cores: ${selectedProfile.filaments.length} — ${filInfo}`);
       }
+    }
 
-      if (plates > 0) {
-        noteParts.push(`Placas de impressão: ${plates}`);
-      }
+    if (plates > 0) {
+      noteParts.push(`Placas de impressão: ${plates}`);
     }
 
     setNotes(noteParts.join("\n"));
     setDescription(model.description || "");
+    setMakerOptionOpen(false);
+    setMakerModelToImport(null);
     setBambuImportOpen(false);
     setCreateOpen(true);
-    toast({ title: "Dados importados do MakerWorld", description: plates > 0 ? `${plates} placas, ${model.profiles?.[0]?.filaments?.length || "?"} cores` : undefined });
+    toast({
+      title: "Dados importados do MakerWorld",
+      description: selectedProfile?.name
+        ? `${selectedProfile.name} · ${selectedProfile?.weight_grams || "?"}g`
+        : plates > 0
+          ? `${plates} placas`
+          : undefined,
+    });
   };
 
   const fetchMakerWorld = async () => {
