@@ -29,8 +29,8 @@ import { useToast } from "@/hooks/use-toast";
 const fmtCurrency = (v: number | null) => v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
 const fmtDuration = (s: number | null) => {
   if (!s) return "—";
-  const m = Math.round(s / 60);
-  return `${m} min`;
+  const h = (s / 60).toFixed(1).replace(".", ",");
+  return `${h}h`;
 };
 
 const categoryLabels: Record<string, string> = {
@@ -153,9 +153,8 @@ export default function Produtos() {
   // Cost breakdown calculation
   const costBreakdown = useMemo(() => {
     const grams = parseFloat(estGrams) || 0;
-    const printMinutes = parseInt(estTime) || 0;
+    const printHours = parseFloat(estTime) || 0;
     const postMin = parseInt(postMinutes) || 0;
-    const printHours = printMinutes / 60;
     const laborHours = postMin / 60;
 
     // Material cost (produto sempre em gramas)
@@ -279,7 +278,7 @@ export default function Produtos() {
   const openEdit = (p: any) => {
     setEditItem(p); setName(p.name); setDescription(p.description || ""); setSku(p.sku || "");
     setCategory(p.category); setMaterialId(p.material_id || ""); setEstGrams(p.est_grams?.toString() || "");
-    setEstTime(p.est_time_minutes?.toString() || ""); setPostMinutes(p.post_process_minutes?.toString() || "");
+    setEstTime(p.est_time_minutes ? (p.est_time_minutes / 60).toFixed(2) : ""); setPostMinutes(p.post_process_minutes?.toString() || "");
     setCostEstimate(p.cost_estimate?.toString() || ""); setSalePrice(p.sale_price?.toString() || "");
     setPhotoUrl(p.photo_url || ""); setNotes(p.notes || ""); setPrinterId(""); setNumColors(String((p as any).num_colors || 1)); setPrintsPerPlate(String((p as any).prints_per_plate || 1));
     // Load extra photos
@@ -337,7 +336,7 @@ export default function Produtos() {
     resetForm();
     setName(task.design_title || "Produto Bambu");
     setEstGrams(task.weight_grams?.toString() || "");
-    setEstTime(task.cost_time_seconds ? Math.round(task.cost_time_seconds / 60).toString() : "");
+    setEstTime(task.cost_time_seconds ? (task.cost_time_seconds / 3600).toFixed(2) : "");
     setPhotoUrl(task.cover_url || "");
     setCategory("printed_part");
     setNotes(`Importado da Bambu Lab — Task ID: ${task.bambu_task_id}`);
@@ -350,7 +349,7 @@ export default function Produtos() {
     resetForm();
     setName(proj.name || "Produto Bambu");
     setEstGrams(proj.total_weight_grams ? proj.total_weight_grams.toFixed(1) : "");
-    setEstTime(proj.total_time_seconds ? Math.round(proj.total_time_seconds / 60).toString() : "");
+    setEstTime(proj.total_time_seconds ? (proj.total_time_seconds / 3600).toFixed(2) : "");
     setPhotoUrl(proj.thumbnail || "");
     setCategory("printed_part");
     const filamentInfo = proj.filaments?.length > 0
@@ -521,7 +520,7 @@ export default function Produtos() {
       const { data: inserted, error } = await supabase.from("products").insert({
         tenant_id: profile.tenant_id, name, description: description || null, sku: sku || null,
         category, material_id: materialId || null, est_grams: estGrams ? parseFloat(estGrams) : 0,
-        est_time_minutes: estTime ? parseInt(estTime) : 0, post_process_minutes: postMinutes ? parseInt(postMinutes) : 0,
+        est_time_minutes: estTime ? Math.round(parseFloat(estTime) * 60) : 0, post_process_minutes: postMinutes ? parseInt(postMinutes) : 0,
         cost_estimate: cost, sale_price: price, margin_percent: margin, notes: notes || null,
         photo_url: photoUrl || null, num_colors: parseInt(numColors) || 1,
         prints_per_plate: parseInt(printsPerPlate) || 1,
@@ -542,7 +541,7 @@ export default function Produtos() {
       const { error } = await supabase.from("products").update({
         name, description: description || null, sku: sku || null, category,
         material_id: materialId || null, est_grams: estGrams ? parseFloat(estGrams) : 0,
-        est_time_minutes: estTime ? parseInt(estTime) : 0, post_process_minutes: postMinutes ? parseInt(postMinutes) : 0,
+        est_time_minutes: estTime ? Math.round(parseFloat(estTime) * 60) : 0, post_process_minutes: postMinutes ? parseInt(postMinutes) : 0,
         cost_estimate: cost, sale_price: price, margin_percent: margin, notes: notes || null,
         photo_url: photoUrl || null, num_colors: parseInt(numColors) || 1,
         prints_per_plate: parseInt(printsPerPlate) || 1,
@@ -642,7 +641,7 @@ export default function Produtos() {
             <p className="mt-1 text-[11px] text-muted-foreground">Usando {costBreakdown.selectedPrinterName} como referência de custo de máquina.</p>
           )}
         </div>
-        <div><Label>Tempo Impressão (min)</Label><Input type="number" value={estTime} onChange={(e) => setEstTime(e.target.value)} placeholder="120" /></div>
+        <div><Label>Tempo Impressão (h)</Label><Input type="number" step="0.1" value={estTime} onChange={(e) => setEstTime(e.target.value)} placeholder="2.5" /></div>
         <div><Label>Pós-Processo (min)</Label><Input type="number" value={postMinutes} onChange={(e) => setPostMinutes(e.target.value)} placeholder="15" /></div>
         <div>
           <Label>Nº de Cores</Label>
@@ -666,7 +665,7 @@ export default function Produtos() {
       </div>
 
       {/* Cost breakdown */}
-      {(parseFloat(estGrams) > 0 || parseInt(estTime) > 0) && (
+      {(parseFloat(estGrams) > 0 || parseFloat(estTime) > 0) && (
         <div className="rounded-lg border border-dashed bg-muted/30 p-3 space-y-2">
           <div className="flex items-center justify-between">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
@@ -698,7 +697,7 @@ export default function Produtos() {
           {tenantSettings.energy_cost_kwh === 0 && tenantSettings.labor_cost_hour === 0 && (
             <p className="text-[11px] text-muted-foreground">⚠ Configure custos de energia/mão de obra em Configurações → Empresa</p>
           )}
-          {!costBreakdown.hasMachineRate && parseInt(estTime) > 0 && (
+          {!costBreakdown.hasMachineRate && parseFloat(estTime) > 0 && (
             <p className="text-[11px] text-muted-foreground">⚠ Para calcular depreciação, preencha custo de aquisição e vida útil da impressora.</p>
           )}
         </div>

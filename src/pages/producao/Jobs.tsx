@@ -46,9 +46,8 @@ const fmtCurrency = (v: number | null) =>
 const fmtGrams = (v: number | null) => (v != null ? `${v.toLocaleString("pt-BR")}g` : "—");
 const fmtMinutes = (m: number | null) => {
   if (m == null || m === 0) return "—";
-  const h = Math.floor(m / 60);
-  const min = m % 60;
-  return h > 0 ? `${h}h${min > 0 ? `${min}m` : ""}` : `${min}m`;
+  const h = (m / 60).toFixed(1).replace(".", ",");
+  return `${h}h`;
 };
 const fmtDate = (d: string | null) => {
   if (!d) return "—";
@@ -433,7 +432,7 @@ function CreateJobDialog({
     setName(p.name);
     setDescription(p.description || "");
     if (p.material_id) setMaterialId(p.material_id);
-    if (p.est_time_minutes) setEstTimeMinutes(String(p.est_time_minutes));
+    if (p.est_time_minutes) setEstTimeMinutes((p.est_time_minutes / 60).toFixed(2));
     if (p.est_grams) setEstGrams(String(p.est_grams));
     const colors = (p as any).num_colors || 1;
     setNumColors(String(colors));
@@ -472,7 +471,7 @@ function CreateJobDialog({
       const code = `OI-${datePart}-${seq}`;
 
       const grams = estGrams ? Number(estGrams) : null;
-      const minutes = estTimeMinutes ? Number(estTimeMinutes) : null;
+      const minutes = estTimeMinutes ? Math.round(Number(estTimeMinutes) * 60) : null;
       const colors = parseInt(numColors) || 1;
       const purge = parseFloat(purgeWasteGrams) || 0;
 
@@ -679,8 +678,8 @@ function CreateJobDialog({
 
           <div className="grid grid-cols-3 gap-3">
             <div className="grid gap-1.5">
-              <Label>Tempo est. (min)</Label>
-              <Input type="number" placeholder="120" value={estTimeMinutes} onChange={e => setEstTimeMinutes(e.target.value)} />
+              <Label>Tempo est. (h)</Label>
+              <Input type="number" step="0.1" placeholder="2.5" value={estTimeMinutes} onChange={e => setEstTimeMinutes(e.target.value)} />
             </div>
             <div className="grid gap-1.5">
               <Label>Gramas est.</Label>
