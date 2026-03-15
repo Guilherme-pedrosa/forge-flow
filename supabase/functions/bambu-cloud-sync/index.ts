@@ -554,13 +554,36 @@ Deno.serve(async (req) => {
                   else if (predictionMatch) timeSeconds = parseInt(predictionMatch[1]);
                 }
                 
-                // Extract weight from HTML JS objects
-                const weightMatch = html.match(/"weight"\s*:\s*(\d+(?:\.\d+)?)/);
-                if (weightMatch) weightGrams = parseFloat(weightMatch[1]);
-                // Fallback: parse from markdown (but skip small numbers that might be magnets)
+                // Extract weight: sum all plate weights from JSON, or use total weight field
+                // First try to find a "totalWeight" or profile-level weight
+                const totalWeightMatch = html.match(/"totalWeight"\s*:\s*(\d+(?:\.\d+)?)/);
+                if (totalWeightMatch) {
+                  weightGrams = parseFloat(totalWeightMatch[1]);
+                }
+                // Fallback: sum all "weight" values from plate objects in HTML
+                if (weightGrams === 0) {
+                  const allWeights = [...html.matchAll(/"weight"\s*:\s*(\d+(?:\.\d+)?)/g)];
+                  if (allWeights.length > 0) {
+                    weightGrams = allWeights.reduce((sum, m) => sum + parseFloat(m[1]), 0);
+                  }
+                }
+                // Fallback: parse "563 g" pattern from markdown profile summary
                 if (weightGrams === 0) {
                   const weightM = markdown.match(/(\d{2,}(?:\.\d+)?)\s*g(?:rams?)?/i);
                   if (weightM) weightGrams = parseFloat(weightM[1]);
+                }
+                
+                // Also extract per-filament grams from markdown: "PLA | 523 g", "PLA | 32 g"
+                const filGramsRegex = /(?:PLA|PETG|ABS|ASA|TPU|PC|PA)\s*\|\s*(\d+(?:\.\d+)?)\s*g/gi;
+                let filGMatch;
+                const filGramsList: number[] = [];
+                while ((filGMatch = filGramsRegex.exec(markdown)) !== null) {
+                  filGramsList.push(parseFloat(filGMatch[1]));
+                }
+                // If we found per-filament grams and they sum to more than current weight, use that
+                if (filGramsList.length > 0) {
+                  const filSum = filGramsList.reduce((a, b) => a + b, 0);
+                  if (filSum > weightGrams) weightGrams = filSum;
                 }
                 
                 // Extract filament colors from Bill of Materials section
