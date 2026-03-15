@@ -157,11 +157,22 @@ export default function Produtos() {
     const printHours = printMinutes / 60;
     const laborHours = postMin / 60;
 
-    // Material cost (avg_cost is per unit; if unit=g, cost is per gram; if unit=kg, divide by 1000)
+    // Material cost (produto sempre em gramas)
     const selectedMaterial = materials.find((m) => m.id === materialId);
-    const isKg = selectedMaterial?.unit === "kg";
-    const baseCostPerGram = selectedMaterial ? (isKg ? selectedMaterial.avg_cost / 1000 : selectedMaterial.avg_cost) : 0;
-    const freightPerGram = selectedMaterial?.freight_cost ? (isKg ? selectedMaterial.freight_cost / 1000 : selectedMaterial.freight_cost) : 0;
+    const materialUnit = String(selectedMaterial?.unit || "").trim().toLowerCase();
+    const isKgUnit = ["kg", "quilo", "quilos", "kilogram", "kilograms"].includes(materialUnit);
+
+    // avg_cost respeita a unidade cadastrada no item
+    const baseCostPerGram = selectedMaterial
+      ? (isKgUnit ? selectedMaterial.avg_cost / 1000 : selectedMaterial.avg_cost)
+      : 0;
+
+    // freight_cost: tratar valores > 1 como R$/kg para evitar distorção quando item está em gramas
+    const rawFreight = Number(selectedMaterial?.freight_cost || 0);
+    const freightPerGram = rawFreight > 0
+      ? (isKgUnit ? rawFreight / 1000 : rawFreight > 1 ? rawFreight / 1000 : rawFreight)
+      : 0;
+
     const lossCoeff = selectedMaterial?.loss_coefficient || 0.05;
     const effectiveGrams = grams * (1 + lossCoeff);
     const materialCost = effectiveGrams * (baseCostPerGram + freightPerGram);
