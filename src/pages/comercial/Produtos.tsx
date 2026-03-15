@@ -566,8 +566,12 @@ export default function Produtos() {
               ) : bambuProjects.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                   <FolderOpen className="h-8 w-8 mb-2 opacity-40" />
-                  <p className="text-sm">Nenhum projeto salvo encontrado</p>
-                  <p className="text-xs mt-1">Conecte-se na página de Integrações → Bambu Lab</p>
+                  <p className="text-sm font-medium">{bambuProjectsError || "Nenhum projeto salvo encontrado"}</p>
+                  <p className="text-xs mt-1 text-center max-w-sm">
+                    {bambuProjectsError 
+                      ? "Vá em Integrações → Bambu Lab e reconecte sua conta."
+                      : "Conecte-se na página de Integrações → Bambu Lab"}
+                  </p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
