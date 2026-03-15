@@ -250,6 +250,10 @@ export default function Itens() {
           <Input type="number" value={minStock} onChange={(e) => setMinStock(e.target.value)} placeholder="200" />
         </div>
         <div>
+          <Label>Estoque Atual</Label>
+          <Input type="number" value={currentStock} onChange={(e) => setCurrentStock(e.target.value)} placeholder="0" />
+        </div>
+        <div>
           <Label>Custo Médio (R$)</Label>
           <Input type="number" step="0.01" value={avgCost} onChange={(e) => setAvgCost(e.target.value)} placeholder="0.08" />
         </div>
