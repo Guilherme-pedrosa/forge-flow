@@ -70,6 +70,7 @@ export default function Produtos() {
   const [notes, setNotes] = useState("");
   const [printerId, setPrinterId] = useState("");
   const [numColors, setNumColors] = useState("1");
+  const [printsPerPlate, setPrintsPerPlate] = useState("1");
 
   const { data: products = [], isLoading } = useQuery({
     queryKey: ["products"],
