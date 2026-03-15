@@ -1,0 +1,1 @@
+ALTER TABLE public.products ADD COLUMN prints_per_plate integer NOT NULL DEFAULT 1;

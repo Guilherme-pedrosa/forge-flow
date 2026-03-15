@@ -1545,6 +1545,7 @@ export type Database = {
           num_colors: number
           photo_url: string | null
           post_process_minutes: number | null
+          prints_per_plate: number
           sale_price: number | null
           sku: string | null
           tenant_id: string
@@ -1566,6 +1567,7 @@ export type Database = {
           num_colors?: number
           photo_url?: string | null
           post_process_minutes?: number | null
+          prints_per_plate?: number
           sale_price?: number | null
           sku?: string | null
           tenant_id: string
@@ -1587,6 +1589,7 @@ export type Database = {
           num_colors?: number
           photo_url?: string | null
           post_process_minutes?: number | null
+          prints_per_plate?: number
           sale_price?: number | null
           sku?: string | null
           tenant_id?: string
