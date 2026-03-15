@@ -336,7 +336,7 @@ export default function Produtos() {
     resetForm();
     setName(task.design_title || "Produto Bambu");
     setEstGrams(task.weight_grams?.toString() || "");
-    setEstTime(task.cost_time_seconds ? Math.round(task.cost_time_seconds / 60).toString() : "");
+    setEstTime(task.cost_time_seconds ? (task.cost_time_seconds / 3600).toFixed(2) : "");
     setPhotoUrl(task.cover_url || "");
     setCategory("printed_part");
     setNotes(`Importado da Bambu Lab — Task ID: ${task.bambu_task_id}`);
