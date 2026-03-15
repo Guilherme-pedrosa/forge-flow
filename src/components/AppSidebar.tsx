@@ -54,6 +54,7 @@ const menuGroups: MenuGroup[] = [
     items: [
       { title: "Itens / Materiais", icon: Package, href: "/estoque/itens" },
       { title: "Movimentações", icon: ArrowRightLeft, href: "/estoque/movimentacoes" },
+      { title: "Compras", icon: ShoppingCart, href: "/estoque/compras" },
       { title: "Alertas", icon: AlertTriangle, href: "/estoque/alertas", badge: 2 },
     ],
   },

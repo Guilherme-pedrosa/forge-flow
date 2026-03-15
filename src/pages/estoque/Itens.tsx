@@ -66,6 +66,7 @@ export default function Itens() {
   const [avgCost, setAvgCost] = useState("");
   const [lossCoefficient, setLossCoefficient] = useState("0.05");
   const [notes, setNotes] = useState("");
+  const [currentStock, setCurrentStock] = useState("");
 
   const { data: items = [], isLoading } = useQuery({
     queryKey: ["inventory_items"],
@@ -99,7 +100,7 @@ export default function Itens() {
   const resetForm = () => {
     setName(""); setCategory("filament"); setMaterialType(""); setColor("");
     setDiameter(""); setBrand(""); setSku(""); setUnit("g"); setMinStock("");
-    setAvgCost(""); setLossCoefficient("0.05"); setNotes("");
+    setAvgCost(""); setLossCoefficient("0.05"); setNotes(""); setCurrentStock("");
   };
 
   const openEdit = (item: ItemRow) => {
@@ -116,6 +117,7 @@ export default function Itens() {
     setAvgCost(item.avg_cost?.toString() || "");
     setLossCoefficient(item.loss_coefficient?.toString() || "0.05");
     setNotes(item.notes || "");
+    setCurrentStock(item.current_stock?.toString() || "0");
   };
 
   const createMut = useMutation({
@@ -133,6 +135,7 @@ export default function Itens() {
         unit,
         min_stock: minStock ? parseFloat(minStock) : 0,
         avg_cost: avgCost ? parseFloat(avgCost) : 0,
+        current_stock: currentStock ? parseFloat(currentStock) : 0,
         loss_coefficient: parseFloat(lossCoefficient) || 0.05,
         notes: notes || null,
       });
@@ -149,7 +152,8 @@ export default function Itens() {
 
   const updateMut = useMutation({
     mutationFn: async () => {
-      if (!editItem) return;
+      if (!editItem || !profile) return;
+      const newStock = currentStock ? parseFloat(currentStock) : 0;
       const { error } = await supabase.from("inventory_items").update({
         name,
         category,
@@ -161,10 +165,24 @@ export default function Itens() {
         unit,
         min_stock: minStock ? parseFloat(minStock) : 0,
         avg_cost: avgCost ? parseFloat(avgCost) : 0,
+        current_stock: newStock,
         loss_coefficient: parseFloat(lossCoefficient) || 0.05,
         notes: notes || null,
       }).eq("id", editItem.id);
       if (error) throw error;
+      // If stock changed, create an adjustment movement for audit trail
+      if (newStock !== editItem.current_stock) {
+        const diff = newStock - editItem.current_stock;
+        await supabase.from("inventory_movements").insert({
+          tenant_id: profile.tenant_id,
+          item_id: editItem.id,
+          movement_type: "adjustment",
+          quantity: Math.abs(diff),
+          unit_cost: avgCost ? parseFloat(avgCost) : editItem.avg_cost,
+          notes: `Ajuste manual de estoque: ${editItem.current_stock} → ${newStock}`,
+          stock_after: newStock,
+        });
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["inventory_items"] });
@@ -245,6 +263,10 @@ export default function Itens() {
         <div>
           <Label>Estoque Mínimo</Label>
           <Input type="number" value={minStock} onChange={(e) => setMinStock(e.target.value)} placeholder="200" />
+        </div>
+        <div>
+          <Label>Estoque Atual</Label>
+          <Input type="number" value={currentStock} onChange={(e) => setCurrentStock(e.target.value)} placeholder="0" />
         </div>
         <div>
           <Label>Custo Médio (R$)</Label>
