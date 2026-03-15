@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageHeader } from "@/components/shared/PageHeader";
 import {
-  Plus, Search, MoreHorizontal, Package, Edit, Trash2, Loader2, Image, CloudDownload, FolderOpen, History,
+  Plus, Search, MoreHorizontal, Package, Edit, Trash2, Loader2, Image, CloudDownload, FolderOpen, History, Globe, Link,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
