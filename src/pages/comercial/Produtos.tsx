@@ -682,10 +682,10 @@ export default function Produtos() {
           </Select>
         </div>
         <div>
-          <Label>Impressões por Prato</Label>
+          <Label>Peças por Prato</Label>
           <Input type="number" min="1" value={printsPerPlate} onChange={(e) => setPrintsPerPlate(e.target.value)} placeholder="1" />
           {parseInt(printsPerPlate) > 1 && (
-            <p className="mt-1 text-[11px] text-muted-foreground">Custo será dividido por {printsPerPlate} peças por impressão.</p>
+            <p className="mt-1 text-[11px] text-muted-foreground">Custo será dividido por {printsPerPlate} peças por prato.</p>
           )}
         </div>
       </div>
