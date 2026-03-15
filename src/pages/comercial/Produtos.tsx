@@ -642,7 +642,7 @@ export default function Produtos() {
             <p className="mt-1 text-[11px] text-muted-foreground">Usando {costBreakdown.selectedPrinterName} como referência de custo de máquina.</p>
           )}
         </div>
-        <div><Label>Tempo Impressão (min)</Label><Input type="number" value={estTime} onChange={(e) => setEstTime(e.target.value)} placeholder="120" /></div>
+        <div><Label>Tempo Impressão (h)</Label><Input type="number" step="0.1" value={estTime} onChange={(e) => setEstTime(e.target.value)} placeholder="2.5" /></div>
         <div><Label>Pós-Processo (min)</Label><Input type="number" value={postMinutes} onChange={(e) => setPostMinutes(e.target.value)} placeholder="15" /></div>
         <div>
           <Label>Nº de Cores</Label>

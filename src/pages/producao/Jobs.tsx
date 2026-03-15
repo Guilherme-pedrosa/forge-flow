@@ -678,8 +678,8 @@ function CreateJobDialog({
 
           <div className="grid grid-cols-3 gap-3">
             <div className="grid gap-1.5">
-              <Label>Tempo est. (min)</Label>
-              <Input type="number" placeholder="120" value={estTimeMinutes} onChange={e => setEstTimeMinutes(e.target.value)} />
+              <Label>Tempo est. (h)</Label>
+              <Input type="number" step="0.1" placeholder="2.5" value={estTimeMinutes} onChange={e => setEstTimeMinutes(e.target.value)} />
             </div>
             <div className="grid gap-1.5">
               <Label>Gramas est.</Label>
