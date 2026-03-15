@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppLayout } from "@/components/AppLayout";
 import Dashboard from "./pages/Dashboard";
 import ModulePlaceholder from "./pages/ModulePlaceholder";
+import ContasPagar from "./pages/financeiro/ContasPagar";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -20,7 +21,7 @@ const App = () => (
           <Routes>
             <Route path="/" element={<Dashboard />} />
             {/* Financeiro */}
-            <Route path="/financeiro/pagar" element={<ModulePlaceholder />} />
+            <Route path="/financeiro/pagar" element={<ContasPagar />} />
             <Route path="/financeiro/receber" element={<ModulePlaceholder />} />
             <Route path="/financeiro/caixa" element={<ModulePlaceholder />} />
             <Route path="/financeiro/conciliacao" element={<ModulePlaceholder />} />
