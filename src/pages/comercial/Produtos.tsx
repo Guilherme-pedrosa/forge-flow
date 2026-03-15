@@ -169,26 +169,33 @@ export default function Produtos() {
     // Labor cost
     const laborCost = laborHours * tenantSettings.labor_cost_hour;
 
-    const subtotal = materialCost + energyCost + machineCost + laborCost;
-    const overhead = subtotal * (tenantSettings.overhead_percent / 100);
-    const total = subtotal + overhead;
+    const subtotalPlate = materialCost + energyCost + machineCost + laborCost;
+    const overheadPlate = subtotalPlate * (tenantSettings.overhead_percent / 100);
+    const totalPlate = subtotalPlate + overheadPlate;
+
+    // Divide by prints per plate
+    const ppp = Math.max(1, parseInt(printsPerPlate) || 1);
+    const total = totalPlate / ppp;
+    const overhead = overheadPlate / ppp;
 
     // Suggested sale price
     const margin = tenantSettings.target_margin || 40;
     const suggestedPrice = margin < 100 ? total / (1 - margin / 100) : total * 2;
 
     return {
-      materialCost,
-      energyCost,
-      machineCost,
-      laborCost,
+      materialCost: materialCost / ppp,
+      energyCost: energyCost / ppp,
+      machineCost: machineCost / ppp,
+      laborCost: laborCost / ppp,
       overhead,
       total,
+      totalPlate,
+      printsPerPlate: ppp,
       suggestedPrice,
       selectedPrinterName: selectedPrinter?.name || null,
       hasMachineRate: (depreciationPerHour + maintenancePerHour) > 0,
     };
-  }, [estGrams, estTime, postMinutes, materialId, printerId, materials, printers, tenantSettings]);
+  }, [estGrams, estTime, postMinutes, materialId, printerId, printsPerPlate, materials, printers, tenantSettings]);
 
   const applyCalculatedCost = () => {
     setCostEstimate(costBreakdown.total.toFixed(2));
