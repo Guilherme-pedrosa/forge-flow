@@ -65,6 +65,7 @@ export default function Produtos() {
   const [salePrice, setSalePrice] = useState("");
   const [photoUrl, setPhotoUrl] = useState("");
   const [notes, setNotes] = useState("");
+  const [printerId, setPrinterId] = useState("");
 
   const { data: products = [], isLoading } = useQuery({
     queryKey: ["products"],
