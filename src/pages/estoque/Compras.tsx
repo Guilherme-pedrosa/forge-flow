@@ -1023,6 +1023,25 @@ export default function Compras() {
                       {p.payment_installments && (
                         <div className="col-span-2"><span className="text-muted-foreground">Pagamento:</span> {p.payment_installments}</div>
                       )}
+                      {p.payment_method && (
+                        <div className="col-span-2"><span className="text-muted-foreground">Forma:</span> {
+                          p.payment_method === "credit_card" ? "Cartão de Crédito" :
+                          p.payment_method === "debit_card" ? "Cartão de Débito" :
+                          p.payment_method === "pix" ? "PIX" :
+                          p.payment_method === "boleto" ? "Boleto" : p.payment_method
+                        }</div>
+                      )}
+                    </div>
+
+                    <div>
+                      <Label className="mb-2 block">Forma de Pagamento</Label>
+                      <Select value={marketplacePaymentMethodId} onValueChange={setMarketplacePaymentMethodId}>
+                        <SelectTrigger><SelectValue placeholder="Selecione a forma de pagamento..." /></SelectTrigger>
+                        <SelectContent>
+                          {paymentMethods.map((pm: any) => <SelectItem key={pm.id} value={pm.id}>{pm.name}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground mt-1">Será usada para gerar a conta a pagar</p>
                     </div>
 
                     <div>
