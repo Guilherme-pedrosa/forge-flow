@@ -924,10 +924,15 @@ function parseDesignToModel(d: any, selectedProfileId?: string | null) {
       parseLooseMetric(p.printTime)
     );
 
+    // Prefer computed weight (sum of plates/filaments) over declared when declared is inflated
+    const computedWeight = maxMetric(summedPlateWeight, filamentWeightSum);
+    const declaredIsCrazy = computedWeight > 0 && declaredWeight > computedWeight * 1.25;
+    const safeWeightGrams = declaredIsCrazy ? computedWeight : maxMetric(declaredWeight, computedWeight);
+
     return {
       profile_id: p.profile_id || p.profileId || p.id || p.profile_id_str || null,
       name: profileDisplayName(p, idx),
-      weight_grams: maxMetric(declaredWeight, summedPlateWeight, filamentWeightSum),
+      weight_grams: safeWeightGrams,
       time_seconds: maxMetric(declaredTime, summedPlateTime),
       plates: plates.length || toPositiveNumber(p.plateCount || p.plate_count),
       filaments,
