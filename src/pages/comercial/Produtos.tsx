@@ -1,10 +1,10 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageHeader } from "@/components/shared/PageHeader";
 import {
-  Plus, Search, MoreHorizontal, Package, Edit, Trash2, Loader2, Image, CloudDownload, FolderOpen, History, Globe, Link, Calculator,
+  Plus, Search, MoreHorizontal, Package, Edit, Trash2, Loader2, Image, CloudDownload, FolderOpen, History, Globe, Link, Calculator, Upload, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -43,6 +43,7 @@ export default function Produtos() {
   const { profile } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [search, setSearch] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
@@ -64,6 +65,8 @@ export default function Produtos() {
   const [costEstimate, setCostEstimate] = useState("");
   const [salePrice, setSalePrice] = useState("");
   const [photoUrl, setPhotoUrl] = useState("");
+  const [extraPhotos, setExtraPhotos] = useState<string[]>([]);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [notes, setNotes] = useState("");
   const [printerId, setPrinterId] = useState("");
 
@@ -210,7 +213,7 @@ export default function Produtos() {
 
   const resetForm = () => {
     setName(""); setDescription(""); setSku(""); setCategory("printed_part"); setMaterialId("");
-    setEstGrams(""); setEstTime(""); setPostMinutes(""); setCostEstimate(""); setSalePrice(""); setPhotoUrl(""); setNotes(""); setPrinterId("");
+    setEstGrams(""); setEstTime(""); setPostMinutes(""); setCostEstimate(""); setSalePrice(""); setPhotoUrl(""); setExtraPhotos([]); setNotes(""); setPrinterId("");
   };
 
   const openEdit = (p: any) => {
@@ -219,6 +222,55 @@ export default function Produtos() {
     setEstTime(p.est_time_minutes?.toString() || ""); setPostMinutes(p.post_process_minutes?.toString() || "");
     setCostEstimate(p.cost_estimate?.toString() || ""); setSalePrice(p.sale_price?.toString() || "");
     setPhotoUrl(p.photo_url || ""); setNotes(p.notes || ""); setPrinterId("");
+    // Load extra photos
+    if (p.id) {
+      supabase.from("product_photos").select("url").eq("product_id", p.id).order("sort_order").then(({ data }) => {
+        setExtraPhotos((data || []).map((d: any) => d.url));
+      });
+    } else {
+      setExtraPhotos([]);
+    }
+  };
+
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || !profile) return;
+    setUploadingPhoto(true);
+    try {
+      for (const file of Array.from(files)) {
+        const ext = file.name.split(".").pop();
+        const path = `${profile.tenant_id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+        const { error: uploadError } = await supabase.storage.from("product-photos").upload(path, file);
+        if (uploadError) throw uploadError;
+        const { data: urlData } = supabase.storage.from("product-photos").getPublicUrl(path);
+        const publicUrl = urlData.publicUrl;
+        if (!photoUrl) {
+          setPhotoUrl(publicUrl);
+        } else {
+          setExtraPhotos(prev => [...prev, publicUrl]);
+        }
+      }
+      toast({ title: "Foto(s) adicionada(s)" });
+    } catch (err: any) {
+      toast({ title: "Erro no upload", description: err.message, variant: "destructive" });
+    } finally {
+      setUploadingPhoto(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const removePhoto = (url: string) => {
+    if (url === photoUrl) {
+      // Promote first extra photo to main, or clear
+      if (extraPhotos.length > 0) {
+        setPhotoUrl(extraPhotos[0]);
+        setExtraPhotos(prev => prev.slice(1));
+      } else {
+        setPhotoUrl("");
+      }
+    } else {
+      setExtraPhotos(prev => prev.filter(u => u !== url));
+    }
   };
 
   const importFromBambuTask = (task: any) => {
@@ -255,6 +307,11 @@ export default function Produtos() {
     setName(model.title || "Produto MakerWorld");
     setPhotoUrl(model.thumbnail || "");
     setCategory("printed_part");
+    // Set gallery photos
+    if (model.gallery?.length > 0) {
+      const gallery = model.gallery.filter((u: string) => u !== model.thumbnail);
+      setExtraPhotos(gallery.slice(0, 5));
+    }
     // Use first profile data if available
     if (model.profiles?.length > 0) {
       const p = model.profiles[0];
@@ -292,20 +349,32 @@ export default function Produtos() {
     }
   };
 
+  const saveExtraPhotos = async (productId: string) => {
+    if (!profile || extraPhotos.length === 0) return;
+    // Delete old extra photos
+    await supabase.from("product_photos").delete().eq("product_id", productId);
+    // Insert new ones
+    const rows = extraPhotos.map((url, i) => ({
+      product_id: productId, tenant_id: profile.tenant_id, url, sort_order: i,
+    }));
+    await supabase.from("product_photos").insert(rows);
+  };
+
   const createMut = useMutation({
     mutationFn: async () => {
       if (!profile) throw new Error("Sem perfil");
       const cost = costEstimate ? parseFloat(costEstimate) : 0;
       const price = salePrice ? parseFloat(salePrice) : 0;
       const margin = price > 0 ? ((price - cost) / price) * 100 : null;
-      const { error } = await supabase.from("products").insert({
+      const { data: inserted, error } = await supabase.from("products").insert({
         tenant_id: profile.tenant_id, name, description: description || null, sku: sku || null,
         category, material_id: materialId || null, est_grams: estGrams ? parseFloat(estGrams) : 0,
         est_time_minutes: estTime ? parseInt(estTime) : 0, post_process_minutes: postMinutes ? parseInt(postMinutes) : 0,
         cost_estimate: cost, sale_price: price, margin_percent: margin, notes: notes || null,
         photo_url: photoUrl || null,
-      });
+      }).select("id").single();
       if (error) throw error;
+      if (inserted) await saveExtraPhotos(inserted.id);
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["products"] }); setCreateOpen(false); resetForm(); toast({ title: "Produto criado" }); },
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
@@ -325,6 +394,7 @@ export default function Produtos() {
         photo_url: photoUrl || null,
       }).eq("id", editItem.id);
       if (error) throw error;
+      await saveExtraPhotos(editItem.id);
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["products"] }); setEditItem(null); resetForm(); toast({ title: "Produto atualizado" }); },
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
@@ -339,18 +409,57 @@ export default function Produtos() {
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 
+  const allPhotos = [photoUrl, ...extraPhotos].filter(Boolean);
+
   const formFields = (
     <div className="grid gap-4 max-h-[60vh] overflow-y-auto pr-1">
-      {/* Photo preview */}
-      {photoUrl && (
-        <div className="flex items-center gap-3">
-          <img src={photoUrl} alt="Preview" className="w-20 h-20 rounded-lg object-cover border" />
-          <div className="flex-1">
-            <p className="text-xs text-muted-foreground">Foto do Produto</p>
-            <Button variant="ghost" size="sm" className="text-destructive text-xs mt-1" onClick={() => setPhotoUrl("")}>Remover foto</Button>
-          </div>
+      {/* Photos gallery */}
+      <div>
+        <Label className="mb-2 block">Fotos do Produto</Label>
+        <div className="flex flex-wrap gap-2">
+          {allPhotos.map((url, i) => (
+            <div key={i} className="relative group">
+              <img src={url} alt={`Foto ${i + 1}`} className="w-20 h-20 rounded-lg object-cover border" />
+              {i === 0 && <span className="absolute bottom-0 left-0 right-0 bg-primary/80 text-primary-foreground text-[9px] text-center rounded-b-lg">Principal</span>}
+              <button
+                type="button"
+                onClick={() => removePhoto(url)}
+                className="absolute -top-1.5 -right-1.5 bg-destructive text-destructive-foreground rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
+          {/* Upload button */}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploadingPhoto}
+            className="w-20 h-20 rounded-lg border-2 border-dashed border-muted-foreground/30 flex flex-col items-center justify-center gap-1 text-muted-foreground hover:border-primary hover:text-primary transition-colors"
+          >
+            {uploadingPhoto ? <Loader2 className="h-5 w-5 animate-spin" /> : <Upload className="h-5 w-5" />}
+            <span className="text-[10px]">{uploadingPhoto ? "..." : "Adicionar"}</span>
+          </button>
         </div>
-      )}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={handlePhotoUpload}
+        />
+        {allPhotos.length === 0 && (
+          <div className="mt-2">
+            <Input
+              placeholder="Ou cole uma URL de imagem..."
+              value={photoUrl}
+              onChange={(e) => setPhotoUrl(e.target.value)}
+              className="text-xs"
+            />
+          </div>
+        )}
+      </div>
       <div className="grid grid-cols-2 gap-3">
         <div className="col-span-2"><Label>Nome *</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Vaso Geométrico P" /></div>
         <div><Label>Categoria</Label>
@@ -418,12 +527,6 @@ export default function Produtos() {
         <div><Label>Custo Estimado (R$)</Label><Input type="number" step="0.01" value={costEstimate} onChange={(e) => setCostEstimate(e.target.value)} placeholder="12.50" /></div>
         <div><Label>Preço de Venda (R$)</Label><Input type="number" step="0.01" value={salePrice} onChange={(e) => setSalePrice(e.target.value)} placeholder="39.90" /></div>
       </div>
-      {!photoUrl && (
-        <div>
-          <Label>URL da Foto</Label>
-          <Input value={photoUrl} onChange={(e) => setPhotoUrl(e.target.value)} placeholder="https://..." />
-        </div>
-      )}
       <div><Label>Observações</Label><Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} /></div>
     </div>
   );

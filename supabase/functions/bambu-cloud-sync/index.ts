@@ -498,45 +498,73 @@ Deno.serve(async (req) => {
               const html = fcData.data?.html || fcData.html || "";
               const markdown = fcData.data?.markdown || fcData.markdown || "";
               
+              console.log("Firecrawl HTML length:", html.length, "Markdown length:", markdown.length);
+              
               // Try __NEXT_DATA__ from rendered HTML
               const extracted = extractFromHtml(html);
               if (extracted) {
                 models.push(extracted);
               }
               
-              // Fallback: parse from markdown content
-              if (models.length === 0 && markdown) {
-                const titleM = markdown.match(/^#\s+(.+)/m);
-                const weightM = markdown.match(/(\d+(?:\.\d+)?)\s*g/i);
-                const timeM = markdown.match(/(\d+)\s*[hH]\s*(\d+)?\s*[mM]?/);
-                
-                // Extract from metadata in HTML
-                const ogTitle = html.match(/property="og:title"\s+content="([^"]+)"/);
+              // Fallback: parse from rendered HTML content
+              if (models.length === 0) {
+                // Extract title from h1 tag
+                const h1Match = html.match(/<h1[^>]*>([^<]+)<\/h1>/);
+                // Extract og:image
                 const ogImage = html.match(/property="og:image"\s+content="([^"]+)"/);
+                // Extract any makerworld image from the rendered page
+                const mwImageMatch = html.match(/src="(https:\/\/makerworld\.bblmw\.com[^"]*(?:\.(?:png|jpg|jpeg|webp))[^"]*)"/i);
+                // Extract from model cover image
+                const coverMatch = html.match(/src="(https:\/\/[^"]*(?:cover|thumbnail|plate_)[^"]*\.(?:png|jpg|jpeg|webp)[^"]*)"/i);
+                
+                const ogTitle = html.match(/property="og:title"\s+content="([^"]+)"/);
                 const ogDesc = html.match(/property="og:description"\s+content="([^"]+)"/);
+                const titleFromH1 = h1Match?.[1]?.trim();
+                const titleM = markdown.match(/^#\s+(.+)/m);
                 
-                const title = titleM?.[1] || ogTitle?.[1] || "Modelo MakerWorld";
-                const thumbnail = ogImage?.[1] || null;
+                const title = titleFromH1 || titleM?.[1] || ogTitle?.[1] || "Modelo MakerWorld";
+                const thumbnail = ogImage?.[1] || coverMatch?.[1] || mwImageMatch?.[1] || null;
                 
+                console.log("Extracted title:", title, "thumbnail:", thumbnail?.substring(0, 80));
+                
+                // Extract weight and time from HTML/markdown
                 let weightGrams = 0;
                 let timeSeconds = 0;
                 
-                if (weightM) weightGrams = parseFloat(weightM[1]);
-                if (timeM) {
-                  timeSeconds = (parseInt(timeM[1]) || 0) * 3600 + (parseInt(timeM[2]) || 0) * 60;
+                // Look for structured data in JS objects within HTML
+                const weightMatch = html.match(/"weight"\s*:\s*(\d+(?:\.\d+)?)/);
+                const timeMatch = html.match(/"estimatedTime"\s*:\s*(\d+)/);
+                const predictionMatch = html.match(/"prediction"\s*:\s*(\d+)/);
+                if (weightMatch) weightGrams = parseFloat(weightMatch[1]);
+                if (timeMatch) timeSeconds = parseInt(timeMatch[1]);
+                else if (predictionMatch) timeSeconds = parseInt(predictionMatch[1]);
+                
+                // Fallback: parse from markdown text
+                if (weightGrams === 0) {
+                  const weightM = markdown.match(/(\d+(?:\.\d+)?)\s*g(?:rams?)?/i);
+                  if (weightM) weightGrams = parseFloat(weightM[1]);
                 }
-
-                // Try to extract from structured data in page
-                const profileDataMatch = html.match(/\"weight\"\s*:\s*(\d+(?:\.\d+)?)/);
-                const timeDataMatch = html.match(/\"estimatedTime\"\s*:\s*(\d+)/);
-                if (profileDataMatch) weightGrams = parseFloat(profileDataMatch[1]);
-                if (timeDataMatch) timeSeconds = parseInt(timeDataMatch[1]);
+                if (timeSeconds === 0) {
+                  const timeM = markdown.match(/(\d+)\s*[hH](?:ours?)?\s*(\d+)?\s*[mM]?/);
+                  if (timeM) timeSeconds = (parseInt(timeM[1]) || 0) * 3600 + (parseInt(timeM[2]) || 0) * 60;
+                }
+                
+                // Also try to get all gallery images
+                const allImages: string[] = [];
+                const imgRegex = /src="(https:\/\/makerworld\.bblmw\.com[^"]*\.(?:png|jpg|jpeg|webp)[^"]*)"/gi;
+                let match;
+                while ((match = imgRegex.exec(html)) !== null) {
+                  if (!allImages.includes(match[1]) && !match[1].includes('/w_60/') && !match[1].includes('avatar')) {
+                    allImages.push(match[1]);
+                  }
+                }
                 
                 models.push({
                   id: modelId,
                   title,
                   thumbnail,
                   description: ogDesc?.[1] || "",
+                  gallery: allImages.slice(0, 10),
                   profiles: weightGrams > 0 ? [{
                     name: "Default",
                     weight_grams: weightGrams,
