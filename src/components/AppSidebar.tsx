@@ -1,262 +1,290 @@
-import { useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { motion, AnimatePresence } from "framer-motion";
 import {
   LayoutDashboard,
-  DollarSign,
-  Package,
-  Factory,
-  CalendarClock,
-  ShoppingCart,
-  Plug,
-  Settings,
-  ChevronDown,
-  ChevronLeft,
-  ChevronRight,
-  Receipt,
-  CreditCard,
+  ArrowUpFromLine,
+  ArrowDownToLine,
+  Wallet,
   Landmark,
-  FileBarChart,
-  Box,
-  ArrowDownUp,
+  PiggyBank,
+  BookOpen,
+  Target,
+  Package,
+  ArrowRightLeft,
   AlertTriangle,
   Printer,
   Hammer,
   BarChart3,
+  ShoppingCart,
+  FileText,
   Store,
   Link2,
-  Sparkles,
+  Building,
+  UserCog,
+  Plug,
+  FileText as LogsIcon,
+  ChevronLeft,
+  ChevronRight,
+  ChevronDown,
+  LogOut,
+  Factory,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { useEffect, useState } from "react";
 
-interface NavSection {
-  label: string;
-  icon: React.ElementType;
-  basePath: string;
-  children: { label: string; path: string; icon: React.ElementType }[];
+interface AppSidebarProps {
+  collapsed: boolean;
+  onToggle: () => void;
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
 }
 
-const navigation: NavSection[] = [
+interface MenuItem {
+  title: string;
+  icon: React.ComponentType<{ className?: string }>;
+  href: string;
+  badge?: number;
+}
+
+interface MenuGroup {
+  label: string;
+  items: MenuItem[];
+  defaultOpen?: boolean;
+}
+
+const menuGroups: MenuGroup[] = [
   {
-    label: "Dashboard",
-    icon: LayoutDashboard,
-    basePath: "/",
-    children: [],
+    label: "",
+    items: [
+      { title: "Dashboard", icon: LayoutDashboard, href: "/" },
+    ],
+    defaultOpen: true,
   },
   {
     label: "Financeiro",
-    icon: DollarSign,
-    basePath: "/financeiro",
-    children: [
-      { label: "Contas a Pagar", path: "/financeiro/pagar", icon: Receipt },
-      { label: "Contas a Receber", path: "/financeiro/receber", icon: CreditCard },
-      { label: "Caixa e Bancos", path: "/financeiro/caixa", icon: Landmark },
-      { label: "Conciliação", path: "/financeiro/conciliacao", icon: ArrowDownUp },
-      { label: "DRE", path: "/financeiro/dre", icon: FileBarChart },
+    items: [
+      { title: "Contas a Pagar", icon: ArrowUpFromLine, href: "/financeiro/pagar" },
+      { title: "Contas a Receber", icon: ArrowDownToLine, href: "/financeiro/receber" },
+      { title: "Caixa e Bancos", icon: Wallet, href: "/financeiro/caixa" },
+      { title: "Conciliação", icon: PiggyBank, href: "/financeiro/conciliacao" },
+      { title: "DRE", icon: BookOpen, href: "/financeiro/dre" },
     ],
+    defaultOpen: true,
   },
   {
     label: "Estoque",
-    icon: Package,
-    basePath: "/estoque",
-    children: [
-      { label: "Itens", path: "/estoque/itens", icon: Box },
-      { label: "Movimentações", path: "/estoque/movimentacoes", icon: ArrowDownUp },
-      { label: "Alertas", path: "/estoque/alertas", icon: AlertTriangle },
+    items: [
+      { title: "Itens / Materiais", icon: Package, href: "/estoque/itens" },
+      { title: "Movimentações", icon: ArrowRightLeft, href: "/estoque/movimentacoes" },
+      { title: "Alertas", icon: AlertTriangle, href: "/estoque/alertas", badge: 2 },
     ],
   },
   {
     label: "Produção",
-    icon: Factory,
-    basePath: "/producao",
-    children: [
-      { label: "Jobs", path: "/producao/jobs", icon: Hammer },
-      { label: "Impressoras", path: "/producao/impressoras", icon: Printer },
-      { label: "Perdas", path: "/producao/perdas", icon: AlertTriangle },
+    items: [
+      { title: "Jobs", icon: Hammer, href: "/producao/jobs" },
+      { title: "Impressoras", icon: Printer, href: "/producao/impressoras" },
+      { title: "Perdas / QC", icon: AlertTriangle, href: "/producao/perdas" },
     ],
   },
   {
     label: "Planejamento",
-    icon: CalendarClock,
-    basePath: "/planejamento",
-    children: [
-      { label: "Fila / Gantt", path: "/planejamento/gantt", icon: BarChart3 },
+    items: [
+      { title: "Fila / Gantt", icon: BarChart3, href: "/planejamento/gantt" },
     ],
   },
   {
     label: "Comercial",
-    icon: ShoppingCart,
-    basePath: "/comercial",
-    children: [
-      { label: "Produtos", path: "/comercial/produtos", icon: Box },
-      { label: "Pedidos", path: "/comercial/pedidos", icon: Receipt },
-      { label: "Marketplaces", path: "/comercial/marketplaces", icon: Store },
+    items: [
+      { title: "Produtos", icon: ShoppingCart, href: "/comercial/produtos" },
+      { title: "Pedidos", icon: FileText, href: "/comercial/pedidos" },
+      { title: "Marketplaces", icon: Store, href: "/comercial/marketplaces" },
     ],
   },
   {
     label: "Integrações",
-    icon: Plug,
-    basePath: "/integracoes",
-    children: [
-      { label: "Bambu Lab", path: "/integracoes/bambu", icon: Link2 },
-      { label: "Mercado Livre", path: "/integracoes/ml", icon: Store },
+    items: [
+      { title: "Bambu Lab", icon: Link2, href: "/integracoes/bambu" },
+      { title: "Mercado Livre", icon: Store, href: "/integracoes/ml" },
+    ],
+  },
+  {
+    label: "Configurações",
+    items: [
+      { title: "Empresa", icon: Building, href: "/configuracoes" },
+      { title: "Usuários", icon: UserCog, href: "/configuracoes/usuarios" },
+      { title: "Logs", icon: LogsIcon, href: "/configuracoes/logs" },
     ],
   },
 ];
 
-export function AppSidebar() {
-  const [collapsed, setCollapsed] = useState(false);
-  const [openSections, setOpenSections] = useState<string[]>(["Dashboard"]);
+export function AppSidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: AppSidebarProps) {
   const location = useLocation();
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
 
-  const toggleSection = (label: string) => {
-    setOpenSections((prev) =>
-      prev.includes(label) ? prev.filter((s) => s !== label) : [...prev, label]
-    );
+  useEffect(() => {
+    const newOpenGroups: Record<string, boolean> = {};
+    menuGroups.forEach((group) => {
+      if (group.defaultOpen) {
+        newOpenGroups[group.label] = true;
+      }
+      if (group.items.some(item => location.pathname === item.href)) {
+        newOpenGroups[group.label] = true;
+      }
+    });
+    setOpenGroups(newOpenGroups);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    onMobileClose?.();
+  }, [location.pathname]);
+
+  const toggleGroup = (label: string) => {
+    setOpenGroups(prev => ({ ...prev, [label]: !prev[label] }));
   };
 
-  const isActive = (path: string) => location.pathname === path;
-  const isSectionActive = (section: NavSection) =>
-    section.basePath === "/" 
-      ? location.pathname === "/" 
-      : location.pathname.startsWith(section.basePath);
-
-  return (
-    <motion.aside
-      animate={{ width: collapsed ? 56 : 240 }}
-      transition={{ duration: 0.15, ease: [0.2, 0, 0, 1] }}
-      className="h-screen flex flex-col bg-sidebar border-r border-sidebar-border flex-shrink-0 overflow-hidden"
-    >
+  const sidebarContent = (
+    <div className="flex h-full flex-col">
       {/* Logo */}
-      <div className="h-12 flex items-center px-3 border-b border-sidebar-border gap-2">
-        <div className="w-7 h-7 rounded-md bg-primary flex items-center justify-center flex-shrink-0">
-          <Factory className="w-4 h-4 text-primary-foreground" />
-        </div>
-        {!collapsed && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="flex flex-col min-w-0"
-          >
-            <span className="text-sm font-semibold tracking-tight text-foreground truncate">ForgeOS</span>
-            <span className="text-[10px] text-muted-foreground leading-none">Manufacturing ERP</span>
-          </motion.div>
+      <div className="flex h-14 items-center gap-3 border-b border-sidebar-border px-4">
+        {(!collapsed || mobileOpen) ? (
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center flex-shrink-0">
+              <Factory className="w-4.5 h-4.5 text-white" />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-sm font-bold text-white tracking-tight">ForgeOS</span>
+              <span className="text-[10px] text-sidebar-foreground/50 leading-none">3D Print ERP</span>
+            </div>
+          </div>
+        ) : (
+          <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center mx-auto">
+            <Factory className="w-4 h-4 text-white" />
+          </div>
         )}
       </div>
 
-      {/* Nav */}
-      <nav className="flex-1 overflow-y-auto py-2 px-1.5 space-y-0.5">
-        {navigation.map((section) => {
-          const Icon = section.icon;
-          const active = isSectionActive(section);
-          const isOpen = openSections.includes(section.label);
-          const hasChildren = section.children.length > 0;
+      {/* Navigation */}
+      <ScrollArea className="flex-1 py-3">
+        <nav className="space-y-0.5 px-3">
+          {menuGroups.map((group, groupIndex) => {
+            const isOpen = openGroups[group.label] ?? false;
 
-          return (
-            <div key={section.label}>
-              {hasChildren ? (
-                <button
-                  onClick={() => toggleSection(section.label)}
-                  className={cn(
-                    "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm transition-colors",
-                    active
-                      ? "text-foreground"
-                      : "text-muted-foreground hover:text-foreground hover:bg-sidebar-accent"
-                  )}
-                >
-                  <Icon className="w-4 h-4 flex-shrink-0" />
-                  {!collapsed && (
-                    <>
-                      <span className="flex-1 text-left truncate">{section.label}</span>
-                      <ChevronDown
-                        className={cn(
-                          "w-3 h-3 transition-transform",
-                          isOpen && "rotate-180"
-                        )}
-                      />
-                    </>
-                  )}
-                </button>
-              ) : (
-                <NavLink
-                  to={section.basePath}
-                  className={cn(
-                    "w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-sm transition-colors",
-                    active
-                      ? "bg-sidebar-accent text-foreground font-medium"
-                      : "text-muted-foreground hover:text-foreground hover:bg-sidebar-accent"
-                  )}
-                >
-                  <Icon className="w-4 h-4 flex-shrink-0" />
-                  {!collapsed && <span className="truncate">{section.label}</span>}
-                </NavLink>
-              )}
+            return (
+              <div key={groupIndex} className={cn(group.label && "mt-4")}>
+                {group.label && (!collapsed || mobileOpen) && (
+                  <button
+                    onClick={() => toggleGroup(group.label)}
+                    className="flex w-full items-center justify-between px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/40 hover:text-sidebar-foreground/60 transition-colors"
+                  >
+                    <span>{group.label}</span>
+                    <ChevronDown className={cn("h-3 w-3 transition-transform duration-200", isOpen && "rotate-180")} />
+                  </button>
+                )}
 
-              {/* Children */}
-              {hasChildren && !collapsed && (
-                <AnimatePresence initial={false}>
-                  {isOpen && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: "auto", opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      transition={{ duration: 0.15, ease: [0.2, 0, 0, 1] }}
-                      className="overflow-hidden"
-                    >
-                      <div className="ml-3 pl-3 border-l border-sidebar-border space-y-0.5 py-0.5">
-                        {section.children.map((child) => (
-                          <NavLink
-                            key={child.path}
-                            to={child.path}
-                            className={cn(
-                              "flex items-center gap-2 px-2 py-1 rounded-md text-xs transition-colors",
-                              isActive(child.path)
-                                ? "bg-sidebar-accent text-foreground font-medium"
-                                : "text-muted-foreground hover:text-foreground hover:bg-sidebar-accent"
-                            )}
-                          >
-                            <child.icon className="w-3.5 h-3.5 flex-shrink-0" />
-                            <span className="truncate">{child.label}</span>
-                          </NavLink>
-                        ))}
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              )}
-            </div>
-          );
-        })}
-      </nav>
-
-      {/* Argus CTA */}
-      {!collapsed && (
-        <div className="px-2 pb-2">
-          <button className="w-full flex items-center gap-2 px-3 py-2 rounded-md bg-primary/10 border border-primary/20 text-primary text-xs hover:bg-primary/15 transition-colors">
-            <Sparkles className="w-3.5 h-3.5" />
-            <span className="font-medium">Perguntar ao Argus</span>
-          </button>
-        </div>
-      )}
+                <ul className={cn(
+                  "space-y-0.5 overflow-hidden transition-all duration-200",
+                  group.label && (!collapsed || mobileOpen) && !isOpen && "max-h-0 opacity-0",
+                  group.label && (!collapsed || mobileOpen) && isOpen && "max-h-[500px] opacity-100",
+                  !group.label && "space-y-0.5",
+                )}>
+                  {group.items.map((item) => {
+                    const isActive = location.pathname === item.href;
+                    return (
+                      <li key={item.href}>
+                        <NavLink
+                          to={item.href}
+                          className={cn(
+                            "sidebar-item",
+                            collapsed && !mobileOpen && "justify-center px-2",
+                            isActive && "sidebar-item-active"
+                          )}
+                          title={collapsed && !mobileOpen ? item.title : undefined}
+                        >
+                          <item.icon className="h-4 w-4 flex-shrink-0" />
+                          {(!collapsed || mobileOpen) && (
+                            <>
+                              <span className="flex-1 truncate">{item.title}</span>
+                              {item.badge && item.badge > 0 && (
+                                <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-primary text-[10px] font-semibold text-white">
+                                  {item.badge}
+                                </span>
+                              )}
+                            </>
+                          )}
+                        </NavLink>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            );
+          })}
+        </nav>
+      </ScrollArea>
 
       {/* Footer */}
-      <div className="border-t border-sidebar-border px-1.5 py-1.5 flex items-center gap-1">
-        {!collapsed && (
-          <NavLink
-            to="/configuracoes"
-            className="flex items-center gap-2 px-2 py-1.5 rounded-md text-xs text-muted-foreground hover:text-foreground hover:bg-sidebar-accent flex-1 transition-colors"
-          >
-            <Settings className="w-3.5 h-3.5" />
-            <span>Configurações</span>
-          </NavLink>
-        )}
-        <button
-          onClick={() => setCollapsed(!collapsed)}
-          className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-sidebar-accent transition-colors flex-shrink-0"
-        >
-          {collapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
-        </button>
+      <div className="border-t border-sidebar-border p-3">
+        <div className={cn("flex items-center gap-3", collapsed && !mobileOpen && "justify-center")}>
+          <div className="h-9 w-9 rounded-full bg-sidebar-accent flex items-center justify-center text-sm font-medium text-sidebar-foreground flex-shrink-0">
+            AD
+          </div>
+          {(!collapsed || mobileOpen) && (
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-sidebar-foreground truncate">Admin</p>
+              <p className="text-[11px] text-sidebar-foreground/50 truncate">admin@forge.app</p>
+            </div>
+          )}
+          {(!collapsed || mobileOpen) && (
+            <Button variant="ghost" size="icon" className="h-8 w-8 text-sidebar-foreground/50 hover:text-sidebar-foreground hover:bg-sidebar-accent flex-shrink-0">
+              <LogOut className="h-4 w-4" />
+            </Button>
+          )}
+        </div>
       </div>
-    </motion.aside>
+
+      {/* Collapse toggle */}
+      <div className="border-t border-sidebar-border p-2">
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={mobileOpen ? onMobileClose : onToggle}
+          className={cn(
+            "w-full text-sidebar-foreground/50 hover:text-sidebar-foreground hover:bg-sidebar-accent",
+            collapsed && !mobileOpen && "px-2"
+          )}
+        >
+          {mobileOpen ? (
+            <><X className="h-4 w-4 mr-2" /><span>Fechar</span></>
+          ) : collapsed ? (
+            <ChevronRight className="h-4 w-4" />
+          ) : (
+            <><ChevronLeft className="h-4 w-4 mr-2" /><span className="text-xs">Recolher menu</span></>
+          )}
+        </Button>
+      </div>
+    </div>
+  );
+
+  return (
+    <>
+      {/* Desktop sidebar */}
+      <aside className={cn(
+        "fixed left-0 top-0 z-40 hidden md:flex h-screen flex-col bg-sidebar transition-all duration-200",
+        collapsed ? "w-16" : "w-60"
+      )}>
+        {sidebarContent}
+      </aside>
+
+      {/* Mobile sidebar */}
+      <aside className={cn(
+        "fixed left-0 top-0 z-50 flex md:hidden h-screen w-72 flex-col bg-sidebar transition-transform duration-300 shadow-2xl",
+        mobileOpen ? "translate-x-0" : "-translate-x-full"
+      )}>
+        {sidebarContent}
+      </aside>
+    </>
   );
 }
