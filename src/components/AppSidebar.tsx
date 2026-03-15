@@ -4,7 +4,7 @@ import {
   BookOpen, Package, ArrowRightLeft, AlertTriangle, Printer, Hammer,
   BarChart3, ShoppingCart, FileText, Store, Link2, Building, UserCog,
   FileText as LogsIcon, ChevronLeft, ChevronRight, ChevronDown,
-  LogOut, Factory, X,
+  LogOut, Factory, X, Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -72,6 +72,7 @@ const menuGroups: MenuGroup[] = [
   {
     label: "Comercial",
     items: [
+      { title: "Clientes", icon: Users, href: "/comercial/clientes" },
       { title: "Produtos", icon: ShoppingCart, href: "/comercial/produtos" },
       { title: "Pedidos", icon: FileText, href: "/comercial/pedidos" },
       { title: "Marketplaces", icon: Store, href: "/comercial/marketplaces" },

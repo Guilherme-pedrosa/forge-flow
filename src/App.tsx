@@ -8,11 +8,21 @@ import { AppLayout } from "@/components/AppLayout";
 import Dashboard from "./pages/Dashboard";
 import ModulePlaceholder from "./pages/ModulePlaceholder";
 import ContasPagar from "./pages/financeiro/ContasPagar";
-import Impressoras from "./pages/producao/Impressoras";
-import Jobs from "./pages/producao/Jobs";
+import ContasReceber from "./pages/financeiro/ContasReceber";
+import CaixaBancos from "./pages/financeiro/CaixaBancos";
+import Conciliacao from "./pages/financeiro/Conciliacao";
+import DRE from "./pages/financeiro/DRE";
 import Itens from "./pages/estoque/Itens";
 import Movimentacoes from "./pages/estoque/Movimentacoes";
 import Alertas from "./pages/estoque/Alertas";
+import Jobs from "./pages/producao/Jobs";
+import Impressoras from "./pages/producao/Impressoras";
+import Produtos from "./pages/comercial/Produtos";
+import Pedidos from "./pages/comercial/Pedidos";
+import Clientes from "./pages/comercial/Clientes";
+import Empresa from "./pages/configuracoes/Empresa";
+import Usuarios from "./pages/configuracoes/Usuarios";
+import Logs from "./pages/configuracoes/Logs";
 import Login from "./pages/auth/Login";
 import Signup from "./pages/auth/Signup";
 import SetupTenant from "./pages/onboarding/SetupTenant";
@@ -27,10 +37,10 @@ function AuthenticatedRoutes() {
         <Route path="/" element={<Dashboard />} />
         {/* Financeiro */}
         <Route path="/financeiro/pagar" element={<ContasPagar />} />
-        <Route path="/financeiro/receber" element={<ModulePlaceholder />} />
-        <Route path="/financeiro/caixa" element={<ModulePlaceholder />} />
-        <Route path="/financeiro/conciliacao" element={<ModulePlaceholder />} />
-        <Route path="/financeiro/dre" element={<ModulePlaceholder />} />
+        <Route path="/financeiro/receber" element={<ContasReceber />} />
+        <Route path="/financeiro/caixa" element={<CaixaBancos />} />
+        <Route path="/financeiro/conciliacao" element={<Conciliacao />} />
+        <Route path="/financeiro/dre" element={<DRE />} />
         {/* Estoque */}
         <Route path="/estoque/itens" element={<Itens />} />
         <Route path="/estoque/movimentacoes" element={<Movimentacoes />} />
@@ -42,14 +52,17 @@ function AuthenticatedRoutes() {
         {/* Planejamento */}
         <Route path="/planejamento/gantt" element={<ModulePlaceholder />} />
         {/* Comercial */}
-        <Route path="/comercial/produtos" element={<ModulePlaceholder />} />
-        <Route path="/comercial/pedidos" element={<ModulePlaceholder />} />
+        <Route path="/comercial/produtos" element={<Produtos />} />
+        <Route path="/comercial/pedidos" element={<Pedidos />} />
+        <Route path="/comercial/clientes" element={<Clientes />} />
         <Route path="/comercial/marketplaces" element={<ModulePlaceholder />} />
         {/* Integrações */}
         <Route path="/integracoes/bambu" element={<ModulePlaceholder />} />
         <Route path="/integracoes/ml" element={<ModulePlaceholder />} />
         {/* Config */}
-        <Route path="/configuracoes" element={<ModulePlaceholder />} />
+        <Route path="/configuracoes" element={<Empresa />} />
+        <Route path="/configuracoes/usuarios" element={<Usuarios />} />
+        <Route path="/configuracoes/logs" element={<Logs />} />
         {/* Catch-all */}
         <Route path="*" element={<NotFound />} />
       </Routes>

@@ -1180,6 +1180,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "jobs_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "jobs_printer_id_fkey"
             columns: ["printer_id"]
             isOneToOne: false
@@ -1195,6 +1202,130 @@ export type Database = {
           },
           {
             foreignKeyName: "jobs_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      order_items: {
+        Row: {
+          created_at: string
+          description: string
+          id: string
+          notes: string | null
+          order_id: string
+          product_id: string | null
+          quantity: number
+          tenant_id: string
+          total: number
+          unit_price: number
+        }
+        Insert: {
+          created_at?: string
+          description: string
+          id?: string
+          notes?: string | null
+          order_id: string
+          product_id?: string | null
+          quantity?: number
+          tenant_id: string
+          total?: number
+          unit_price?: number
+        }
+        Update: {
+          created_at?: string
+          description?: string
+          id?: string
+          notes?: string | null
+          order_id?: string
+          product_id?: string | null
+          quantity?: number
+          tenant_id?: string
+          total?: number
+          unit_price?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "order_items_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: false
+            referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "order_items_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "order_items_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      orders: {
+        Row: {
+          approved_at: string | null
+          code: string
+          created_at: string
+          created_by: string | null
+          customer_id: string | null
+          discount: number | null
+          due_date: string | null
+          id: string
+          notes: string | null
+          status: string
+          tenant_id: string
+          total: number
+          updated_at: string
+        }
+        Insert: {
+          approved_at?: string | null
+          code: string
+          created_at?: string
+          created_by?: string | null
+          customer_id?: string | null
+          discount?: number | null
+          due_date?: string | null
+          id?: string
+          notes?: string | null
+          status?: string
+          tenant_id: string
+          total?: number
+          updated_at?: string
+        }
+        Update: {
+          approved_at?: string | null
+          code?: string
+          created_at?: string
+          created_by?: string | null
+          customer_id?: string | null
+          discount?: number | null
+          due_date?: string | null
+          id?: string
+          notes?: string | null
+          status?: string
+          tenant_id?: string
+          total?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "orders_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "orders_tenant_id_fkey"
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "tenants"
@@ -1316,6 +1447,84 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "printers_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      products: {
+        Row: {
+          category: string
+          cost_estimate: number | null
+          created_at: string
+          description: string | null
+          est_grams: number | null
+          est_time_minutes: number | null
+          id: string
+          is_active: boolean
+          margin_percent: number | null
+          material_id: string | null
+          name: string
+          notes: string | null
+          photo_url: string | null
+          post_process_minutes: number | null
+          sale_price: number | null
+          sku: string | null
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          category?: string
+          cost_estimate?: number | null
+          created_at?: string
+          description?: string | null
+          est_grams?: number | null
+          est_time_minutes?: number | null
+          id?: string
+          is_active?: boolean
+          margin_percent?: number | null
+          material_id?: string | null
+          name: string
+          notes?: string | null
+          photo_url?: string | null
+          post_process_minutes?: number | null
+          sale_price?: number | null
+          sku?: string | null
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          category?: string
+          cost_estimate?: number | null
+          created_at?: string
+          description?: string | null
+          est_grams?: number | null
+          est_time_minutes?: number | null
+          id?: string
+          is_active?: boolean
+          margin_percent?: number | null
+          material_id?: string | null
+          name?: string
+          notes?: string | null
+          photo_url?: string | null
+          post_process_minutes?: number | null
+          sale_price?: number | null
+          sku?: string | null
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "products_material_id_fkey"
+            columns: ["material_id"]
+            isOneToOne: false
+            referencedRelation: "inventory_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "products_tenant_id_fkey"
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "tenants"
