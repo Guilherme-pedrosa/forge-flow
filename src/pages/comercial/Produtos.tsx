@@ -702,7 +702,7 @@ export default function Produtos() {
                 const totalDeduction = baseFeeAmount + shippingAmount;
                 const net = price - totalDeduction;
                 const profit = net - cost;
-                const profitPct = cost > 0 ? ((profit / cost) * 100) : 0;
+                const profitPct = net > 0 ? ((1 - cost / net) * 100) : 0;
                 const totalPct = ch.fee + (ch.freeShipping && ch.freeShippingType === "percent" ? ch.freeShippingExtra : 0);
                 return (
                   <div key={ch.key} className="contents">
