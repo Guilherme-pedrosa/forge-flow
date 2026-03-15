@@ -171,7 +171,8 @@ export default function Itens() {
         current_stock: newStock,
         loss_coefficient: parseFloat(lossCoefficient) || 0.05,
         notes: notes || null,
-      }).eq("id", editItem.id);
+        freight_cost: freightCost ? parseFloat(freightCost) : 0,
+      } as any).eq("id", editItem.id);
       if (error) throw error;
       // If stock changed, create an adjustment movement for audit trail
       if (newStock !== editItem.current_stock) {
