@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageHeader } from "@/components/shared/PageHeader";
 import {
-  Plus, Search, MoreHorizontal, Package, Edit, Trash2, Loader2, Image, CloudDownload, FolderOpen, History,
+  Plus, Search, MoreHorizontal, Package, Edit, Trash2, Loader2, Image, CloudDownload, FolderOpen, History, Globe, Link,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -48,7 +48,10 @@ export default function Produtos() {
   const [createOpen, setCreateOpen] = useState(false);
   const [editItem, setEditItem] = useState<any>(null);
   const [bambuImportOpen, setBambuImportOpen] = useState(false);
-  const [bambuTab, setBambuTab] = useState<"projects" | "tasks">("projects");
+  const [bambuTab, setBambuTab] = useState<"projects" | "tasks" | "makerworld">("projects");
+  const [makerWorldUrl, setMakerWorldUrl] = useState(""); 
+  const [makerWorldLoading, setMakerWorldLoading] = useState(false);
+  const [makerWorldModels, setMakerWorldModels] = useState<any[]>([]);
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -159,6 +162,48 @@ export default function Produtos() {
     setBambuImportOpen(false);
     setCreateOpen(true);
     toast({ title: "Dados importados", description: "Preencha custo e preço para finalizar o cadastro." });
+  };
+
+  const importFromMakerWorld = (model: any) => {
+    resetForm();
+    setName(model.title || "Produto MakerWorld");
+    setPhotoUrl(model.thumbnail || "");
+    setCategory("printed_part");
+    // Use first profile data if available
+    if (model.profiles?.length > 0) {
+      const p = model.profiles[0];
+      if (p.weight_grams) setEstGrams(p.weight_grams.toString());
+      if (p.time_seconds) setEstTime(Math.round(p.time_seconds / 60).toString());
+      const filInfo = p.filaments?.map((f: any) => `${f.type} ${f.grams}g`).join(", ") || "";
+      setNotes(`Importado do MakerWorld — ID: ${model.id}${filInfo ? `\nFilamentos: ${filInfo}` : ""}`);
+    } else {
+      setNotes(`Importado do MakerWorld — ID: ${model.id}`);
+    }
+    setDescription(model.description || "");
+    setBambuImportOpen(false);
+    setCreateOpen(true);
+    toast({ title: "Dados importados do MakerWorld" });
+  };
+
+  const fetchMakerWorld = async () => {
+    if (!makerWorldUrl.trim()) return;
+    setMakerWorldLoading(true);
+    setMakerWorldModels([]);
+    try {
+      const { data, error } = await supabase.functions.invoke("bambu-cloud-sync", {
+        body: { action: "makerworld", url: makerWorldUrl.trim() },
+      });
+      if (error) throw error;
+      if (data.error) throw new Error(data.error);
+      setMakerWorldModels(data.models || []);
+      if ((data.models || []).length === 0) {
+        toast({ title: "Nenhum modelo encontrado", description: "Verifique a URL e tente novamente.", variant: "destructive" });
+      }
+    } catch (e: any) {
+      toast({ title: "Erro ao buscar", description: e.message, variant: "destructive" });
+    } finally {
+      setMakerWorldLoading(false);
+    }
   };
 
   const createMut = useMutation({
@@ -379,7 +424,16 @@ export default function Produtos() {
                 bambuTab === "tasks" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
               )}
             >
-              <History className="h-4 w-4" /> Impressões Concluídas
+              <History className="h-4 w-4" /> Impressões
+            </button>
+            <button
+              onClick={() => setBambuTab("makerworld")}
+              className={cn(
+                "flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-md text-sm font-medium transition-colors",
+                bambuTab === "makerworld" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <Globe className="h-4 w-4" /> MakerWorld
             </button>
           </div>
 
@@ -396,25 +450,13 @@ export default function Produtos() {
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {bambuProjects.map((p: any) => (
-                    <button
-                      key={p.project_id}
-                      onClick={() => importFromBambuProject(p)}
-                      className="flex items-start gap-3 p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors text-left"
-                    >
-                      {p.thumbnail ? (
-                        <img src={p.thumbnail} alt="" className="w-14 h-14 rounded object-cover flex-shrink-0" />
-                      ) : (
-                        <div className="w-14 h-14 rounded bg-muted flex items-center justify-center flex-shrink-0">
-                          <Image className="h-5 w-5 text-muted-foreground" />
-                        </div>
-                      )}
+                    <button key={p.project_id} onClick={() => importFromBambuProject(p)}
+                      className="flex items-start gap-3 p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors text-left">
+                      {p.thumbnail ? <img src={p.thumbnail} alt="" className="w-14 h-14 rounded object-cover flex-shrink-0" /> :
+                        <div className="w-14 h-14 rounded bg-muted flex items-center justify-center flex-shrink-0"><Image className="h-5 w-5 text-muted-foreground" /></div>}
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium text-foreground truncate">{p.name || "Sem nome"}</p>
-                        {p.filaments?.length > 0 && (
-                          <p className="text-xs text-muted-foreground truncate">
-                            {p.filaments.map((f: any) => f.type).filter((v: string, i: number, a: string[]) => a.indexOf(v) === i).join(", ")}
-                          </p>
-                        )}
+                        {p.filaments?.length > 0 && <p className="text-xs text-muted-foreground truncate">{p.filaments.map((f: any) => f.type).filter((v: string, i: number, a: string[]) => a.indexOf(v) === i).join(", ")}</p>}
                         <div className="flex items-center gap-3 mt-1 text-[11px] text-muted-foreground">
                           {p.total_weight_grams > 0 && <span>{p.total_weight_grams.toFixed(1)}g</span>}
                           {p.total_time_seconds > 0 && <span>{fmtDuration(p.total_time_seconds)}</span>}
@@ -424,7 +466,7 @@ export default function Produtos() {
                   ))}
                 </div>
               )
-            ) : (
+            ) : bambuTab === "tasks" ? (
               bambuTasksLoading ? (
                 <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
               ) : bambuTasks.length === 0 ? (
@@ -436,18 +478,10 @@ export default function Produtos() {
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {bambuTasks.map((t: any) => (
-                    <button
-                      key={t.id}
-                      onClick={() => importFromBambuTask(t)}
-                      className="flex items-start gap-3 p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors text-left"
-                    >
-                      {t.cover_url ? (
-                        <img src={t.cover_url} alt="" className="w-14 h-14 rounded object-cover flex-shrink-0" />
-                      ) : (
-                        <div className="w-14 h-14 rounded bg-muted flex items-center justify-center flex-shrink-0">
-                          <Image className="h-5 w-5 text-muted-foreground" />
-                        </div>
-                      )}
+                    <button key={t.id} onClick={() => importFromBambuTask(t)}
+                      className="flex items-start gap-3 p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors text-left">
+                      {t.cover_url ? <img src={t.cover_url} alt="" className="w-14 h-14 rounded object-cover flex-shrink-0" /> :
+                        <div className="w-14 h-14 rounded bg-muted flex items-center justify-center flex-shrink-0"><Image className="h-5 w-5 text-muted-foreground" /></div>}
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium text-foreground truncate">{t.design_title || "Sem título"}</p>
                         <p className="text-xs text-muted-foreground">{t.bambu_devices?.name || "—"}</p>
@@ -460,6 +494,54 @@ export default function Produtos() {
                   ))}
                 </div>
               )
+            ) : (
+              /* MakerWorld tab */
+              <div className="space-y-4">
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Link className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      className="pl-9"
+                      placeholder="https://makerworld.com/pt/@user/collections/models ou URL de modelo"
+                      value={makerWorldUrl}
+                      onChange={(e) => setMakerWorldUrl(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && fetchMakerWorld()}
+                    />
+                  </div>
+                  <Button onClick={fetchMakerWorld} disabled={makerWorldLoading || !makerWorldUrl.trim()}>
+                    {makerWorldLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                  </Button>
+                </div>
+
+                {makerWorldLoading ? (
+                  <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+                ) : makerWorldModels.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                    <Globe className="h-8 w-8 mb-2 opacity-40" />
+                    <p className="text-sm">Cole a URL de uma coleção ou modelo do MakerWorld</p>
+                    <p className="text-xs mt-1 text-center max-w-sm">Ex: https://makerworld.com/pt/@usuario/collections/models</p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {makerWorldModels.map((m: any) => (
+                      <button key={m.id} onClick={() => importFromMakerWorld(m)}
+                        className="flex items-start gap-3 p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors text-left">
+                        {m.thumbnail ? <img src={m.thumbnail} alt="" className="w-14 h-14 rounded object-cover flex-shrink-0" /> :
+                          <div className="w-14 h-14 rounded bg-muted flex items-center justify-center flex-shrink-0"><Image className="h-5 w-5 text-muted-foreground" /></div>}
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-foreground truncate">{m.title}</p>
+                          {m.description && <p className="text-xs text-muted-foreground truncate">{m.description}</p>}
+                          <div className="flex items-center gap-3 mt-1 text-[11px] text-muted-foreground">
+                            {m.profiles?.[0]?.weight_grams > 0 && <span>{m.profiles[0].weight_grams}g</span>}
+                            {m.profiles?.[0]?.time_seconds > 0 && <span>{fmtDuration(m.profiles[0].time_seconds)}</span>}
+                            {m.print_count && <span>🖨 {m.print_count}</span>}
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </DialogContent>

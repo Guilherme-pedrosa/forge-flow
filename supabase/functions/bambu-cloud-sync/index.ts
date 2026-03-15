@@ -311,12 +311,23 @@ Deno.serve(async (req) => {
       const projectsRes = await fetch(`${BAMBU_API}/v1/iot-service/api/user/project`, {
         headers: { Authorization: `Bearer ${conn.access_token_encrypted}` },
       });
-      const projectsData = await projectsRes.json();
+
+      const rawText = await projectsRes.text();
+      let projectsData: any;
+      try {
+        projectsData = JSON.parse(rawText);
+      } catch {
+        console.error("Bambu projects API returned non-JSON:", rawText.slice(0, 500));
+        return new Response(
+          JSON.stringify({ error: "API Bambu retornou resposta inválida. Tente reconectar.", projects: [] }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
 
       if (!projectsRes.ok || projectsData.message !== "success") {
         return new Response(
-          JSON.stringify({ error: projectsData.message || "Falha ao buscar projetos" }),
-          { status: projectsRes.status, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          JSON.stringify({ error: projectsData.message || "Falha ao buscar projetos", projects: [] }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
@@ -330,10 +341,16 @@ Deno.serve(async (req) => {
             `${BAMBU_API}/v1/iot-service/api/user/project/${proj.project_id}`,
             { headers: { Authorization: `Bearer ${conn.access_token_encrypted}` } }
           );
-          const detailData = await detailRes.json();
+          const detailText = await detailRes.text();
+          let detailData: any;
+          try {
+            detailData = JSON.parse(detailText);
+          } catch {
+            console.warn(`Non-JSON response for project ${proj.project_id}`);
+            continue;
+          }
 
           if (detailRes.ok && detailData.message === "success") {
-            // Extract plate info (thumbnails, weight, time, filaments)
             const profiles = detailData.profiles || [];
             let thumbnail = null;
             let totalWeight = 0;
@@ -345,53 +362,166 @@ Deno.serve(async (req) => {
               if (!ctx) continue;
               const plates = ctx.plates || [];
               for (const plate of plates) {
-                if (!thumbnail && plate.thumbnail?.url) {
-                  thumbnail = plate.thumbnail.url;
-                }
+                if (!thumbnail && plate.thumbnail?.url) thumbnail = plate.thumbnail.url;
                 if (plate.weight) totalWeight += Number(plate.weight);
                 if (plate.prediction) totalTime += Number(plate.prediction);
                 for (const fil of (plate.filaments || [])) {
-                  filaments.push({
-                    type: fil.type || "Unknown",
-                    color: fil.color || "",
-                    grams: Number(fil.used_g) || 0,
-                  });
+                  filaments.push({ type: fil.type || "Unknown", color: fil.color || "", grams: Number(fil.used_g) || 0 });
                 }
               }
             }
 
             detailedProjects.push({
-              project_id: proj.project_id,
-              model_id: proj.model_id,
+              project_id: proj.project_id, model_id: proj.model_id,
               name: proj.name || detailData.name || "Sem nome",
-              status: proj.status,
-              created_at: proj.create_time,
-              updated_at: proj.update_time,
-              thumbnail,
-              total_weight_grams: totalWeight,
-              total_time_seconds: totalTime,
-              filaments,
+              status: proj.status, created_at: proj.create_time, updated_at: proj.update_time,
+              thumbnail, total_weight_grams: totalWeight, total_time_seconds: totalTime, filaments,
             });
           }
         } catch (e) {
           console.warn(`Failed to get project detail for ${proj.project_id}:`, e);
           detailedProjects.push({
-            project_id: proj.project_id,
-            model_id: proj.model_id,
-            name: proj.name || "Sem nome",
-            status: proj.status,
-            created_at: proj.create_time,
-            updated_at: proj.update_time,
-            thumbnail: null,
-            total_weight_grams: 0,
-            total_time_seconds: 0,
-            filaments: [],
+            project_id: proj.project_id, model_id: proj.model_id,
+            name: proj.name || "Sem nome", status: proj.status,
+            created_at: proj.create_time, updated_at: proj.update_time,
+            thumbnail: null, total_weight_grams: 0, total_time_seconds: 0, filaments: [],
           });
         }
       }
 
       return new Response(
         JSON.stringify({ projects: detailedProjects }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // ── Fetch MakerWorld collection models ──
+    if (action === "makerworld") {
+      const { url } = body;
+      if (!url) {
+        return new Response(
+          JSON.stringify({ error: "URL da coleção é obrigatória" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // Extract user ID from URL like https://makerworld.com/pt/@user_xxx/collections/models
+      // or a model URL like https://makerworld.com/en/models/12345-name
+      const models: any[] = [];
+
+      // Try to determine if it's a collection page or model page
+      const modelMatch = url.match(/\/models\/(\d+)/);
+      const userMatch = url.match(/@([^/]+)/);
+
+      if (modelMatch) {
+        // Single model - fetch the page and extract __NEXT_DATA__
+        const modelId = modelMatch[1];
+        try {
+          const pageRes = await fetch(`https://makerworld.com/en/models/${modelId}`, {
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+              "Accept": "text/html,application/xhtml+xml",
+              "Accept-Language": "en-US,en;q=0.9",
+            },
+          });
+          const html = await pageRes.text();
+          const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+          if (nextDataMatch) {
+            const nextData = JSON.parse(nextDataMatch[1]);
+            const design = nextData?.props?.pageProps?.design;
+            if (design) {
+              models.push({
+                id: design.id,
+                title: design.title || "Sem nome",
+                thumbnail: design.cover || design.images?.[0]?.url || null,
+                description: design.summary || "",
+                print_count: design.printCountStr || "0",
+                download_count: design.downloadCountStr || "0",
+                like_count: design.likeCount || 0,
+                profiles: (design.profileList || []).map((p: any) => ({
+                  name: p.name || "Default",
+                  weight_grams: p.weight || 0,
+                  time_seconds: p.estimatedTime || 0,
+                  filaments: (p.materialList || []).map((m: any) => ({
+                    type: m.type || "PLA",
+                    color: m.color || "",
+                    grams: m.weight || 0,
+                  })),
+                })),
+              });
+            }
+          }
+        } catch (e) {
+          console.error("MakerWorld model fetch error:", e);
+        }
+      } else if (userMatch) {
+        // Collection page - try API endpoint
+        const userId = userMatch[1];
+        try {
+          // MakerWorld internal API for user's published models
+          const apiRes = await fetch(
+            `https://makerworld.com/api/v1/design/collection?uid=${userId}&offset=0&limit=100&orderBy=updated`,
+            {
+              headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "application/json",
+                "Referer": "https://makerworld.com/",
+              },
+            }
+          );
+          const apiText = await apiRes.text();
+          let apiData: any;
+          try {
+            apiData = JSON.parse(apiText);
+          } catch {
+            // If API fails, try scraping the page
+            const pageRes = await fetch(url.replace("/pt/", "/en/"), {
+              headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html",
+              },
+            });
+            const html = await pageRes.text();
+            const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+            if (nextDataMatch) {
+              const nextData = JSON.parse(nextDataMatch[1]);
+              const designs = nextData?.props?.pageProps?.designs || nextData?.props?.pageProps?.collectionDesigns || [];
+              for (const d of designs) {
+                models.push({
+                  id: d.id,
+                  title: d.title || "Sem nome",
+                  thumbnail: d.cover || d.images?.[0]?.url || null,
+                  description: d.summary || "",
+                  print_count: d.printCountStr || "0",
+                  profiles: [],
+                });
+              }
+            }
+            return new Response(
+              JSON.stringify({ models }),
+              { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
+
+          if (apiData?.hits) {
+            for (const d of apiData.hits) {
+              models.push({
+                id: d.id,
+                title: d.title || "Sem nome",
+                thumbnail: d.cover || null,
+                description: d.summary || "",
+                print_count: d.printCountStr || "0",
+                profiles: [],
+              });
+            }
+          }
+        } catch (e) {
+          console.error("MakerWorld collection fetch error:", e);
+        }
+      }
+
+      return new Response(
+        JSON.stringify({ models }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
