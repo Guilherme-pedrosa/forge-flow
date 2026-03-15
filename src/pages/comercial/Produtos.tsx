@@ -453,7 +453,6 @@ export default function Produtos() {
       : Math.round(toNumber(model?.plates ?? model?.plate_count ?? model?.plateCount));
 
     const plates = Math.max(profilePlates, modelPlates, 0);
-    const platesMultiplier = plates > 1 ? plates : 1;
 
     const noteParts: string[] = [
       `Importado do MakerWorld — ID: ${model.id}`,
@@ -461,15 +460,14 @@ export default function Produtos() {
     ].filter(Boolean);
 
     if (resolvedWeight > 0) {
-      // Weight from profile is per-plate; multiply by plates to get total per piece
-      const totalWeight = resolvedWeight * platesMultiplier;
-      setEstGrams(totalWeight.toFixed(1).replace(/\.0$/, ""));
+      // Backend já retorna o total do profile (somado das plates)
+      setEstGrams(resolvedWeight.toFixed(1).replace(/\.0$/, ""));
     }
 
     if (resolvedTimeSeconds > 0) {
-      // Time from profile is per-plate; multiply by plates to get total per piece
-      const totalTimeMinutes = Math.round((resolvedTimeSeconds * platesMultiplier) / 60);
-      setEstTime(totalTimeMinutes.toString());
+      // Backend já retorna o total do profile (somado das plates)
+      const minutes = Math.round(resolvedTimeSeconds / 60);
+      setEstTime(minutes.toString());
     }
 
     if (selectedProfile?.filaments?.length > 0) {
@@ -481,8 +479,7 @@ export default function Produtos() {
     }
 
     if (plates > 1) {
-      // Plates per piece — weight/time already multiplied above
-      noteParts.push(`${plates} pratos por peça (gramatura e tempo já multiplicados)`);
+      noteParts.push(`${plates} pratos no profile (gramatura/tempo considerados no total do profile)`);
     }
 
     if (resolvedWeight === 0) {
