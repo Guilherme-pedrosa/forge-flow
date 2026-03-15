@@ -557,18 +557,21 @@ export default function Produtos() {
               Aplicar Custo Calculado
             </Button>
           </div>
+          {costBreakdown.printsPerPlate > 1 && (
+            <p className="text-[11px] text-primary font-medium">📐 Custo por peça (÷ {costBreakdown.printsPerPlate} peças/prato) — Prato total: {fmtCurrency(costBreakdown.totalPlate)}</p>
+          )}
           <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-            <span className="text-muted-foreground">Material</span>
+            <span className="text-muted-foreground">Material{costBreakdown.printsPerPlate > 1 ? " /peça" : ""}</span>
             <span className="text-right font-mono">{fmtCurrency(costBreakdown.materialCost)}</span>
-            <span className="text-muted-foreground">Energia</span>
+            <span className="text-muted-foreground">Energia{costBreakdown.printsPerPlate > 1 ? " /peça" : ""}</span>
             <span className="text-right font-mono">{fmtCurrency(costBreakdown.energyCost)}</span>
-            <span className="text-muted-foreground">Máquina (depr. + manutenção)</span>
+            <span className="text-muted-foreground">Máquina{costBreakdown.printsPerPlate > 1 ? " /peça" : ""}</span>
             <span className="text-right font-mono">{fmtCurrency(costBreakdown.machineCost)}</span>
-            <span className="text-muted-foreground">Mão de Obra</span>
+            <span className="text-muted-foreground">Mão de Obra{costBreakdown.printsPerPlate > 1 ? " /peça" : ""}</span>
             <span className="text-right font-mono">{fmtCurrency(costBreakdown.laborCost)}</span>
             <span className="text-muted-foreground">Overhead ({tenantSettings.overhead_percent}%)</span>
             <span className="text-right font-mono">{fmtCurrency(costBreakdown.overhead)}</span>
-            <span className="font-semibold text-foreground border-t pt-1 mt-1">Custo Total</span>
+            <span className="font-semibold text-foreground border-t pt-1 mt-1">Custo por Peça</span>
             <span className="text-right font-mono font-semibold text-foreground border-t pt-1 mt-1">{fmtCurrency(costBreakdown.total)}</span>
             <span className="text-muted-foreground">Preço Sugerido ({tenantSettings.target_margin}% margem)</span>
             <span className="text-right font-mono text-primary">{fmtCurrency(costBreakdown.suggestedPrice)}</span>
