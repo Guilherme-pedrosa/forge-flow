@@ -7,6 +7,7 @@ import { AppLayout } from "@/components/AppLayout";
 import Dashboard from "./pages/Dashboard";
 import ModulePlaceholder from "./pages/ModulePlaceholder";
 import ContasPagar from "./pages/financeiro/ContasPagar";
+import Impressoras from "./pages/producao/Impressoras";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -32,7 +33,7 @@ const App = () => (
             <Route path="/estoque/alertas" element={<ModulePlaceholder />} />
             {/* Produção */}
             <Route path="/producao/jobs" element={<ModulePlaceholder />} />
-            <Route path="/producao/impressoras" element={<ModulePlaceholder />} />
+            <Route path="/producao/impressoras" element={<Impressoras />} />
             <Route path="/producao/perdas" element={<ModulePlaceholder />} />
             {/* Planejamento */}
             <Route path="/planejamento/gantt" element={<ModulePlaceholder />} />
