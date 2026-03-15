@@ -517,6 +517,18 @@ export default function Produtos() {
         </div>
         <div><Label>Tempo Impressão (min)</Label><Input type="number" value={estTime} onChange={(e) => setEstTime(e.target.value)} placeholder="120" /></div>
         <div><Label>Pós-Processo (min)</Label><Input type="number" value={postMinutes} onChange={(e) => setPostMinutes(e.target.value)} placeholder="15" /></div>
+        <div>
+          <Label>Nº de Cores</Label>
+          <Select value={numColors} onValueChange={setNumColors}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="1">1 cor</SelectItem>
+              <SelectItem value="2">2 cores</SelectItem>
+              <SelectItem value="3">3 cores</SelectItem>
+              <SelectItem value="4">4 cores (AMS)</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       {/* Cost breakdown */}
