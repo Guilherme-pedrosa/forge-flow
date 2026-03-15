@@ -248,7 +248,7 @@ export default function Produtos() {
     setCategory(p.category); setMaterialId(p.material_id || ""); setEstGrams(p.est_grams?.toString() || "");
     setEstTime(p.est_time_minutes?.toString() || ""); setPostMinutes(p.post_process_minutes?.toString() || "");
     setCostEstimate(p.cost_estimate?.toString() || ""); setSalePrice(p.sale_price?.toString() || "");
-    setPhotoUrl(p.photo_url || ""); setNotes(p.notes || ""); setPrinterId("");
+    setPhotoUrl(p.photo_url || ""); setNotes(p.notes || ""); setPrinterId(""); setNumColors(String((p as any).num_colors || 1));
     // Load extra photos
     if (p.id) {
       supabase.from("product_photos").select("url").eq("product_id", p.id).order("sort_order").then(({ data }) => {
