@@ -252,12 +252,28 @@ export default function Compras() {
         const { error: ie } = await supabase.from("purchase_order_items").insert(rows);
         if (ie) throw ie;
       }
+
+      // Create accounts_payable
+      if (subtotal > 0) {
+        await supabase.from("accounts_payable").insert({
+          tenant_id: profile.tenant_id,
+          description: `Compra ${nextCode}${vendorId ? "" : ""}`,
+          amount: subtotal,
+          due_date: expectedDate || orderDate,
+          vendor_id: vendorId || null,
+          payment_method_id: paymentMethodId || null,
+          status: "open",
+          notes: `Ref. pedido de compra ${nextCode}`,
+          created_by: profile.user_id,
+        });
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
+      qc.invalidateQueries({ queryKey: ["accounts_payable"] });
       setCreateOpen(false);
       resetForm();
-      toast({ title: "Pedido de compra criado" });
+      toast({ title: "Pedido de compra criado e conta a pagar gerada" });
     },
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
