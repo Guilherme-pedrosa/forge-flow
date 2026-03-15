@@ -358,43 +358,108 @@ export default function Produtos() {
         <DialogContent className="max-w-2xl max-h-[80vh]">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2"><CloudDownload className="h-5 w-5 text-primary" /> Importar da Bambu Lab</DialogTitle>
-            <DialogDescription>Selecione uma impressão concluída para importar foto, gramagem e tempo</DialogDescription>
+            <DialogDescription>Selecione um modelo salvo ou impressão concluída para importar</DialogDescription>
           </DialogHeader>
-          <div className="overflow-y-auto max-h-[55vh]">
-            {bambuLoading ? (
-              <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
-            ) : bambuTasks.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
-                <CloudDownload className="h-8 w-8 mb-2 opacity-40" />
-                <p className="text-sm">Nenhuma impressão concluída encontrada</p>
-                <p className="text-xs mt-1">Conecte-se na página de Integrações → Bambu Lab e sincronize</p>
-              </div>
+
+          {/* Tabs */}
+          <div className="flex gap-1 p-1 rounded-lg bg-muted">
+            <button
+              onClick={() => setBambuTab("projects")}
+              className={cn(
+                "flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-md text-sm font-medium transition-colors",
+                bambuTab === "projects" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <FolderOpen className="h-4 w-4" /> Meus Projetos
+            </button>
+            <button
+              onClick={() => setBambuTab("tasks")}
+              className={cn(
+                "flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-md text-sm font-medium transition-colors",
+                bambuTab === "tasks" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <History className="h-4 w-4" /> Impressões Concluídas
+            </button>
+          </div>
+
+          <div className="overflow-y-auto max-h-[50vh]">
+            {bambuTab === "projects" ? (
+              bambuProjectsLoading ? (
+                <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+              ) : bambuProjects.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                  <FolderOpen className="h-8 w-8 mb-2 opacity-40" />
+                  <p className="text-sm">Nenhum projeto salvo encontrado</p>
+                  <p className="text-xs mt-1">Conecte-se na página de Integrações → Bambu Lab</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {bambuProjects.map((p: any) => (
+                    <button
+                      key={p.project_id}
+                      onClick={() => importFromBambuProject(p)}
+                      className="flex items-start gap-3 p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors text-left"
+                    >
+                      {p.thumbnail ? (
+                        <img src={p.thumbnail} alt="" className="w-14 h-14 rounded object-cover flex-shrink-0" />
+                      ) : (
+                        <div className="w-14 h-14 rounded bg-muted flex items-center justify-center flex-shrink-0">
+                          <Image className="h-5 w-5 text-muted-foreground" />
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-foreground truncate">{p.name || "Sem nome"}</p>
+                        {p.filaments?.length > 0 && (
+                          <p className="text-xs text-muted-foreground truncate">
+                            {p.filaments.map((f: any) => f.type).filter((v: string, i: number, a: string[]) => a.indexOf(v) === i).join(", ")}
+                          </p>
+                        )}
+                        <div className="flex items-center gap-3 mt-1 text-[11px] text-muted-foreground">
+                          {p.total_weight_grams > 0 && <span>{p.total_weight_grams.toFixed(1)}g</span>}
+                          {p.total_time_seconds > 0 && <span>{fmtDuration(p.total_time_seconds)}</span>}
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {bambuTasks.map((t: any) => (
-                  <button
-                    key={t.id}
-                    onClick={() => importFromBambu(t)}
-                    className="flex items-start gap-3 p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors text-left"
-                  >
-                    {t.cover_url ? (
-                      <img src={t.cover_url} alt="" className="w-14 h-14 rounded object-cover flex-shrink-0" />
-                    ) : (
-                      <div className="w-14 h-14 rounded bg-muted flex items-center justify-center flex-shrink-0">
-                        <Image className="h-5 w-5 text-muted-foreground" />
+              bambuTasksLoading ? (
+                <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+              ) : bambuTasks.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                  <CloudDownload className="h-8 w-8 mb-2 opacity-40" />
+                  <p className="text-sm">Nenhuma impressão concluída encontrada</p>
+                  <p className="text-xs mt-1">Conecte-se na página de Integrações → Bambu Lab e sincronize</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {bambuTasks.map((t: any) => (
+                    <button
+                      key={t.id}
+                      onClick={() => importFromBambuTask(t)}
+                      className="flex items-start gap-3 p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors text-left"
+                    >
+                      {t.cover_url ? (
+                        <img src={t.cover_url} alt="" className="w-14 h-14 rounded object-cover flex-shrink-0" />
+                      ) : (
+                        <div className="w-14 h-14 rounded bg-muted flex items-center justify-center flex-shrink-0">
+                          <Image className="h-5 w-5 text-muted-foreground" />
+                        </div>
+                      )}
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-foreground truncate">{t.design_title || "Sem título"}</p>
+                        <p className="text-xs text-muted-foreground">{t.bambu_devices?.name || "—"}</p>
+                        <div className="flex items-center gap-3 mt-1 text-[11px] text-muted-foreground">
+                          {t.weight_grams != null && <span>{t.weight_grams}g</span>}
+                          {t.cost_time_seconds != null && <span>{fmtDuration(t.cost_time_seconds)}</span>}
+                        </div>
                       </div>
-                    )}
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-foreground truncate">{t.design_title || "Sem título"}</p>
-                      <p className="text-xs text-muted-foreground">{t.bambu_devices?.name || "—"}</p>
-                      <div className="flex items-center gap-3 mt-1 text-[11px] text-muted-foreground">
-                        {t.weight_grams != null && <span>{t.weight_grams}g</span>}
-                        {t.cost_time_seconds != null && <span>{fmtDuration(t.cost_time_seconds)}</span>}
-                      </div>
-                    </div>
-                  </button>
-                ))}
-              </div>
+                    </button>
+                  ))}
+                </div>
+              )
             )}
           </div>
         </DialogContent>
