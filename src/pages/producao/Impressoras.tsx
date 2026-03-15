@@ -8,6 +8,7 @@ import {
   Plus, Search, MoreHorizontal, Printer, WifiOff,
   AlertTriangle, Wrench, Pause, Play, Eye, Edit, Trash2,
   Power, Zap, Activity, Clock, Download, Loader2, Settings2,
+  CloudDownload, Mail, KeyRound, RefreshCw, CheckCircle2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
