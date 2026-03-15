@@ -864,6 +864,7 @@ export type Database = {
           min_stock: number | null
           name: string
           notes: string | null
+          parent_id: string | null
           sku: string | null
           tenant_id: string
           unit: string
@@ -887,6 +888,7 @@ export type Database = {
           min_stock?: number | null
           name: string
           notes?: string | null
+          parent_id?: string | null
           sku?: string | null
           tenant_id: string
           unit?: string
@@ -910,6 +912,7 @@ export type Database = {
           min_stock?: number | null
           name?: string
           notes?: string | null
+          parent_id?: string | null
           sku?: string | null
           tenant_id?: string
           unit?: string
@@ -917,6 +920,13 @@ export type Database = {
           vendor_id?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "inventory_items_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "inventory_items"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "inventory_items_tenant_id_fkey"
             columns: ["tenant_id"]
