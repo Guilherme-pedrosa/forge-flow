@@ -77,6 +77,18 @@
     /* Argus (AI) accent */
     --argus: 217 100% 50%;
     --argus-foreground: 0 0% 100%;
+    --argus-surface: 217 100% 97%;
+    --argus-border: 217 100% 90%;
+
+    /* Surfaces */
+    --surface-raised: 0 0% 100%;
+    --surface-sunken: 210 40% 95%;
+    --surface-overlay: 0 0% 100%;
+
+    /* Shadows */
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+    --shadow-md: 0 4px 6px rgba(0,0,0,0.07);
+    --shadow-lg: 0 10px 15px rgba(0,0,0,0.1);
 
     /* Charts */
     --chart-1: 217 100% 50%;
