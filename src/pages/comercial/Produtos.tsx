@@ -84,19 +84,33 @@ export default function Produtos() {
   });
 
   // Fetch Bambu tasks for import
-  const { data: bambuTasks = [], isLoading: bambuLoading } = useQuery({
+  const { data: bambuTasks = [], isLoading: bambuTasksLoading } = useQuery({
     queryKey: ["bambu_tasks_for_import"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("bambu_tasks")
         .select("*, bambu_devices(name)")
-        .eq("status", "2") // completed only
+        .eq("status", "2")
         .order("start_time", { ascending: false })
         .limit(200);
       if (error) throw error;
       return data;
     },
-    enabled: !!profile && bambuImportOpen,
+    enabled: !!profile && bambuImportOpen && bambuTab === "tasks",
+  });
+
+  // Fetch Bambu projects (saved models / collections)
+  const { data: bambuProjects = [], isLoading: bambuProjectsLoading } = useQuery({
+    queryKey: ["bambu_projects_for_import"],
+    queryFn: async () => {
+      const { data, error } = await supabase.functions.invoke("bambu-cloud-sync", {
+        body: { action: "projects" },
+      });
+      if (error) throw error;
+      if (data.error) throw new Error(data.error);
+      return data.projects || [];
+    },
+    enabled: !!profile && bambuImportOpen && bambuTab === "projects",
   });
 
   const filtered = useMemo(() => {
