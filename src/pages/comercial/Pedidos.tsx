@@ -192,17 +192,22 @@ export default function Pedidos() {
   const discountNum = parseFloat(discountVal) || 0;
   const grandTotal = subtotal + shippingVal - discountNum;
 
-  // Convert any image URL to base64 (handles Supabase storage CORS)
+  // Resolve image source for print (base64 for internal storage, direct URL for external images)
   const fetchImageAsBase64 = async (url: string): Promise<string> => {
     try {
       const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      if (url.includes(supabaseUrl) && url.includes("/storage/v1/object/public/")) {
+      const isInternalStorage = !!supabaseUrl
+        && url.includes(supabaseUrl)
+        && url.includes("/storage/v1/object/public/");
+
+      if (isInternalStorage) {
         const storagePrefix = "/storage/v1/object/public/";
         const idx = url.indexOf(storagePrefix);
         const pathAfter = url.substring(idx + storagePrefix.length);
         const slashIdx = pathAfter.indexOf("/");
         const bucket = pathAfter.substring(0, slashIdx);
-        const filePath = pathAfter.substring(slashIdx + 1);
+        const filePath = pathAfter.substring(slashIdx + 1).split("?")[0].split("#")[0];
+
         const { data, error } = await supabase.storage.from(bucket).download(filePath);
         if (!error && data) {
           return await new Promise<string>((resolve) => {
@@ -212,15 +217,11 @@ export default function Pedidos() {
           });
         }
       }
-      const res = await fetch(url, { mode: "cors" });
-      const blob = await res.blob();
-      return await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result as string);
-        reader.readAsDataURL(blob);
-      });
+
+      // External URLs (ex: MakerWorld) are used directly to avoid CORS failures on fetch()
+      return url;
     } catch {
-      return "";
+      return url;
     }
   };
 
