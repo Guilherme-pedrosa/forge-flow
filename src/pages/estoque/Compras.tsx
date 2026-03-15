@@ -134,6 +134,7 @@ export default function Compras() {
   const [marketplaceParsing, setMarketplaceParsing] = useState(false);
   const [marketplaceParsed, setMarketplaceParsed] = useState<any[]>([]);
   const [marketplaceSelectedIdx, setMarketplaceSelectedIdx] = useState(0);
+  const [marketplacePaymentMethodId, setMarketplacePaymentMethodId] = useState("");
   const marketplaceFileRef = useRef<HTMLInputElement>(null);
   const [nfeData, setNfeData] = useState<NfeData | null>(null);
   const [xmlRaw, setXmlRaw] = useState("");
@@ -143,6 +144,7 @@ export default function Compras() {
   const [orderDate, setOrderDate] = useState(new Date().toISOString().slice(0, 10));
   const [expectedDate, setExpectedDate] = useState("");
   const [notes, setNotes] = useState("");
+  const [paymentMethodId, setPaymentMethodId] = useState("");
   const [manualItems, setManualItems] = useState<{ description: string; quantity: string; unitPrice: string }[]>([
     { description: "", quantity: "1", unitPrice: "0" },
   ]);
