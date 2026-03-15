@@ -38,6 +38,7 @@ type JobStatus = JobRow["status"];
 type StatusFilter = JobStatus | "all";
 type PrinterRow = Tables<"printers">;
 type InventoryRow = Tables<"inventory_items">;
+type ProductRow = Tables<"products">;
 
 // ── Helpers ──
 const fmtCurrency = (v: number | null) =>
