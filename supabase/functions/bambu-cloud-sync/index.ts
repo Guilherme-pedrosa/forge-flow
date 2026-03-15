@@ -695,6 +695,45 @@ Deno.serve(async (req) => {
 
 // ── Helper: parse MakerWorld design object to our model format ──
 function parseDesignToModel(d: any) {
+  const profiles = (d.profileList || d.profiles || []).map((p: any) => {
+    const ctx = p.context || {};
+    const plates = ctx.plates || [];
+    let totalWeight = p.weight || p.total_weight || 0;
+    let totalTime = p.estimatedTime || p.estimated_time || 0;
+    const filaments: Array<{ type: string; color: string; grams: number }> = [];
+    const seenColors = new Set<string>();
+
+    // Sum across all plates
+    for (const plate of plates) {
+      if (!totalWeight && plate.weight) totalWeight += Number(plate.weight);
+      if (!totalTime && plate.prediction) totalTime += Number(plate.prediction);
+      for (const fil of (plate.filaments || [])) {
+        const colorKey = `${fil.type || "PLA"}-${fil.color || ""}`.toLowerCase();
+        if (!seenColors.has(colorKey)) {
+          seenColors.add(colorKey);
+          filaments.push({ type: fil.type || "PLA", color: fil.color || "", grams: Number(fil.used_g) || 0 });
+        }
+      }
+    }
+
+    // Also check materialList
+    for (const m of (p.materialList || p.materials || [])) {
+      const colorKey = `${m.type || "PLA"}-${m.color || ""}`.toLowerCase();
+      if (!seenColors.has(colorKey)) {
+        seenColors.add(colorKey);
+        filaments.push({ type: m.type || "PLA", color: m.color || "", grams: m.weight || 0 });
+      }
+    }
+
+    return {
+      name: p.name || "Default",
+      weight_grams: totalWeight,
+      time_seconds: totalTime,
+      plates: plates.length || p.plateCount || 0,
+      filaments,
+    };
+  });
+
   return {
     id: d.id || d.designId || d.design_id || "",
     title: d.title || d.name || "Sem nome",
@@ -703,16 +742,8 @@ function parseDesignToModel(d: any) {
     print_count: d.printCountStr || d.print_count || "0",
     download_count: d.downloadCountStr || d.download_count || "0",
     like_count: d.likeCount || d.like_count || 0,
-    profiles: (d.profileList || d.profiles || []).map((p: any) => ({
-      name: p.name || "Default",
-      weight_grams: p.weight || p.total_weight || 0,
-      time_seconds: p.estimatedTime || p.estimated_time || 0,
-      filaments: (p.materialList || p.materials || []).map((m: any) => ({
-        type: m.type || "PLA",
-        color: m.color || "",
-        grams: m.weight || 0,
-      })),
-    })),
+    plates: profiles[0]?.plates || 0,
+    profiles,
   };
 }
 
