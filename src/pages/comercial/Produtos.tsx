@@ -453,6 +453,7 @@ export default function Produtos() {
       : Math.round(toNumber(model?.plates ?? model?.plate_count ?? model?.plateCount));
 
     const plates = Math.max(profilePlates, modelPlates, 0);
+    const platesMultiplier = plates > 1 ? plates : 1;
 
     const noteParts: string[] = [
       `Importado do MakerWorld — ID: ${model.id}`,
@@ -460,11 +461,15 @@ export default function Produtos() {
     ].filter(Boolean);
 
     if (resolvedWeight > 0) {
-      setEstGrams(resolvedWeight.toFixed(1).replace(/\.0$/, ""));
+      // Weight from profile is per-plate; multiply by plates to get total per piece
+      const totalWeight = resolvedWeight * platesMultiplier;
+      setEstGrams(totalWeight.toFixed(1).replace(/\.0$/, ""));
     }
 
     if (resolvedTimeSeconds > 0) {
-      setEstTime(Math.round(resolvedTimeSeconds / 60).toString());
+      // Time from profile is per-plate; multiply by plates to get total per piece
+      const totalTimeMinutes = Math.round((resolvedTimeSeconds * platesMultiplier) / 60);
+      setEstTime(totalTimeMinutes.toString());
     }
 
     if (selectedProfile?.filaments?.length > 0) {
@@ -475,9 +480,9 @@ export default function Produtos() {
       noteParts.push(`Cores: ${selectedProfile.filaments.length} — ${filInfo}`);
     }
 
-    if (plates > 0) {
-      setPrintsPerPlate(String(plates));
-      noteParts.push(`Placas de impressão: ${plates}`);
+    if (plates > 1) {
+      // Plates per piece — weight/time already multiplied above
+      noteParts.push(`${plates} pratos por peça (gramatura e tempo já multiplicados)`);
     }
 
     if (resolvedWeight === 0) {
@@ -677,10 +682,10 @@ export default function Produtos() {
           </Select>
         </div>
         <div>
-          <Label>Impressões por Prato</Label>
+          <Label>Peças por Prato</Label>
           <Input type="number" min="1" value={printsPerPlate} onChange={(e) => setPrintsPerPlate(e.target.value)} placeholder="1" />
           {parseInt(printsPerPlate) > 1 && (
-            <p className="mt-1 text-[11px] text-muted-foreground">Custo será dividido por {printsPerPlate} peças por impressão.</p>
+            <p className="mt-1 text-[11px] text-muted-foreground">Custo será dividido por {printsPerPlate} peças por prato.</p>
           )}
         </div>
       </div>
