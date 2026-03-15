@@ -9,6 +9,7 @@ import Dashboard from "./pages/Dashboard";
 import ModulePlaceholder from "./pages/ModulePlaceholder";
 import ContasPagar from "./pages/financeiro/ContasPagar";
 import Impressoras from "./pages/producao/Impressoras";
+import Jobs from "./pages/producao/Jobs";
 import Login from "./pages/auth/Login";
 import Signup from "./pages/auth/Signup";
 import SetupTenant from "./pages/onboarding/SetupTenant";
