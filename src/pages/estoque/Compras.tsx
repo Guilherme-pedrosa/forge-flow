@@ -548,6 +548,9 @@ export default function Compras() {
         breadcrumbs={[{ label: "Estoque", href: "/estoque/itens" }, { label: "Compras" }]}
         actions={
           <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => { setMarketplaceImages([]); setMarketplaceParsed([]); setMarketplaceImportOpen(true); }}>
+              <Camera className="h-4 w-4 mr-1" /> Screenshot Compra
+            </Button>
             <Button variant="outline" size="sm" onClick={() => { setNfeData(null); setXmlRaw(""); setXmlImportOpen(true); }}>
               <Upload className="h-4 w-4 mr-1" /> Importar XML
             </Button>
