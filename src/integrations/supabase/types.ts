@@ -799,6 +799,7 @@ export type Database = {
       customers: {
         Row: {
           address: Json | null
+          birthday: string | null
           created_at: string
           document: string | null
           email: string | null
@@ -812,6 +813,7 @@ export type Database = {
         }
         Insert: {
           address?: Json | null
+          birthday?: string | null
           created_at?: string
           document?: string | null
           email?: string | null
@@ -825,6 +827,7 @@ export type Database = {
         }
         Update: {
           address?: Json | null
+          birthday?: string | null
           created_at?: string
           document?: string | null
           email?: string | null
