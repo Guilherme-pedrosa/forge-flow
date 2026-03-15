@@ -376,47 +376,8 @@ export default function Produtos() {
     const profileIdx = selectedProfileIndex ?? 0;
     const selectedProfile = profiles[profileIdx] || profiles[0] || null;
 
-    // ── Peso: prioridade = soma dos filamentos do profile selecionado ──
-    const profileFilamentSum = (selectedProfile?.filaments || []).reduce((sum: number, f: any) => {
-      return sum + toNumber(f?.grams ?? f?.used_g ?? f?.weight);
-    }, 0);
-
-    const profileDeclaredWeight = Math.max(
-      toNumber(selectedProfile?.weight_grams),
-      toNumber(selectedProfile?.weight),
-      toNumber(selectedProfile?.total_weight),
-      toNumber(selectedProfile?.totalWeight)
-    );
-
-    // Filament sum > declared profile weight > model-level weight (fallback only)
-    const resolvedWeight = profileFilamentSum > 0
-      ? profileFilamentSum
-      : profileDeclaredWeight > 0
-        ? profileDeclaredWeight
-        : Math.max(
-            toNumber(model?.weight_grams),
-            toNumber(model?.weight),
-            toNumber(model?.total_weight),
-            toNumber(model?.totalWeight)
-          );
-
-    // ── Tempo: profile selecionado > model-level (fallback) ──
-    const profileTimeSeconds = Math.max(
-      toNumber(selectedProfile?.time_seconds),
-      toNumber(selectedProfile?.prediction),
-      toNumber(selectedProfile?.estimatedTime),
-      toNumber(selectedProfile?.printTime)
-    );
-
-    const resolvedTimeSeconds = profileTimeSeconds > 0
-      ? profileTimeSeconds
-      : Math.max(
-          toNumber(model?.time_seconds),
-          toNumber(model?.prediction),
-          toNumber(model?.estimatedTime),
-          toNumber(model?.printTime)
-        );
-
+    // Peso/tempo não são mais preenchidos automaticamente no import do MakerWorld
+    // para evitar cadastrar valores incorretos.
     // ── Material: auto-match pelo tipo dominante do filamento ──
     const dominantFilamentType = (selectedProfile?.filaments || [])
       .reduce((best: any, f: any) => (!best || toNumber(f?.grams) > toNumber(best?.grams) ? f : best), null)
@@ -459,14 +420,7 @@ export default function Produtos() {
       selectedProfile?.name ? `Profile: ${selectedProfile.name}` : "",
     ].filter(Boolean);
 
-    if (resolvedWeight > 0) {
-      setEstGrams(resolvedWeight.toFixed(1).replace(/\.0$/, ""));
-    }
-
-    if (resolvedTimeSeconds > 0) {
-      const minutes = Math.round(resolvedTimeSeconds / 60);
-      setEstTime(minutes.toString());
-    }
+    noteParts.push("⚠ Peso e tempo não foram preenchidos automaticamente. Preencha manualmente.");
 
     if (selectedProfile?.filaments?.length > 0) {
       setNumColors(String(selectedProfile.filaments.length));
@@ -484,10 +438,6 @@ export default function Produtos() {
       noteParts.push(`Plates: ${plates} (produto único; total já considera múltiplos pratos)`);
     }
 
-    if (resolvedWeight === 0) {
-      noteParts.push("⚠ Gramatura não disponível. Preencha manualmente.");
-    }
-
     setNotes(noteParts.join("\n"));
     setDescription(model.description || "");
     setMakerOptionOpen(false);
@@ -497,10 +447,10 @@ export default function Produtos() {
     toast({
       title: "Dados importados do MakerWorld",
       description: selectedProfile?.name
-        ? `${selectedProfile.name} · ${resolvedWeight > 0 ? `${resolvedWeight.toFixed(1).replace(/\.0$/, "")}g` : "gramatura indisponível"}`
+        ? `${selectedProfile.name} · preencha peso/tempo manualmente`
         : plates > 0
           ? `${plates} placas`
-          : undefined,
+          : "Preencha peso/tempo manualmente",
     });
   };
 
