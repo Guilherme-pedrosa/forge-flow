@@ -525,6 +525,32 @@ export default function Produtos() {
     }
   };
 
+  const fetchMyCollections = async () => {
+    setMyCollectionsLoading(true);
+    setMakerWorldModels([]);
+    try {
+      const { data, error } = await supabase.functions.invoke("bambu-cloud-sync", {
+        body: { action: "makerworld_my_collections" },
+      });
+      if (error) throw error;
+      if (data.error) throw new Error(data.error);
+
+      const models = data.models || [];
+      setMakerWorldModels(models);
+      if (data.collection_url) setMakerWorldUrl(data.collection_url);
+
+      if (models.length === 0) {
+        toast({ title: "Nenhum modelo encontrado", description: "Não encontrei modelos nas suas coleções públicas.", variant: "destructive" });
+      } else {
+        toast({ title: "Coleções carregadas", description: `${models.length} modelo(s) importável(eis).` });
+      }
+    } catch (e: any) {
+      toast({ title: "Erro ao buscar coleções", description: e.message, variant: "destructive" });
+    } finally {
+      setMyCollectionsLoading(false);
+    }
+  };
+
   const saveExtraPhotos = async (productId: string) => {
     if (!profile || extraPhotos.length === 0) return;
     // Delete old extra photos
