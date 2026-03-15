@@ -852,32 +852,45 @@ function parseDesignToModel(d: any) {
     let summedPlateTime = 0;
 
     for (const plate of plates) {
-      summedPlateWeight += toPositiveNumber(plate.weight ?? plate.total_weight ?? plate.weight_grams);
-      summedPlateTime += toPositiveNumber(plate.prediction ?? plate.estimatedTime ?? plate.time_seconds);
+      summedPlateWeight += metricToGrams(
+        plate.weight ?? plate.total_weight ?? plate.weight_grams ?? plate.totalWeight,
+        plate.weight_unit || plate.unit
+      );
+      summedPlateTime += parseLooseMetric(plate.prediction ?? plate.estimatedTime ?? plate.time_seconds ?? plate.printTime);
 
       for (const fil of (plate.filaments || [])) {
-        addFilament(fil.type || "PLA", fil.color || "", toPositiveNumber(fil.used_g ?? fil.weight ?? fil.grams));
+        addFilament(
+          fil.type || "PLA",
+          fil.color || "",
+          metricToGrams(fil.used_g ?? fil.weight ?? fil.grams ?? fil.usedWeight, fil.unit)
+        );
       }
     }
 
     for (const m of (p.materialList || p.materials || [])) {
-      addFilament(m.type || "PLA", m.color || "", toPositiveNumber(m.weight ?? m.used_g ?? m.grams));
+      addFilament(
+        m.type || "PLA",
+        m.color || "",
+        metricToGrams(m.weight ?? m.used_g ?? m.grams ?? m.usedWeight, m.unit)
+      );
     }
 
     const filaments = Array.from(filamentMap.values());
     const filamentWeightSum = filaments.reduce((sum, f) => sum + toPositiveNumber(f.grams), 0);
 
     const declaredWeight = maxMetric(
-      toPositiveNumber(p.weight),
-      toPositiveNumber(p.total_weight),
-      toPositiveNumber(p.totalWeight),
-      toPositiveNumber(p.weight_grams)
+      metricToGrams(p.weight, p.weight_unit || p.unit),
+      metricToGrams(p.total_weight, p.weight_unit || p.unit),
+      metricToGrams(p.totalWeight, p.weight_unit || p.unit),
+      metricToGrams(p.weight_grams, "g"),
+      metricToGrams(p.used_g, "g")
     );
 
     const declaredTime = maxMetric(
-      toPositiveNumber(p.estimatedTime),
-      toPositiveNumber(p.estimated_time),
-      toPositiveNumber(p.time_seconds)
+      parseLooseMetric(p.estimatedTime),
+      parseLooseMetric(p.estimated_time),
+      parseLooseMetric(p.time_seconds),
+      parseLooseMetric(p.printTime)
     );
 
     return {
@@ -892,8 +905,18 @@ function parseDesignToModel(d: any) {
   if (profiles.length === 0) {
     profiles.push({
       name: "Opção 1",
-      weight_grams: maxMetric(toPositiveNumber(d.weight), toPositiveNumber(d.total_weight), toPositiveNumber(d.totalWeight)),
-      time_seconds: maxMetric(toPositiveNumber(d.estimatedTime), toPositiveNumber(d.estimated_time), toPositiveNumber(d.time_seconds)),
+      weight_grams: maxMetric(
+        metricToGrams(d.weight, d.weight_unit || d.unit),
+        metricToGrams(d.total_weight, d.weight_unit || d.unit),
+        metricToGrams(d.totalWeight, d.weight_unit || d.unit),
+        metricToGrams(d.weight_grams, "g")
+      ),
+      time_seconds: maxMetric(
+        parseLooseMetric(d.estimatedTime),
+        parseLooseMetric(d.estimated_time),
+        parseLooseMetric(d.time_seconds),
+        parseLooseMetric(d.printTime)
+      ),
       plates: toPositiveNumber(d.plateCount || d.plate_count),
       filaments: [],
     });
