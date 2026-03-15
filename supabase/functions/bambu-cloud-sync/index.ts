@@ -466,18 +466,33 @@ Deno.serve(async (req) => {
             },
           });
           const apiText = await apiRes.text();
-          if (apiRes.ok && apiText.trim()) {
+          if (apiRes.ok && apiText.trim() && apiText.trim() !== "{}") {
             try {
               const data = JSON.parse(apiText);
               const design = data?.design || data;
-              if (design?.id || design?.title) {
+              // Validate we actually got meaningful data (not empty object)
+              const hasContent = design?.id || design?.title || design?.profileList?.length > 0 || design?.profiles?.length > 0;
+              if (hasContent) {
                 const parsed = parseDesignToModel(design, selectedProfileId);
-                models.push(parsed);
-                strategyUsed = "api_internal";
+                // Verify the parsed result has meaningful data (weight or time > 0)
+                const firstProfile = parsed.profiles?.[0];
+                const hasWeight = firstProfile?.weight_grams > 0;
+                const hasTime = firstProfile?.time_seconds > 0;
+                if (hasWeight || hasTime) {
+                  models.push(parsed);
+                  strategyUsed = "api_internal";
+                  console.log(`Strategy 1 OK: weight=${firstProfile?.weight_grams}g, time=${firstProfile?.time_seconds}s`);
+                } else {
+                  console.warn("Strategy 1 returned 0 weight and 0 time, falling through to Strategy 2");
+                }
+              } else {
+                console.warn("Strategy 1 returned empty/minimal data:", apiText.slice(0, 200));
               }
             } catch {
               console.warn("MakerWorld API JSON parse failed");
             }
+          } else {
+            console.warn("Strategy 1 returned empty response, status:", apiRes.status);
           }
         } catch (e) {
           console.warn("MakerWorld API call failed:", e);
