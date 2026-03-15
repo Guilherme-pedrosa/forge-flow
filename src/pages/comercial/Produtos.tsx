@@ -428,6 +428,7 @@ export default function Produtos() {
         est_time_minutes: estTime ? parseInt(estTime) : 0, post_process_minutes: postMinutes ? parseInt(postMinutes) : 0,
         cost_estimate: cost, sale_price: price, margin_percent: margin, notes: notes || null,
         photo_url: photoUrl || null, num_colors: parseInt(numColors) || 1,
+        prints_per_plate: parseInt(printsPerPlate) || 1,
       } as any).eq("id", editItem.id);
       if (error) throw error;
       await saveExtraPhotos(editItem.id);
