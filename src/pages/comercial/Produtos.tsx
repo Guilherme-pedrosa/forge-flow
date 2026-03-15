@@ -700,7 +700,16 @@ export default function Produtos() {
                       {ch.freeShipping && <span className="text-[10px] text-muted-foreground ml-1">(c/ frete grátis)</span>}
                     </span>
                     <span className="text-right font-mono">
-                      {totalDeduction > 0 ? `${fmtCurrency(totalDeduction)}` : "—"}
+                      {totalDeduction > 0 ? (
+                        <span className="flex flex-col items-end leading-tight">
+                          <span>{fmtCurrency(totalDeduction)}</span>
+                          {ch.freeShipping && shippingAmount > 0 && (
+                            <span className="text-[10px] text-muted-foreground">
+                              {ch.fee}% + {ch.freeShippingType === "percent" ? `${ch.freeShippingExtra}%` : fmtCurrency(ch.freeShippingExtra)} frete
+                            </span>
+                          )}
+                        </span>
+                      ) : "—"}
                     </span>
                     <span className="text-right font-mono">{fmtCurrency(net)}</span>
                     <span className={cn("text-right font-mono font-semibold", profit > 0 ? "text-green-600" : "text-destructive")}>
