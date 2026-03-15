@@ -5,7 +5,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { PageHeader } from "@/components/shared/PageHeader";
 import {
   Plus, Search, MoreHorizontal, Loader2, Upload, FileText,
-  Trash2, Eye, CheckCircle2, Package, ShoppingCart,
+  Trash2, Eye, CheckCircle2, Package, ShoppingCart, Camera,
+  Image as ImageIcon, Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
