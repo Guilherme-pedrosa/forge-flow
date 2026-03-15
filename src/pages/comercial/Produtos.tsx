@@ -132,7 +132,7 @@ export default function Produtos() {
     setPhotoUrl(p.photo_url || ""); setNotes(p.notes || "");
   };
 
-  const importFromBambu = (task: any) => {
+  const importFromBambuTask = (task: any) => {
     resetForm();
     setName(task.design_title || "Produto Bambu");
     setEstGrams(task.weight_grams?.toString() || "");
@@ -140,6 +140,22 @@ export default function Produtos() {
     setPhotoUrl(task.cover_url || "");
     setCategory("printed_part");
     setNotes(`Importado da Bambu Lab — Task ID: ${task.bambu_task_id}`);
+    setBambuImportOpen(false);
+    setCreateOpen(true);
+    toast({ title: "Dados importados", description: "Preencha custo e preço para finalizar o cadastro." });
+  };
+
+  const importFromBambuProject = (proj: any) => {
+    resetForm();
+    setName(proj.name || "Produto Bambu");
+    setEstGrams(proj.total_weight_grams ? proj.total_weight_grams.toFixed(1) : "");
+    setEstTime(proj.total_time_seconds ? Math.round(proj.total_time_seconds / 60).toString() : "");
+    setPhotoUrl(proj.thumbnail || "");
+    setCategory("printed_part");
+    const filamentInfo = proj.filaments?.length > 0
+      ? proj.filaments.map((f: any) => `${f.type} ${f.grams}g`).join(", ")
+      : "";
+    setNotes(`Importado da Bambu Lab — Projeto: ${proj.project_id}${filamentInfo ? `\nFilamentos: ${filamentInfo}` : ""}`);
     setBambuImportOpen(false);
     setCreateOpen(true);
     toast({ title: "Dados importados", description: "Preencha custo e preço para finalizar o cadastro." });
