@@ -616,8 +616,13 @@ Deno.serve(async (req) => {
               body: JSON.stringify({
                 url: `https://makerworld.com/en/models/${modelId}${hashSuffix}`,
                 formats: ["html", "markdown"],
+                actions: [
+                  { type: "wait", milliseconds: 3000 },
+                  { type: "click", selector: "[class*='profile-item'], [class*='ProfileItem'], [class*='instance-item'], [data-testid*='profile']" },
+                  { type: "wait", milliseconds: 2000 },
+                ],
                 onlyMainContent: false,
-                waitFor: 8000,
+                waitFor: 5000,
               }),
             });
             if (!firecrawlRes.ok) {
