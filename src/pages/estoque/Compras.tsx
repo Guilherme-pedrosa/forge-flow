@@ -310,19 +310,25 @@ export default function Compras() {
         if (ie) throw ie;
       }
 
-      // Create accounts_payable
+      // Create accounts_payable (with installments)
       if (subtotal > 0) {
-        await supabase.from("accounts_payable").insert({
-          tenant_id: profile.tenant_id,
-          description: `Compra ${nextCode}${vendorId ? "" : ""}`,
-          amount: subtotal,
-          due_date: expectedDate || orderDate,
-          vendor_id: vendorId || null,
-          payment_method_id: paymentMethodId || null,
-          status: "open",
+        const apDueDate = dueDate || expectedDate || orderDate;
+        const numInst = parseInt(installments || "1", 10);
+        const entries = generateInstallmentAP({
+          tenantId: profile.tenant_id,
+          description: `Compra ${nextCode}`,
+          totalAmount: subtotal,
+          baseDueDate: apDueDate,
+          numInstallments: numInst,
+          vendorId: vendorId || null,
+          paymentMethodId: paymentMethodId || null,
+          isPaid: false,
+          paymentDate: null,
           notes: `Ref. pedido de compra ${nextCode}`,
-          created_by: profile.user_id,
+          createdBy: profile.user_id,
         });
+        const { error: apErr } = await supabase.from("accounts_payable").insert(entries);
+        if (apErr) throw apErr;
       }
     },
     onSuccess: () => {
