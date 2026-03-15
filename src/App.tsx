@@ -16,6 +16,7 @@ import DRE from "./pages/financeiro/DRE";
 import Itens from "./pages/estoque/Itens";
 import Movimentacoes from "./pages/estoque/Movimentacoes";
 import Alertas from "./pages/estoque/Alertas";
+import Compras from "./pages/estoque/Compras";
 import Jobs from "./pages/producao/Jobs";
 import Impressoras from "./pages/producao/Impressoras";
 import Produtos from "./pages/comercial/Produtos";
