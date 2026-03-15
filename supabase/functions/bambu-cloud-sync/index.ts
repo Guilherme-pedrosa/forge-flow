@@ -445,6 +445,7 @@ Deno.serve(async (req) => {
       }
 
       const models: any[] = [];
+      let strategyUsed: "api_internal" | "firecrawl" | "direct_html" | null = null;
       const modelMatch = url.match(/\/models\/(\d+)/);
       const hashProfileId = url.match(/profileId-(\d+)/i)?.[1] || null;
       const selectedProfileId = selected_profile_id || hashProfileId;
@@ -469,7 +470,18 @@ Deno.serve(async (req) => {
               const data = JSON.parse(apiText);
               const design = data?.design || data;
               if (design?.id || design?.title) {
-                models.push(parseDesignToModel(design, selectedProfileId));
+                const parsed = parseDesignToModel(design, selectedProfileId);
+                const hasMatchedProfile = !selectedProfileId || parsed.profiles.some((p: any) => String(p?.profile_id || "") === String(selectedProfileId));
+                const hasAnyProfileId = parsed.profiles.some((p: any) => !!p?.profile_id);
+                const hasFilamentEvidence = parsed.profiles.some((p: any) => Array.isArray(p?.filaments) && p.filaments.some((f: any) => toPositiveNumber(f?.grams) > 0));
+                const lowConfidence = !hasMatchedProfile || (!hasAnyProfileId && !hasFilamentEvidence && parsed.profiles.length <= 1);
+
+                if (lowConfidence && FIRECRAWL_API_KEY) {
+                  console.log("MakerWorld API result low-confidence; trying Firecrawl fallback");
+                } else {
+                  models.push(parsed);
+                  strategyUsed = "api_internal";
+                }
               }
             } catch {
               console.warn("MakerWorld API JSON parse failed");
@@ -504,9 +516,10 @@ Deno.serve(async (req) => {
               console.log("Firecrawl HTML length:", html.length, "Markdown length:", markdown.length);
               
               // Try __NEXT_DATA__ from rendered HTML
-              const extracted = extractFromHtml(html);
+              const extracted = extractFromHtml(html, selectedProfileId);
               if (extracted) {
                 models.push(extracted);
+                strategyUsed = "firecrawl";
               }
               
               // Fallback: parse from rendered HTML content
@@ -654,7 +667,39 @@ Deno.serve(async (req) => {
                     .filter((n) => Number.isFinite(n) && n > 0.05 && n < 5000);
 
                   if (candidates.length > 0) {
-                    weightGrams = Math.max(...candidates);
+                    const uniqueCandidates = Array.from(new Set(candidates.map((n) => Math.round(n * 10) / 10))).sort((a, b) => a - b);
+                    let picked = uniqueCandidates[uniqueCandidates.length - 1];
+
+                    // Prefer "component sum" totals (e.g. 163 + 114 ≈ 277) over outlier values
+                    for (let targetIdx = uniqueCandidates.length - 1; targetIdx >= 0; targetIdx--) {
+                      const target = uniqueCandidates[targetIdx];
+                      let foundComposite = false;
+
+                      for (let i = 0; i < targetIdx && !foundComposite; i++) {
+                        for (let j = i + 1; j < targetIdx; j++) {
+                          const sum2 = uniqueCandidates[i] + uniqueCandidates[j];
+                          if (Math.abs(sum2 - target) / target <= 0.1) {
+                            picked = target;
+                            foundComposite = true;
+                            break;
+                          }
+                        }
+                      }
+
+                      if (foundComposite) break;
+                    }
+
+                    // If top value is a strong outlier, prefer the next plausible one
+                    if (uniqueCandidates.length >= 2) {
+                      const max = uniqueCandidates[uniqueCandidates.length - 1];
+                      const second = uniqueCandidates[uniqueCandidates.length - 2];
+                      if (picked === max && max > second * 1.4) {
+                        picked = second;
+                      }
+                    }
+
+                    console.log("MakerWorld weight candidates:", uniqueCandidates.join(","), "picked:", picked);
+                    weightGrams = picked;
                   }
                 }
 
@@ -735,6 +780,7 @@ Deno.serve(async (req) => {
                   plates: totalPlates || normalizedProfiles[0]?.plates || 0,
                   profiles: normalizedProfiles,
                 });
+                strategyUsed = "firecrawl";
               }
             } else {
               console.error("Firecrawl error:", fcData);
@@ -754,8 +800,11 @@ Deno.serve(async (req) => {
               },
             });
             const html = await pageRes.text();
-            const extracted = extractFromHtml(html);
-            if (extracted) models.push(extracted);
+            const extracted = extractFromHtml(html, selectedProfileId);
+            if (extracted) {
+              models.push(extracted);
+              strategyUsed = "direct_html";
+            }
           } catch (e) {
             console.error("Direct HTML fetch error:", e);
           }
@@ -776,7 +825,7 @@ Deno.serve(async (req) => {
       }
 
       return new Response(
-        JSON.stringify({ models }),
+        JSON.stringify({ models, strategy_used: strategyUsed }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -940,23 +989,60 @@ function parseDesignToModel(d: any, selectedProfileId?: string | null) {
   });
 
   if (profiles.length === 0) {
+    const topLevelPlates = Array.isArray(d.plates)
+      ? d.plates
+      : Array.isArray(d.context?.plates)
+        ? d.context.plates
+        : [];
+
+    const topLevelFilaments = (d.materialList || d.materials || d.filaments || [])
+      .map((m: any) => ({
+        type: (m?.type || "PLA").toUpperCase(),
+        color: m?.color || "",
+        grams: metricToGrams(m?.weight ?? m?.used_g ?? m?.grams ?? m?.usedWeight, m?.unit),
+      }))
+      .filter((f: any) => f.grams > 0 || f.type || f.color);
+
+    const topLevelSummedPlateWeight = topLevelPlates.reduce(
+      (sum: number, plate: any) =>
+        sum + metricToGrams(plate?.weight ?? plate?.total_weight ?? plate?.weight_grams ?? plate?.totalWeight, plate?.weight_unit || plate?.unit),
+      0
+    );
+
+    const topLevelSummedPlateTime = topLevelPlates.reduce(
+      (sum: number, plate: any) =>
+        sum + parseLooseMetric(plate?.prediction ?? plate?.estimatedTime ?? plate?.time_seconds ?? plate?.printTime),
+      0
+    );
+
+    const topLevelFilamentWeight = topLevelFilaments.reduce((sum: number, f: any) => sum + toPositiveNumber(f.grams), 0);
+
+    const topLevelDeclaredWeight = maxMetric(
+      metricToGrams(d.weight, d.weight_unit || d.unit),
+      metricToGrams(d.total_weight, d.weight_unit || d.unit),
+      metricToGrams(d.totalWeight, d.weight_unit || d.unit),
+      metricToGrams(d.weight_grams, "g")
+    );
+
+    const topLevelComputedWeight = maxMetric(topLevelSummedPlateWeight, topLevelFilamentWeight);
+    const topLevelDeclaredTooHigh = topLevelComputedWeight > 0 && topLevelDeclaredWeight > topLevelComputedWeight * 1.25;
+    const topLevelSafeWeight = topLevelDeclaredTooHigh
+      ? topLevelComputedWeight
+      : maxMetric(topLevelDeclaredWeight, topLevelComputedWeight);
+
     profiles.push({
       profile_id: selectedProfileId || d.profile_id || d.profileId || null,
       name: "Opção 1",
-      weight_grams: maxMetric(
-        metricToGrams(d.weight, d.weight_unit || d.unit),
-        metricToGrams(d.total_weight, d.weight_unit || d.unit),
-        metricToGrams(d.totalWeight, d.weight_unit || d.unit),
-        metricToGrams(d.weight_grams, "g")
-      ),
+      weight_grams: topLevelSafeWeight,
       time_seconds: maxMetric(
         parseLooseMetric(d.estimatedTime),
         parseLooseMetric(d.estimated_time),
         parseLooseMetric(d.time_seconds),
-        parseLooseMetric(d.printTime)
+        parseLooseMetric(d.printTime),
+        topLevelSummedPlateTime
       ),
-      plates: toPositiveNumber(d.plateCount || d.plate_count),
-      filaments: [],
+      plates: toPositiveNumber(d.plateCount || d.plate_count || topLevelPlates.length),
+      filaments: topLevelFilaments,
     });
   }
 
@@ -983,13 +1069,13 @@ function parseDesignToModel(d: any, selectedProfileId?: string | null) {
 }
 
 // ── Helper: extract model data from HTML page ──
-function extractFromHtml(html: string): any | null {
+function extractFromHtml(html: string, selectedProfileId?: string | null): any | null {
   const nextMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
   if (nextMatch) {
     try {
       const nextData = JSON.parse(nextMatch[1]);
       const design = nextData?.props?.pageProps?.design;
-      if (design) return parseDesignToModel(design);
+      if (design) return parseDesignToModel(design, selectedProfileId);
     } catch {}
   }
   
