@@ -553,6 +553,10 @@ Deno.serve(async (req) => {
                 waitFor: 8000,
               }),
             });
+            if (!fcJsonRes.ok) {
+              console.warn("Strategy 1.5: Firecrawl returned", fcJsonRes.status, await fcJsonRes.text().catch(() => ""));
+              throw new Error(`Firecrawl HTTP ${fcJsonRes.status}`);
+            }
             const fcJsonData = await fcJsonRes.json();
             const extracted = fcJsonData?.data?.json || fcJsonData?.json;
 
