@@ -128,10 +128,16 @@ export default function Impressoras() {
         description="Cadastro, monitoramento e gestão do parque de impressoras 3D."
         breadcrumbs={[{ label: "Produção", href: "/producao/jobs" }, { label: "Impressoras" }]}
         actions={
-          <Button onClick={() => setCreateOpen(true)} className="gap-2">
-            <Plus className="h-4 w-4" />
-            Nova Impressora
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => setBambuCloudOpen(true)} className="gap-2">
+              <CloudDownload className="h-4 w-4" />
+              Bambu Cloud
+            </Button>
+            <Button onClick={() => setCreateOpen(true)} className="gap-2">
+              <Plus className="h-4 w-4" />
+              Nova Impressora
+            </Button>
+          </div>
         }
       />
 
