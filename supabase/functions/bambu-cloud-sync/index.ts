@@ -549,10 +549,15 @@ Deno.serve(async (req) => {
                 formats: ["extract"],
                 extract: {
                   schema: jsonSchema,
-                  prompt: "Extract 3D model info: title, description, thumbnail image URL, and for each print profile extract name, number of plates, total weight in grams, total print time in minutes, and list of filaments with type (PLA/PETG/ABS etc), color name, and weight in grams. IMPORTANT: weight should be the PRINT weight, not the filament spool size. Ignore 1kg/250g spool sizes from the Bill of Materials section.",
+                  prompt: "Extract 3D model info: title, description, thumbnail image URL, and for each print profile extract name, number of plates, total weight in grams, total print time in minutes, and list of filaments with type (PLA/PETG/ABS etc), color name, and weight in grams. IMPORTANT: weight should be the PRINT weight (the amount of filament used to print), NOT the filament spool size (like 1kg spool). Ignore any weights from the 'Bill of Materials' or store/purchase section.",
                 },
+                actions: [
+                  { type: "wait", milliseconds: 3000 },
+                  { type: "click", selector: "[class*='profile-item'], [class*='ProfileItem'], [class*='instance-item'], [data-testid*='profile']" },
+                  { type: "wait", milliseconds: 2000 },
+                ],
                 onlyMainContent: false,
-                waitFor: 8000,
+                waitFor: 5000,
               }),
             });
             if (!fcJsonRes.ok) {
