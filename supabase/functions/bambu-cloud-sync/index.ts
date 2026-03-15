@@ -448,13 +448,14 @@ Deno.serve(async (req) => {
       let strategyUsed: "api_internal" | "firecrawl" | "direct_html" | null = null;
       const modelMatch = url.match(/\/models\/(\d+)/);
       const hashProfileId = url.match(/profileId-(\d+)/i)?.[1] || null;
-      const selectedProfileId = selected_profile_id || hashProfileId;
+      const queryProfileId = url.match(/[?&]profileId=(\d+)/i)?.[1] || null;
+      const selectedProfileId = selected_profile_id || hashProfileId || queryProfileId;
 
       const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
 
       if (modelMatch) {
         const modelId = modelMatch[1];
-        const hashSuffix = hashProfileId ? `#profileId-${hashProfileId}` : "";
+        const hashSuffix = selectedProfileId ? `#profileId-${selectedProfileId}` : "";
 
         // Strategy 1: Try MakerWorld internal API (fast, no JS needed)
         try {
@@ -471,17 +472,8 @@ Deno.serve(async (req) => {
               const design = data?.design || data;
               if (design?.id || design?.title) {
                 const parsed = parseDesignToModel(design, selectedProfileId);
-                const hasMatchedProfile = !selectedProfileId || parsed.profiles.some((p: any) => String(p?.profile_id || "") === String(selectedProfileId));
-                const hasAnyProfileId = parsed.profiles.some((p: any) => !!p?.profile_id);
-                const hasFilamentEvidence = parsed.profiles.some((p: any) => Array.isArray(p?.filaments) && p.filaments.some((f: any) => toPositiveNumber(f?.grams) > 0));
-                const lowConfidence = !hasMatchedProfile || (!hasAnyProfileId && !hasFilamentEvidence && parsed.profiles.length <= 1);
-
-                if (lowConfidence && FIRECRAWL_API_KEY) {
-                  console.log("MakerWorld API result low-confidence; trying Firecrawl fallback");
-                } else {
-                  models.push(parsed);
-                  strategyUsed = "api_internal";
-                }
+                models.push(parsed);
+                strategyUsed = "api_internal";
               }
             } catch {
               console.warn("MakerWorld API JSON parse failed");
@@ -641,7 +633,28 @@ Deno.serve(async (req) => {
                   }
                 }
 
-                // Extract weight: try broad key set from rendered HTML, then markdown fallback
+                // Extract weight: first prefer material-tagged tokens (e.g. "163 g PETG" + "114 g PETG")
+                if (weightGrams === 0) {
+                  const plainHtml = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+                  const materialWeightTokens = [
+                    ...(`${plainHtml}\n${markdown}`).matchAll(
+                      /(\d+(?:[.,]\d+)?)\s*(kg|g|grams?)\s*(PLA|PETG|ABS|ASA|TPU|PC|PA|PVA)\b/gi
+                    ),
+                  ]
+                    .map((m) => metricToGrams(m[1], m[2]))
+                    .filter((n) => Number.isFinite(n) && n > 0.05 && n < 5000);
+
+                  if (materialWeightTokens.length >= 2) {
+                    const dedup = Array.from(new Set(materialWeightTokens.map((n) => Math.round(n * 10) / 10)));
+                    const materialWeightSum = dedup.reduce((sum, n) => sum + n, 0);
+                    if (materialWeightSum > 0) {
+                      console.log("MakerWorld material weight sum:", dedup.join("+"), "=", materialWeightSum);
+                      weightGrams = materialWeightSum;
+                    }
+                  }
+                }
+
+                // Fallback: broad key extraction from rendered HTML/markdown
                 if (weightGrams === 0) {
                   const htmlWeightValues = collectMetricValues(html, [
                     "totalWeight",
@@ -909,7 +922,18 @@ function profileDisplayName(profile: any, idx: number): string {
 }
 
 function parseDesignToModel(d: any, selectedProfileId?: string | null) {
-  const sourceProfiles = d.profileList || d.profiles || [];
+  let sourceProfiles = d.profileList || d.profiles || [];
+
+  if (selectedProfileId && Array.isArray(sourceProfiles) && sourceProfiles.length > 1) {
+    const targetId = String(selectedProfileId);
+    const selectedIdx = sourceProfiles.findIndex((p: any) =>
+      String(p?.profile_id || p?.profileId || p?.id || p?.profile_id_str || "") === targetId
+    );
+    if (selectedIdx > 0) {
+      const selected = sourceProfiles[selectedIdx];
+      sourceProfiles = [selected, ...sourceProfiles.slice(0, selectedIdx), ...sourceProfiles.slice(selectedIdx + 1)];
+    }
+  }
 
   const profiles = sourceProfiles.map((p: any, idx: number) => {
     const ctx = p.context || {};
@@ -973,16 +997,20 @@ function parseDesignToModel(d: any, selectedProfileId?: string | null) {
       parseLooseMetric(p.printTime)
     );
 
-    // Prefer computed weight (sum of plates/filaments) over declared when declared is inflated
-    const computedWeight = maxMetric(summedPlateWeight, filamentWeightSum);
-    const declaredIsCrazy = computedWeight > 0 && declaredWeight > computedWeight * 1.25;
-    const safeWeightGrams = declaredIsCrazy ? computedWeight : maxMetric(declaredWeight, computedWeight);
+    const safeWeightGrams =
+      filamentWeightSum > 0
+        ? filamentWeightSum
+        : summedPlateWeight > 0
+          ? summedPlateWeight
+          : declaredWeight;
+
+    const safeTimeSeconds = summedPlateTime > 0 ? summedPlateTime : declaredTime;
 
     return {
       profile_id: p.profile_id || p.profileId || p.id || p.profile_id_str || null,
       name: profileDisplayName(p, idx),
       weight_grams: safeWeightGrams,
-      time_seconds: maxMetric(declaredTime, summedPlateTime),
+      time_seconds: safeTimeSeconds,
       plates: plates.length || toPositiveNumber(p.plateCount || p.plate_count),
       filaments,
     };
@@ -1024,23 +1052,26 @@ function parseDesignToModel(d: any, selectedProfileId?: string | null) {
       metricToGrams(d.weight_grams, "g")
     );
 
-    const topLevelComputedWeight = maxMetric(topLevelSummedPlateWeight, topLevelFilamentWeight);
-    const topLevelDeclaredTooHigh = topLevelComputedWeight > 0 && topLevelDeclaredWeight > topLevelComputedWeight * 1.25;
-    const topLevelSafeWeight = topLevelDeclaredTooHigh
-      ? topLevelComputedWeight
-      : maxMetric(topLevelDeclaredWeight, topLevelComputedWeight);
+    const topLevelSafeWeight =
+      topLevelFilamentWeight > 0
+        ? topLevelFilamentWeight
+        : topLevelSummedPlateWeight > 0
+          ? topLevelSummedPlateWeight
+          : topLevelDeclaredWeight;
+
+    const topLevelDeclaredTime = maxMetric(
+      parseLooseMetric(d.estimatedTime),
+      parseLooseMetric(d.estimated_time),
+      parseLooseMetric(d.time_seconds),
+      parseLooseMetric(d.printTime)
+    );
+    const topLevelSafeTime = topLevelSummedPlateTime > 0 ? topLevelSummedPlateTime : topLevelDeclaredTime;
 
     profiles.push({
       profile_id: selectedProfileId || d.profile_id || d.profileId || null,
       name: "Opção 1",
       weight_grams: topLevelSafeWeight,
-      time_seconds: maxMetric(
-        parseLooseMetric(d.estimatedTime),
-        parseLooseMetric(d.estimated_time),
-        parseLooseMetric(d.time_seconds),
-        parseLooseMetric(d.printTime),
-        topLevelSummedPlateTime
-      ),
+      time_seconds: topLevelSafeTime,
       plates: toPositiveNumber(d.plateCount || d.plate_count || topLevelPlates.length),
       filaments: topLevelFilaments,
     });
