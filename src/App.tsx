@@ -9,6 +9,7 @@ import Dashboard from "./pages/Dashboard";
 import ModulePlaceholder from "./pages/ModulePlaceholder";
 import ContasPagar from "./pages/financeiro/ContasPagar";
 import Impressoras from "./pages/producao/Impressoras";
+import Jobs from "./pages/producao/Jobs";
 import Login from "./pages/auth/Login";
 import Signup from "./pages/auth/Signup";
 import SetupTenant from "./pages/onboarding/SetupTenant";
@@ -32,7 +33,7 @@ function AuthenticatedRoutes() {
         <Route path="/estoque/movimentacoes" element={<ModulePlaceholder />} />
         <Route path="/estoque/alertas" element={<ModulePlaceholder />} />
         {/* Produção */}
-        <Route path="/producao/jobs" element={<ModulePlaceholder />} />
+        <Route path="/producao/jobs" element={<Jobs />} />
         <Route path="/producao/impressoras" element={<Impressoras />} />
         <Route path="/producao/perdas" element={<ModulePlaceholder />} />
         {/* Planejamento */}
