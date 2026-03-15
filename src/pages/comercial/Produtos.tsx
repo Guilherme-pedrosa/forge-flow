@@ -1,10 +1,10 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageHeader } from "@/components/shared/PageHeader";
 import {
-  Plus, Search, MoreHorizontal, Package, Edit, Trash2, Loader2, Image, CloudDownload, FolderOpen, History, Globe, Link, Calculator,
+  Plus, Search, MoreHorizontal, Package, Edit, Trash2, Loader2, Image, CloudDownload, FolderOpen, History, Globe, Link, Calculator, Upload, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -43,6 +43,7 @@ export default function Produtos() {
   const { profile } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [search, setSearch] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
@@ -64,6 +65,8 @@ export default function Produtos() {
   const [costEstimate, setCostEstimate] = useState("");
   const [salePrice, setSalePrice] = useState("");
   const [photoUrl, setPhotoUrl] = useState("");
+  const [extraPhotos, setExtraPhotos] = useState<string[]>([]);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [notes, setNotes] = useState("");
   const [printerId, setPrinterId] = useState("");
 
