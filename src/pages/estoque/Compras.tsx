@@ -973,6 +973,25 @@ export default function Compras() {
             </div>
           )}
 
+            {nfeData && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="mb-2 block">Parcelas</Label>
+                  <Select value={nfeInstallments} onValueChange={setNfeInstallments}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {[1,2,3,4,5,6,7,8,9,10,11,12].map(n => <SelectItem key={n} value={String(n)}>{n}x</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="mb-2 block">Vencimento 1ª parcela</Label>
+                  <Input type="date" value={nfeDueDate} onChange={(e) => setNfeDueDate(e.target.value)} />
+                </div>
+                <p className="text-xs text-muted-foreground col-span-2">Demais parcelas: +30 dias cada</p>
+              </div>
+            )}
+
           <DialogFooter>
             {nfeData && (
               <>
