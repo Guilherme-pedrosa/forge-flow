@@ -438,10 +438,6 @@ export default function Produtos() {
       noteParts.push(`Plates: ${plates} (produto único; total já considera múltiplos pratos)`);
     }
 
-    if (resolvedWeight === 0) {
-      noteParts.push("⚠ Gramatura não disponível. Preencha manualmente.");
-    }
-
     setNotes(noteParts.join("\n"));
     setDescription(model.description || "");
     setMakerOptionOpen(false);
@@ -451,10 +447,10 @@ export default function Produtos() {
     toast({
       title: "Dados importados do MakerWorld",
       description: selectedProfile?.name
-        ? `${selectedProfile.name} · ${resolvedWeight > 0 ? `${resolvedWeight.toFixed(1).replace(/\.0$/, "")}g` : "gramatura indisponível"}`
+        ? `${selectedProfile.name} · preencha peso/tempo manualmente`
         : plates > 0
           ? `${plates} placas`
-          : undefined,
+          : "Preencha peso/tempo manualmente",
     });
   };
 
