@@ -466,27 +466,131 @@ Deno.serve(async (req) => {
             },
           });
           const apiText = await apiRes.text();
-          if (apiRes.ok && apiText.trim()) {
+          if (apiRes.ok && apiText.trim() && apiText.trim() !== "{}") {
             try {
               const data = JSON.parse(apiText);
               const design = data?.design || data;
-              if (design?.id || design?.title) {
+              // Validate we actually got meaningful data (not empty object)
+              const hasContent = design?.id || design?.title || design?.profileList?.length > 0 || design?.profiles?.length > 0;
+              if (hasContent) {
                 const parsed = parseDesignToModel(design, selectedProfileId);
-                models.push(parsed);
-                strategyUsed = "api_internal";
+                // Verify the parsed result has meaningful data (weight or time > 0)
+                const firstProfile = parsed.profiles?.[0];
+                const hasWeight = firstProfile?.weight_grams > 0;
+                const hasTime = firstProfile?.time_seconds > 0;
+                if (hasWeight || hasTime) {
+                  models.push(parsed);
+                  strategyUsed = "api_internal";
+                  console.log(`Strategy 1 OK: weight=${firstProfile?.weight_grams}g, time=${firstProfile?.time_seconds}s`);
+                } else {
+                  console.warn("Strategy 1 returned 0 weight and 0 time, falling through to Strategy 2");
+                }
+              } else {
+                console.warn("Strategy 1 returned empty/minimal data:", apiText.slice(0, 200));
               }
             } catch {
               console.warn("MakerWorld API JSON parse failed");
             }
+          } else {
+            console.warn("Strategy 1 returned empty response, status:", apiRes.status);
           }
         } catch (e) {
           console.warn("MakerWorld API call failed:", e);
         }
 
-        // Strategy 2: Use Firecrawl to render JS and extract data
+        // Strategy 1.5: Use Firecrawl JSON extraction (structured, most reliable)
         if (models.length === 0 && FIRECRAWL_API_KEY) {
           try {
-            console.log("Using Firecrawl to scrape MakerWorld model:", modelId);
+            console.log("Strategy 1.5: Firecrawl JSON extraction for model:", modelId);
+            const jsonSchema = {
+              type: "object",
+              properties: {
+                title: { type: "string" },
+                description: { type: "string" },
+                thumbnail: { type: "string" },
+                profiles: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      name: { type: "string" },
+                      plates: { type: "number" },
+                      weight_grams: { type: "number" },
+                      time_minutes: { type: "number" },
+                      filaments: {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          properties: {
+                            type: { type: "string" },
+                            color: { type: "string" },
+                            grams: { type: "number" },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            };
+
+            const fcJsonRes = await fetch("https://api.firecrawl.dev/v1/scrape", {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${FIRECRAWL_API_KEY}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                url: `https://makerworld.com/en/models/${modelId}${hashSuffix}`,
+                formats: [
+                  { type: "json", schema: jsonSchema, prompt: "Extract 3D model info: title, description, thumbnail image URL, and for each print profile extract name, number of plates, total weight in grams, total print time in minutes, and list of filaments with type (PLA/PETG/ABS etc), color name, and weight in grams." },
+                ],
+                waitFor: 5000,
+              }),
+            });
+            const fcJsonData = await fcJsonRes.json();
+            const extracted = fcJsonData?.data?.json || fcJsonData?.json;
+
+            if (extracted?.title && (extracted?.profiles?.length > 0)) {
+              const hasData = extracted.profiles.some((p: any) => p.weight_grams > 0 || p.time_minutes > 0);
+              if (hasData) {
+                // Get thumbnail from og:image if not in JSON
+                const ogImage = (fcJsonData?.data?.metadata?.ogImage) || extracted.thumbnail || null;
+
+                const profiles = extracted.profiles.map((p: any, idx: number) => ({
+                  name: p.name || `Opção ${idx + 1}`,
+                  weight_grams: toPositiveNumber(p.weight_grams),
+                  time_seconds: toPositiveNumber(p.time_minutes) * 60,
+                  plates: toPositiveNumber(p.plates),
+                  filaments: (p.filaments || []).map((f: any) => ({
+                    type: (f.type || "PLA").toUpperCase(),
+                    color: f.color || "",
+                    grams: toPositiveNumber(f.grams),
+                  })),
+                }));
+
+                models.push({
+                  id: modelId,
+                  title: extracted.title,
+                  thumbnail: ogImage,
+                  description: extracted.description || "",
+                  gallery: [],
+                  plates: profiles[0]?.plates || 0,
+                  profiles,
+                });
+                strategyUsed = "firecrawl_json";
+                console.log(`Strategy 1.5 OK: ${profiles.length} profiles, weight=${profiles[0]?.weight_grams}g, time=${profiles[0]?.time_seconds}s`);
+              }
+            }
+          } catch (e) {
+            console.warn("Strategy 1.5 (Firecrawl JSON) failed:", e);
+          }
+        }
+
+        // Strategy 2: Use Firecrawl HTML/markdown parsing (fallback)
+        if (models.length === 0 && FIRECRAWL_API_KEY) {
+          try {
+            console.log("Strategy 2: Firecrawl HTML/markdown for model:", modelId);
             const firecrawlRes = await fetch("https://api.firecrawl.dev/v1/scrape", {
               method: "POST",
               headers: {
