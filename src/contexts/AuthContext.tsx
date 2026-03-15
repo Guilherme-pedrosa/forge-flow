@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, useRef, ReactNode } from "react";
 import { Session, User } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate, useLocation } from "react-router-dom";
@@ -38,6 +38,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
   const location = useLocation();
+  const locationRef = useRef(location.pathname);
+
+  // Keep ref always up-to-date so the onAuthStateChange closure never goes stale
+  useEffect(() => {
+    locationRef.current = location.pathname;
+  }, [location.pathname]);
 
   const fetchProfile = async (userId: string): Promise<Profile | null> => {
     const { data, error } = await supabase
@@ -65,7 +71,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!newSession) {
           setProfile(null);
           setLoading(false);
-          if (!PUBLIC_ROUTES.includes(location.pathname)) {
+          if (!PUBLIC_ROUTES.includes(locationRef.current)) {
             navigate("/login");
           }
           return;
@@ -77,9 +83,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setProfile(p);
           setLoading(false);
 
-          if (!p && location.pathname !== "/setup") {
+          if (!p && locationRef.current !== "/setup") {
             navigate("/setup");
-          } else if (p && PUBLIC_ROUTES.includes(location.pathname)) {
+          } else if (p && PUBLIC_ROUTES.includes(locationRef.current)) {
             navigate("/");
           }
         }, 0);
@@ -90,7 +96,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     supabase.auth.getSession().then(({ data: { session: s } }) => {
       if (!s) {
         setLoading(false);
-        if (!PUBLIC_ROUTES.includes(location.pathname)) {
+        if (!PUBLIC_ROUTES.includes(locationRef.current)) {
           navigate("/login");
         }
       }
