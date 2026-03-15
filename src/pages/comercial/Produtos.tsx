@@ -73,6 +73,15 @@ export default function Produtos() {
   const [numColors, setNumColors] = useState("1");
   const [printsPerPlate, setPrintsPerPlate] = useState("1");
 
+  // Marketplace fee config
+  const [channelConfig, setChannelConfig] = useState([
+    { key: "shopee", name: "Shopee", fee: 20, freeShipping: false, freeShippingExtra: 6, enabled: true },
+    { key: "ml", name: "Mercado Livre", fee: 16, freeShipping: true, freeShippingExtra: 5, enabled: true },
+    { key: "tiktok", name: "TikTok Shop", fee: 8, freeShipping: false, freeShippingExtra: 0, enabled: true },
+    { key: "particular", name: "Particular", fee: 0, freeShipping: false, freeShippingExtra: 0, enabled: true },
+  ]);
+  const [showChannelConfig, setShowChannelConfig] = useState(false);
+
   const { data: products = [], isLoading } = useQuery({
     queryKey: ["products"],
     queryFn: async () => {
