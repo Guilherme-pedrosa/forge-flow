@@ -8,6 +8,7 @@ import {
   Plus, Search, MoreHorizontal, Printer, WifiOff,
   AlertTriangle, Wrench, Pause, Play, Eye, Edit, Trash2,
   Power, Zap, Activity, Clock, Download, Loader2, Settings2,
+  CloudDownload, Mail, KeyRound, RefreshCw, CheckCircle2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -63,6 +64,7 @@ export default function Impressoras() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [detailPrinter, setDetailPrinter] = useState<PrinterRow | null>(null);
+  const [bambuCloudOpen, setBambuCloudOpen] = useState(false);
 
   // ── Fetch printers ──
   const { data: printers = [], isLoading } = useQuery({
@@ -126,10 +128,16 @@ export default function Impressoras() {
         description="Cadastro, monitoramento e gestão do parque de impressoras 3D."
         breadcrumbs={[{ label: "Produção", href: "/producao/jobs" }, { label: "Impressoras" }]}
         actions={
-          <Button onClick={() => setCreateOpen(true)} className="gap-2">
-            <Plus className="h-4 w-4" />
-            Nova Impressora
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={() => setBambuCloudOpen(true)} className="gap-2">
+              <CloudDownload className="h-4 w-4" />
+              Bambu Cloud
+            </Button>
+            <Button onClick={() => setCreateOpen(true)} className="gap-2">
+              <Plus className="h-4 w-4" />
+              Nova Impressora
+            </Button>
+          </div>
         }
       />
 
@@ -279,6 +287,7 @@ export default function Impressoras() {
 
       <CreatePrinterDialog open={createOpen} onOpenChange={setCreateOpen} />
       <PrinterDetailDialog printer={detailPrinter} onClose={() => setDetailPrinter(null)} />
+      <BambuCloudDialog open={bambuCloudOpen} onOpenChange={setBambuCloudOpen} />
     </div>
   );
 }
@@ -436,6 +445,233 @@ function PrinterDetailDialog({ printer, onClose }: { printer: PrinterRow | null;
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>Fechar</Button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Bambu Cloud Dialog ──
+type BambuStep = "login" | "verify_code" | "syncing" | "done";
+
+function BambuCloudDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const [step, setStep] = useState<BambuStep>("login");
+  const [loading, setLoading] = useState(false);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [code, setCode] = useState("");
+  const [resultMessage, setResultMessage] = useState("");
+  const [syncedDevices, setSyncedDevices] = useState<Array<{ dev_id: string; name: string; model: string; online: boolean }>>([]);
+
+  const reset = () => {
+    setStep("login");
+    setEmail("");
+    setPassword("");
+    setCode("");
+    setResultMessage("");
+    setSyncedDevices([]);
+  };
+
+  const callEdgeFunction = async (body: Record<string, string>) => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) throw new Error("Not authenticated");
+
+    const res = await fetch(
+      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/bambu-cloud-sync`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+          apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+        },
+        body: JSON.stringify(body),
+      }
+    );
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Request failed");
+    return data;
+  };
+
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const data = await callEdgeFunction({ action: "login", email, password });
+
+      if (data.step === "verify_code") {
+        setStep("verify_code");
+        toast({ title: "Código enviado", description: "Verifique seu e-mail Bambu Lab." });
+      } else if (data.step === "done") {
+        setStep("done");
+        setResultMessage(data.message);
+        setSyncedDevices(data.devices || []);
+        queryClient.invalidateQueries({ queryKey: ["printers"] });
+        toast({ title: "Conectado!", description: data.message });
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Erro desconhecido";
+      toast({ variant: "destructive", title: "Erro no login", description: msg });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerifyCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      const data = await callEdgeFunction({ action: "verify_code", email, code });
+      setStep("done");
+      setResultMessage(data.message);
+      setSyncedDevices(data.devices || []);
+      queryClient.invalidateQueries({ queryKey: ["printers"] });
+      toast({ title: "Conectado!", description: data.message });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Código inválido";
+      toast({ variant: "destructive", title: "Erro na verificação", description: msg });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSync = async () => {
+    setLoading(true);
+    try {
+      const data = await callEdgeFunction({ action: "sync" });
+      setStep("done");
+      setResultMessage(data.message);
+      setSyncedDevices(data.devices || []);
+      queryClient.invalidateQueries({ queryKey: ["printers"] });
+      toast({ title: "Sincronizado!", description: data.message });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Erro na sincronização";
+      toast({ variant: "destructive", title: "Erro", description: msg });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) reset(); }}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <CloudDownload className="h-5 w-5" />
+            Bambu Cloud Sync
+          </DialogTitle>
+          <DialogDescription>
+            Conecte sua conta Bambu Lab para importar automaticamente todas as impressoras registradas.
+          </DialogDescription>
+        </DialogHeader>
+
+        {step === "login" && (
+          <form onSubmit={handleLogin} className="grid gap-4 py-4">
+            <div className="space-y-2">
+              <Label className="flex items-center gap-2">
+                <Mail className="h-4 w-4" />
+                E-mail da conta Bambu Lab
+              </Label>
+              <Input
+                type="email"
+                placeholder="seu@email.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="flex items-center gap-2">
+                <KeyRound className="h-4 w-4" />
+                Senha
+              </Label>
+              <Input
+                type="password"
+                placeholder="••••••••"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Suas credenciais são enviadas diretamente para a API da Bambu Lab. O token de acesso é armazenado para sincronizações futuras.
+            </p>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
+              <Button type="submit" disabled={loading}>
+                {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Conectar
+              </Button>
+            </DialogFooter>
+          </form>
+        )}
+
+        {step === "verify_code" && (
+          <form onSubmit={handleVerifyCode} className="grid gap-4 py-4">
+            <div className="rounded-lg border border-border bg-muted/50 p-3">
+              <p className="text-sm text-muted-foreground">
+                A Bambu Lab enviou um código de verificação para <strong className="text-foreground">{email}</strong>. Verifique seu e-mail e insira o código abaixo.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label>Código de Verificação</Label>
+              <Input
+                placeholder="123456"
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                required
+                className="text-center text-lg tracking-widest font-mono"
+              />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setStep("login")}>Voltar</Button>
+              <Button type="submit" disabled={loading}>
+                {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Verificar
+              </Button>
+            </DialogFooter>
+          </form>
+        )}
+
+        {step === "done" && (
+          <div className="grid gap-4 py-4">
+            <div className="flex items-center gap-3 rounded-lg border border-border bg-muted/50 p-4">
+              <CheckCircle2 className="h-6 w-6 text-primary flex-shrink-0" />
+              <div>
+                <p className="font-semibold text-foreground">{resultMessage}</p>
+                <p className="text-xs text-muted-foreground mt-1">Impressoras importadas para o cadastro.</p>
+              </div>
+            </div>
+
+            {syncedDevices.length > 0 && (
+              <div className="space-y-2">
+                <Label className="text-xs uppercase tracking-wide text-muted-foreground">Dispositivos encontrados</Label>
+                <div className="space-y-1.5">
+                  {syncedDevices.map((d) => (
+                    <div key={d.dev_id} className="flex items-center justify-between rounded-md border border-border px-3 py-2 text-sm">
+                      <div className="flex items-center gap-2">
+                        <div className={cn("h-2 w-2 rounded-full", d.online ? "bg-primary" : "bg-muted-foreground/30")} />
+                        <span className="font-medium">{d.name}</span>
+                      </div>
+                      <span className="text-muted-foreground text-xs">{d.model}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => handleSync()} disabled={loading} className="gap-2">
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                Re-sincronizar
+              </Button>
+              <Button onClick={() => { onOpenChange(false); reset(); }}>Fechar</Button>
+            </DialogFooter>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );
