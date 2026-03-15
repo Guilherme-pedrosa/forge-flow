@@ -370,6 +370,7 @@ export default function Jobs() {
         onOpenChange={setCreateOpen}
         printers={printers}
         materials={materials}
+        products={products}
       />
       {detailJob && (
         <JobDetailDialog
