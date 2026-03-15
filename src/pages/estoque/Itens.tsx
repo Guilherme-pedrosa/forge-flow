@@ -140,7 +140,8 @@ export default function Itens() {
         current_stock: currentStock ? parseFloat(currentStock) : 0,
         loss_coefficient: parseFloat(lossCoefficient) || 0.05,
         notes: notes || null,
-      });
+        freight_cost: freightCost ? parseFloat(freightCost) : 0,
+      } as any);
       if (error) throw error;
     },
     onSuccess: () => {
