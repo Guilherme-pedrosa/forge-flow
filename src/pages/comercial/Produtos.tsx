@@ -455,16 +455,14 @@ export default function Produtos() {
 
     const noteParts: string[] = [
       `Importado do MakerWorld — ID: ${model.id}`,
-      selectedProfile?.name ? `Opção selecionada: ${selectedProfile.name}` : "",
+      selectedProfile?.name ? `Profile: ${selectedProfile.name}` : "",
     ].filter(Boolean);
 
     if (resolvedWeight > 0) {
-      // Backend já retorna o total do profile (somado das plates)
       setEstGrams(resolvedWeight.toFixed(1).replace(/\.0$/, ""));
     }
 
     if (resolvedTimeSeconds > 0) {
-      // Backend já retorna o total do profile (somado das plates)
       const minutes = Math.round(resolvedTimeSeconds / 60);
       setEstTime(minutes.toString());
     }
@@ -472,17 +470,21 @@ export default function Produtos() {
     if (selectedProfile?.filaments?.length > 0) {
       setNumColors(String(selectedProfile.filaments.length));
       const filInfo = selectedProfile.filaments
-        .map((f: any) => `${f.color || "?"} (${f.type})`)
+        .map((f: any) => `${f.color || "?"} (${f.type}) ${toNumber(f.grams).toFixed(0)}g`)
         .join(", ");
-      noteParts.push(`Cores: ${selectedProfile.filaments.length} — ${filInfo}`);
+      noteParts.push(`Filamentos: ${filInfo}`);
+    }
+
+    if (dominantFilamentType) {
+      noteParts.push(`Material dominante: ${dominantFilamentType}${autoMatchedMaterial ? ` → ${autoMatchedMaterial.name}` : " (não encontrado no estoque)"}`);
     }
 
     if (plates > 1) {
-      noteParts.push(`${plates} pratos no profile (gramatura/tempo considerados no total do profile)`);
+      noteParts.push(`Plates: ${plates} (produto único; total já considera múltiplos pratos)`);
     }
 
     if (resolvedWeight === 0) {
-      noteParts.push("⚠ Gramatura não disponível automaticamente neste modelo. Preencha manualmente se necessário.");
+      noteParts.push("⚠ Gramatura não disponível. Preencha manualmente.");
     }
 
     setNotes(noteParts.join("\n"));
