@@ -546,9 +546,11 @@ Deno.serve(async (req) => {
               },
               body: JSON.stringify({
                 url: `https://makerworld.com/en/models/${modelId}${hashSuffix}`,
-                formats: [
-                  { type: "json", schema: jsonSchema, prompt: "Extract 3D model info: title, description, thumbnail image URL, and for each print profile extract name, number of plates, total weight in grams, total print time in minutes, and list of filaments with type (PLA/PETG/ABS etc), color name, and weight in grams." },
-                ],
+                formats: ["extract"],
+                extract: {
+                  schema: jsonSchema,
+                  prompt: "Extract 3D model info: title, description, thumbnail image URL, and for each print profile extract name, number of plates, total weight in grams, total print time in minutes, and list of filaments with type (PLA/PETG/ABS etc), color name, and weight in grams. IMPORTANT: weight should be the PRINT weight, not the filament spool size. Ignore 1kg/250g spool sizes from the Bill of Materials section.",
+                },
                 onlyMainContent: false,
                 waitFor: 8000,
               }),
@@ -558,7 +560,7 @@ Deno.serve(async (req) => {
               throw new Error(`Firecrawl HTTP ${fcJsonRes.status}`);
             }
             const fcJsonData = await fcJsonRes.json();
-            const extracted = fcJsonData?.data?.json || fcJsonData?.json;
+            const extracted = fcJsonData?.data?.extract || fcJsonData?.data?.json || fcJsonData?.extract || fcJsonData?.json;
 
             if (extracted?.title && (extracted?.profiles?.length > 0)) {
               const hasData = extracted.profiles.some((p: any) => p.weight_grams > 0 || p.time_minutes > 0);
@@ -675,6 +677,11 @@ Deno.serve(async (req) => {
                 };
 
                 const extractWeightFromBlock = (text: string) => {
+                  // Skip blocks that are clearly BOM/store sections (spool sizes, not print weight)
+                  if (/bill of materials|refill|spool|add to cart|buy now/i.test(text)) {
+                    return 0;
+                  }
+
                   const totalLabelMatch = text.match(/total[^\n]{0,24}?(\d+(?:[.,]\d+)?)\s*(kg|g|grams?)/i);
                   if (totalLabelMatch) {
                     return metricToGrams(totalLabelMatch[1], totalLabelMatch[2]);
@@ -751,10 +758,12 @@ Deno.serve(async (req) => {
                   }
                 }
 
-                const profileMarkdownSlice = markdown.split(/### Description/i)[0] || markdown;
+                const profileMarkdownSlice = markdown.split(/### (?:Description|Bill of Materials)/i)[0] || markdown;
                 const profileStartIdx = html.toLowerCase().indexOf("print profile");
+                const bomHtmlIdx = html.toLowerCase().indexOf("bill of materials");
+                const profileEndIdx = bomHtmlIdx >= 0 ? bomHtmlIdx : (profileStartIdx >= 0 ? profileStartIdx + 20000 : html.length);
                 const profileHtmlSlice =
-                  profileStartIdx >= 0 ? html.slice(profileStartIdx, profileStartIdx + 20000) : html;
+                  profileStartIdx >= 0 ? html.slice(profileStartIdx, Math.min(profileEndIdx, profileStartIdx + 20000)) : "";
 
                 // Extract weight: first prefer material-tagged tokens (e.g. "163 g PETG" + "114 g PETG")
                 if (weightGrams === 0) {
