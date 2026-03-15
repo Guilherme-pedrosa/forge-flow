@@ -38,6 +38,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
   const location = useLocation();
+  const locationRef = useRef(location.pathname);
+
+  // Keep ref always up-to-date so the onAuthStateChange closure never goes stale
+  useEffect(() => {
+    locationRef.current = location.pathname;
+  }, [location.pathname]);
 
   const fetchProfile = async (userId: string): Promise<Profile | null> => {
     const { data, error } = await supabase
