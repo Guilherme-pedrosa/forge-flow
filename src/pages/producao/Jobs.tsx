@@ -871,6 +871,9 @@ function JobDetailDialog({
               <InfoRow icon={AlertTriangle} label="Prioridade" value={priorityLabel(job.priority)} />
               <InfoRow icon={Timer} label="Tempo estimado" value={fmtMinutes(job.est_time_minutes)} />
               <InfoRow icon={Weight} label="Gramas est." value={fmtGrams(job.est_grams)} />
+              {job.order_id && (
+                <InfoRow icon={FileText} label="Pedido" value={(job as any).orders?.code || "Vinculado"} />
+              )}
             </div>
 
             {available.length > 0 && (
