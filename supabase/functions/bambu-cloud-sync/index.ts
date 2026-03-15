@@ -745,6 +745,52 @@ function maxMetric(...values: number[]): number {
   return values.reduce((acc, v) => (v > acc ? v : acc), 0);
 }
 
+function parseLooseMetric(value: unknown): number {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  if (typeof value !== "string") return 0;
+  const cleaned = value.replace(/\s+/g, " ").trim();
+  const m = cleaned.match(/(\d+(?:[.,]\d+)?)/);
+  if (!m) return 0;
+  const n = Number(m[1].replace(",", "."));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function metricToGrams(value: unknown, explicitUnit?: string | null): number {
+  const n = parseLooseMetric(value);
+  if (n <= 0) return 0;
+  const unit = (explicitUnit || (typeof value === "string" ? (value.match(/\b(kg|kilograms?)\b/i)?.[1] || value.match(/\b(g|grams?)\b/i)?.[1]) : "") || "").toLowerCase();
+  if (unit.startsWith("kg") || unit.startsWith("kilo")) return n * 1000;
+  return n;
+}
+
+function collectMetricValues(source: string, keys: string[]): number[] {
+  const values: number[] = [];
+
+  for (const key of keys) {
+    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    const structuredRegex = new RegExp(
+      `["']?${escaped}["']?\\s*[:=]\\s*["']?([0-9]+(?:[.,][0-9]+)?)(?:\\s*(kg|kgs|kilograms?|g|grams?))?["']?`,
+      "gi"
+    );
+
+    const looseRegex = new RegExp(
+      `${escaped}[^0-9]{0,16}([0-9]+(?:[.,][0-9]+)?)(?:\\s*(kg|kgs|kilograms?|g|grams?))`,
+      "gi"
+    );
+
+    for (const regex of [structuredRegex, looseRegex]) {
+      let m: RegExpExecArray | null;
+      while ((m = regex.exec(source)) !== null) {
+        const grams = metricToGrams(m[1], m[2]);
+        if (grams > 0) values.push(grams);
+      }
+    }
+  }
+
+  return values;
+}
+
 function profileDisplayName(profile: any, idx: number): string {
   return profile?.name || profile?.profileName || profile?.title || `Opção ${idx + 1}`;
 }
