@@ -47,6 +47,7 @@ function AuthenticatedRoutes() {
         <Route path="/estoque/itens" element={<Itens />} />
         <Route path="/estoque/movimentacoes" element={<Movimentacoes />} />
         <Route path="/estoque/alertas" element={<Alertas />} />
+        <Route path="/estoque/compras" element={<Compras />} />
         {/* Produção */}
         <Route path="/producao/jobs" element={<Jobs />} />
         <Route path="/producao/impressoras" element={<Impressoras />} />
