@@ -1000,13 +1000,13 @@ function parseDesignToModel(d: any, selectedProfileId?: string | null) {
 }
 
 // ── Helper: extract model data from HTML page ──
-function extractFromHtml(html: string): any | null {
+function extractFromHtml(html: string, selectedProfileId?: string | null): any | null {
   const nextMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
   if (nextMatch) {
     try {
       const nextData = JSON.parse(nextMatch[1]);
       const design = nextData?.props?.pageProps?.design;
-      if (design) return parseDesignToModel(design);
+      if (design) return parseDesignToModel(design, selectedProfileId);
     } catch {}
   }
   
