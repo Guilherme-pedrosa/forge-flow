@@ -756,7 +756,7 @@ Deno.serve(async (req) => {
                   }
                 }
 
-                const profileMarkdownSlice = markdown.split(/### Description/i)[0] || markdown;
+                const profileMarkdownSlice = markdown.split(/### (?:Description|Bill of Materials)/i)[0] || markdown;
                 const profileStartIdx = html.toLowerCase().indexOf("print profile");
                 const profileHtmlSlice =
                   profileStartIdx >= 0 ? html.slice(profileStartIdx, profileStartIdx + 20000) : html;
