@@ -149,8 +149,8 @@ export default function Compras() {
   const [paymentMethodId, setPaymentMethodId] = useState("");
   const [installments, setInstallments] = useState("1");
   const [dueDate, setDueDate] = useState("");
-  const [manualItems, setManualItems] = useState<{ description: string; quantity: string; unitPrice: string }[]>([
-    { description: "", quantity: "1", unitPrice: "0" },
+  const [manualItems, setManualItems] = useState<{ description: string; quantity: string; unitPrice: string; inventoryItemId: string }[]>([
+    { description: "", quantity: "1", unitPrice: "0", inventoryItemId: "" },
   ]);
 
   // NFe form
