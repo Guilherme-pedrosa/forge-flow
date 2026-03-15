@@ -758,8 +758,10 @@ Deno.serve(async (req) => {
 
                 const profileMarkdownSlice = markdown.split(/### (?:Description|Bill of Materials)/i)[0] || markdown;
                 const profileStartIdx = html.toLowerCase().indexOf("print profile");
+                const bomHtmlIdx = html.toLowerCase().indexOf("bill of materials");
+                const profileEndIdx = bomHtmlIdx >= 0 ? bomHtmlIdx : (profileStartIdx >= 0 ? profileStartIdx + 20000 : html.length);
                 const profileHtmlSlice =
-                  profileStartIdx >= 0 ? html.slice(profileStartIdx, profileStartIdx + 20000) : html;
+                  profileStartIdx >= 0 ? html.slice(profileStartIdx, Math.min(profileEndIdx, profileStartIdx + 20000)) : "";
 
                 // Extract weight: first prefer material-tagged tokens (e.g. "163 g PETG" + "114 g PETG")
                 if (weightGrams === 0) {
