@@ -607,29 +607,81 @@ export default function Produtos() {
       {parseFloat(salePrice) > 0 && parseFloat(costEstimate) > 0 && (() => {
         const price = parseFloat(salePrice);
         const cost = parseFloat(costEstimate);
-        const channels = [
-          { name: "Shopee", fee: 0.20, fixed: 0, color: "text-orange-600" },
-          { name: "Mercado Livre", fee: 0.16, fixed: 0, color: "text-yellow-600" },
-          { name: "TikTok Shop", fee: 0.08, fixed: 0, color: "text-foreground" },
-          { name: "Particular", fee: 0, fixed: 0, color: "text-green-600" },
-        ];
+        const updateChannel = (idx: number, field: string, value: any) => {
+          setChannelConfig(prev => prev.map((ch, i) => i === idx ? { ...ch, [field]: value } : ch));
+        };
         return (
-          <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Simulação por Canal de Venda</p>
-            <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-3 gap-y-1 text-xs items-center">
+          <div className="rounded-lg border bg-muted/30 p-3 space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Simulação por Canal de Venda</p>
+              <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => setShowChannelConfig(!showChannelConfig)}>
+                <Settings2 className="h-3 w-3 mr-1" /> {showChannelConfig ? "Fechar" : "Taxas"}
+              </Button>
+            </div>
+
+            {showChannelConfig && (
+              <div className="rounded-md border bg-background p-3 space-y-2">
+                <p className="text-xs font-medium text-muted-foreground mb-1">Configurar Taxas por Canal</p>
+                {channelConfig.map((ch, idx) => (
+                  <div key={ch.key} className="grid grid-cols-[1fr_70px_auto_auto] gap-2 items-center text-xs">
+                    <span className="font-medium">{ch.name}</span>
+                    <div className="flex items-center gap-1">
+                      <Input
+                        type="number" step="0.1" min="0" max="100"
+                        className="h-7 text-xs w-16 text-right"
+                        value={ch.fee}
+                        onChange={(e) => updateChannel(idx, "fee", parseFloat(e.target.value) || 0)}
+                      />
+                      <span className="text-muted-foreground">%</span>
+                    </div>
+                    {ch.key !== "particular" && (
+                      <div className="flex items-center gap-1.5">
+                        <Switch
+                          checked={ch.freeShipping}
+                          onCheckedChange={(v) => updateChannel(idx, "freeShipping", v)}
+                          className="scale-75"
+                        />
+                        <span className="text-muted-foreground whitespace-nowrap">Frete grátis</span>
+                        {ch.freeShipping && (
+                          <div className="flex items-center gap-1">
+                            <span className="text-muted-foreground">+</span>
+                            <Input
+                              type="number" step="0.1" min="0" max="100"
+                              className="h-7 text-xs w-14 text-right"
+                              value={ch.freeShippingExtra}
+                              onChange={(e) => updateChannel(idx, "freeShippingExtra", parseFloat(e.target.value) || 0)}
+                            />
+                            <span className="text-muted-foreground">%</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {ch.key === "particular" && <span />}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-3 gap-y-1.5 text-xs items-center">
               <span className="font-medium text-muted-foreground">Canal</span>
               <span className="font-medium text-muted-foreground text-right">Taxa</span>
               <span className="font-medium text-muted-foreground text-right">Líquido</span>
               <span className="font-medium text-muted-foreground text-right">Lucro</span>
-              {channels.map(ch => {
-                const feeAmount = price * ch.fee + ch.fixed;
+              {channelConfig.filter(ch => ch.enabled).map(ch => {
+                const totalFee = ch.fee + (ch.freeShipping ? ch.freeShippingExtra : 0);
+                const feeAmount = price * (totalFee / 100);
                 const net = price - feeAmount;
                 const profit = net - cost;
                 const profitPct = cost > 0 ? ((profit / cost) * 100) : 0;
                 return (
-                  <div key={ch.name} className="contents">
-                    <span className={cn("font-medium", ch.color)}>{ch.name}</span>
-                    <span className="text-right font-mono">{ch.fee > 0 ? `${(ch.fee * 100).toFixed(0)}% = ${fmtCurrency(feeAmount)}` : "—"}</span>
+                  <div key={ch.key} className="contents">
+                    <span className="font-medium">
+                      {ch.name}
+                      {ch.freeShipping && <span className="text-[10px] text-muted-foreground ml-1">(c/ frete grátis)</span>}
+                    </span>
+                    <span className="text-right font-mono">
+                      {totalFee > 0 ? `${totalFee.toFixed(0)}% = ${fmtCurrency(feeAmount)}` : "—"}
+                    </span>
                     <span className="text-right font-mono">{fmtCurrency(net)}</span>
                     <span className={cn("text-right font-mono font-semibold", profit > 0 ? "text-green-600" : "text-destructive")}>
                       {fmtCurrency(profit)} <span className="text-muted-foreground font-normal">({profitPct.toFixed(0)}%)</span>
@@ -638,7 +690,6 @@ export default function Produtos() {
                 );
               })}
             </div>
-            <p className="text-[11px] text-muted-foreground">Taxas aproximadas. Shopee ~20%, ML ~16%, TikTok ~8%. Não inclui frete.</p>
           </div>
         );
       })()}
