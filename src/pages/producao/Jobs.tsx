@@ -170,6 +170,10 @@ export default function Jobs() {
   // ── Update status ──
   const statusMutation = useMutation({
     mutationFn: async ({ id, status }: { id: string; status: JobStatus }) => {
+      // Fetch current job data
+      const { data: job, error: fetchErr } = await supabase.from("jobs").select("*").eq("id", id).single();
+      if (fetchErr || !job) throw fetchErr || new Error("Job não encontrado");
+
       const updates: Record<string, unknown> = { status };
       if (status === "printing" || status === "reprint") {
         updates.started_at = new Date().toISOString();
@@ -177,11 +181,88 @@ export default function Jobs() {
       if (status === "completed" || status === "shipped") {
         updates.completed_at = new Date().toISOString();
       }
+
+      // ── Ao concluir: calcular custos reais + consumir estoque ──
+      if (status === "completed" && profile) {
+        const actualGrams = job.actual_grams || job.est_grams;
+        const actualMinutes = job.actual_time_minutes || job.est_time_minutes;
+
+        // Calculate actual costs
+        let actualMaterialCost = 0;
+        if (actualGrams && job.material_id) {
+          const mat = materials.find(m => m.id === job.material_id);
+          if (mat && mat.avg_cost > 0) {
+            const costPerGram = mat.unit === "kg" ? mat.avg_cost / 1000 : mat.avg_cost;
+            actualMaterialCost = actualGrams * (1 + (mat.loss_coefficient || 0.05)) * costPerGram;
+          }
+        }
+
+        let actualMachineCost = 0;
+        let actualEnergyCost = 0;
+        if (actualMinutes && job.printer_id) {
+          const printer = printers.find(p => p.id === job.printer_id);
+          if (printer) {
+            const hours = actualMinutes / 60;
+            actualMachineCost = hours * (printer.depreciation_per_hour ?? 0) + hours * (printer.maintenance_cost_per_hour ?? 0);
+            actualEnergyCost = ((printer.power_watts ?? 150) / 1000) * hours * 0.85;
+          }
+        }
+
+        const actualTotalCost = actualMaterialCost + actualMachineCost + actualEnergyCost;
+        updates.actual_material_cost = actualMaterialCost;
+        updates.actual_machine_cost = actualMachineCost;
+        updates.actual_energy_cost = actualEnergyCost;
+        updates.actual_total_cost = actualTotalCost;
+        if (!job.actual_grams) updates.actual_grams = actualGrams;
+        if (!job.actual_time_minutes) updates.actual_time_minutes = actualMinutes;
+
+        // Calculate margin
+        if (job.sale_price && job.sale_price > 0) {
+          updates.margin_percent = ((job.sale_price - actualTotalCost) / job.sale_price) * 100;
+        }
+
+        // ── Consumir estoque (inventory_movement) ──
+        if (actualGrams && job.material_id && actualGrams > 0) {
+          const lossCoeff = materials.find(m => m.id === job.material_id)?.loss_coefficient || 0.05;
+          const totalConsumption = actualGrams * (1 + lossCoeff) + (job.purge_waste_grams || 0);
+
+          await supabase.from("inventory_movements").insert({
+            tenant_id: profile.tenant_id,
+            item_id: job.material_id,
+            movement_type: "job_consumption" as const,
+            quantity: totalConsumption,
+            unit_cost: materials.find(m => m.id === job.material_id)?.avg_cost || 0,
+            reference_type: "job",
+            reference_id: id,
+            notes: `Consumo automático — ${job.code}`,
+            created_by: profile.user_id,
+          });
+        }
+      }
+
       const { error } = await supabase.from("jobs").update(updates).eq("id", id);
       if (error) throw error;
+
+      // ── Sync: se todos os jobs do pedido estão concluídos, marcar pedido como "ready" ──
+      if (status === "completed" && job.order_id) {
+        const { data: siblingJobs } = await supabase
+          .from("jobs")
+          .select("id, status")
+          .eq("order_id", job.order_id);
+
+        const allDone = siblingJobs?.every(
+          (j) => j.id === id ? true : j.status === "completed" || j.status === "shipped"
+        );
+
+        if (allDone) {
+          await supabase.from("orders").update({ status: "ready" }).eq("id", job.order_id);
+        }
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["jobs"] });
+      queryClient.invalidateQueries({ queryKey: ["orders"] });
+      queryClient.invalidateQueries({ queryKey: ["inventory_items"] });
       setDetailJob(null);
       toast({ title: "Status atualizado" });
     },

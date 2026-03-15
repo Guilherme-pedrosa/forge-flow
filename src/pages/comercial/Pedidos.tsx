@@ -137,6 +137,17 @@ export default function Pedidos() {
     enabled: !!viewOrderId,
   });
 
+  // Jobs linked to this order
+  const { data: linkedJobs = [] } = useQuery({
+    queryKey: ["order_jobs", viewOrderId],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("jobs").select("id, code, name, status, est_total_cost, actual_total_cost").eq("order_id", viewOrderId!).order("code");
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!viewOrderId,
+  });
+
   // Auto-fill address when customer changes
   useEffect(() => {
     if (customerId) {
@@ -403,8 +414,94 @@ export default function Pedidos() {
       if (status === "approved") updates.approved_at = new Date().toISOString();
       const { error } = await supabase.from("orders").update(updates).eq("id", id);
       if (error) throw error;
+
+      // ── Explosão: ao mover para "Em Produção", criar Jobs automáticos ──
+      if (status === "in_production" && profile) {
+        const { data: items, error: itemsErr } = await supabase
+          .from("order_items")
+          .select("*, products(id, name, description, material_id, est_time_minutes, est_grams, num_colors, cost_estimate, sale_price, post_process_minutes)")
+          .eq("order_id", id);
+        if (itemsErr) throw itemsErr;
+
+        // Fetch printers and materials for cost calc
+        const { data: allPrinters } = await supabase.from("printers").select("*").eq("is_active", true);
+        const { data: allMaterials } = await supabase.from("inventory_items").select("*").eq("is_active", true);
+        const pList = allPrinters || [];
+        const mList = allMaterials || [];
+
+        const { count: jobCount } = await supabase
+          .from("jobs")
+          .select("*", { count: "exact", head: true })
+          .eq("tenant_id", profile.tenant_id);
+        let seq = (jobCount ?? 0) + 1;
+        const datePart = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+
+        // Fetch order data once
+        const { data: orderData } = await supabase.from("orders").select("code, due_date").eq("id", id).single();
+        const orderCode = orderData?.code || id;
+        const orderDueDate = orderData?.due_date || null;
+
+        const jobInserts: any[] = [];
+        for (const item of (items || [])) {
+          const prod = item.products as any;
+          for (let q = 0; q < (item.quantity || 1); q++) {
+            const code = `OI-${datePart}-${String(seq++).padStart(3, "0")}`;
+            const grams = prod?.est_grams || null;
+            const minutes = prod?.est_time_minutes || null;
+            const materialId = prod?.material_id || null;
+
+            let estMaterialCost = 0;
+            if (grams && materialId) {
+              const mat = mList.find((m: any) => m.id === materialId);
+              if (mat && mat.avg_cost > 0) {
+                const costPerGram = mat.unit === "kg" ? mat.avg_cost / 1000 : mat.avg_cost;
+                estMaterialCost = grams * (1 + (mat.loss_coefficient || 0.05)) * costPerGram;
+              }
+            }
+            let estMachineCost = 0;
+            let estEnergyCost = 0;
+            const defaultPrinter = pList[0];
+            if (minutes && defaultPrinter) {
+              const hours = minutes / 60;
+              estMachineCost = hours * (defaultPrinter.depreciation_per_hour ?? 0) + hours * (defaultPrinter.maintenance_cost_per_hour ?? 0);
+              estEnergyCost = ((defaultPrinter.power_watts ?? 150) / 1000) * hours * 0.85;
+            }
+
+            jobInserts.push({
+              tenant_id: profile.tenant_id,
+              code,
+              name: prod?.name || item.description,
+              description: `Pedido ${orderCode} — ${item.description}`,
+              product_id: prod?.id || null,
+              material_id: materialId,
+              order_id: id,
+              due_date: orderDueDate,
+              priority: 5,
+              est_time_minutes: minutes,
+              est_grams: grams,
+              num_colors: prod?.num_colors || 1,
+              est_material_cost: estMaterialCost,
+              est_machine_cost: estMachineCost,
+              est_energy_cost: estEnergyCost,
+              est_total_cost: estMaterialCost + estMachineCost + estEnergyCost,
+              sale_price: item.unit_price || prod?.sale_price || null,
+              created_by: profile.user_id,
+              status: "queued" as const,
+            });
+          }
+        }
+
+        if (jobInserts.length > 0) {
+          const { error: jobErr } = await supabase.from("jobs").insert(jobInserts);
+          if (jobErr) throw jobErr;
+        }
+      }
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["orders"] }); toast({ title: "Status atualizado" }); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["orders"] });
+      qc.invalidateQueries({ queryKey: ["jobs"] });
+      toast({ title: "Status atualizado" });
+    },
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 
@@ -688,6 +785,43 @@ export default function Pedidos() {
                   </TableBody>
                 </Table>
               </div>
+
+              {/* Linked Jobs */}
+              {linkedJobs.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Ordens de Impressão ({linkedJobs.length})</p>
+                  <div className="rounded-lg border overflow-hidden">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="bg-muted/50">
+                          <TableHead>Código</TableHead>
+                          <TableHead>Peça</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead className="text-right">Custo</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {linkedJobs.map((j: any) => {
+                          const jCfg = { draft: "bg-muted text-muted-foreground", queued: "bg-primary/10 text-primary", printing: "bg-emerald-100 text-emerald-700", completed: "bg-emerald-100 text-emerald-700", failed: "bg-destructive/10 text-destructive" } as Record<string, string>;
+                          const statusLabels: Record<string, string> = { draft: "Rascunho", queued: "Na fila", printing: "Imprimindo", paused: "Pausado", failed: "Falhou", reprint: "Reimpressão", post_processing: "Pós-processo", quality_check: "QC", ready: "Pronto", shipped: "Enviado", completed: "Concluído" };
+                          return (
+                            <TableRow key={j.id}>
+                              <TableCell className="font-mono text-xs">{j.code}</TableCell>
+                              <TableCell className="text-sm">{j.name}</TableCell>
+                              <TableCell>
+                                <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold", jCfg[j.status] || "bg-muted text-muted-foreground")}>
+                                  {statusLabels[j.status] || j.status}
+                                </span>
+                              </TableCell>
+                              <TableCell className="text-right font-mono text-xs">{fmtCurrency(j.actual_total_cost || j.est_total_cost)}</TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              )}
 
               <div className="flex justify-between items-end">
                 <Button variant="outline" size="sm" onClick={handlePrint}>
