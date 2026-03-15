@@ -67,14 +67,14 @@ REGRAS DE VALORES:
 
 Retorne APENAS o JSON, sem markdown, sem explicações.`;
 
-    const response = await fetch(AI_GATEWAY_URL, {
+    const response = await fetch(OPENAI_API_URL, {
       method: "POST",
       headers: {
-        "Authorization": `Bearer ${LOVABLE_API_KEY}`,
+        "Authorization": `Bearer ${OPENAI_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-pro",
+        model: "gpt-4o",
         messages: [
           { role: "system", content: systemPrompt },
           {
