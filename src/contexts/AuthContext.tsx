@@ -96,7 +96,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     supabase.auth.getSession().then(({ data: { session: s } }) => {
       if (!s) {
         setLoading(false);
-        if (!PUBLIC_ROUTES.includes(location.pathname)) {
+        if (!PUBLIC_ROUTES.includes(locationRef.current)) {
           navigate("/login");
         }
       }
