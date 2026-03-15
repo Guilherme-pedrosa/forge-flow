@@ -445,6 +445,7 @@ Deno.serve(async (req) => {
       }
 
       const models: any[] = [];
+      let strategyUsed: "api_internal" | "firecrawl" | "direct_html" | null = null;
       const modelMatch = url.match(/\/models\/(\d+)/);
       const hashProfileId = url.match(/profileId-(\d+)/i)?.[1] || null;
       const selectedProfileId = selected_profile_id || hashProfileId;
@@ -469,7 +470,18 @@ Deno.serve(async (req) => {
               const data = JSON.parse(apiText);
               const design = data?.design || data;
               if (design?.id || design?.title) {
-                models.push(parseDesignToModel(design, selectedProfileId));
+                const parsed = parseDesignToModel(design, selectedProfileId);
+                const hasMatchedProfile = !selectedProfileId || parsed.profiles.some((p: any) => String(p?.profile_id || "") === String(selectedProfileId));
+                const hasAnyProfileId = parsed.profiles.some((p: any) => !!p?.profile_id);
+                const hasFilamentEvidence = parsed.profiles.some((p: any) => Array.isArray(p?.filaments) && p.filaments.some((f: any) => toPositiveNumber(f?.grams) > 0));
+                const lowConfidence = !hasMatchedProfile || (!hasAnyProfileId && !hasFilamentEvidence && parsed.profiles.length <= 1);
+
+                if (lowConfidence && FIRECRAWL_API_KEY) {
+                  console.log("MakerWorld API result low-confidence; trying Firecrawl fallback");
+                } else {
+                  models.push(parsed);
+                  strategyUsed = "api_internal";
+                }
               }
             } catch {
               console.warn("MakerWorld API JSON parse failed");
