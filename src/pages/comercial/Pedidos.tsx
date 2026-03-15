@@ -403,8 +403,104 @@ export default function Pedidos() {
       if (status === "approved") updates.approved_at = new Date().toISOString();
       const { error } = await supabase.from("orders").update(updates).eq("id", id);
       if (error) throw error;
+
+      // ── Explosão: ao mover para "Em Produção", criar Jobs automáticos ──
+      if (status === "in_production" && profile) {
+        const { data: items, error: itemsErr } = await supabase
+          .from("order_items")
+          .select("*, products(id, name, description, material_id, est_time_minutes, est_grams, num_colors, cost_estimate, sale_price, post_process_minutes)")
+          .eq("order_id", id);
+        if (itemsErr) throw itemsErr;
+
+        // Fetch printers and materials for cost calc
+        const { data: allPrinters } = await supabase.from("printers").select("*").eq("is_active", true);
+        const { data: allMaterials } = await supabase.from("inventory_items").select("*").eq("is_active", true);
+        const pList = allPrinters || [];
+        const mList = allMaterials || [];
+
+        const { count: jobCount } = await supabase
+          .from("jobs")
+          .select("*", { count: "exact", head: true })
+          .eq("tenant_id", profile.tenant_id);
+        let seq = (jobCount ?? 0) + 1;
+        const datePart = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+
+        const jobInserts: any[] = [];
+        for (const item of (items || [])) {
+          const prod = item.products as any;
+          for (let q = 0; q < (item.quantity || 1); q++) {
+            const code = `OI-${datePart}-${String(seq++).padStart(3, "0")}`;
+            const grams = prod?.est_grams || null;
+            const minutes = prod?.est_time_minutes || null;
+            const materialId = prod?.material_id || null;
+
+            // Calculate estimated costs
+            let estMaterialCost = 0;
+            if (grams && materialId) {
+              const mat = mList.find((m: any) => m.id === materialId);
+              if (mat && mat.avg_cost > 0) {
+                const costPerGram = mat.unit === "kg" ? mat.avg_cost / 1000 : mat.avg_cost;
+                estMaterialCost = grams * (1 + (mat.loss_coefficient || 0.05)) * costPerGram;
+              }
+            }
+            let estMachineCost = 0;
+            let estEnergyCost = 0;
+            // Use first idle printer as default
+            const defaultPrinter = pList[0];
+            if (minutes && defaultPrinter) {
+              const hours = minutes / 60;
+              estMachineCost = hours * (defaultPrinter.depreciation_per_hour ?? 0) + hours * (defaultPrinter.maintenance_cost_per_hour ?? 0);
+              estEnergyCost = ((defaultPrinter.power_watts ?? 150) / 1000) * hours * 0.85;
+            }
+
+            jobInserts.push({
+              tenant_id: profile.tenant_id,
+              code,
+              name: prod?.name || item.description,
+              description: `Pedido ${(await supabase.from("orders").select("code").eq("id", id).single()).data?.code || id} — ${item.description}`,
+              product_id: prod?.id || null,
+              material_id: materialId,
+              order_id: id,
+              due_date: (await supabase.from("orders").select("due_date").eq("id", id).single()).data?.due_date || null,
+              priority: 5,
+              est_time_minutes: minutes,
+              est_grams: grams,
+              num_colors: prod?.num_colors || 1,
+              est_material_cost: estMaterialCost,
+              est_machine_cost: estMachineCost,
+              est_energy_cost: estEnergyCost,
+              est_total_cost: estMaterialCost + estMachineCost + estEnergyCost,
+              sale_price: item.unit_price || prod?.sale_price || null,
+              created_by: profile.user_id,
+              status: "queued" as const,
+            });
+          }
+        }
+
+        if (jobInserts.length > 0) {
+          // Fetch order data once to avoid repeated queries
+          const { data: orderData } = await supabase.from("orders").select("code, due_date").eq("id", id).single();
+          const orderCode = orderData?.code || id;
+          const orderDueDate = orderData?.due_date || null;
+
+          // Fix descriptions and due_dates with pre-fetched data
+          for (const j of jobInserts) {
+            if (j.description.includes("Pedido ")) {
+              j.description = `Pedido ${orderCode} — ${j.name}`;
+            }
+            if (!j.due_date) j.due_date = orderDueDate;
+          }
+
+          const { error: jobErr } = await supabase.from("jobs").insert(jobInserts);
+          if (jobErr) throw jobErr;
+        }
+      }
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["orders"] }); toast({ title: "Status atualizado" }); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["orders"] });
+      qc.invalidateQueries({ queryKey: ["jobs"] });
+      toast({ title: "Status atualizado" });
+    },
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 
