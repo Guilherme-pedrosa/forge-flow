@@ -69,6 +69,7 @@ export default function Produtos() {
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [notes, setNotes] = useState("");
   const [printerId, setPrinterId] = useState("");
+  const [numColors, setNumColors] = useState("1");
 
   const { data: products = [], isLoading } = useQuery({
     queryKey: ["products"],
@@ -239,7 +240,7 @@ export default function Produtos() {
 
   const resetForm = () => {
     setName(""); setDescription(""); setSku(""); setCategory("printed_part"); setMaterialId("");
-    setEstGrams(""); setEstTime(""); setPostMinutes(""); setCostEstimate(""); setSalePrice(""); setPhotoUrl(""); setExtraPhotos([]); setNotes(""); setPrinterId("");
+    setEstGrams(""); setEstTime(""); setPostMinutes(""); setCostEstimate(""); setSalePrice(""); setPhotoUrl(""); setExtraPhotos([]); setNotes(""); setPrinterId(""); setNumColors("1");
   };
 
   const openEdit = (p: any) => {
@@ -247,7 +248,7 @@ export default function Produtos() {
     setCategory(p.category); setMaterialId(p.material_id || ""); setEstGrams(p.est_grams?.toString() || "");
     setEstTime(p.est_time_minutes?.toString() || ""); setPostMinutes(p.post_process_minutes?.toString() || "");
     setCostEstimate(p.cost_estimate?.toString() || ""); setSalePrice(p.sale_price?.toString() || "");
-    setPhotoUrl(p.photo_url || ""); setNotes(p.notes || ""); setPrinterId("");
+    setPhotoUrl(p.photo_url || ""); setNotes(p.notes || ""); setPrinterId(""); setNumColors(String((p as any).num_colors || 1));
     // Load extra photos
     if (p.id) {
       supabase.from("product_photos").select("url").eq("product_id", p.id).order("sort_order").then(({ data }) => {
@@ -397,8 +398,8 @@ export default function Produtos() {
         category, material_id: materialId || null, est_grams: estGrams ? parseFloat(estGrams) : 0,
         est_time_minutes: estTime ? parseInt(estTime) : 0, post_process_minutes: postMinutes ? parseInt(postMinutes) : 0,
         cost_estimate: cost, sale_price: price, margin_percent: margin, notes: notes || null,
-        photo_url: photoUrl || null,
-      }).select("id").single();
+        photo_url: photoUrl || null, num_colors: parseInt(numColors) || 1,
+      } as any).select("id").single();
       if (error) throw error;
       if (inserted) await saveExtraPhotos(inserted.id);
     },
@@ -417,8 +418,8 @@ export default function Produtos() {
         material_id: materialId || null, est_grams: estGrams ? parseFloat(estGrams) : 0,
         est_time_minutes: estTime ? parseInt(estTime) : 0, post_process_minutes: postMinutes ? parseInt(postMinutes) : 0,
         cost_estimate: cost, sale_price: price, margin_percent: margin, notes: notes || null,
-        photo_url: photoUrl || null,
-      }).eq("id", editItem.id);
+        photo_url: photoUrl || null, num_colors: parseInt(numColors) || 1,
+      } as any).eq("id", editItem.id);
       if (error) throw error;
       await saveExtraPhotos(editItem.id);
     },
@@ -516,6 +517,18 @@ export default function Produtos() {
         </div>
         <div><Label>Tempo Impressão (min)</Label><Input type="number" value={estTime} onChange={(e) => setEstTime(e.target.value)} placeholder="120" /></div>
         <div><Label>Pós-Processo (min)</Label><Input type="number" value={postMinutes} onChange={(e) => setPostMinutes(e.target.value)} placeholder="15" /></div>
+        <div>
+          <Label>Nº de Cores</Label>
+          <Select value={numColors} onValueChange={setNumColors}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="1">1 cor</SelectItem>
+              <SelectItem value="2">2 cores</SelectItem>
+              <SelectItem value="3">3 cores</SelectItem>
+              <SelectItem value="4">4 cores (AMS)</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
       {/* Cost breakdown */}
