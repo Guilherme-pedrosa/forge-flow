@@ -943,6 +943,15 @@ function parseDesignToModel(d: any, selectedProfileId?: string | null) {
     });
   }
 
+  if (selectedProfileId) {
+    profiles.sort((a: any, b: any) => {
+      const aMatch = String(a?.profile_id || "") === String(selectedProfileId);
+      const bMatch = String(b?.profile_id || "") === String(selectedProfileId);
+      if (aMatch === bMatch) return 0;
+      return aMatch ? -1 : 1;
+    });
+  }
+
   return {
     id: d.id || d.designId || d.design_id || "",
     title: d.title || d.name || "Sem nome",
