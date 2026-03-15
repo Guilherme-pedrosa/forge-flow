@@ -680,11 +680,15 @@ export default function Produtos() {
               <span className="font-medium text-muted-foreground text-right">Líquido</span>
               <span className="font-medium text-muted-foreground text-right">Lucro</span>
               {channelConfig.filter(ch => ch.enabled).map(ch => {
-                const totalFee = ch.fee + (ch.freeShipping ? ch.freeShippingExtra : 0);
-                const feeAmount = price * (totalFee / 100);
-                const net = price - feeAmount;
+                const baseFeeAmount = price * (ch.fee / 100);
+                const shippingAmount = ch.freeShipping
+                  ? (ch.freeShippingType === "percent" ? price * (ch.freeShippingExtra / 100) : ch.freeShippingExtra)
+                  : 0;
+                const totalDeduction = baseFeeAmount + shippingAmount;
+                const net = price - totalDeduction;
                 const profit = net - cost;
                 const profitPct = cost > 0 ? ((profit / cost) * 100) : 0;
+                const totalPct = ch.fee + (ch.freeShipping && ch.freeShippingType === "percent" ? ch.freeShippingExtra : 0);
                 return (
                   <div key={ch.key} className="contents">
                     <span className="font-medium">
@@ -692,7 +696,7 @@ export default function Produtos() {
                       {ch.freeShipping && <span className="text-[10px] text-muted-foreground ml-1">(c/ frete grátis)</span>}
                     </span>
                     <span className="text-right font-mono">
-                      {totalFee > 0 ? `${totalFee.toFixed(0)}% = ${fmtCurrency(feeAmount)}` : "—"}
+                      {totalDeduction > 0 ? `${fmtCurrency(totalDeduction)}` : "—"}
                     </span>
                     <span className="text-right font-mono">{fmtCurrency(net)}</span>
                     <span className={cn("text-right font-mono font-semibold", profit > 0 ? "text-green-600" : "text-destructive")}>
