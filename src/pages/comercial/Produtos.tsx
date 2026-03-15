@@ -424,7 +424,16 @@ export default function Produtos() {
                 bambuTab === "tasks" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
               )}
             >
-              <History className="h-4 w-4" /> Impressões Concluídas
+              <History className="h-4 w-4" /> Impressões
+            </button>
+            <button
+              onClick={() => setBambuTab("makerworld")}
+              className={cn(
+                "flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-md text-sm font-medium transition-colors",
+                bambuTab === "makerworld" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              <Globe className="h-4 w-4" /> MakerWorld
             </button>
           </div>
 
