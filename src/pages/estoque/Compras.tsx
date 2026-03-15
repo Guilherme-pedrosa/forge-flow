@@ -882,10 +882,22 @@ export default function Compras() {
               </div>
               <div className="space-y-2">
                 {manualItems.map((item, idx) => (
-                  <div key={idx} className="grid grid-cols-[1fr_80px_100px_32px] gap-2 items-end">
+                  <div key={idx} className="grid grid-cols-[1fr_140px_80px_100px_32px] gap-2 items-end">
                     <div>
                       {idx === 0 && <Label className="text-xs">Descrição</Label>}
                       <Input value={item.description} onChange={(e) => updateManualItem(idx, "description", e.target.value)} placeholder="Material..." />
+                    </div>
+                    <div>
+                      {idx === 0 && <Label className="text-xs">Item Estoque</Label>}
+                      <Select value={item.inventoryItemId || "none"} onValueChange={(v) => updateManualItem(idx, "inventoryItemId", v === "none" ? "" : v)}>
+                        <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Vincular..." /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">— Nenhum —</SelectItem>
+                          {inventoryItems.map((inv: any) => (
+                            <SelectItem key={inv.id} value={inv.id}>{inv.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                     <div>
                       {idx === 0 && <Label className="text-xs">Qtd</Label>}
