@@ -137,6 +137,17 @@ export default function Pedidos() {
     enabled: !!viewOrderId,
   });
 
+  // Jobs linked to this order
+  const { data: linkedJobs = [] } = useQuery({
+    queryKey: ["order_jobs", viewOrderId],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("jobs").select("id, code, name, status, est_total_cost, actual_total_cost").eq("order_id", viewOrderId!).order("code");
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!viewOrderId,
+  });
+
   // Auto-fill address when customer changes
   useEffect(() => {
     if (customerId) {
