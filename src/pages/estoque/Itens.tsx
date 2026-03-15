@@ -100,7 +100,7 @@ export default function Itens() {
   const resetForm = () => {
     setName(""); setCategory("filament"); setMaterialType(""); setColor("");
     setDiameter(""); setBrand(""); setSku(""); setUnit("g"); setMinStock("");
-    setAvgCost(""); setLossCoefficient("0.05"); setNotes("");
+    setAvgCost(""); setLossCoefficient("0.05"); setNotes(""); setCurrentStock("");
   };
 
   const openEdit = (item: ItemRow) => {
