@@ -436,7 +436,7 @@ Deno.serve(async (req) => {
 
     // ── Fetch MakerWorld models ──
     if (action === "makerworld") {
-      const { url } = body;
+      const { url, selected_profile_id } = body;
       if (!url) {
         return new Response(
           JSON.stringify({ error: "URL é obrigatória" }),
@@ -446,11 +446,14 @@ Deno.serve(async (req) => {
 
       const models: any[] = [];
       const modelMatch = url.match(/\/models\/(\d+)/);
+      const hashProfileId = url.match(/profileId-(\d+)/i)?.[1] || null;
+      const selectedProfileId = selected_profile_id || hashProfileId;
 
       const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
 
       if (modelMatch) {
         const modelId = modelMatch[1];
+        const hashSuffix = hashProfileId ? `#profileId-${hashProfileId}` : "";
 
         // Strategy 1: Try MakerWorld internal API (fast, no JS needed)
         try {
@@ -466,7 +469,7 @@ Deno.serve(async (req) => {
               const data = JSON.parse(apiText);
               const design = data?.design || data;
               if (design?.id || design?.title) {
-                models.push(parseDesignToModel(design));
+                models.push(parseDesignToModel(design, selectedProfileId));
               }
             } catch {
               console.warn("MakerWorld API JSON parse failed");
@@ -487,7 +490,7 @@ Deno.serve(async (req) => {
                 "Content-Type": "application/json",
               },
               body: JSON.stringify({
-                url: `https://makerworld.com/en/models/${modelId}`,
+                url: `https://makerworld.com/en/models/${modelId}${hashSuffix}`,
                 formats: ["html", "markdown"],
                 waitFor: 5000,
               }),
@@ -631,12 +634,12 @@ Deno.serve(async (req) => {
                   ]);
 
                   const markdownWeightValues = [
-                    ...collectMetricValues(markdown, ["total weight", "filament weight", "weight", "filament"]),
+                    ...collectMetricValues(markdown, ["total weight", "filament weight", "weight_grams", "used_g"]),
                     ...[...markdown.matchAll(/(\d+(?:[.,]\d+)?)\s*(kg|g|grams?)\b/gi)].map((m) => metricToGrams(m[1], m[2])),
                   ];
 
                   const candidates = [...htmlWeightValues, ...markdownWeightValues]
-                    .filter((n) => Number.isFinite(n) && n > 0.05 && n < 50000);
+                    .filter((n) => Number.isFinite(n) && n > 0.05 && n < 5000);
 
                   if (candidates.length > 0) {
                     weightGrams = Math.max(...candidates);
@@ -683,9 +686,18 @@ Deno.serve(async (req) => {
                   }
                 }
 
+                const profileIds = Array.from(
+                  new Set(
+                    [...html.matchAll(/profileId-(\d+)/gi)]
+                      .map((m) => m[1])
+                      .filter(Boolean)
+                  )
+                );
+
                 const normalizedProfiles = parsedProfiles.length > 0
-                  ? parsedProfiles.map((p) => ({
+                  ? parsedProfiles.map((p, idx) => ({
                       ...p,
+                      profile_id: p.profile_id || profileIds[idx] || null,
                       weight_grams: p.weight_grams || weightGrams,
                       time_seconds: p.time_seconds || timeSeconds,
                       plates: p.plates || totalPlates,
@@ -693,6 +705,7 @@ Deno.serve(async (req) => {
                     }))
                   : [{
                       name: "Opção 1",
+                      profile_id: profileIds[0] || selectedProfileId || null,
                       weight_grams: weightGrams,
                       time_seconds: timeSeconds,
                       plates: totalPlates,
@@ -834,7 +847,7 @@ function profileDisplayName(profile: any, idx: number): string {
   return profile?.name || profile?.profileName || profile?.title || `Opção ${idx + 1}`;
 }
 
-function parseDesignToModel(d: any) {
+function parseDesignToModel(d: any, selectedProfileId?: string | null) {
   const sourceProfiles = d.profileList || d.profiles || [];
 
   const profiles = sourceProfiles.map((p: any, idx: number) => {
@@ -900,6 +913,7 @@ function parseDesignToModel(d: any) {
     );
 
     return {
+      profile_id: p.profile_id || p.profileId || p.id || p.profile_id_str || null,
       name: profileDisplayName(p, idx),
       weight_grams: maxMetric(declaredWeight, summedPlateWeight, filamentWeightSum),
       time_seconds: maxMetric(declaredTime, summedPlateTime),
@@ -910,6 +924,7 @@ function parseDesignToModel(d: any) {
 
   if (profiles.length === 0) {
     profiles.push({
+      profile_id: selectedProfileId || d.profile_id || d.profileId || null,
       name: "Opção 1",
       weight_grams: maxMetric(
         metricToGrams(d.weight, d.weight_unit || d.unit),
@@ -925,6 +940,15 @@ function parseDesignToModel(d: any) {
       ),
       plates: toPositiveNumber(d.plateCount || d.plate_count),
       filaments: [],
+    });
+  }
+
+  if (selectedProfileId) {
+    profiles.sort((a: any, b: any) => {
+      const aMatch = String(a?.profile_id || "") === String(selectedProfileId);
+      const bMatch = String(b?.profile_id || "") === String(selectedProfileId);
+      if (aMatch === bMatch) return 0;
+      return aMatch ? -1 : 1;
     });
   }
 
