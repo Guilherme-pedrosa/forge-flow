@@ -749,6 +749,15 @@ export default function Compras() {
                 <Label>Previsão de Entrega</Label>
                 <Input type="date" value={expectedDate} onChange={(e) => setExpectedDate(e.target.value)} />
               </div>
+              <div>
+                <Label>Forma de Pagamento</Label>
+                <Select value={paymentMethodId} onValueChange={setPaymentMethodId}>
+                  <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                  <SelectContent>
+                    {paymentMethods.map((pm: any) => <SelectItem key={pm.id} value={pm.id}>{pm.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             <div>
