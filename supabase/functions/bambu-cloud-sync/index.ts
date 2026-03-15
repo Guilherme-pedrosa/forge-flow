@@ -308,48 +308,82 @@ Deno.serve(async (req) => {
         );
       }
 
-      const projectsRes = await fetch(`${BAMBU_API}/v1/iot-service/api/user/project`, {
-        headers: { Authorization: `Bearer ${conn.access_token_encrypted}` },
-      });
+      // Try multiple Bambu API endpoints for projects
+      let projects: any[] = [];
+      let apiError = "";
 
-      const rawText = await projectsRes.text();
-      let projectsData: any;
+      // Attempt 1: /v1/iot-service/api/user/project
       try {
-        projectsData = JSON.parse(rawText);
-      } catch {
-        console.error("Bambu projects API returned non-JSON:", rawText.slice(0, 500));
+        const projectsRes = await fetch(`${BAMBU_API}/v1/iot-service/api/user/project`, {
+          headers: { Authorization: `Bearer ${conn.access_token_encrypted}` },
+        });
+
+        if (projectsRes.status === 401 || projectsRes.status === 403) {
+          // Token expired - mark connection as needing re-auth
+          await supabase
+            .from("bambu_connections")
+            .update({ is_active: false, updated_at: new Date().toISOString() })
+            .eq("id", conn.id);
+
+          return new Response(
+            JSON.stringify({ 
+              error: "Token Bambu expirado. Vá em Integrações → Bambu Lab e reconecte sua conta.", 
+              token_expired: true,
+              projects: [] 
+            }),
+            { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
+        const rawText = await projectsRes.text();
+        if (rawText && rawText.trim()) {
+          try {
+            const projectsData = JSON.parse(rawText);
+            if (projectsData.message === "success" && projectsData.projects) {
+              projects = projectsData.projects;
+            } else {
+              apiError = projectsData.message || "Resposta inesperada da API";
+            }
+          } catch {
+            console.error("Bambu projects non-JSON:", rawText.slice(0, 200));
+            apiError = "API Bambu retornou resposta inválida";
+          }
+        } else {
+          apiError = "API Bambu retornou resposta vazia. Token pode ter expirado.";
+        }
+      } catch (e) {
+        console.error("Bambu projects fetch error:", e);
+        apiError = "Erro ao conectar com API Bambu";
+      }
+
+      if (projects.length === 0 && apiError) {
         return new Response(
-          JSON.stringify({ error: "API Bambu retornou resposta inválida. Tente reconectar.", projects: [] }),
+          JSON.stringify({ error: apiError + ". Tente desconectar e reconectar em Integrações → Bambu Lab.", projects: [] }),
           { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
-      if (!projectsRes.ok || projectsData.message !== "success") {
-        return new Response(
-          JSON.stringify({ error: projectsData.message || "Falha ao buscar projetos", projects: [] }),
-          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-      }
-
-      const projects = projectsData.projects || [];
-
-      // Fetch details for each project to get thumbnails and plate data
+      // Fetch details for each project (limit to first 20 to avoid timeouts)
       const detailedProjects = [];
-      for (const proj of projects) {
+      const projectsToFetch = projects.slice(0, 20);
+
+      for (const proj of projectsToFetch) {
         try {
           const detailRes = await fetch(
             `${BAMBU_API}/v1/iot-service/api/user/project/${proj.project_id}`,
             { headers: { Authorization: `Bearer ${conn.access_token_encrypted}` } }
           );
           const detailText = await detailRes.text();
-          let detailData: any;
-          try {
-            detailData = JSON.parse(detailText);
-          } catch {
-            console.warn(`Non-JSON response for project ${proj.project_id}`);
+          if (!detailText || !detailText.trim()) {
+            detailedProjects.push({
+              project_id: proj.project_id, model_id: proj.model_id,
+              name: proj.name || "Sem nome", status: proj.status,
+              thumbnail: null, total_weight_grams: 0, total_time_seconds: 0, filaments: [],
+            });
             continue;
           }
 
+          const detailData = JSON.parse(detailText);
           if (detailRes.ok && detailData.message === "success") {
             const profiles = detailData.profiles || [];
             let thumbnail = null;
@@ -377,13 +411,18 @@ Deno.serve(async (req) => {
               status: proj.status, created_at: proj.create_time, updated_at: proj.update_time,
               thumbnail, total_weight_grams: totalWeight, total_time_seconds: totalTime, filaments,
             });
+          } else {
+            detailedProjects.push({
+              project_id: proj.project_id, model_id: proj.model_id,
+              name: proj.name || "Sem nome", status: proj.status,
+              thumbnail: null, total_weight_grams: 0, total_time_seconds: 0, filaments: [],
+            });
           }
         } catch (e) {
-          console.warn(`Failed to get project detail for ${proj.project_id}:`, e);
+          console.warn(`Failed project detail ${proj.project_id}:`, e);
           detailedProjects.push({
             project_id: proj.project_id, model_id: proj.model_id,
             name: proj.name || "Sem nome", status: proj.status,
-            created_at: proj.create_time, updated_at: proj.update_time,
             thumbnail: null, total_weight_grams: 0, total_time_seconds: 0, filaments: [],
           });
         }
@@ -395,129 +434,135 @@ Deno.serve(async (req) => {
       );
     }
 
-    // ── Fetch MakerWorld collection models ──
+    // ── Fetch MakerWorld models ──
     if (action === "makerworld") {
       const { url } = body;
       if (!url) {
         return new Response(
-          JSON.stringify({ error: "URL da coleção é obrigatória" }),
+          JSON.stringify({ error: "URL é obrigatória" }),
           { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
-      // Extract user ID from URL like https://makerworld.com/pt/@user_xxx/collections/models
-      // or a model URL like https://makerworld.com/en/models/12345-name
       const models: any[] = [];
-
-      // Try to determine if it's a collection page or model page
       const modelMatch = url.match(/\/models\/(\d+)/);
-      const userMatch = url.match(/@([^/]+)/);
+      const userMatch = url.match(/@([^/\s?]+)/);
+
+      const fetchHeaders = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/html,application/xhtml+xml",
+        "Accept-Language": "en-US,en;q=0.9,pt-BR;q=0.8",
+        "Referer": "https://makerworld.com/",
+        "Origin": "https://makerworld.com",
+      };
 
       if (modelMatch) {
-        // Single model - fetch the page and extract __NEXT_DATA__
+        // Single model page
         const modelId = modelMatch[1];
         try {
-          const pageRes = await fetch(`https://makerworld.com/en/models/${modelId}`, {
-            headers: {
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-              "Accept": "text/html,application/xhtml+xml",
-              "Accept-Language": "en-US,en;q=0.9",
-            },
+          // Try MakerWorld internal API first
+          const apiRes = await fetch(`https://makerworld.com/api/v1/design/detail/${modelId}`, {
+            headers: fetchHeaders,
           });
-          const html = await pageRes.text();
-          const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
-          if (nextDataMatch) {
-            const nextData = JSON.parse(nextDataMatch[1]);
-            const design = nextData?.props?.pageProps?.design;
-            if (design) {
-              models.push({
-                id: design.id,
-                title: design.title || "Sem nome",
-                thumbnail: design.cover || design.images?.[0]?.url || null,
-                description: design.summary || "",
-                print_count: design.printCountStr || "0",
-                download_count: design.downloadCountStr || "0",
-                like_count: design.likeCount || 0,
-                profiles: (design.profileList || []).map((p: any) => ({
-                  name: p.name || "Default",
-                  weight_grams: p.weight || 0,
-                  time_seconds: p.estimatedTime || 0,
-                  filaments: (p.materialList || []).map((m: any) => ({
-                    type: m.type || "PLA",
-                    color: m.color || "",
-                    grams: m.weight || 0,
-                  })),
-                })),
-              });
-            }
-          }
-        } catch (e) {
-          console.error("MakerWorld model fetch error:", e);
-        }
-      } else if (userMatch) {
-        // Collection page - try API endpoint
-        const userId = userMatch[1];
-        try {
-          // MakerWorld internal API for user's published models
-          const apiRes = await fetch(
-            `https://makerworld.com/api/v1/design/collection?uid=${userId}&offset=0&limit=100&orderBy=updated`,
-            {
-              headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                "Accept": "application/json",
-                "Referer": "https://makerworld.com/",
-              },
-            }
-          );
           const apiText = await apiRes.text();
-          let apiData: any;
-          try {
-            apiData = JSON.parse(apiText);
-          } catch {
-            // If API fails, try scraping the page
-            const pageRes = await fetch(url.replace("/pt/", "/en/"), {
-              headers: {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                "Accept": "text/html",
-              },
-            });
-            const html = await pageRes.text();
-            const nextDataMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
-            if (nextDataMatch) {
-              const nextData = JSON.parse(nextDataMatch[1]);
-              const designs = nextData?.props?.pageProps?.designs || nextData?.props?.pageProps?.collectionDesigns || [];
-              for (const d of designs) {
-                models.push({
-                  id: d.id,
-                  title: d.title || "Sem nome",
-                  thumbnail: d.cover || d.images?.[0]?.url || null,
-                  description: d.summary || "",
-                  print_count: d.printCountStr || "0",
-                  profiles: [],
-                });
+          
+          if (apiRes.ok && apiText.trim()) {
+            try {
+              const data = JSON.parse(apiText);
+              const design = data?.design || data;
+              if (design?.id || design?.title) {
+                models.push(parseDesignToModel(design));
               }
+            } catch {
+              console.warn("MakerWorld API JSON parse failed, trying HTML scrape");
             }
-            return new Response(
-              JSON.stringify({ models }),
-              { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-            );
           }
 
-          if (apiData?.hits) {
-            for (const d of apiData.hits) {
-              models.push({
-                id: d.id,
-                title: d.title || "Sem nome",
-                thumbnail: d.cover || null,
-                description: d.summary || "",
-                print_count: d.printCountStr || "0",
-                profiles: [],
-              });
-            }
+          // Fallback: scrape HTML
+          if (models.length === 0) {
+            const pageRes = await fetch(`https://makerworld.com/en/models/${modelId}`, {
+              headers: { ...fetchHeaders, "Accept": "text/html" },
+            });
+            const html = await pageRes.text();
+            const extracted = extractFromHtml(html);
+            if (extracted) models.push(extracted);
           }
         } catch (e) {
-          console.error("MakerWorld collection fetch error:", e);
+          console.error("MakerWorld single model error:", e);
         }
+      } else if (userMatch) {
+        // User profile / collection
+        const userId = userMatch[1];
+        
+        // Try multiple API patterns
+        const apiUrls = [
+          `https://makerworld.com/api/v1/design/user/${userId}?offset=0&limit=50`,
+          `https://makerworld.com/api/v1/user/${userId}/designs?offset=0&limit=50`,
+        ];
+
+        for (const apiUrl of apiUrls) {
+          if (models.length > 0) break;
+          try {
+            const apiRes = await fetch(apiUrl, { headers: fetchHeaders });
+            const apiText = await apiRes.text();
+            if (apiRes.ok && apiText.trim()) {
+              const apiData = JSON.parse(apiText);
+              const designs = apiData?.hits || apiData?.designs || apiData?.data || [];
+              for (const d of designs) {
+                models.push(parseDesignToModel(d));
+              }
+            }
+          } catch (e) {
+            console.warn(`MakerWorld API attempt failed for ${apiUrl}:`, e);
+          }
+        }
+
+        // Fallback: scrape the collection page HTML
+        if (models.length === 0) {
+          try {
+            const normalizedUrl = url.replace("/pt/", "/en/").replace("/pt?", "/en?");
+            const pageRes = await fetch(normalizedUrl, {
+              headers: { ...fetchHeaders, "Accept": "text/html,application/xhtml+xml" },
+            });
+            const html = await pageRes.text();
+            
+            // Try __NEXT_DATA__
+            const nextMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+            if (nextMatch) {
+              try {
+                const nextData = JSON.parse(nextMatch[1]);
+                const pageProps = nextData?.props?.pageProps || {};
+                const designs = pageProps.designs || pageProps.collectionDesigns || pageProps.userDesigns || [];
+                for (const d of designs) {
+                  models.push(parseDesignToModel(d));
+                }
+              } catch {
+                console.warn("Failed to parse __NEXT_DATA__");
+              }
+            }
+
+            // If still nothing, try to find JSON-LD or og:tags
+            if (models.length === 0) {
+              const titleMatch = html.match(/<title>([^<]+)<\/title>/);
+              const ogImageMatch = html.match(/property="og:image"\s+content="([^"]+)"/);
+              if (titleMatch) {
+                console.log("Page title found:", titleMatch[1], "- but no model data could be extracted");
+              }
+            }
+          } catch (e) {
+            console.error("MakerWorld HTML scrape error:", e);
+          }
+        }
+      }
+
+      if (models.length === 0) {
+        return new Response(
+          JSON.stringify({ 
+            error: "Não foi possível buscar modelos. O MakerWorld usa proteção Cloudflare que pode bloquear a busca. Tente colar a URL de um modelo específico (ex: makerworld.com/en/models/12345).",
+            models: [] 
+          }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
       }
 
       return new Response(
@@ -543,6 +588,58 @@ Deno.serve(async (req) => {
     );
   }
 });
+
+// ── Helper: parse MakerWorld design object to our model format ──
+function parseDesignToModel(d: any) {
+  return {
+    id: d.id || d.designId || d.design_id || "",
+    title: d.title || d.name || "Sem nome",
+    thumbnail: d.cover || d.cover_url || d.coverUrl || d.images?.[0]?.url || null,
+    description: d.summary || d.description || "",
+    print_count: d.printCountStr || d.print_count || "0",
+    download_count: d.downloadCountStr || d.download_count || "0",
+    like_count: d.likeCount || d.like_count || 0,
+    profiles: (d.profileList || d.profiles || []).map((p: any) => ({
+      name: p.name || "Default",
+      weight_grams: p.weight || p.total_weight || 0,
+      time_seconds: p.estimatedTime || p.estimated_time || 0,
+      filaments: (p.materialList || p.materials || []).map((m: any) => ({
+        type: m.type || "PLA",
+        color: m.color || "",
+        grams: m.weight || 0,
+      })),
+    })),
+  };
+}
+
+// ── Helper: extract model data from HTML page ──
+function extractFromHtml(html: string): any | null {
+  const nextMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+  if (nextMatch) {
+    try {
+      const nextData = JSON.parse(nextMatch[1]);
+      const design = nextData?.props?.pageProps?.design;
+      if (design) return parseDesignToModel(design);
+    } catch {}
+  }
+  
+  // Try og:tags as minimal fallback
+  const titleMatch = html.match(/<meta\s+property="og:title"\s+content="([^"]+)"/);
+  const imageMatch = html.match(/<meta\s+property="og:image"\s+content="([^"]+)"/);
+  const descMatch = html.match(/<meta\s+property="og:description"\s+content="([^"]+)"/);
+  
+  if (titleMatch) {
+    return {
+      id: "og-" + Date.now(),
+      title: titleMatch[1],
+      thumbnail: imageMatch?.[1] || null,
+      description: descMatch?.[1] || "",
+      profiles: [],
+    };
+  }
+  
+  return null;
+}
 
 // ── Fetch devices from Bambu Cloud and upsert into DB ──
 async function fetchAndSyncDevices(

@@ -179,17 +179,23 @@ export default function Produtos() {
   });
 
   // Fetch Bambu projects (saved models / collections)
+  const [bambuProjectsError, setBambuProjectsError] = useState("");
   const { data: bambuProjects = [], isLoading: bambuProjectsLoading } = useQuery({
     queryKey: ["bambu_projects_for_import"],
     queryFn: async () => {
+      setBambuProjectsError("");
       const { data, error } = await supabase.functions.invoke("bambu-cloud-sync", {
         body: { action: "projects" },
       });
       if (error) throw error;
-      if (data.error) throw new Error(data.error);
+      if (data.error) {
+        setBambuProjectsError(data.error);
+        return data.projects || [];
+      }
       return data.projects || [];
     },
     enabled: !!profile && bambuImportOpen && bambuTab === "projects",
+    retry: false,
   });
 
   const filtered = useMemo(() => {
@@ -560,8 +566,12 @@ export default function Produtos() {
               ) : bambuProjects.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                   <FolderOpen className="h-8 w-8 mb-2 opacity-40" />
-                  <p className="text-sm">Nenhum projeto salvo encontrado</p>
-                  <p className="text-xs mt-1">Conecte-se na página de Integrações → Bambu Lab</p>
+                  <p className="text-sm font-medium">{bambuProjectsError || "Nenhum projeto salvo encontrado"}</p>
+                  <p className="text-xs mt-1 text-center max-w-sm">
+                    {bambuProjectsError 
+                      ? "Vá em Integrações → Bambu Lab e reconecte sua conta."
+                      : "Conecte-se na página de Integrações → Bambu Lab"}
+                  </p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
