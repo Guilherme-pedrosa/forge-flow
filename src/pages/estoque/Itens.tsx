@@ -152,7 +152,8 @@ export default function Itens() {
 
   const updateMut = useMutation({
     mutationFn: async () => {
-      if (!editItem) return;
+      if (!editItem || !profile) return;
+      const newStock = currentStock ? parseFloat(currentStock) : 0;
       const { error } = await supabase.from("inventory_items").update({
         name,
         category,
@@ -164,10 +165,24 @@ export default function Itens() {
         unit,
         min_stock: minStock ? parseFloat(minStock) : 0,
         avg_cost: avgCost ? parseFloat(avgCost) : 0,
+        current_stock: newStock,
         loss_coefficient: parseFloat(lossCoefficient) || 0.05,
         notes: notes || null,
       }).eq("id", editItem.id);
       if (error) throw error;
+      // If stock changed, create an adjustment movement for audit trail
+      if (newStock !== editItem.current_stock) {
+        const diff = newStock - editItem.current_stock;
+        await supabase.from("inventory_movements").insert({
+          tenant_id: profile.tenant_id,
+          item_id: editItem.id,
+          movement_type: "adjustment",
+          quantity: Math.abs(diff),
+          unit_cost: avgCost ? parseFloat(avgCost) : editItem.avg_cost,
+          notes: `Ajuste manual de estoque: ${editItem.current_stock} → ${newStock}`,
+          stock_after: newStock,
+        });
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["inventory_items"] });
