@@ -1,11 +1,11 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageHeader } from "@/components/shared/PageHeader";
 import {
   Plus, Search, MoreHorizontal, FileText, Loader2, Trash2, CheckCircle2, Clock, Truck,
-  ShoppingCart, MapPin, X, Package,
+  ShoppingCart, MapPin, X, Package, Printer,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -63,6 +63,7 @@ export default function Pedidos() {
   const { profile } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
+  const printRef = useRef<HTMLDivElement>(null);
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -87,7 +88,7 @@ export default function Pedidos() {
   const { data: orders = [], isLoading } = useQuery({
     queryKey: ["orders"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("orders").select("*, customers(name, address)").order("created_at", { ascending: false });
+      const { data, error } = await supabase.from("orders").select("*, customers(name, address, phone, email, document)").order("created_at", { ascending: false });
       if (error) throw error;
       return data;
     },
@@ -108,6 +109,17 @@ export default function Pedidos() {
     queryKey: ["products_for_orders"],
     queryFn: async () => {
       const { data, error } = await supabase.from("products").select("id, name, sku, sale_price, cost_estimate").eq("is_active", true).order("name");
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!profile,
+  });
+
+  const { data: tenant } = useQuery({
+    queryKey: ["tenant"],
+    queryFn: async () => {
+      if (!profile) return null;
+      const { data, error } = await supabase.from("tenants").select("*").eq("id", profile.tenant_id).single();
       if (error) throw error;
       return data;
     },
@@ -179,6 +191,104 @@ export default function Pedidos() {
   const shippingVal = parseFloat(shipping) || 0;
   const discountNum = parseFloat(discountVal) || 0;
   const grandTotal = subtotal + shippingVal - discountNum;
+
+  // Print PDF
+  const handlePrint = () => {
+    if (!printRef.current) return;
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) return;
+
+    const tenantSettings = (tenant?.settings as any) || {};
+    const addr = tenantSettings.address || {};
+    const companyAddress = [addr.street, addr.number, addr.complement, addr.neighborhood, addr.city, addr.state, addr.zip].filter(Boolean).join(", ");
+
+    const viewOrder = orders.find((o: any) => o.id === viewOrderId);
+    if (!viewOrder) return;
+
+    const cfg = statusConfig[viewOrder.status] || statusConfig.draft;
+    const customerName = (viewOrder as any).customers?.name || "—";
+
+    const itemsHtml = viewItems.map((item: any) => `
+      <tr>
+        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">${item.description}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:center;">${item.quantity}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right;font-family:monospace;">${fmtCurrency(item.unit_price)}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right;font-family:monospace;font-weight:600;">${fmtCurrency(item.total)}</td>
+      </tr>
+    `).join("");
+
+    const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>${viewOrder.code}</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color:#1a1a1a; padding:40px; max-width:800px; margin:0 auto; }
+  .header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:32px; padding-bottom:24px; border-bottom:2px solid #1a1a1a; }
+  .company-info { flex:1; }
+  .company-name { font-size:20px; font-weight:700; margin-bottom:4px; }
+  .company-detail { font-size:11px; color:#666; line-height:1.6; }
+  .logo { max-height:64px; max-width:160px; object-fit:contain; }
+  .doc-title { text-align:center; margin:24px 0; }
+  .doc-title h1 { font-size:18px; font-weight:700; letter-spacing:1px; }
+  .doc-title .badge { display:inline-block; margin-top:6px; padding:3px 12px; border-radius:20px; font-size:11px; font-weight:600; background:#f3f4f6; }
+  .info-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:24px; }
+  .info-block label { display:block; font-size:10px; text-transform:uppercase; letter-spacing:0.5px; color:#888; margin-bottom:2px; }
+  .info-block p { font-size:13px; font-weight:500; }
+  .notes { background:#f9fafb; border-radius:8px; padding:12px 16px; margin-bottom:24px; font-size:12px; white-space:pre-line; line-height:1.6; }
+  table { width:100%; border-collapse:collapse; margin-bottom:24px; }
+  thead th { background:#f3f4f6; padding:8px 12px; font-size:11px; text-transform:uppercase; letter-spacing:0.5px; font-weight:600; text-align:left; border-bottom:2px solid #d1d5db; }
+  .totals { display:flex; justify-content:flex-end; margin-bottom:32px; }
+  .totals-box { width:260px; }
+  .totals-row { display:flex; justify-content:space-between; padding:4px 0; font-size:13px; }
+  .totals-row.total { border-top:2px solid #1a1a1a; padding-top:8px; margin-top:4px; font-weight:700; font-size:15px; }
+  .totals-row.discount { color:#dc2626; }
+  .footer { text-align:center; padding-top:24px; border-top:1px solid #e5e7eb; font-size:10px; color:#999; }
+  @media print { body { padding:20px; } }
+</style></head><body>
+  <div class="header">
+    <div class="company-info">
+      <div class="company-name">${tenant?.name || "Empresa"}</div>
+      ${tenantSettings.cnpj ? `<div class="company-detail">CNPJ: ${tenantSettings.cnpj}</div>` : ""}
+      ${tenantSettings.phone ? `<div class="company-detail">Tel: ${tenantSettings.phone}</div>` : ""}
+      ${tenantSettings.email ? `<div class="company-detail">${tenantSettings.email}</div>` : ""}
+      ${companyAddress ? `<div class="company-detail">${companyAddress}</div>` : ""}
+    </div>
+    ${tenant?.logo_url ? `<img src="${tenant.logo_url}" class="logo" />` : ""}
+  </div>
+
+  <div class="doc-title">
+    <h1>${viewOrder.code}</h1>
+    <span class="badge">${cfg.label}</span>
+  </div>
+
+  <div class="info-grid">
+    <div class="info-block"><label>Cliente</label><p>${customerName}</p></div>
+    <div class="info-block"><label>Data de Entrega</label><p>${viewOrder.due_date ? new Date(viewOrder.due_date + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</p></div>
+    <div class="info-block"><label>Data de Emissão</label><p>${new Date(viewOrder.created_at).toLocaleDateString("pt-BR")}</p></div>
+  </div>
+
+  ${viewOrder.notes ? `<div class="notes">${viewOrder.notes}</div>` : ""}
+
+  <table>
+    <thead><tr>
+      <th>Item</th><th style="text-align:center;width:80px;">Qtd</th><th style="text-align:right;width:120px;">Unitário</th><th style="text-align:right;width:120px;">Total</th>
+    </tr></thead>
+    <tbody>${itemsHtml}</tbody>
+  </table>
+
+  <div class="totals">
+    <div class="totals-box">
+      ${viewOrder.discount > 0 ? `<div class="totals-row discount"><span>Desconto</span><span>- ${fmtCurrency(viewOrder.discount)}</span></div>` : ""}
+      <div class="totals-row total"><span>Total</span><span>${fmtCurrency(viewOrder.total)}</span></div>
+    </div>
+  </div>
+
+  <div class="footer">Documento gerado em ${new Date().toLocaleString("pt-BR")}</div>
+</body></html>`;
+
+    printWindow.document.write(html);
+    printWindow.document.close();
+    printWindow.onload = () => { printWindow.print(); };
+  };
 
   // Mutations
   const createMut = useMutation({
@@ -375,66 +485,23 @@ export default function Pedidos() {
                     {lines.map((line) => (
                       <TableRow key={line.id}>
                         <TableCell className="p-1.5">
-                          <Select value={line.product_id || "custom"} onValueChange={(v) => {
-                            if (v === "custom") {
-                              updateLine(line.id, "product_id", "");
-                            } else {
-                              updateLine(line.id, "product_id", v);
-                            }
-                          }}>
-                            <SelectTrigger className="h-8 text-xs">
-                              <SelectValue placeholder="Selecione produto..." />
-                            </SelectTrigger>
+                          <Select value={line.product_id || "custom"} onValueChange={(v) => updateLine(line.id, "product_id", v === "custom" ? "" : v)}>
+                            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Selecione" /></SelectTrigger>
                             <SelectContent>
-                              <SelectItem value="custom">✏️ Personalizado</SelectItem>
-                              {products.map((p) => (
-                                <SelectItem key={p.id} value={p.id}>
-                                  {p.name} {p.sku ? `(${p.sku})` : ""} — {fmtCurrency(p.sale_price)}
-                                </SelectItem>
-                              ))}
+                              <SelectItem value="custom">Personalizado</SelectItem>
+                              {products.map((p) => <SelectItem key={p.id} value={p.id}>{p.name} {p.sale_price ? `(${fmtCurrency(p.sale_price)})` : ""}</SelectItem>)}
                             </SelectContent>
                           </Select>
                           {!line.product_id && (
-                            <Input
-                              className="h-7 text-xs mt-1"
-                              placeholder="Descrição do item"
-                              value={line.description}
-                              onChange={(e) => updateLine(line.id, "description", e.target.value)}
-                            />
-                          )}
-                          {line.product_id && (
-                            <Input
-                              className="h-7 text-xs mt-1"
-                              placeholder="Observação do item (opcional)"
-                              value={line.notes}
-                              onChange={(e) => updateLine(line.id, "notes", e.target.value)}
-                            />
+                            <Input className="mt-1 h-7 text-xs" value={line.description} onChange={(e) => updateLine(line.id, "description", e.target.value)} placeholder="Descrição do item" />
                           )}
                         </TableCell>
+                        <TableCell className="p-1.5"><Input type="number" min={1} className="h-8 text-xs text-center" value={line.quantity} onChange={(e) => updateLine(line.id, "quantity", e.target.value)} /></TableCell>
+                        <TableCell className="p-1.5"><Input type="number" step="0.01" className="h-8 text-xs text-right" value={line.unit_price} onChange={(e) => updateLine(line.id, "unit_price", e.target.value)} /></TableCell>
+                        <TableCell className="p-1.5 text-right font-mono text-xs font-medium">{fmtCurrency(line.total)}</TableCell>
                         <TableCell className="p-1.5">
-                          <Input
-                            type="number"
-                            min={1}
-                            className="h-8 text-xs text-center w-16"
-                            value={line.quantity}
-                            onChange={(e) => updateLine(line.id, "quantity", parseInt(e.target.value) || 1)}
-                          />
-                        </TableCell>
-                        <TableCell className="p-1.5">
-                          <Input
-                            type="number"
-                            step="0.01"
-                            className="h-8 text-xs text-right"
-                            value={line.unit_price || ""}
-                            onChange={(e) => updateLine(line.id, "unit_price", parseFloat(e.target.value) || 0)}
-                          />
-                        </TableCell>
-                        <TableCell className="p-1.5 text-right font-mono text-xs font-medium text-foreground">
-                          {fmtCurrency(line.total)}
-                        </TableCell>
-                        <TableCell className="p-1.5">
-                          <Button type="button" variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => removeLine(line.id)}>
-                            <X className="h-3.5 w-3.5" />
+                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => removeLine(line.id)}>
+                            <X className="h-3.5 w-3.5 text-muted-foreground" />
                           </Button>
                         </TableCell>
                       </TableRow>
@@ -503,7 +570,7 @@ export default function Pedidos() {
           </DialogHeader>
 
           {viewOrder && (
-            <div className="space-y-4">
+            <div className="space-y-4" ref={printRef}>
               <div className="grid grid-cols-2 gap-4 text-sm">
                 <div>
                   <p className="text-xs text-muted-foreground">Cliente</p>
@@ -555,7 +622,10 @@ export default function Pedidos() {
                 </Table>
               </div>
 
-              <div className="flex justify-end">
+              <div className="flex justify-between items-end">
+                <Button variant="outline" size="sm" onClick={handlePrint}>
+                  <Printer className="h-4 w-4 mr-1" /> Imprimir / PDF
+                </Button>
                 <div className="w-64 space-y-1 text-sm">
                   {viewOrder.discount > 0 && (
                     <div className="flex justify-between text-muted-foreground">
