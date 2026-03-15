@@ -686,9 +686,18 @@ Deno.serve(async (req) => {
                   }
                 }
 
+                const profileIds = Array.from(
+                  new Set(
+                    [...html.matchAll(/profileId-(\d+)/gi)]
+                      .map((m) => m[1])
+                      .filter(Boolean)
+                  )
+                );
+
                 const normalizedProfiles = parsedProfiles.length > 0
-                  ? parsedProfiles.map((p) => ({
+                  ? parsedProfiles.map((p, idx) => ({
                       ...p,
+                      profile_id: p.profile_id || profileIds[idx] || null,
                       weight_grams: p.weight_grams || weightGrams,
                       time_seconds: p.time_seconds || timeSeconds,
                       plates: p.plates || totalPlates,
@@ -696,6 +705,7 @@ Deno.serve(async (req) => {
                     }))
                   : [{
                       name: "Opção 1",
+                      profile_id: profileIds[0] || selectedProfileId || null,
                       weight_grams: weightGrams,
                       time_seconds: timeSeconds,
                       plates: totalPlates,
