@@ -1149,8 +1149,24 @@ export default function Compras() {
                           {paymentMethods.map((pm: any) => <SelectItem key={pm.id} value={pm.id}>{pm.name}</SelectItem>)}
                         </SelectContent>
                       </Select>
-                      <p className="text-xs text-muted-foreground mt-1">Será usada para gerar a conta a pagar</p>
                     </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <Label className="mb-2 block">Parcelas</Label>
+                        <Select value={marketplaceInstallments || String(parseInstallmentCount(p.payment_installments))} onValueChange={setMarketplaceInstallments}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {[1,2,3,4,5,6,7,8,9,10,11,12].map(n => <SelectItem key={n} value={String(n)}>{n}x</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <Label className="mb-2 block">Vencimento 1ª parcela</Label>
+                        <Input type="date" value={marketplaceDueDate} onChange={(e) => setMarketplaceDueDate(e.target.value)} />
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground">Será usada para gerar a(s) conta(s) a pagar. Demais parcelas: +30 dias cada.</p>
 
                     <div>
                       <Label className="mb-2 block">Itens ({p.items?.length || 0})</Label>
