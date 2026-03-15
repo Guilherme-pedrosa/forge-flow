@@ -635,7 +635,7 @@ export default function Produtos() {
                       <span className="text-muted-foreground">%</span>
                     </div>
                     {ch.key !== "particular" && (
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <Switch
                           checked={ch.freeShipping}
                           onCheckedChange={(v) => updateChannel(idx, "freeShipping", v)}
@@ -646,12 +646,24 @@ export default function Produtos() {
                           <div className="flex items-center gap-1">
                             <span className="text-muted-foreground">+</span>
                             <Input
-                              type="number" step="0.1" min="0" max="100"
-                              className="h-7 text-xs w-14 text-right"
+                              type="number" step="0.01" min="0"
+                              className="h-7 text-xs w-16 text-right"
                               value={ch.freeShippingExtra}
                               onChange={(e) => updateChannel(idx, "freeShippingExtra", parseFloat(e.target.value) || 0)}
                             />
-                            <span className="text-muted-foreground">%</span>
+                            <button
+                              type="button"
+                              className={cn(
+                                "h-7 px-1.5 rounded text-xs font-medium border transition-colors",
+                                ch.freeShippingType === "percent"
+                                  ? "bg-primary/10 text-primary border-primary/30"
+                                  : "bg-muted text-muted-foreground border-border hover:bg-muted/80"
+                              )}
+                              onClick={() => updateChannel(idx, "freeShippingType", ch.freeShippingType === "percent" ? "fixed" : "percent")}
+                              title="Clique para alternar entre % e R$"
+                            >
+                              {ch.freeShippingType === "percent" ? "%" : "R$"}
+                            </button>
                           </div>
                         )}
                       </div>
