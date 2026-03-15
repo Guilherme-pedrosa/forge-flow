@@ -10,6 +10,9 @@ import ModulePlaceholder from "./pages/ModulePlaceholder";
 import ContasPagar from "./pages/financeiro/ContasPagar";
 import Impressoras from "./pages/producao/Impressoras";
 import Jobs from "./pages/producao/Jobs";
+import Itens from "./pages/estoque/Itens";
+import Movimentacoes from "./pages/estoque/Movimentacoes";
+import Alertas from "./pages/estoque/Alertas";
 import Login from "./pages/auth/Login";
 import Signup from "./pages/auth/Signup";
 import SetupTenant from "./pages/onboarding/SetupTenant";
@@ -29,9 +32,9 @@ function AuthenticatedRoutes() {
         <Route path="/financeiro/conciliacao" element={<ModulePlaceholder />} />
         <Route path="/financeiro/dre" element={<ModulePlaceholder />} />
         {/* Estoque */}
-        <Route path="/estoque/itens" element={<ModulePlaceholder />} />
-        <Route path="/estoque/movimentacoes" element={<ModulePlaceholder />} />
-        <Route path="/estoque/alertas" element={<ModulePlaceholder />} />
+        <Route path="/estoque/itens" element={<Itens />} />
+        <Route path="/estoque/movimentacoes" element={<Movimentacoes />} />
+        <Route path="/estoque/alertas" element={<Alertas />} />
         {/* Produção */}
         <Route path="/producao/jobs" element={<Jobs />} />
         <Route path="/producao/impressoras" element={<Impressoras />} />
