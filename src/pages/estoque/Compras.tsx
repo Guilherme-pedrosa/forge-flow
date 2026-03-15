@@ -651,22 +651,27 @@ export default function Compras() {
         if (ie) throw ie;
       }
 
-      // Create accounts_payable
+      // Create accounts_payable (with installments)
       if (totalAmount > 0) {
         const purchaseDate = purchase.order_date || new Date().toISOString().slice(0, 10);
-        await supabase.from("accounts_payable").insert({
-          tenant_id: profile.tenant_id,
+        const baseDue = marketplaceDueDate || purchaseDate;
+        const numInst = parseInt(marketplaceInstallments || "1", 10) || parseInstallmentCount(purchase.payment_installments);
+        const isPaid = purchase.status === "concluido";
+        const entries = generateInstallmentAP({
+          tenantId: profile.tenant_id,
           description: `${marketplace} - ${purchase.vendor_name || code}`,
-          amount: totalAmount,
-          due_date: purchaseDate,
-          vendor_id: vid,
-          payment_method_id: pmId,
-          status: purchase.status === "concluido" ? "paid" : "open",
-          payment_date: purchase.status === "concluido" ? purchaseDate : null,
-          amount_paid: purchase.status === "concluido" ? totalAmount : 0,
+          totalAmount,
+          baseDueDate: baseDue,
+          numInstallments: numInst,
+          vendorId: vid,
+          paymentMethodId: pmId,
+          isPaid,
+          paymentDate: isPaid ? purchaseDate : null,
           notes: `Ref. pedido ${code}${purchase.payment_installments ? ` | ${purchase.payment_installments}` : ""}`,
-          created_by: profile.user_id,
+          createdBy: profile.user_id,
         });
+        const { error: apErr } = await supabase.from("accounts_payable").insert(entries);
+        if (apErr) throw apErr;
       }
     },
     onSuccess: () => {
