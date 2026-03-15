@@ -89,7 +89,7 @@ function toneClass(tone: ModuleConfig["kpis"][number]["tone"]) {
   if (tone === "overdue") return "status-card-overdue";
   if (tone === "paid") return "status-card-paid";
   if (tone === "today") return "status-card-today";
-  if (tone === "upcoming") return "status-card-upcoming";
+  if (tone === "upcoming" || tone === "warning") return "status-card-upcoming";
   return "status-card-total";
 }
 
