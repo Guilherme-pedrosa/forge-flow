@@ -546,7 +546,10 @@ export default function Produtos() {
             <span className="text-right font-mono text-primary">{fmtCurrency(costBreakdown.suggestedPrice)}</span>
           </div>
           {tenantSettings.energy_cost_kwh === 0 && tenantSettings.labor_cost_hour === 0 && (
-            <p className="text-[11px] text-amber-600">⚠ Configure custos de energia/mão de obra em Configurações → Empresa</p>
+            <p className="text-[11px] text-muted-foreground">⚠ Configure custos de energia/mão de obra em Configurações → Empresa</p>
+          )}
+          {!costBreakdown.hasMachineRate && parseInt(estTime) > 0 && (
+            <p className="text-[11px] text-muted-foreground">⚠ Para calcular depreciação, preencha custo de aquisição e vida útil da impressora.</p>
           )}
         </div>
       )}
