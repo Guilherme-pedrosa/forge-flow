@@ -667,7 +667,38 @@ Deno.serve(async (req) => {
                     .filter((n) => Number.isFinite(n) && n > 0.05 && n < 5000);
 
                   if (candidates.length > 0) {
-                    weightGrams = Math.max(...candidates);
+                    const uniqueCandidates = Array.from(new Set(candidates.map((n) => Math.round(n * 10) / 10))).sort((a, b) => a - b);
+                    let picked = uniqueCandidates[uniqueCandidates.length - 1];
+
+                    // Prefer "component sum" totals (e.g. 163 + 114 ≈ 277) over outlier values
+                    for (let targetIdx = uniqueCandidates.length - 1; targetIdx >= 0; targetIdx--) {
+                      const target = uniqueCandidates[targetIdx];
+                      let foundComposite = false;
+
+                      for (let i = 0; i < targetIdx && !foundComposite; i++) {
+                        for (let j = i + 1; j < targetIdx; j++) {
+                          const sum2 = uniqueCandidates[i] + uniqueCandidates[j];
+                          if (Math.abs(sum2 - target) / target <= 0.1) {
+                            picked = target;
+                            foundComposite = true;
+                            break;
+                          }
+                        }
+                      }
+
+                      if (foundComposite) break;
+                    }
+
+                    // If top value is a strong outlier, prefer the next plausible one
+                    if (uniqueCandidates.length >= 2) {
+                      const max = uniqueCandidates[uniqueCandidates.length - 1];
+                      const second = uniqueCandidates[uniqueCandidates.length - 2];
+                      if (picked === max && max > second * 1.4) {
+                        picked = second;
+                      }
+                    }
+
+                    weightGrams = picked;
                   }
                 }
 
