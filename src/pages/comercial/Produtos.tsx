@@ -53,6 +53,7 @@ export default function Produtos() {
   const [bambuTab, setBambuTab] = useState<"projects" | "tasks" | "makerworld">("projects");
   const [makerWorldUrl, setMakerWorldUrl] = useState("");
   const [makerWorldLoading, setMakerWorldLoading] = useState(false);
+  const [myCollectionsLoading, setMyCollectionsLoading] = useState(false);
   const [makerWorldModels, setMakerWorldModels] = useState<any[]>([]);
   const [makerOptionOpen, setMakerOptionOpen] = useState(false);
   const [makerModelToImport, setMakerModelToImport] = useState<any | null>(null);
@@ -521,6 +522,32 @@ export default function Produtos() {
       toast({ title: "Erro ao buscar", description: e.message, variant: "destructive" });
     } finally {
       setMakerWorldLoading(false);
+    }
+  };
+
+  const fetchMyCollections = async () => {
+    setMyCollectionsLoading(true);
+    setMakerWorldModels([]);
+    try {
+      const { data, error } = await supabase.functions.invoke("bambu-cloud-sync", {
+        body: { action: "makerworld_my_collections" },
+      });
+      if (error) throw error;
+      if (data.error) throw new Error(data.error);
+
+      const models = data.models || [];
+      setMakerWorldModels(models);
+      if (data.collection_url) setMakerWorldUrl(data.collection_url);
+
+      if (models.length === 0) {
+        toast({ title: "Nenhum modelo encontrado", description: "Não encontrei modelos nas suas coleções públicas.", variant: "destructive" });
+      } else {
+        toast({ title: "Coleções carregadas", description: `${models.length} modelo(s) importável(eis).` });
+      }
+    } catch (e: any) {
+      toast({ title: "Erro ao buscar coleções", description: e.message, variant: "destructive" });
+    } finally {
+      setMyCollectionsLoading(false);
     }
   };
 
@@ -1051,7 +1078,7 @@ export default function Produtos() {
             ) : (
               /* MakerWorld tab */
               <div className="space-y-4">
-                <div className="flex gap-2">
+                <div className="flex flex-col sm:flex-row gap-2">
                   <div className="relative flex-1">
                     <Link className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input
@@ -1062,17 +1089,22 @@ export default function Produtos() {
                       onKeyDown={(e) => e.key === "Enter" && fetchMakerWorld()}
                     />
                   </div>
-                  <Button onClick={fetchMakerWorld} disabled={makerWorldLoading || !makerWorldUrl.trim()}>
-                    {makerWorldLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-                  </Button>
+                  <div className="flex gap-2">
+                    <Button onClick={fetchMakerWorld} disabled={makerWorldLoading || myCollectionsLoading || !makerWorldUrl.trim()}>
+                      {makerWorldLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
+                    </Button>
+                    <Button variant="outline" onClick={fetchMyCollections} disabled={myCollectionsLoading || makerWorldLoading}>
+                      {myCollectionsLoading ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <FolderOpen className="h-4 w-4 mr-1" />} Minhas coleções
+                    </Button>
+                  </div>
                 </div>
 
-                {makerWorldLoading ? (
+                {makerWorldLoading || myCollectionsLoading ? (
                   <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
                 ) : makerWorldModels.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                     <Globe className="h-8 w-8 mb-2 opacity-40" />
-                    <p className="text-sm">Cole a URL de uma coleção ou modelo do MakerWorld</p>
+                    <p className="text-sm">Clique em “Minhas coleções” ou cole a URL de uma coleção/modelo</p>
                     <p className="text-xs mt-1 text-center max-w-sm">Ex: https://makerworld.com/pt/@usuario/collections/models</p>
                   </div>
                 ) : (
