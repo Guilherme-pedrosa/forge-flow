@@ -32,9 +32,9 @@ function AuthenticatedRoutes() {
         <Route path="/financeiro/conciliacao" element={<ModulePlaceholder />} />
         <Route path="/financeiro/dre" element={<ModulePlaceholder />} />
         {/* Estoque */}
-        <Route path="/estoque/itens" element={<ModulePlaceholder />} />
-        <Route path="/estoque/movimentacoes" element={<ModulePlaceholder />} />
-        <Route path="/estoque/alertas" element={<ModulePlaceholder />} />
+        <Route path="/estoque/itens" element={<Itens />} />
+        <Route path="/estoque/movimentacoes" element={<Movimentacoes />} />
+        <Route path="/estoque/alertas" element={<Alertas />} />
         {/* Produção */}
         <Route path="/producao/jobs" element={<Jobs />} />
         <Route path="/producao/impressoras" element={<Impressoras />} />
