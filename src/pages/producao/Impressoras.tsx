@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -78,7 +78,26 @@ export default function Impressoras() {
       return data;
     },
     enabled: !!profile,
+    refetchInterval: 15000, // Fallback polling every 15s
   });
+
+  // ── Realtime subscription ──
+  useEffect(() => {
+    const channel = supabase
+      .channel("printers-realtime")
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "printers" },
+        () => {
+          queryClient.invalidateQueries({ queryKey: ["printers"] });
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [queryClient]);
 
   // ── Delete printer ──
   const deleteMutation = useMutation({
