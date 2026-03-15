@@ -305,6 +305,7 @@ export default function Compras() {
           quantity: parseFloat(i.quantity || "1"),
           unit_price: parseFloat(i.unitPrice || "0"),
           total: parseFloat(i.quantity || "1") * parseFloat(i.unitPrice || "0"),
+          inventory_item_id: i.inventoryItemId || null,
         }));
         const { error: ie } = await supabase.from("purchase_order_items").insert(rows);
         if (ie) throw ie;
