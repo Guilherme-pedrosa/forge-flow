@@ -54,13 +54,26 @@ export function TelemetryStrip() {
 
   if (!printers?.length) return null;
 
+  // Map Bambu print_status to our local status
+  const resolveStatus = (localStatus: string, device: BambuDevice | null | undefined): string => {
+    if (!device) return localStatus;
+    const bs = device.print_status?.toUpperCase();
+    if (bs === "RUNNING") return "printing";
+    if (bs === "PAUSE") return "paused";
+    if (bs === "FAILED") return "error";
+    if (bs === "IDLE" || bs === "FINISH") return "idle";
+    if (device.online === false) return "offline";
+    return localStatus;
+  };
+
   return (
     <div className="h-10 bg-surface-sunken border-t border-sidebar-border flex items-center px-4 gap-6 overflow-x-auto flex-shrink-0">
       {printers.map((p) => {
         const device = p.bambu_device_id ? deviceMap.get(p.bambu_device_id) : null;
+        const liveStatus = resolveStatus(p.status, device);
         const nozzle = device?.nozzle_temp;
         const progress = device?.progress;
-        const isPrinting = p.status === "printing";
+        const isPrinting = liveStatus === "printing";
 
         return (
           <div key={p.id} className="flex items-center gap-2 text-xs whitespace-nowrap">
