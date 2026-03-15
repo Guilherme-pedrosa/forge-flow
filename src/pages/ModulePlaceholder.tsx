@@ -53,7 +53,7 @@ const configs: Record<string, ModuleConfig> = {
       { label: "Saldo Consolidado", value: "R$ 94.780,55", trend: "+2,9%", tone: "total" },
       { label: "Entradas Hoje", value: "R$ 11.920,00", trend: "17 lanç.", tone: "paid" },
       { label: "Saídas Hoje", value: "R$ 8.640,00", trend: "12 lanç.", tone: "today" },
-      { label: "Não Conciliado", value: "R$ 4.220,00", trend: "4 lanç.", tone: "warning" as never },
+      { label: "Não Conciliado", value: "R$ 4.220,00", trend: "4 lanç.", tone: "warning" },
     ],
     tableColumns: ["Conta", "Descrição", "Data", "Valor", "Tipo", "Conciliação"],
     tableRows: [
