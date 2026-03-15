@@ -448,7 +448,8 @@ Deno.serve(async (req) => {
       let strategyUsed: "api_internal" | "firecrawl" | "direct_html" | null = null;
       const modelMatch = url.match(/\/models\/(\d+)/);
       const hashProfileId = url.match(/profileId-(\d+)/i)?.[1] || null;
-      const selectedProfileId = selected_profile_id || hashProfileId;
+      const queryProfileId = url.match(/[?&]profileId=(\d+)/i)?.[1] || null;
+      const selectedProfileId = selected_profile_id || hashProfileId || queryProfileId;
 
       const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
 
