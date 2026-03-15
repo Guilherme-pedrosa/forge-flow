@@ -179,17 +179,23 @@ export default function Produtos() {
   });
 
   // Fetch Bambu projects (saved models / collections)
+  const [bambuProjectsError, setBambuProjectsError] = useState("");
   const { data: bambuProjects = [], isLoading: bambuProjectsLoading } = useQuery({
     queryKey: ["bambu_projects_for_import"],
     queryFn: async () => {
+      setBambuProjectsError("");
       const { data, error } = await supabase.functions.invoke("bambu-cloud-sync", {
         body: { action: "projects" },
       });
       if (error) throw error;
-      if (data.error) throw new Error(data.error);
+      if (data.error) {
+        setBambuProjectsError(data.error);
+        return data.projects || [];
+      }
       return data.projects || [];
     },
     enabled: !!profile && bambuImportOpen && bambuTab === "projects",
+    retry: false,
   });
 
   const filtered = useMemo(() => {
