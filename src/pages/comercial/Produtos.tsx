@@ -375,18 +375,31 @@ export default function Produtos() {
     const profileIdx = selectedProfileIndex ?? 0;
     const selectedProfile = profiles[profileIdx] || profiles[0] || null;
 
+    // ── Peso: prioridade = soma dos filamentos do profile selecionado ──
     const profileFilamentSum = (selectedProfile?.filaments || []).reduce((sum: number, f: any) => {
       return sum + toNumber(f?.grams ?? f?.used_g ?? f?.weight);
     }, 0);
 
-    const profileWeight = Math.max(
+    const profileDeclaredWeight = Math.max(
       toNumber(selectedProfile?.weight_grams),
       toNumber(selectedProfile?.weight),
       toNumber(selectedProfile?.total_weight),
-      toNumber(selectedProfile?.totalWeight),
-      profileFilamentSum
+      toNumber(selectedProfile?.totalWeight)
     );
 
+    // Filament sum > declared profile weight > model-level weight (fallback only)
+    const resolvedWeight = profileFilamentSum > 0
+      ? profileFilamentSum
+      : profileDeclaredWeight > 0
+        ? profileDeclaredWeight
+        : Math.max(
+            toNumber(model?.weight_grams),
+            toNumber(model?.weight),
+            toNumber(model?.total_weight),
+            toNumber(model?.totalWeight)
+          );
+
+    // ── Tempo: profile selecionado > model-level (fallback) ──
     const profileTimeSeconds = Math.max(
       toNumber(selectedProfile?.time_seconds),
       toNumber(selectedProfile?.prediction),
@@ -394,45 +407,26 @@ export default function Produtos() {
       toNumber(selectedProfile?.printTime)
     );
 
-    const maxProfileWeight = profiles.reduce((acc: number, p: any) => {
-      const pFilamentSum = (p?.filaments || []).reduce((sum: number, f: any) => {
-        return sum + toNumber(f?.grams ?? f?.used_g ?? f?.weight);
-      }, 0);
-      return Math.max(
-        acc,
-        toNumber(p?.weight_grams),
-        toNumber(p?.weight),
-        toNumber(p?.total_weight),
-        toNumber(p?.totalWeight),
-        pFilamentSum
-      );
-    }, 0);
+    const resolvedTimeSeconds = profileTimeSeconds > 0
+      ? profileTimeSeconds
+      : Math.max(
+          toNumber(model?.time_seconds),
+          toNumber(model?.prediction),
+          toNumber(model?.estimatedTime),
+          toNumber(model?.printTime)
+        );
 
-    const maxProfileTime = profiles.reduce((acc: number, p: any) => Math.max(
-      acc,
-      toNumber(p?.time_seconds),
-      toNumber(p?.prediction),
-      toNumber(p?.estimatedTime),
-      toNumber(p?.printTime)
-    ), 0);
+    // ── Material: auto-match pelo tipo dominante do filamento ──
+    const dominantFilamentType = (selectedProfile?.filaments || [])
+      .reduce((best: any, f: any) => (!best || toNumber(f?.grams) > toNumber(best?.grams) ? f : best), null)
+      ?.type?.toUpperCase() || "";
 
-    const resolvedWeight = Math.max(
-      profileWeight,
-      maxProfileWeight,
-      toNumber(model?.weight_grams),
-      toNumber(model?.weight),
-      toNumber(model?.total_weight),
-      toNumber(model?.totalWeight)
-    );
-
-    const resolvedTimeSeconds = Math.max(
-      profileTimeSeconds,
-      maxProfileTime,
-      toNumber(model?.time_seconds),
-      toNumber(model?.prediction),
-      toNumber(model?.estimatedTime),
-      toNumber(model?.printTime)
-    );
+    const autoMatchedMaterial = dominantFilamentType
+      ? materials.find((m: any) => {
+          const mt = (m.name || "").toUpperCase();
+          return mt.includes(dominantFilamentType);
+        })
+      : null;
 
     resetForm();
     setName(model.title || "Produto MakerWorld");
