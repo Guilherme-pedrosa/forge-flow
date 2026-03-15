@@ -153,9 +153,8 @@ export default function Produtos() {
   // Cost breakdown calculation
   const costBreakdown = useMemo(() => {
     const grams = parseFloat(estGrams) || 0;
-    const printMinutes = parseInt(estTime) || 0;
+    const printHours = parseFloat(estTime) || 0;
     const postMin = parseInt(postMinutes) || 0;
-    const printHours = printMinutes / 60;
     const laborHours = postMin / 60;
 
     // Material cost (produto sempre em gramas)
