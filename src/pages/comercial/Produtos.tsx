@@ -508,8 +508,11 @@ export default function Produtos() {
         <div><Label>Impressora</Label>
           <Select value={printerId || "none"} onValueChange={(v) => setPrinterId(v === "none" ? "" : v)}>
             <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-            <SelectContent><SelectItem value="none">Padrão (200W)</SelectItem>{printers.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent>
+            <SelectContent><SelectItem value="none">Automático</SelectItem>{printers.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent>
           </Select>
+          {!printerId && costBreakdown.selectedPrinterName && (
+            <p className="mt-1 text-[11px] text-muted-foreground">Usando {costBreakdown.selectedPrinterName} como referência de custo de máquina.</p>
+          )}
         </div>
         <div><Label>Tempo Impressão (min)</Label><Input type="number" value={estTime} onChange={(e) => setEstTime(e.target.value)} placeholder="120" /></div>
         <div><Label>Pós-Processo (min)</Label><Input type="number" value={postMinutes} onChange={(e) => setPostMinutes(e.target.value)} placeholder="15" /></div>
