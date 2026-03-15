@@ -54,6 +54,8 @@ Estrutura de cada pedido:
   "discount": null,
   "total": 123.60,
   "status": "concluido" | "pendente" | "enviado" | "cancelado" | null,
+  "payment_method": "pix" | "credit_card" | "boleto" | "debit_card" | null,
+  "payment_installments": "3x de R$ 41,20" ou null,
   "notes": null
 }
 
@@ -64,6 +66,9 @@ REGRAS DE VALORES:
 - Se o preço é unitário e a qtd > 1, calcule o total = unit_price × quantity
 - O "Total:" mostrado na Shopee é o total do PEDIDO (pode incluir frete)
 - Se não conseguir um campo, use null (mas NUNCA deixe items vazio se há produtos visíveis)
+- EXTRAIA a forma de pagamento se visível (cartão de crédito, PIX, boleto, etc)
+- Se houver parcelamento (ex: "3x de R$ 41,20"), coloque em payment_installments
+- payment_method deve ser: "credit_card", "debit_card", "pix", "boleto" ou null
 
 Retorne APENAS o JSON, sem markdown, sem explicações.`;
 

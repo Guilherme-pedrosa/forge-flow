@@ -134,6 +134,7 @@ export default function Compras() {
   const [marketplaceParsing, setMarketplaceParsing] = useState(false);
   const [marketplaceParsed, setMarketplaceParsed] = useState<any[]>([]);
   const [marketplaceSelectedIdx, setMarketplaceSelectedIdx] = useState(0);
+  const [marketplacePaymentMethodId, setMarketplacePaymentMethodId] = useState("");
   const marketplaceFileRef = useRef<HTMLInputElement>(null);
   const [nfeData, setNfeData] = useState<NfeData | null>(null);
   const [xmlRaw, setXmlRaw] = useState("");
@@ -143,6 +144,7 @@ export default function Compras() {
   const [orderDate, setOrderDate] = useState(new Date().toISOString().slice(0, 10));
   const [expectedDate, setExpectedDate] = useState("");
   const [notes, setNotes] = useState("");
+  const [paymentMethodId, setPaymentMethodId] = useState("");
   const [manualItems, setManualItems] = useState<{ description: string; quantity: string; unitPrice: string }[]>([
     { description: "", quantity: "1", unitPrice: "0" },
   ]);
@@ -174,6 +176,16 @@ export default function Compras() {
     queryKey: ["inventory_items"],
     queryFn: async () => {
       const { data, error } = await supabase.from("inventory_items").select("id, name, sku").eq("is_active", true).order("name");
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!profile,
+  });
+
+  const { data: paymentMethods = [] } = useQuery({
+    queryKey: ["payment_methods"],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("payment_methods").select("id, name, type").eq("is_active", true).order("name");
       if (error) throw error;
       return data;
     },
@@ -240,12 +252,28 @@ export default function Compras() {
         const { error: ie } = await supabase.from("purchase_order_items").insert(rows);
         if (ie) throw ie;
       }
+
+      // Create accounts_payable
+      if (subtotal > 0) {
+        await supabase.from("accounts_payable").insert({
+          tenant_id: profile.tenant_id,
+          description: `Compra ${nextCode}${vendorId ? "" : ""}`,
+          amount: subtotal,
+          due_date: expectedDate || orderDate,
+          vendor_id: vendorId || null,
+          payment_method_id: paymentMethodId || null,
+          status: "open",
+          notes: `Ref. pedido de compra ${nextCode}`,
+          created_by: profile.user_id,
+        });
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
+      qc.invalidateQueries({ queryKey: ["accounts_payable"] });
       setCreateOpen(false);
       resetForm();
-      toast({ title: "Pedido de compra criado" });
+      toast({ title: "Pedido de compra criado e conta a pagar gerada" });
     },
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
@@ -307,14 +335,29 @@ export default function Compras() {
         const { error: ie } = await supabase.from("purchase_order_items").insert(rows);
         if (ie) throw ie;
       }
+
+      // Create accounts_payable for NFe
+      if (nfeData.total > 0) {
+        await supabase.from("accounts_payable").insert({
+          tenant_id: profile.tenant_id,
+          description: `NFe ${nfeData.nfeNumber} - ${nfeData.vendorName || "Fornecedor"}`,
+          amount: nfeData.total,
+          due_date: nfeData.issueDate || new Date().toISOString().slice(0, 10),
+          vendor_id: vid,
+          status: "open",
+          notes: `Ref. NFe ${nfeData.nfeNumber} - Pedido ${code}`,
+          created_by: profile.user_id,
+        });
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
       qc.invalidateQueries({ queryKey: ["vendors"] });
+      qc.invalidateQueries({ queryKey: ["accounts_payable"] });
       setXmlImportOpen(false);
       setNfeData(null);
       setXmlRaw("");
-      toast({ title: "NFe importada com sucesso!" });
+      toast({ title: "NFe importada e conta a pagar gerada!" });
     },
     onError: (e: any) => toast({ title: "Erro ao importar", description: e.message, variant: "destructive" }),
   });
@@ -377,6 +420,7 @@ export default function Compras() {
     setOrderDate(new Date().toISOString().slice(0, 10));
     setExpectedDate("");
     setNotes("");
+    setPaymentMethodId("");
     setManualItems([{ description: "", quantity: "1", unitPrice: "0" }]);
   };
 
@@ -489,17 +533,34 @@ export default function Compras() {
         }
       }
 
+      // Auto-detect payment method from AI response
+      let pmId = marketplacePaymentMethodId || null;
+      if (!pmId && purchase.payment_method && paymentMethods.length > 0) {
+        const pmMap: Record<string, string> = {
+          credit_card: "credit_card",
+          debit_card: "debit_card",
+          pix: "pix",
+          boleto: "boleto",
+        };
+        const aiType = pmMap[purchase.payment_method];
+        if (aiType) {
+          const found = paymentMethods.find((pm: any) => pm.type === aiType);
+          if (found) pmId = found.id;
+        }
+      }
+
       const code = `PC-${String(orders.length + 1).padStart(4, "0")}`;
       const marketplace = marketplaceLabels[purchase.marketplace] || purchase.marketplace || "Marketplace";
+      const totalAmount = purchase.total || 0;
       const { data: po, error } = await supabase.from("purchase_orders").insert({
         tenant_id: profile.tenant_id,
         code,
         vendor_id: vid,
         order_date: purchase.order_date || new Date().toISOString().slice(0, 10),
-        subtotal: purchase.subtotal || purchase.total || 0,
+        subtotal: purchase.subtotal || totalAmount,
         discount: purchase.discount || 0,
         shipping: purchase.shipping || 0,
-        total: purchase.total || 0,
+        total: totalAmount,
         status: purchase.status === "concluido" ? "received" : "pending",
         received_date: purchase.status === "concluido" ? (purchase.order_date || new Date().toISOString().slice(0, 10)) : null,
         notes: `Importado de ${marketplace}${purchase.payment_installments ? ` | Pgto: ${purchase.payment_installments}` : ""}${purchase.notes ? ` | ${purchase.notes}` : ""}`,
@@ -519,18 +580,38 @@ export default function Compras() {
         const { error: ie } = await supabase.from("purchase_order_items").insert(rows);
         if (ie) throw ie;
       }
+
+      // Create accounts_payable
+      if (totalAmount > 0) {
+        const purchaseDate = purchase.order_date || new Date().toISOString().slice(0, 10);
+        await supabase.from("accounts_payable").insert({
+          tenant_id: profile.tenant_id,
+          description: `${marketplace} - ${purchase.vendor_name || code}`,
+          amount: totalAmount,
+          due_date: purchaseDate,
+          vendor_id: vid,
+          payment_method_id: pmId,
+          status: purchase.status === "concluido" ? "paid" : "open",
+          payment_date: purchase.status === "concluido" ? purchaseDate : null,
+          amount_paid: purchase.status === "concluido" ? totalAmount : 0,
+          notes: `Ref. pedido ${code}${purchase.payment_installments ? ` | ${purchase.payment_installments}` : ""}`,
+          created_by: profile.user_id,
+        });
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
       qc.invalidateQueries({ queryKey: ["vendors"] });
+      qc.invalidateQueries({ queryKey: ["accounts_payable"] });
       // Remove imported purchase from list
       setMarketplaceParsed(prev => prev.filter((_, i) => i !== marketplaceSelectedIdx));
       setMarketplaceSelectedIdx(0);
-      toast({ title: "Compra importada!" });
+      toast({ title: "Compra importada e conta a pagar gerada!" });
       if (marketplaceParsed.length <= 1) {
         setMarketplaceImportOpen(false);
         setMarketplaceImages([]);
         setMarketplaceParsed([]);
+        setMarketplacePaymentMethodId("");
       }
     },
     onError: (e: any) => toast({ title: "Erro ao importar", description: e.message, variant: "destructive" }),
@@ -682,6 +763,15 @@ export default function Compras() {
               <div>
                 <Label>Previsão de Entrega</Label>
                 <Input type="date" value={expectedDate} onChange={(e) => setExpectedDate(e.target.value)} />
+              </div>
+              <div>
+                <Label>Forma de Pagamento</Label>
+                <Select value={paymentMethodId} onValueChange={setPaymentMethodId}>
+                  <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                  <SelectContent>
+                    {paymentMethods.map((pm: any) => <SelectItem key={pm.id} value={pm.id}>{pm.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 
@@ -948,6 +1038,25 @@ export default function Compras() {
                       {p.payment_installments && (
                         <div className="col-span-2"><span className="text-muted-foreground">Pagamento:</span> {p.payment_installments}</div>
                       )}
+                      {p.payment_method && (
+                        <div className="col-span-2"><span className="text-muted-foreground">Forma:</span> {
+                          p.payment_method === "credit_card" ? "Cartão de Crédito" :
+                          p.payment_method === "debit_card" ? "Cartão de Débito" :
+                          p.payment_method === "pix" ? "PIX" :
+                          p.payment_method === "boleto" ? "Boleto" : p.payment_method
+                        }</div>
+                      )}
+                    </div>
+
+                    <div>
+                      <Label className="mb-2 block">Forma de Pagamento</Label>
+                      <Select value={marketplacePaymentMethodId} onValueChange={setMarketplacePaymentMethodId}>
+                        <SelectTrigger><SelectValue placeholder="Selecione a forma de pagamento..." /></SelectTrigger>
+                        <SelectContent>
+                          {paymentMethods.map((pm: any) => <SelectItem key={pm.id} value={pm.id}>{pm.name}</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-xs text-muted-foreground mt-1">Será usada para gerar a conta a pagar</p>
                     </div>
 
                     <div>
