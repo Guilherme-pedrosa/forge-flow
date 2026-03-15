@@ -542,7 +542,7 @@ export default function Produtos() {
       const { error } = await supabase.from("products").update({
         name, description: description || null, sku: sku || null, category,
         material_id: materialId || null, est_grams: estGrams ? parseFloat(estGrams) : 0,
-        est_time_minutes: estTime ? parseInt(estTime) : 0, post_process_minutes: postMinutes ? parseInt(postMinutes) : 0,
+        est_time_minutes: estTime ? Math.round(parseFloat(estTime) * 60) : 0, post_process_minutes: postMinutes ? parseInt(postMinutes) : 0,
         cost_estimate: cost, sale_price: price, margin_percent: margin, notes: notes || null,
         photo_url: photoUrl || null, num_colors: parseInt(numColors) || 1,
         prints_per_plate: parseInt(printsPerPlate) || 1,
