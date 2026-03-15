@@ -375,18 +375,31 @@ export default function Produtos() {
     const profileIdx = selectedProfileIndex ?? 0;
     const selectedProfile = profiles[profileIdx] || profiles[0] || null;
 
+    // ── Peso: prioridade = soma dos filamentos do profile selecionado ──
     const profileFilamentSum = (selectedProfile?.filaments || []).reduce((sum: number, f: any) => {
       return sum + toNumber(f?.grams ?? f?.used_g ?? f?.weight);
     }, 0);
 
-    const profileWeight = Math.max(
+    const profileDeclaredWeight = Math.max(
       toNumber(selectedProfile?.weight_grams),
       toNumber(selectedProfile?.weight),
       toNumber(selectedProfile?.total_weight),
-      toNumber(selectedProfile?.totalWeight),
-      profileFilamentSum
+      toNumber(selectedProfile?.totalWeight)
     );
 
+    // Filament sum > declared profile weight > model-level weight (fallback only)
+    const resolvedWeight = profileFilamentSum > 0
+      ? profileFilamentSum
+      : profileDeclaredWeight > 0
+        ? profileDeclaredWeight
+        : Math.max(
+            toNumber(model?.weight_grams),
+            toNumber(model?.weight),
+            toNumber(model?.total_weight),
+            toNumber(model?.totalWeight)
+          );
+
+    // ── Tempo: profile selecionado > model-level (fallback) ──
     const profileTimeSeconds = Math.max(
       toNumber(selectedProfile?.time_seconds),
       toNumber(selectedProfile?.prediction),
@@ -394,50 +407,36 @@ export default function Produtos() {
       toNumber(selectedProfile?.printTime)
     );
 
-    const maxProfileWeight = profiles.reduce((acc: number, p: any) => {
-      const pFilamentSum = (p?.filaments || []).reduce((sum: number, f: any) => {
-        return sum + toNumber(f?.grams ?? f?.used_g ?? f?.weight);
-      }, 0);
-      return Math.max(
-        acc,
-        toNumber(p?.weight_grams),
-        toNumber(p?.weight),
-        toNumber(p?.total_weight),
-        toNumber(p?.totalWeight),
-        pFilamentSum
-      );
-    }, 0);
+    const resolvedTimeSeconds = profileTimeSeconds > 0
+      ? profileTimeSeconds
+      : Math.max(
+          toNumber(model?.time_seconds),
+          toNumber(model?.prediction),
+          toNumber(model?.estimatedTime),
+          toNumber(model?.printTime)
+        );
 
-    const maxProfileTime = profiles.reduce((acc: number, p: any) => Math.max(
-      acc,
-      toNumber(p?.time_seconds),
-      toNumber(p?.prediction),
-      toNumber(p?.estimatedTime),
-      toNumber(p?.printTime)
-    ), 0);
+    // ── Material: auto-match pelo tipo dominante do filamento ──
+    const dominantFilamentType = (selectedProfile?.filaments || [])
+      .reduce((best: any, f: any) => (!best || toNumber(f?.grams) > toNumber(best?.grams) ? f : best), null)
+      ?.type?.toUpperCase() || "";
 
-    const resolvedWeight = Math.max(
-      profileWeight,
-      maxProfileWeight,
-      toNumber(model?.weight_grams),
-      toNumber(model?.weight),
-      toNumber(model?.total_weight),
-      toNumber(model?.totalWeight)
-    );
-
-    const resolvedTimeSeconds = Math.max(
-      profileTimeSeconds,
-      maxProfileTime,
-      toNumber(model?.time_seconds),
-      toNumber(model?.prediction),
-      toNumber(model?.estimatedTime),
-      toNumber(model?.printTime)
-    );
+    const autoMatchedMaterial = dominantFilamentType
+      ? materials.find((m: any) => {
+          const mt = (m.name || "").toUpperCase();
+          return mt.includes(dominantFilamentType);
+        })
+      : null;
 
     resetForm();
     setName(model.title || "Produto MakerWorld");
     setPhotoUrl(model.thumbnail || "");
     setCategory("printed_part");
+
+    // Auto-selecionar material pelo tipo do filamento
+    if (autoMatchedMaterial) {
+      setMaterialId(autoMatchedMaterial.id);
+    }
 
     if (model.gallery?.length > 0) {
       const gallery = model.gallery.filter((u: string) => u !== model.thumbnail);
@@ -456,16 +455,14 @@ export default function Produtos() {
 
     const noteParts: string[] = [
       `Importado do MakerWorld — ID: ${model.id}`,
-      selectedProfile?.name ? `Opção selecionada: ${selectedProfile.name}` : "",
+      selectedProfile?.name ? `Profile: ${selectedProfile.name}` : "",
     ].filter(Boolean);
 
     if (resolvedWeight > 0) {
-      // Backend já retorna o total do profile (somado das plates)
       setEstGrams(resolvedWeight.toFixed(1).replace(/\.0$/, ""));
     }
 
     if (resolvedTimeSeconds > 0) {
-      // Backend já retorna o total do profile (somado das plates)
       const minutes = Math.round(resolvedTimeSeconds / 60);
       setEstTime(minutes.toString());
     }
@@ -473,17 +470,21 @@ export default function Produtos() {
     if (selectedProfile?.filaments?.length > 0) {
       setNumColors(String(selectedProfile.filaments.length));
       const filInfo = selectedProfile.filaments
-        .map((f: any) => `${f.color || "?"} (${f.type})`)
+        .map((f: any) => `${f.color || "?"} (${f.type}) ${toNumber(f.grams).toFixed(0)}g`)
         .join(", ");
-      noteParts.push(`Cores: ${selectedProfile.filaments.length} — ${filInfo}`);
+      noteParts.push(`Filamentos: ${filInfo}`);
+    }
+
+    if (dominantFilamentType) {
+      noteParts.push(`Material dominante: ${dominantFilamentType}${autoMatchedMaterial ? ` → ${autoMatchedMaterial.name}` : " (não encontrado no estoque)"}`);
     }
 
     if (plates > 1) {
-      noteParts.push(`${plates} pratos no profile (gramatura/tempo considerados no total do profile)`);
+      noteParts.push(`Plates: ${plates} (produto único; total já considera múltiplos pratos)`);
     }
 
     if (resolvedWeight === 0) {
-      noteParts.push("⚠ Gramatura não disponível automaticamente neste modelo. Preencha manualmente se necessário.");
+      noteParts.push("⚠ Gramatura não disponível. Preencha manualmente.");
     }
 
     setNotes(noteParts.join("\n"));
