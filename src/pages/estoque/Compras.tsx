@@ -689,6 +689,8 @@ export default function Compras() {
         setMarketplaceImages([]);
         setMarketplaceParsed([]);
         setMarketplacePaymentMethodId("");
+        setMarketplaceInstallments("1");
+        setMarketplaceDueDate("");
       }
     },
     onError: (e: any) => toast({ title: "Erro ao importar", description: e.message, variant: "destructive" }),
