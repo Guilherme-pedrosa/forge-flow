@@ -7,6 +7,7 @@ import { AuthProvider } from "@/contexts/AuthContext";
 import { AppLayout } from "@/components/AppLayout";
 import Dashboard from "./pages/Dashboard";
 import ModulePlaceholder from "./pages/ModulePlaceholder";
+import BambuLab from "./pages/integracoes/BambuLab";
 import ContasPagar from "./pages/financeiro/ContasPagar";
 import ContasReceber from "./pages/financeiro/ContasReceber";
 import CaixaBancos from "./pages/financeiro/CaixaBancos";
@@ -57,7 +58,7 @@ function AuthenticatedRoutes() {
         <Route path="/comercial/clientes" element={<Clientes />} />
         <Route path="/comercial/marketplaces" element={<ModulePlaceholder />} />
         {/* Integrações */}
-        <Route path="/integracoes/bambu" element={<ModulePlaceholder />} />
+        <Route path="/integracoes/bambu" element={<BambuLab />} />
         <Route path="/integracoes/ml" element={<ModulePlaceholder />} />
         {/* Config */}
         <Route path="/configuracoes" element={<Empresa />} />
