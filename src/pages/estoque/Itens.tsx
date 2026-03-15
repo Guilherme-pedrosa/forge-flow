@@ -119,6 +119,7 @@ export default function Itens() {
     setLossCoefficient(item.loss_coefficient?.toString() || "0.05");
     setNotes(item.notes || "");
     setCurrentStock(item.current_stock?.toString() || "0");
+    setFreightCost((item as any).freight_cost?.toString() || "");
   };
 
   const createMut = useMutation({
