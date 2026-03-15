@@ -970,9 +970,11 @@ export default function Produtos() {
                         <div className="min-w-0 flex-1">
                           <p className="text-sm font-medium text-foreground truncate">{m.title}</p>
                           {m.description && <p className="text-xs text-muted-foreground truncate">{m.description}</p>}
-                          <div className="flex items-center gap-3 mt-1 text-[11px] text-muted-foreground">
-                            {m.profiles?.[0]?.weight_grams > 0 && <span>{m.profiles[0].weight_grams}g</span>}
-                            {m.profiles?.[0]?.time_seconds > 0 && <span>{fmtDuration(m.profiles[0].time_seconds)}</span>}
+                          <div className="flex items-center gap-3 mt-1 text-[11px] text-muted-foreground flex-wrap">
+                            {m.plates > 0 && <span>📋 {m.plates} placas</span>}
+                            {m.profiles?.[0]?.filaments?.length > 0 && <span>🎨 {m.profiles[0].filaments.length} cores</span>}
+                            {m.profiles?.[0]?.weight_grams > 0 && <span>⚖ {m.profiles[0].weight_grams}g</span>}
+                            {m.profiles?.[0]?.time_seconds > 0 && <span>⏱ {fmtDuration(m.profiles[0].time_seconds)}</span>}
                             {m.print_count && <span>🖨 {m.print_count}</span>}
                           </div>
                         </div>
