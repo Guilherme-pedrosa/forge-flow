@@ -5,7 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { PageHeader } from "@/components/shared/PageHeader";
 import {
   Plus, Search, MoreHorizontal, Package, Edit, Trash2,
-  Loader2, AlertTriangle, Eye, Archive,
+  Loader2, AlertTriangle, ChevronDown, ChevronRight, Palette,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -27,9 +27,6 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import type { Tables } from "@/integrations/supabase/types";
-
-type ItemRow = Tables<"inventory_items">;
 
 const fmtCurrency = (v: number | null) =>
   v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
@@ -50,15 +47,18 @@ export default function Itens() {
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [createOpen, setCreateOpen] = useState(false);
-  const [editItem, setEditItem] = useState<ItemRow | null>(null);
-  const [detailItem, setDetailItem] = useState<ItemRow | null>(null);
+  const [editItem, setEditItem] = useState<any>(null);
+  const [detailItem, setDetailItem] = useState<any>(null);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
   // Form state
+  const [formMode, setFormMode] = useState<"group" | "color">("group");
+  const [parentId, setParentId] = useState<string>("");
   const [name, setName] = useState("");
   const [category, setCategory] = useState("filament");
   const [materialType, setMaterialType] = useState("");
   const [color, setColor] = useState("");
-  const [diameter, setDiameter] = useState("");
+  const [diameter, setDiameter] = useState("1.75");
   const [brand, setBrand] = useState("");
   const [sku, setSku] = useState("");
   const [unit, setUnit] = useState("g");
@@ -75,6 +75,7 @@ export default function Itens() {
       const { data, error } = await supabase
         .from("inventory_items")
         .select("*")
+        .order("material_type")
         .order("name");
       if (error) throw error;
       return data;
@@ -82,35 +83,80 @@ export default function Itens() {
     enabled: !!profile,
   });
 
-  const filtered = useMemo(() => {
-    let list = items;
-    if (categoryFilter !== "all") list = list.filter((i) => i.category === categoryFilter);
-    if (search) {
-      const s = search.toLowerCase();
-      list = list.filter(
-        (i) =>
-          i.name.toLowerCase().includes(s) ||
-          i.sku?.toLowerCase().includes(s) ||
-          i.material_type?.toLowerCase().includes(s) ||
-          i.color?.toLowerCase().includes(s)
-      );
-    }
-    return list;
-  }, [items, categoryFilter, search]);
+  // Group items: parents (no parent_id) and children (with parent_id)
+  const { parentItems, childrenMap, orphanItems } = useMemo(() => {
+    const parents: any[] = [];
+    const children = new Map<string, any[]>();
+    const orphans: any[] = [];
 
-  const resetForm = () => {
-    setName(""); setCategory("filament"); setMaterialType(""); setColor("");
-    setDiameter(""); setBrand(""); setSku(""); setUnit("g"); setMinStock("");
-    setAvgCost(""); setLossCoefficient("0.05"); setNotes(""); setCurrentStock(""); setFreightCost("");
+    for (const item of items) {
+      const pid = (item as any).parent_id;
+      if (pid) {
+        if (!children.has(pid)) children.set(pid, []);
+        children.get(pid)!.push(item);
+      } else {
+        // Check if this item has children
+        const hasChildren = items.some((i: any) => (i as any).parent_id === item.id);
+        if (hasChildren) {
+          parents.push(item);
+        } else {
+          orphans.push(item);
+        }
+      }
+    }
+    return { parentItems: parents, childrenMap: children, orphanItems: orphans };
+  }, [items]);
+
+  // Filter
+  const filteredGroups = useMemo(() => {
+    const s = search.toLowerCase();
+    const matchSearch = (item: any) =>
+      !search ||
+      item.name.toLowerCase().includes(s) ||
+      item.sku?.toLowerCase().includes(s) ||
+      item.material_type?.toLowerCase().includes(s) ||
+      item.color?.toLowerCase().includes(s);
+
+    const filteredParents = parentItems.filter((p) => {
+      if (categoryFilter !== "all" && p.category !== categoryFilter) return false;
+      const kids = childrenMap.get(p.id) || [];
+      return matchSearch(p) || kids.some(matchSearch);
+    });
+
+    const filteredOrphans = orphanItems.filter((o) => {
+      if (categoryFilter !== "all" && o.category !== categoryFilter) return false;
+      return matchSearch(o);
+    });
+
+    return { parents: filteredParents, orphans: filteredOrphans };
+  }, [parentItems, orphanItems, childrenMap, categoryFilter, search]);
+
+  const toggleGroup = (id: string) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
-  const openEdit = (item: ItemRow) => {
+  const resetForm = () => {
+    setFormMode("group"); setParentId(""); setName(""); setCategory("filament");
+    setMaterialType(""); setColor(""); setDiameter("1.75"); setBrand(""); setSku("");
+    setUnit("g"); setMinStock(""); setAvgCost(""); setLossCoefficient("0.05");
+    setNotes(""); setCurrentStock(""); setFreightCost("");
+  };
+
+  const openEdit = (item: any) => {
     setEditItem(item);
+    const isChild = !!item.parent_id;
+    setFormMode(isChild ? "color" : "group");
+    setParentId(item.parent_id || "");
     setName(item.name);
     setCategory(item.category);
     setMaterialType(item.material_type || "");
     setColor(item.color || "");
-    setDiameter(item.diameter?.toString() || "");
+    setDiameter(item.diameter?.toString() || "1.75");
     setBrand(item.brand || "");
     setSku(item.sku || "");
     setUnit(item.unit);
@@ -119,18 +165,32 @@ export default function Itens() {
     setLossCoefficient(item.loss_coefficient?.toString() || "0.05");
     setNotes(item.notes || "");
     setCurrentStock(item.current_stock?.toString() || "0");
-    setFreightCost((item as any).freight_cost?.toString() || "");
+    setFreightCost(item.freight_cost?.toString() || "");
+  };
+
+  const openAddColor = (parent: any) => {
+    resetForm();
+    setFormMode("color");
+    setParentId(parent.id);
+    setCategory(parent.category);
+    setMaterialType(parent.material_type || "");
+    setDiameter(parent.diameter?.toString() || "1.75");
+    setBrand(parent.brand || "");
+    setUnit(parent.unit);
+    setLossCoefficient(parent.loss_coefficient?.toString() || "0.05");
+    setName(`${parent.material_type || parent.name}`);
+    setCreateOpen(true);
   };
 
   const createMut = useMutation({
     mutationFn: async () => {
       if (!profile) throw new Error("Sem perfil");
-      const { error } = await supabase.from("inventory_items").insert({
+      const payload: any = {
         tenant_id: profile.tenant_id,
-        name,
+        name: formMode === "color" ? `${materialType || name} ${color}`.trim() : name,
         category,
         material_type: materialType || null,
-        color: color || null,
+        color: formMode === "color" ? (color || null) : null,
         diameter: diameter ? parseFloat(diameter) : null,
         brand: brand || null,
         sku: sku || null,
@@ -141,14 +201,16 @@ export default function Itens() {
         loss_coefficient: parseFloat(lossCoefficient) || 0.05,
         notes: notes || null,
         freight_cost: freightCost ? parseFloat(freightCost) : 0,
-      } as any);
+        parent_id: formMode === "color" && parentId ? parentId : null,
+      };
+      const { error } = await supabase.from("inventory_items").insert(payload);
       if (error) throw error;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["inventory_items"] });
       setCreateOpen(false);
       resetForm();
-      toast({ title: "Item criado com sucesso" });
+      toast({ title: formMode === "color" ? "Cor adicionada ao material" : "Material criado com sucesso" });
     },
     onError: (e: any) => toast({ title: "Erro ao criar item", description: e.message, variant: "destructive" }),
   });
@@ -157,11 +219,11 @@ export default function Itens() {
     mutationFn: async () => {
       if (!editItem || !profile) return;
       const newStock = currentStock ? parseFloat(currentStock) : 0;
-      const { error } = await supabase.from("inventory_items").update({
-        name,
+      const payload: any = {
+        name: formMode === "color" ? `${materialType || name} ${color}`.trim() : name,
         category,
         material_type: materialType || null,
-        color: color || null,
+        color: formMode === "color" ? (color || null) : null,
         diameter: diameter ? parseFloat(diameter) : null,
         brand: brand || null,
         sku: sku || null,
@@ -172,9 +234,10 @@ export default function Itens() {
         loss_coefficient: parseFloat(lossCoefficient) || 0.05,
         notes: notes || null,
         freight_cost: freightCost ? parseFloat(freightCost) : 0,
-      } as any).eq("id", editItem.id);
+        parent_id: formMode === "color" && parentId ? parentId : null,
+      };
+      const { error } = await supabase.from("inventory_items").update(payload).eq("id", editItem.id);
       if (error) throw error;
-      // If stock changed, create an adjustment movement for audit trail
       if (newStock !== editItem.current_stock) {
         const diff = newStock - editItem.current_stock;
         await supabase.from("inventory_movements").insert({
@@ -211,16 +274,72 @@ export default function Itens() {
 
   // KPIs
   const totalItems = items.length;
-  const lowStock = items.filter((i) => i.min_stock && i.current_stock < i.min_stock).length;
-  const totalValue = items.reduce((s, i) => s + i.current_stock * i.avg_cost, 0);
+  const lowStock = items.filter((i: any) => i.min_stock && i.current_stock < i.min_stock).length;
+  const totalValue = items.reduce((s: number, i: any) => s + i.current_stock * i.avg_cost, 0);
+
+  // Compute aggregated stats for a parent
+  const getGroupStats = (parent: any) => {
+    const kids = childrenMap.get(parent.id) || [];
+    const totalStock = kids.reduce((s: number, k: any) => s + k.current_stock, 0);
+    const totalVal = kids.reduce((s: number, k: any) => s + k.current_stock * k.avg_cost, 0);
+    const avgCostGroup = totalStock > 0 ? totalVal / totalStock : 0;
+    const belowMin = kids.some((k: any) => k.min_stock && k.current_stock < k.min_stock);
+    return { totalStock, totalVal, avgCostGroup, belowMin, count: kids.length };
+  };
 
   const formFields = (
     <div className="grid gap-4 max-h-[60vh] overflow-y-auto pr-1">
-      <div className="grid grid-cols-2 gap-3">
-        <div className="col-span-2">
-          <Label>Nome *</Label>
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="PLA Branco eSUN 1kg" />
+      {/* Mode selector - only for new items */}
+      {!editItem && (
+        <div>
+          <Label>Tipo de Cadastro</Label>
+          <Select value={formMode} onValueChange={(v: "group" | "color") => { setFormMode(v); if (v === "group") setParentId(""); }}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="group">📦 Novo Material (grupo)</SelectItem>
+              <SelectItem value="color">🎨 Nova Cor (de um material existente)</SelectItem>
+            </SelectContent>
+          </Select>
         </div>
+      )}
+
+      {/* Parent selector for color mode */}
+      {formMode === "color" && !editItem && (
+        <div>
+          <Label>Material Pai *</Label>
+          <Select value={parentId} onValueChange={setParentId}>
+            <SelectTrigger><SelectValue placeholder="Selecione o material..." /></SelectTrigger>
+            <SelectContent>
+              {/* Show parent items and orphan items as potential parents */}
+              {[...parentItems, ...orphanItems]
+                .filter((p) => p.category === "filament" || p.category === "resin")
+                .map((p) => (
+                  <SelectItem key={p.id} value={p.id}>{p.name} ({p.material_type || p.category})</SelectItem>
+                ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-3">
+        {formMode === "group" ? (
+          <div className="col-span-2">
+            <Label>Nome do Material *</Label>
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="PLA eSUN" />
+          </div>
+        ) : (
+          <>
+            <div>
+              <Label>Tipo de Material</Label>
+              <Input value={materialType} onChange={(e) => setMaterialType(e.target.value)} placeholder="PLA" />
+            </div>
+            <div>
+              <Label>Cor *</Label>
+              <Input value={color} onChange={(e) => setColor(e.target.value)} placeholder="Vermelho" />
+            </div>
+          </>
+        )}
+
         <div>
           <Label>Categoria</Label>
           <Select value={category} onValueChange={setCategory}>
@@ -232,14 +351,14 @@ export default function Itens() {
             </SelectContent>
           </Select>
         </div>
-        <div>
-          <Label>Tipo de Material</Label>
-          <Input value={materialType} onChange={(e) => setMaterialType(e.target.value)} placeholder="PLA / PETG / ABS" />
-        </div>
-        <div>
-          <Label>Cor</Label>
-          <Input value={color} onChange={(e) => setColor(e.target.value)} placeholder="Branco" />
-        </div>
+
+        {formMode === "group" && (
+          <div>
+            <Label>Tipo de Material</Label>
+            <Input value={materialType} onChange={(e) => setMaterialType(e.target.value)} placeholder="PLA / PETG / ABS" />
+          </div>
+        )}
+
         <div>
           <Label>Diâmetro (mm)</Label>
           <Input type="number" step="0.01" value={diameter} onChange={(e) => setDiameter(e.target.value)} placeholder="1.75" />
@@ -273,7 +392,7 @@ export default function Itens() {
           <Input type="number" value={currentStock} onChange={(e) => setCurrentStock(e.target.value)} placeholder="0" />
         </div>
         <div>
-          <Label>Custo Médio (R$)</Label>
+          <Label>Custo Médio (R$/{unit})</Label>
           <Input type="number" step="0.01" value={avgCost} onChange={(e) => setAvgCost(e.target.value)} placeholder="0.08" />
         </div>
         <div>
@@ -292,16 +411,77 @@ export default function Itens() {
     </div>
   );
 
+  const renderItemRow = (item: any, indent = false) => {
+    const belowMin = item.min_stock != null && item.current_stock < item.min_stock;
+    return (
+      <TableRow key={item.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setDetailItem(item)}>
+        <TableCell>
+          <div className={cn("flex items-center gap-2", indent && "pl-8")}>
+            {belowMin && <AlertTriangle className="h-3.5 w-3.5 text-destructive flex-shrink-0" />}
+            {indent && item.color && (
+              <span className="h-4 w-4 rounded-full border flex-shrink-0" style={{ backgroundColor: item.color.toLowerCase() }} />
+            )}
+            <div>
+              <p className="font-medium text-sm">{indent ? (item.color || item.name) : item.name}</p>
+              {item.brand && !indent && <p className="text-xs text-muted-foreground">{item.brand}</p>}
+              {indent && item.sku && <p className="text-xs text-muted-foreground">{item.sku}</p>}
+            </div>
+          </div>
+        </TableCell>
+        <TableCell className="text-sm">{item.material_type || categoryLabels[item.category] || item.category}</TableCell>
+        <TableCell>
+          {item.color && !indent && (
+            <span className="inline-flex items-center gap-1.5 text-sm">
+              <span className="h-3 w-3 rounded-full border" style={{ backgroundColor: item.color.toLowerCase() }} />
+              {item.color}
+            </span>
+          )}
+        </TableCell>
+        <TableCell className={cn("text-right font-mono text-sm", belowMin && "text-destructive font-semibold")}>
+          {item.current_stock.toLocaleString("pt-BR")}{item.unit}
+        </TableCell>
+        <TableCell className="text-right font-mono text-sm text-muted-foreground">
+          {item.min_stock != null ? `${item.min_stock.toLocaleString("pt-BR")}${item.unit}` : "—"}
+        </TableCell>
+        <TableCell className="text-right font-mono text-sm">{fmtCurrency(item.avg_cost)}</TableCell>
+        <TableCell className="text-right font-mono text-sm">{fmtCurrency(item.current_stock * item.avg_cost)}</TableCell>
+        <TableCell>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+              <Button variant="ghost" size="icon" className="h-7 w-7">
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openEdit(item); }}>
+                <Edit className="h-3.5 w-3.5 mr-2" /> Editar
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem className="text-destructive" onClick={(e) => { e.stopPropagation(); deleteMut.mutate(item.id); }}>
+                <Trash2 className="h-3.5 w-3.5 mr-2" /> Excluir
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </TableCell>
+      </TableRow>
+    );
+  };
+
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       <PageHeader
         title="Itens / Materiais"
-        description="Cadastro de filamentos, insumos e componentes"
+        description="Cadastro de filamentos, insumos e componentes agrupados por tipo"
         breadcrumbs={[{ label: "Estoque", href: "/estoque/itens" }, { label: "Itens" }]}
         actions={
-          <Button size="sm" onClick={() => { resetForm(); setCreateOpen(true); }}>
-            <Plus className="h-4 w-4 mr-1" /> Novo Item
-          </Button>
+          <div className="flex gap-2">
+            <Button size="sm" variant="outline" onClick={() => { resetForm(); setFormMode("color"); setCreateOpen(true); }}>
+              <Palette className="h-4 w-4 mr-1" /> Nova Cor
+            </Button>
+            <Button size="sm" onClick={() => { resetForm(); setFormMode("group"); setCreateOpen(true); }}>
+              <Plus className="h-4 w-4 mr-1" /> Novo Material
+            </Button>
+          </div>
         }
       />
 
@@ -342,7 +522,7 @@ export default function Itens() {
       <div className="rounded-xl border bg-card overflow-hidden">
         {isLoading ? (
           <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
-        ) : filtered.length === 0 ? (
+        ) : (filteredGroups.parents.length === 0 && filteredGroups.orphans.length === 0) ? (
           <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
             <Package className="h-10 w-10 mb-3 opacity-40" />
             <p className="font-medium">Nenhum item encontrado</p>
@@ -352,7 +532,7 @@ export default function Itens() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Nome</TableHead>
+                <TableHead>Material / Cor</TableHead>
                 <TableHead>Tipo</TableHead>
                 <TableHead>Cor</TableHead>
                 <TableHead className="text-right">Estoque</TableHead>
@@ -363,57 +543,81 @@ export default function Itens() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filtered.map((item) => {
-                const belowMin = item.min_stock != null && item.current_stock < item.min_stock;
+              {/* Grouped parents */}
+              {filteredGroups.parents.map((parent) => {
+                const expanded = expandedGroups.has(parent.id);
+                const stats = getGroupStats(parent);
+                const kids = childrenMap.get(parent.id) || [];
+
                 return (
-                  <TableRow key={item.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setDetailItem(item)}>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        {belowMin && <AlertTriangle className="h-3.5 w-3.5 text-destructive" />}
-                        <div>
-                          <p className="font-medium text-sm">{item.name}</p>
-                          {item.brand && <p className="text-xs text-muted-foreground">{item.brand}</p>}
+                  <>
+                    {/* Parent row */}
+                    <TableRow
+                      key={parent.id}
+                      className="cursor-pointer hover:bg-muted/50 bg-muted/20 font-medium"
+                      onClick={() => toggleGroup(parent.id)}
+                    >
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          {expanded ? <ChevronDown className="h-4 w-4 text-muted-foreground" /> : <ChevronRight className="h-4 w-4 text-muted-foreground" />}
+                          {stats.belowMin && <AlertTriangle className="h-3.5 w-3.5 text-destructive" />}
+                          <div>
+                            <p className="font-semibold text-sm">{parent.name}</p>
+                            <p className="text-xs text-muted-foreground">{stats.count} cores · {parent.brand || ""}</p>
+                          </div>
                         </div>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-sm">{item.material_type || categoryLabels[item.category] || item.category}</TableCell>
-                    <TableCell>
-                      {item.color && (
-                        <span className="inline-flex items-center gap-1.5 text-sm">
-                          <span className="h-3 w-3 rounded-full border" style={{ backgroundColor: item.color.toLowerCase() }} />
-                          {item.color}
-                        </span>
-                      )}
-                    </TableCell>
-                    <TableCell className={cn("text-right font-mono text-sm", belowMin && "text-destructive font-semibold")}>
-                      {item.current_stock.toLocaleString("pt-BR")}{item.unit}
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-sm text-muted-foreground">
-                      {item.min_stock != null ? `${item.min_stock.toLocaleString("pt-BR")}${item.unit}` : "—"}
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-sm">{fmtCurrency(item.avg_cost)}</TableCell>
-                    <TableCell className="text-right font-mono text-sm">{fmtCurrency(item.current_stock * item.avg_cost)}</TableCell>
-                    <TableCell>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                          <Button variant="ghost" size="icon" className="h-7 w-7">
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openEdit(item); }}>
-                            <Edit className="h-3.5 w-3.5 mr-2" /> Editar
-                          </DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem className="text-destructive" onClick={(e) => { e.stopPropagation(); deleteMut.mutate(item.id); }}>
-                            <Trash2 className="h-3.5 w-3.5 mr-2" /> Excluir
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
+                      </TableCell>
+                      <TableCell className="text-sm font-semibold">{parent.material_type || categoryLabels[parent.category]}</TableCell>
+                      <TableCell>
+                        <div className="flex -space-x-1">
+                          {kids.slice(0, 6).map((k: any) => (
+                            <span
+                              key={k.id}
+                              className="h-4 w-4 rounded-full border-2 border-card"
+                              style={{ backgroundColor: k.color?.toLowerCase() || "#ccc" }}
+                              title={k.color || ""}
+                            />
+                          ))}
+                          {kids.length > 6 && <span className="text-xs text-muted-foreground ml-2">+{kids.length - 6}</span>}
+                        </div>
+                      </TableCell>
+                      <TableCell className={cn("text-right font-mono text-sm font-semibold", stats.belowMin && "text-destructive")}>
+                        {stats.totalStock.toLocaleString("pt-BR")}{parent.unit}
+                      </TableCell>
+                      <TableCell className="text-right font-mono text-sm text-muted-foreground">—</TableCell>
+                      <TableCell className="text-right font-mono text-sm font-semibold">{fmtCurrency(stats.avgCostGroup)}</TableCell>
+                      <TableCell className="text-right font-mono text-sm font-semibold">{fmtCurrency(stats.totalVal)}</TableCell>
+                      <TableCell>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
+                            <Button variant="ghost" size="icon" className="h-7 w-7">
+                              <MoreHorizontal className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openAddColor(parent); }}>
+                              <Palette className="h-3.5 w-3.5 mr-2" /> Adicionar Cor
+                            </DropdownMenuItem>
+                            <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openEdit(parent); }}>
+                              <Edit className="h-3.5 w-3.5 mr-2" /> Editar Material
+                            </DropdownMenuItem>
+                            <DropdownMenuSeparator />
+                            <DropdownMenuItem className="text-destructive" onClick={(e) => { e.stopPropagation(); deleteMut.mutate(parent.id); }}>
+                              <Trash2 className="h-3.5 w-3.5 mr-2" /> Excluir
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </TableCell>
+                    </TableRow>
+
+                    {/* Child rows */}
+                    {expanded && kids.map((kid: any) => renderItemRow(kid, true))}
+                  </>
                 );
               })}
+
+              {/* Orphan items (no children, not a child) */}
+              {filteredGroups.orphans.map((item) => renderItemRow(item, false))}
             </TableBody>
           </Table>
         )}
@@ -423,14 +627,26 @@ export default function Itens() {
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Novo Item</DialogTitle>
-            <DialogDescription>Cadastrar material ou insumo no estoque</DialogDescription>
+            <DialogTitle>{formMode === "color" ? "Adicionar Cor" : "Novo Material"}</DialogTitle>
+            <DialogDescription>
+              {formMode === "color"
+                ? "Cadastrar uma nova cor/variação de um material existente"
+                : "Cadastrar um novo tipo de material (ex: PLA, PETG)"}
+            </DialogDescription>
           </DialogHeader>
           {formFields}
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancelar</Button>
-            <Button onClick={() => createMut.mutate()} disabled={!name || createMut.isPending}>
-              {createMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Criar
+            <Button
+              onClick={() => createMut.mutate()}
+              disabled={
+                (formMode === "group" && !name) ||
+                (formMode === "color" && (!color || !parentId)) ||
+                createMut.isPending
+              }
+            >
+              {createMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
+              {formMode === "color" ? "Adicionar Cor" : "Criar Material"}
             </Button>
           </DialogFooter>
         </DialogContent>
