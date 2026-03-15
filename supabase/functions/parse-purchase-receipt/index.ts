@@ -2,14 +2,14 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
 const AI_GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/chat/completions";
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
+    return new Response(null, { headers: corsHeaders });
   }
 
   try {
@@ -25,39 +25,47 @@ serve(async (req) => {
 
     const systemPrompt = `Você é um assistente especializado em extrair dados de compras a partir de screenshots de marketplaces brasileiros (Mercado Livre, Shopee, TikTok Shop, Amazon, Magazine Luiza, etc).
 
-Analise a imagem e extraia TODAS as informações de compra visíveis. Retorne um JSON válido com esta estrutura:
+INSTRUÇÕES CRÍTICAS:
+1. Analise a imagem PIXEL A PIXEL. Cada pedido visível DEVE ter seus itens extraídos.
+2. Na Shopee, cada bloco com "nome da loja >" seguido de produtos é UM pedido separado.
+3. NUNCA retorne um pedido com items vazio. Se você vê o nome de um produto, EXTRAIA ele.
+4. Preste atenção em: nome do produto, variante/cor, quantidade (x1, x2...), preço unitário, total.
+5. Se houver MÚLTIPLOS pedidos de LOJAS DIFERENTES na mesma imagem, retorne um ARRAY com um objeto para cada pedido/loja.
 
+Retorne um JSON válido. Se houver múltiplos pedidos, retorne um array. Para um único pedido, retorne um objeto.
+
+Estrutura de cada pedido:
 {
-  "marketplace": "mercado_livre" | "shopee" | "tiktok_shop" | "amazon" | "magalu" | "outro",
-  "vendor_name": "nome da loja/vendedor",
-  "order_date": "YYYY-MM-DD ou null",
+  "marketplace": "shopee" | "mercado_livre" | "tiktok_shop" | "amazon" | "magalu" | "outro",
+  "vendor_name": "nome exato da loja/vendedor como aparece na tela",
+  "order_date": "YYYY-MM-DD ou null se não visível",
   "items": [
     {
-      "description": "nome completo do produto",
-      "quantity": 1,
-      "unit_price": 82.08,
-      "total": 82.08,
-      "color": "cor se visível ou null",
-      "variant": "variante se visível ou null"
+      "description": "nome COMPLETO do produto como aparece na tela",
+      "quantity": 2,
+      "unit_price": 61.00,
+      "total": 122.00,
+      "color": "Preto",
+      "variant": "Padrão"
     }
   ],
-  "subtotal": 249.66,
-  "shipping": 0,
-  "discount": 0,
-  "total": 249.66,
-  "payment_method": "método de pagamento se visível ou null",
-  "payment_installments": "4x R$ 60,92 ou null",
+  "subtotal": null,
+  "shipping": null,
+  "discount": null,
+  "total": 123.60,
   "status": "concluido" | "pendente" | "enviado" | "cancelado" | null,
-  "notes": "observações adicionais relevantes"
+  "notes": null
 }
 
-Regras:
-- Valores monetários devem ser números (não strings). Ex: 82.08 não "R$ 82,08"
-- Se houver múltiplos pedidos na imagem, retorne um array de objetos
-- Se não conseguir identificar algum campo, use null
-- Preste atenção em preços riscados (promoção) vs preço pago real
-- Identifique a quantidade correta (x1, x2, etc)
-- Retorne APENAS o JSON, sem markdown ou texto adicional`;
+REGRAS DE VALORES:
+- Valores monetários SEMPRE como números: 61.00 não "R$ 61,00"
+- R$ 72,01 → 72.01
+- Quantidade "x2" → quantity: 2
+- Se o preço é unitário e a qtd > 1, calcule o total = unit_price × quantity
+- O "Total:" mostrado na Shopee é o total do PEDIDO (pode incluir frete)
+- Se não conseguir um campo, use null (mas NUNCA deixe items vazio se há produtos visíveis)
+
+Retorne APENAS o JSON, sem markdown, sem explicações.`;
 
     const response = await fetch(AI_GATEWAY_URL, {
       method: "POST",
@@ -66,7 +74,7 @@ Regras:
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
+        model: "google/gemini-2.5-pro",
         messages: [
           { role: "system", content: systemPrompt },
           {
@@ -80,41 +88,56 @@ Regras:
               },
               {
                 type: "text",
-                text: "Extraia os dados de compra desta screenshot de marketplace.",
+                text: "Extraia TODOS os pedidos e TODOS os itens visíveis nesta screenshot. Não pule nenhum produto.",
               },
             ],
           },
         ],
-        temperature: 0.1,
-        max_tokens: 4096,
+        temperature: 0.05,
+        max_tokens: 8192,
       }),
     });
 
     if (!response.ok) {
       const errorText = await response.text();
+      console.error("AI Gateway error:", response.status, errorText);
       throw new Error(`AI Gateway error [${response.status}]: ${errorText}`);
     }
 
     const aiResult = await response.json();
     const content = aiResult.choices?.[0]?.message?.content || "";
+    console.log("AI raw response length:", content.length);
 
     // Parse JSON from response (handle markdown code blocks)
     let jsonStr = content.trim();
+    // Remove markdown fences
     if (jsonStr.startsWith("```")) {
-      jsonStr = jsonStr.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
+      jsonStr = jsonStr.replace(/^```(?:json)?\s*\n?/, "").replace(/\n?\s*```$/, "");
     }
 
     let parsed;
     try {
       parsed = JSON.parse(jsonStr);
     } catch {
+      console.error("Failed to parse JSON:", jsonStr.slice(0, 500));
       throw new Error(`Failed to parse AI response as JSON: ${jsonStr.slice(0, 200)}`);
     }
 
     // Normalize: if single object, wrap in array
     const purchases = Array.isArray(parsed) ? parsed : [parsed];
 
-    return new Response(JSON.stringify({ purchases }), {
+    // Validate: filter out purchases with no items
+    const validPurchases = purchases.filter((p: any) => {
+      if (!p.items || p.items.length === 0) {
+        console.warn("Skipping purchase with no items:", p.vendor_name);
+        return false;
+      }
+      return true;
+    });
+
+    console.log(`Parsed ${purchases.length} purchases, ${validPurchases.length} with items`);
+
+    return new Response(JSON.stringify({ purchases: validPurchases }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error: unknown) {
