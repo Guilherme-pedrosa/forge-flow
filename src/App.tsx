@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppLayout } from "@/components/AppLayout";
 import Dashboard from "./pages/Dashboard";
 import ModulePlaceholder from "./pages/ModulePlaceholder";
+import ContasPagar from "./pages/financeiro/ContasPagar";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
