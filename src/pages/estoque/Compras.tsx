@@ -491,6 +491,8 @@ export default function Compras() {
     setExpectedDate("");
     setNotes("");
     setPaymentMethodId("");
+    setInstallments("1");
+    setDueDate("");
     setManualItems([{ description: "", quantity: "1", unitPrice: "0" }]);
   };
 
