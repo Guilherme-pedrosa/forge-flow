@@ -852,6 +852,20 @@ export default function Compras() {
                   </SelectContent>
                 </Select>
               </div>
+              <div>
+                <Label>Parcelas</Label>
+                <Select value={installments} onValueChange={setInstallments}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {[1,2,3,4,5,6,7,8,9,10,11,12].map(n => <SelectItem key={n} value={String(n)}>{n}x</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Vencimento 1ª parcela</Label>
+                <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+                <p className="text-xs text-muted-foreground mt-1">Demais parcelas: +30 dias cada</p>
+              </div>
             </div>
 
             <div>
