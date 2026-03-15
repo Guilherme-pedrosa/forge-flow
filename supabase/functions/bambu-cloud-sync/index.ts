@@ -889,14 +889,23 @@ function metricToGrams(value: unknown, explicitUnit?: string | null): number {
   return n;
 }
 
-function collectMetricValues(source: string, keys: string[]): number[] {
+function collectMetricValues(
+  source: string,
+  keys: string[],
+  options?: { requireUnit?: boolean }
+): number[] {
   const values: number[] = [];
+  const requireUnit = options?.requireUnit ?? false;
 
   for (const key of keys) {
     const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
     const structuredRegex = new RegExp(
-      `["']?${escaped}["']?\\s*[:=]\\s*["']?([0-9]+(?:[.,][0-9]+)?)(?:\\s*(kg|kgs|kilograms?|g|grams?))?["']?`,
+      `["']?${escaped}["']?\\s*[:=]\\s*["']?([0-9]+(?:[.,][0-9]+)?)${
+        requireUnit
+          ? `\\s*(kg|kgs|kilograms?|g|grams?)`
+          : `(?:\\s*(kg|kgs|kilograms?|g|grams?))?`
+      }["']?`,
       "gi"
     );
 
