@@ -135,6 +135,8 @@ export default function Compras() {
   const [marketplaceParsed, setMarketplaceParsed] = useState<any[]>([]);
   const [marketplaceSelectedIdx, setMarketplaceSelectedIdx] = useState(0);
   const [marketplacePaymentMethodId, setMarketplacePaymentMethodId] = useState("");
+  const [marketplaceInstallments, setMarketplaceInstallments] = useState("1");
+  const [marketplaceDueDate, setMarketplaceDueDate] = useState("");
   const marketplaceFileRef = useRef<HTMLInputElement>(null);
   const [nfeData, setNfeData] = useState<NfeData | null>(null);
   const [xmlRaw, setXmlRaw] = useState("");
@@ -145,9 +147,64 @@ export default function Compras() {
   const [expectedDate, setExpectedDate] = useState("");
   const [notes, setNotes] = useState("");
   const [paymentMethodId, setPaymentMethodId] = useState("");
+  const [installments, setInstallments] = useState("1");
+  const [dueDate, setDueDate] = useState("");
   const [manualItems, setManualItems] = useState<{ description: string; quantity: string; unitPrice: string }[]>([
     { description: "", quantity: "1", unitPrice: "0" },
   ]);
+
+  // NFe form
+  const [nfeInstallments, setNfeInstallments] = useState("1");
+  const [nfeDueDate, setNfeDueDate] = useState("");
+
+  // Helper: parse "3x de R$ 41,20" → 3
+  const parseInstallmentCount = (str: string | null | undefined): number => {
+    if (!str) return 1;
+    const match = str.match(/^(\d+)x/i);
+    return match ? parseInt(match[1], 10) : 1;
+  };
+
+  // Helper: generate installment AP entries
+  const generateInstallmentAP = (params: {
+    tenantId: string;
+    description: string;
+    totalAmount: number;
+    baseDueDate: string;
+    numInstallments: number;
+    vendorId: string | null;
+    paymentMethodId: string | null;
+    isPaid: boolean;
+    paymentDate: string | null;
+    notes: string;
+    createdBy: string;
+  }) => {
+    const { tenantId, description, totalAmount, baseDueDate, numInstallments, vendorId: vId, paymentMethodId: pmId, isPaid, paymentDate, notes: apNotes, createdBy } = params;
+    const n = Math.max(1, numInstallments);
+    const installmentAmount = Math.round((totalAmount / n) * 100) / 100;
+    const entries = [];
+    for (let i = 0; i < n; i++) {
+      const due = new Date(baseDueDate + "T00:00:00");
+      due.setDate(due.getDate() + i * 30);
+      const dueStr = due.toISOString().slice(0, 10);
+      const amt = i === n - 1 ? Math.round((totalAmount - installmentAmount * (n - 1)) * 100) / 100 : installmentAmount;
+      entries.push({
+        tenant_id: tenantId,
+        description: n > 1 ? `${description} (${i + 1}/${n})` : description,
+        amount: amt,
+        due_date: dueStr,
+        vendor_id: vId,
+        payment_method_id: pmId,
+        status: isPaid ? "paid" as const : "open" as const,
+        payment_date: isPaid ? paymentDate : null,
+        amount_paid: isPaid ? amt : 0,
+        installment_number: i + 1,
+        installment_total: n,
+        notes: apNotes,
+        created_by: createdBy,
+      });
+    }
+    return entries;
+  };
 
   const { data: orders = [], isLoading } = useQuery({
     queryKey: ["purchase_orders"],
@@ -253,19 +310,25 @@ export default function Compras() {
         if (ie) throw ie;
       }
 
-      // Create accounts_payable
+      // Create accounts_payable (with installments)
       if (subtotal > 0) {
-        await supabase.from("accounts_payable").insert({
-          tenant_id: profile.tenant_id,
-          description: `Compra ${nextCode}${vendorId ? "" : ""}`,
-          amount: subtotal,
-          due_date: expectedDate || orderDate,
-          vendor_id: vendorId || null,
-          payment_method_id: paymentMethodId || null,
-          status: "open",
+        const apDueDate = dueDate || expectedDate || orderDate;
+        const numInst = parseInt(installments || "1", 10);
+        const entries = generateInstallmentAP({
+          tenantId: profile.tenant_id,
+          description: `Compra ${nextCode}`,
+          totalAmount: subtotal,
+          baseDueDate: apDueDate,
+          numInstallments: numInst,
+          vendorId: vendorId || null,
+          paymentMethodId: paymentMethodId || null,
+          isPaid: false,
+          paymentDate: null,
           notes: `Ref. pedido de compra ${nextCode}`,
-          created_by: profile.user_id,
+          createdBy: profile.user_id,
         });
+        const { error: apErr } = await supabase.from("accounts_payable").insert(entries);
+        if (apErr) throw apErr;
       }
     },
     onSuccess: () => {
@@ -336,18 +399,25 @@ export default function Compras() {
         if (ie) throw ie;
       }
 
-      // Create accounts_payable for NFe
+      // Create accounts_payable for NFe (with installments)
       if (nfeData.total > 0) {
-        await supabase.from("accounts_payable").insert({
-          tenant_id: profile.tenant_id,
+        const apDueDate = nfeDueDate || nfeData.issueDate || new Date().toISOString().slice(0, 10);
+        const numInst = parseInt(nfeInstallments || "1", 10);
+        const entries = generateInstallmentAP({
+          tenantId: profile.tenant_id,
           description: `NFe ${nfeData.nfeNumber} - ${nfeData.vendorName || "Fornecedor"}`,
-          amount: nfeData.total,
-          due_date: nfeData.issueDate || new Date().toISOString().slice(0, 10),
-          vendor_id: vid,
-          status: "open",
+          totalAmount: nfeData.total,
+          baseDueDate: apDueDate,
+          numInstallments: numInst,
+          vendorId: vid,
+          paymentMethodId: null,
+          isPaid: false,
+          paymentDate: null,
           notes: `Ref. NFe ${nfeData.nfeNumber} - Pedido ${code}`,
-          created_by: profile.user_id,
+          createdBy: profile.user_id,
         });
+        const { error: apErr } = await supabase.from("accounts_payable").insert(entries);
+        if (apErr) throw apErr;
       }
     },
     onSuccess: () => {
@@ -421,6 +491,8 @@ export default function Compras() {
     setExpectedDate("");
     setNotes("");
     setPaymentMethodId("");
+    setInstallments("1");
+    setDueDate("");
     setManualItems([{ description: "", quantity: "1", unitPrice: "0" }]);
   };
 
@@ -478,6 +550,12 @@ export default function Compras() {
       }
       setMarketplaceParsed(allPurchases);
       setMarketplaceSelectedIdx(0);
+      // Auto-detect installments from AI
+      if (allPurchases.length > 0) {
+        const firstPurchase = allPurchases[0];
+        const detectedInst = parseInstallmentCount(firstPurchase.payment_installments);
+        if (detectedInst > 1) setMarketplaceInstallments(String(detectedInst));
+      }
       if (allPurchases.length === 0) {
         toast({ title: "Nenhuma compra identificada", description: "Não foi possível extrair dados da imagem.", variant: "destructive" });
       }
@@ -581,22 +659,27 @@ export default function Compras() {
         if (ie) throw ie;
       }
 
-      // Create accounts_payable
+      // Create accounts_payable (with installments)
       if (totalAmount > 0) {
         const purchaseDate = purchase.order_date || new Date().toISOString().slice(0, 10);
-        await supabase.from("accounts_payable").insert({
-          tenant_id: profile.tenant_id,
+        const baseDue = marketplaceDueDate || purchaseDate;
+        const numInst = parseInt(marketplaceInstallments || "1", 10) || parseInstallmentCount(purchase.payment_installments);
+        const isPaid = purchase.status === "concluido";
+        const entries = generateInstallmentAP({
+          tenantId: profile.tenant_id,
           description: `${marketplace} - ${purchase.vendor_name || code}`,
-          amount: totalAmount,
-          due_date: purchaseDate,
-          vendor_id: vid,
-          payment_method_id: pmId,
-          status: purchase.status === "concluido" ? "paid" : "open",
-          payment_date: purchase.status === "concluido" ? purchaseDate : null,
-          amount_paid: purchase.status === "concluido" ? totalAmount : 0,
+          totalAmount,
+          baseDueDate: baseDue,
+          numInstallments: numInst,
+          vendorId: vid,
+          paymentMethodId: pmId,
+          isPaid,
+          paymentDate: isPaid ? purchaseDate : null,
           notes: `Ref. pedido ${code}${purchase.payment_installments ? ` | ${purchase.payment_installments}` : ""}`,
-          created_by: profile.user_id,
+          createdBy: profile.user_id,
         });
+        const { error: apErr } = await supabase.from("accounts_payable").insert(entries);
+        if (apErr) throw apErr;
       }
     },
     onSuccess: () => {
@@ -612,6 +695,8 @@ export default function Compras() {
         setMarketplaceImages([]);
         setMarketplaceParsed([]);
         setMarketplacePaymentMethodId("");
+        setMarketplaceInstallments("1");
+        setMarketplaceDueDate("");
       }
     },
     onError: (e: any) => toast({ title: "Erro ao importar", description: e.message, variant: "destructive" }),
@@ -773,6 +858,20 @@ export default function Compras() {
                   </SelectContent>
                 </Select>
               </div>
+              <div>
+                <Label>Parcelas</Label>
+                <Select value={installments} onValueChange={setInstallments}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {[1,2,3,4,5,6,7,8,9,10,11,12].map(n => <SelectItem key={n} value={String(n)}>{n}x</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <Label>Vencimento 1ª parcela</Label>
+                <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+                <p className="text-xs text-muted-foreground mt-1">Demais parcelas: +30 dias cada</p>
+              </div>
             </div>
 
             <div>
@@ -879,6 +978,25 @@ export default function Compras() {
               </div>
             </div>
           )}
+
+            {nfeData && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="mb-2 block">Parcelas</Label>
+                  <Select value={nfeInstallments} onValueChange={setNfeInstallments}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {[1,2,3,4,5,6,7,8,9,10,11,12].map(n => <SelectItem key={n} value={String(n)}>{n}x</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label className="mb-2 block">Vencimento 1ª parcela</Label>
+                  <Input type="date" value={nfeDueDate} onChange={(e) => setNfeDueDate(e.target.value)} />
+                </div>
+                <p className="text-xs text-muted-foreground col-span-2">Demais parcelas: +30 dias cada</p>
+              </div>
+            )}
 
           <DialogFooter>
             {nfeData && (
@@ -1056,8 +1174,24 @@ export default function Compras() {
                           {paymentMethods.map((pm: any) => <SelectItem key={pm.id} value={pm.id}>{pm.name}</SelectItem>)}
                         </SelectContent>
                       </Select>
-                      <p className="text-xs text-muted-foreground mt-1">Será usada para gerar a conta a pagar</p>
                     </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <Label className="mb-2 block">Parcelas</Label>
+                        <Select value={marketplaceInstallments || String(parseInstallmentCount(p.payment_installments))} onValueChange={setMarketplaceInstallments}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            {[1,2,3,4,5,6,7,8,9,10,11,12].map(n => <SelectItem key={n} value={String(n)}>{n}x</SelectItem>)}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div>
+                        <Label className="mb-2 block">Vencimento 1ª parcela</Label>
+                        <Input type="date" value={marketplaceDueDate} onChange={(e) => setMarketplaceDueDate(e.target.value)} />
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground">Será usada para gerar a(s) conta(s) a pagar. Demais parcelas: +30 dias cada.</p>
 
                     <div>
                       <Label className="mb-2 block">Itens ({p.items?.length || 0})</Label>
