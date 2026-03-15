@@ -432,7 +432,7 @@ function CreateJobDialog({
     setName(p.name);
     setDescription(p.description || "");
     if (p.material_id) setMaterialId(p.material_id);
-    if (p.est_time_minutes) setEstTimeMinutes(String(p.est_time_minutes));
+    if (p.est_time_minutes) setEstTimeMinutes((p.est_time_minutes / 60).toFixed(2));
     if (p.est_grams) setEstGrams(String(p.est_grams));
     const colors = (p as any).num_colors || 1;
     setNumColors(String(colors));
