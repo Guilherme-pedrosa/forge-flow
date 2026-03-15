@@ -1,4 +1,4 @@
-import { Thermometer, Loader2 } from "lucide-react";
+import { Thermometer, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -25,7 +25,42 @@ const statusLabels: Record<string, string> = {
   maintenance: "Manutenção",
 };
 
+const fmtRemaining = (minutes: number | null | undefined) => {
+  if (minutes == null || minutes <= 0) return null;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return h > 0 ? `${h}h${m > 0 ? `${m}m` : ""}` : `${m}m`;
+};
+
 export function TelemetryStrip() {
+  // Trigger telemetry sync via edge function every 30s
+  useQuery({
+    queryKey: ["telemetry-sync"],
+    queryFn: async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return null;
+      
+      const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
+      const res = await fetch(
+        `https://${projectId}.supabase.co/functions/v1/bambu-cloud-sync`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${session.access_token}`,
+            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+          },
+          body: JSON.stringify({ action: "telemetry" }),
+        }
+      );
+      if (!res.ok) return null;
+      return res.json();
+    },
+    refetchInterval: 30000,
+    retry: false,
+    staleTime: 25000,
+  });
+
   const { data: printers } = useQuery({
     queryKey: ["telemetry-printers"],
     queryFn: async () => {
@@ -44,7 +79,7 @@ export function TelemetryStrip() {
     queryFn: async () => {
       const { data } = await supabase
         .from("bambu_devices")
-        .select("dev_id, nozzle_temp, bed_temp, progress, print_status, current_task, online");
+        .select("dev_id, nozzle_temp, bed_temp, progress, print_status, current_task, online, remaining_time");
       return (data ?? []) as BambuDevice[];
     },
     refetchInterval: 15000,
@@ -54,7 +89,6 @@ export function TelemetryStrip() {
 
   if (!printers?.length) return null;
 
-  // Map Bambu print_status to our local status
   const resolveStatus = (localStatus: string, device: BambuDevice | null | undefined): string => {
     if (!device) return localStatus;
     const bs = device.print_status?.toUpperCase();
@@ -73,6 +107,7 @@ export function TelemetryStrip() {
         const liveStatus = resolveStatus(p.status, device);
         const nozzle = device?.nozzle_temp;
         const progress = device?.progress;
+        const remaining = fmtRemaining(device?.remaining_time);
         const isPrinting = liveStatus === "printing";
 
         return (
@@ -90,6 +125,12 @@ export function TelemetryStrip() {
               </>
             )}
 
+            {isPrinting && remaining && (
+              <span className="text-muted-foreground font-mono flex items-center gap-0.5">
+                <Clock className="w-3 h-3" />{remaining}
+              </span>
+            )}
+
             {nozzle != null && liveStatus !== "offline" && (
               <span className="text-muted-foreground font-mono flex items-center gap-0.5">
                 <Thermometer className="w-3 h-3" />{Math.round(nozzle)}°
@@ -97,7 +138,7 @@ export function TelemetryStrip() {
             )}
 
             {device?.current_task && (
-              <span className="text-muted-foreground truncate max-w-[120px]">{device.current_task}</span>
+              <span className="text-muted-foreground truncate max-w-[140px] italic">{device.current_task}</span>
             )}
           </div>
         );

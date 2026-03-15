@@ -292,6 +292,160 @@ Deno.serve(async (req) => {
       );
     }
 
+    // ── Fetch live telemetry (progress, temps, current task) ──
+    if (action === "telemetry") {
+      const { data: conn } = await supabase
+        .from("bambu_connections")
+        .select("*")
+        .eq("tenant_id", profile.tenant_id)
+        .eq("is_active", true)
+        .maybeSingle();
+
+      if (!conn || !conn.access_token_encrypted) {
+        return new Response(
+          JSON.stringify({ error: "Nenhuma conexão Bambu Lab ativa." }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      // Get all bambu_devices for this tenant
+      const { data: devices } = await supabase
+        .from("bambu_devices")
+        .select("id, dev_id, printer_id")
+        .eq("tenant_id", profile.tenant_id);
+
+      if (!devices || devices.length === 0) {
+        return new Response(
+          JSON.stringify({ message: "Nenhum dispositivo encontrado.", devices: [] }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const accessToken = conn.access_token_encrypted;
+      const telemetryResults = [];
+
+      // Fetch device list for online/status info
+      let cloudDeviceMap: Record<string, any> = {};
+      try {
+        const devicesRes = await fetch(
+          `${BAMBU_API}/v1/iot-service/api/user/bind`,
+          { headers: { Authorization: `Bearer ${accessToken}` } }
+        );
+        if (devicesRes.status === 401 || devicesRes.status === 403) {
+          await supabase
+            .from("bambu_connections")
+            .update({ is_active: false, updated_at: new Date().toISOString() })
+            .eq("id", conn.id);
+          return new Response(
+            JSON.stringify({ error: "Token Bambu expirado. Reconecte em Integrações → Bambu Lab.", token_expired: true }),
+            { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+        const devicesData = await devicesRes.json();
+        if (devicesData.devices) {
+          for (const d of devicesData.devices) {
+            cloudDeviceMap[d.dev_id] = d;
+          }
+        }
+      } catch (e) {
+        console.error("Failed to fetch device list:", e);
+      }
+
+      for (const device of devices) {
+        const cloudDev = cloudDeviceMap[device.dev_id];
+        const online = cloudDev?.online === true;
+        const printStatus = cloudDev?.print_status || null;
+
+        // Fetch running tasks for this device
+        let currentTaskName: string | null = null;
+        let progress: number | null = null;
+        let remainingTime: number | null = null;
+        let nozzleTemp: number | null = cloudDev?.nozzle_temper ?? null;
+        let bedTemp: number | null = cloudDev?.bed_temper ?? null;
+        let chamberTemp: number | null = cloudDev?.chamber_temper ?? null;
+
+        try {
+          const tasksRes = await fetch(
+            `${BAMBU_API}/v1/user-service/my/tasks?deviceId=${device.dev_id}&limit=5`,
+            { headers: { Authorization: `Bearer ${accessToken}` } }
+          );
+          const tasksData = await tasksRes.json();
+          if (tasksRes.ok && tasksData.hits) {
+            // Find the running task (status 0 = running)
+            const runningTask = tasksData.hits.find((t: any) => String(t.status) === "0");
+            if (runningTask) {
+              currentTaskName = runningTask.title || runningTask.designTitle || null;
+              progress = runningTask.progress != null ? Number(runningTask.progress) : null;
+              // Calculate remaining time from total and elapsed
+              if (runningTask.costTime != null && runningTask.totalTime != null) {
+                const remaining = Number(runningTask.totalTime) - Number(runningTask.costTime);
+                remainingTime = remaining > 0 ? Math.round(remaining / 60) : 0;
+              } else if (runningTask.remainTime != null) {
+                remainingTime = Math.round(Number(runningTask.remainTime) / 60);
+              }
+            }
+          }
+        } catch (e) {
+          console.warn(`Failed to fetch tasks for ${device.dev_id}:`, e);
+        }
+
+        // Map Bambu print_status to our printer_status enum
+        let printerStatus: string = "offline";
+        if (online) {
+          const ps = printStatus?.toUpperCase();
+          if (ps === "RUNNING") printerStatus = "printing";
+          else if (ps === "PAUSE") printerStatus = "paused";
+          else if (ps === "FAILED") printerStatus = "error";
+          else printerStatus = "idle";
+        }
+
+        // Update bambu_devices with telemetry
+        await supabase
+          .from("bambu_devices")
+          .update({
+            online,
+            print_status: printStatus,
+            nozzle_temp: nozzleTemp,
+            bed_temp: bedTemp,
+            chamber_temp: chamberTemp,
+            progress,
+            remaining_time: remainingTime,
+            current_task: currentTaskName,
+            last_seen_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", device.id);
+
+        // Sync printer status too
+        if (device.printer_id) {
+          await supabase
+            .from("printers")
+            .update({
+              status: printerStatus,
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", device.printer_id);
+        }
+
+        telemetryResults.push({
+          dev_id: device.dev_id,
+          online,
+          print_status: printStatus,
+          printer_status: printerStatus,
+          progress,
+          remaining_time: remainingTime,
+          current_task: currentTaskName,
+          nozzle_temp: nozzleTemp,
+          bed_temp: bedTemp,
+        });
+      }
+
+      return new Response(
+        JSON.stringify({ devices: telemetryResults }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     // ── Fetch user projects (saved models / collections) ──
     if (action === "projects") {
       const { data: conn } = await supabase
