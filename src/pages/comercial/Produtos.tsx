@@ -433,7 +433,16 @@ export default function Produtos() {
       setExtraPhotos(gallery.slice(0, 5));
     }
 
-    const plates = selectedProfile?.plates || model.plates || 0;
+    const profilePlates = Array.isArray(selectedProfile?.plates)
+      ? selectedProfile.plates.length
+      : Math.round(toNumber(selectedProfile?.plates ?? selectedProfile?.plate_count ?? selectedProfile?.plateCount));
+
+    const modelPlates = Array.isArray(model?.plates)
+      ? model.plates.length
+      : Math.round(toNumber(model?.plates ?? model?.plate_count ?? model?.plateCount));
+
+    const plates = Math.max(profilePlates, modelPlates, 0);
+
     const noteParts: string[] = [
       `Importado do MakerWorld — ID: ${model.id}`,
       selectedProfile?.name ? `Opção selecionada: ${selectedProfile.name}` : "",
@@ -456,6 +465,7 @@ export default function Produtos() {
     }
 
     if (plates > 0) {
+      setPrintsPerPlate(String(plates));
       noteParts.push(`Placas de impressão: ${plates}`);
     }
 
