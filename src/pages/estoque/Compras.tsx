@@ -518,17 +518,34 @@ export default function Compras() {
         }
       }
 
+      // Auto-detect payment method from AI response
+      let pmId = marketplacePaymentMethodId || null;
+      if (!pmId && purchase.payment_method && paymentMethods.length > 0) {
+        const pmMap: Record<string, string> = {
+          credit_card: "credit_card",
+          debit_card: "debit_card",
+          pix: "pix",
+          boleto: "boleto",
+        };
+        const aiType = pmMap[purchase.payment_method];
+        if (aiType) {
+          const found = paymentMethods.find((pm: any) => pm.type === aiType);
+          if (found) pmId = found.id;
+        }
+      }
+
       const code = `PC-${String(orders.length + 1).padStart(4, "0")}`;
       const marketplace = marketplaceLabels[purchase.marketplace] || purchase.marketplace || "Marketplace";
+      const totalAmount = purchase.total || 0;
       const { data: po, error } = await supabase.from("purchase_orders").insert({
         tenant_id: profile.tenant_id,
         code,
         vendor_id: vid,
         order_date: purchase.order_date || new Date().toISOString().slice(0, 10),
-        subtotal: purchase.subtotal || purchase.total || 0,
+        subtotal: purchase.subtotal || totalAmount,
         discount: purchase.discount || 0,
         shipping: purchase.shipping || 0,
-        total: purchase.total || 0,
+        total: totalAmount,
         status: purchase.status === "concluido" ? "received" : "pending",
         received_date: purchase.status === "concluido" ? (purchase.order_date || new Date().toISOString().slice(0, 10)) : null,
         notes: `Importado de ${marketplace}${purchase.payment_installments ? ` | Pgto: ${purchase.payment_installments}` : ""}${purchase.notes ? ` | ${purchase.notes}` : ""}`,
@@ -548,18 +565,38 @@ export default function Compras() {
         const { error: ie } = await supabase.from("purchase_order_items").insert(rows);
         if (ie) throw ie;
       }
+
+      // Create accounts_payable
+      if (totalAmount > 0) {
+        const purchaseDate = purchase.order_date || new Date().toISOString().slice(0, 10);
+        await supabase.from("accounts_payable").insert({
+          tenant_id: profile.tenant_id,
+          description: `${marketplace} - ${purchase.vendor_name || code}`,
+          amount: totalAmount,
+          due_date: purchaseDate,
+          vendor_id: vid,
+          payment_method_id: pmId,
+          status: purchase.status === "concluido" ? "paid" : "open",
+          payment_date: purchase.status === "concluido" ? purchaseDate : null,
+          amount_paid: purchase.status === "concluido" ? totalAmount : 0,
+          notes: `Ref. pedido ${code}${purchase.payment_installments ? ` | ${purchase.payment_installments}` : ""}`,
+          created_by: profile.user_id,
+        });
+      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
       qc.invalidateQueries({ queryKey: ["vendors"] });
+      qc.invalidateQueries({ queryKey: ["accounts_payable"] });
       // Remove imported purchase from list
       setMarketplaceParsed(prev => prev.filter((_, i) => i !== marketplaceSelectedIdx));
       setMarketplaceSelectedIdx(0);
-      toast({ title: "Compra importada!" });
+      toast({ title: "Compra importada e conta a pagar gerada!" });
       if (marketplaceParsed.length <= 1) {
         setMarketplaceImportOpen(false);
         setMarketplaceImages([]);
         setMarketplaceParsed([]);
+        setMarketplacePaymentMethodId("");
       }
     },
     onError: (e: any) => toast({ title: "Erro ao importar", description: e.message, variant: "destructive" }),
