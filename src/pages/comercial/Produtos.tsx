@@ -80,7 +80,7 @@ export default function Produtos() {
   const { data: materials = [] } = useQuery({
     queryKey: ["inventory_items"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("inventory_items").select("id, name, avg_cost").eq("is_active", true).order("name");
+      const { data, error } = await supabase.from("inventory_items").select("id, name, avg_cost, freight_cost, loss_coefficient, unit").eq("is_active", true).order("name");
       if (error) throw error;
       return data;
     },
