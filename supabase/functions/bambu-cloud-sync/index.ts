@@ -589,6 +589,58 @@ Deno.serve(async (req) => {
   }
 });
 
+// ── Helper: parse MakerWorld design object to our model format ──
+function parseDesignToModel(d: any) {
+  return {
+    id: d.id || d.designId || d.design_id || "",
+    title: d.title || d.name || "Sem nome",
+    thumbnail: d.cover || d.cover_url || d.coverUrl || d.images?.[0]?.url || null,
+    description: d.summary || d.description || "",
+    print_count: d.printCountStr || d.print_count || "0",
+    download_count: d.downloadCountStr || d.download_count || "0",
+    like_count: d.likeCount || d.like_count || 0,
+    profiles: (d.profileList || d.profiles || []).map((p: any) => ({
+      name: p.name || "Default",
+      weight_grams: p.weight || p.total_weight || 0,
+      time_seconds: p.estimatedTime || p.estimated_time || 0,
+      filaments: (p.materialList || p.materials || []).map((m: any) => ({
+        type: m.type || "PLA",
+        color: m.color || "",
+        grams: m.weight || 0,
+      })),
+    })),
+  };
+}
+
+// ── Helper: extract model data from HTML page ──
+function extractFromHtml(html: string): any | null {
+  const nextMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+  if (nextMatch) {
+    try {
+      const nextData = JSON.parse(nextMatch[1]);
+      const design = nextData?.props?.pageProps?.design;
+      if (design) return parseDesignToModel(design);
+    } catch {}
+  }
+  
+  // Try og:tags as minimal fallback
+  const titleMatch = html.match(/<meta\s+property="og:title"\s+content="([^"]+)"/);
+  const imageMatch = html.match(/<meta\s+property="og:image"\s+content="([^"]+)"/);
+  const descMatch = html.match(/<meta\s+property="og:description"\s+content="([^"]+)"/);
+  
+  if (titleMatch) {
+    return {
+      id: "og-" + Date.now(),
+      title: titleMatch[1],
+      thumbnail: imageMatch?.[1] || null,
+      description: descMatch?.[1] || "",
+      profiles: [],
+    };
+  }
+  
+  return null;
+}
+
 // ── Fetch devices from Bambu Cloud and upsert into DB ──
 async function fetchAndSyncDevices(
   supabase: ReturnType<typeof createClient>,
