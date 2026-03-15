@@ -53,6 +53,7 @@ export default function Produtos() {
   const [bambuTab, setBambuTab] = useState<"projects" | "tasks" | "makerworld">("projects");
   const [makerWorldUrl, setMakerWorldUrl] = useState("");
   const [makerWorldLoading, setMakerWorldLoading] = useState(false);
+  const [myCollectionsLoading, setMyCollectionsLoading] = useState(false);
   const [makerWorldModels, setMakerWorldModels] = useState<any[]>([]);
   const [makerOptionOpen, setMakerOptionOpen] = useState(false);
   const [makerModelToImport, setMakerModelToImport] = useState<any | null>(null);
