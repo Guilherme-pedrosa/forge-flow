@@ -516,9 +516,10 @@ Deno.serve(async (req) => {
               console.log("Firecrawl HTML length:", html.length, "Markdown length:", markdown.length);
               
               // Try __NEXT_DATA__ from rendered HTML
-              const extracted = extractFromHtml(html);
+              const extracted = extractFromHtml(html, selectedProfileId);
               if (extracted) {
                 models.push(extracted);
+                strategyUsed = "firecrawl";
               }
               
               // Fallback: parse from rendered HTML content
