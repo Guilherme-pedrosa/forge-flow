@@ -18,7 +18,7 @@ interface ModuleConfig {
   title: string;
   description: string;
   actionLabel: string;
-  kpis: Array<{ label: string; value: string; trend: string; tone: "today" | "upcoming" | "paid" | "overdue" | "total" }>;
+  kpis: Array<{ label: string; value: string; trend: string; tone: "today" | "upcoming" | "paid" | "overdue" | "total" | "warning" }>;
   tableColumns: string[];
   tableRows: string[][];
   aiMessage: string;
