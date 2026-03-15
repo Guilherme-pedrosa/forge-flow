@@ -540,6 +540,31 @@ Deno.serve(async (req) => {
                   filaments: Array<{ type: string; color: string; grams: number }>;
                 }> = [];
 
+                const parseHoursAndMinutesToSeconds = (text: string) => {
+                  const h = text.match(/(\d+(?:[.,]\d+)?)\s*h\b/i);
+                  const min = text.match(/(\d+)\s*min\b/i);
+                  const hSeconds = h ? Math.round(parseLooseMetric(h[1]) * 3600) : 0;
+                  const minSeconds = min ? Math.round(parseLooseMetric(min[1]) * 60) : 0;
+                  return hSeconds + minSeconds;
+                };
+
+                const extractWeightFromBlock = (text: string) => {
+                  const totalLabelMatch = text.match(/total[^\n]{0,24}?(\d+(?:[.,]\d+)?)\s*(kg|g|grams?)/i);
+                  if (totalLabelMatch) {
+                    return metricToGrams(totalLabelMatch[1], totalLabelMatch[2]);
+                  }
+
+                  const allWeightTokens = [...text.matchAll(/(\d+(?:[.,]\d+)?)\s*(kg|g|grams?)\b/gi)].map((m) => metricToGrams(m[1], m[2])).filter((n) => n > 0);
+                  if (allWeightTokens.length === 0) return 0;
+
+                  // If multiple tokens exist, assume they are per-color consumptions and sum them.
+                  if (allWeightTokens.length > 1) {
+                    return allWeightTokens.reduce((sum, n) => sum + n, 0);
+                  }
+
+                  return allWeightTokens[0];
+                };
+
                 const profileBlocks = markdown
                   .split(/\* \* \*/)
                   .map((block) => block.trim())
@@ -551,17 +576,9 @@ Deno.serve(async (req) => {
                   const blockName = nameMatch?.[1]?.trim() || `Opção ${idx + 1}`;
 
                   const platesMatch = block.match(/(\d+)\s*plates?/i);
-                  const hoursMatch = block.match(/(\d+(?:\.\d+)?)\s*h\b/i);
-                  const minutesMatch = block.match(/(\d+)\s*min\b/i);
-                  const directWeightMatch = block.match(/(\d+(?:\.\d+)?)\s*g(?:rams?)?/i);
-
-                  const filGramsRegex = /(?:PLA|PETG|ABS|ASA|TPU|PC|PA|PVA)\s*\|\s*(\d+(?:\.\d+)?)\s*g/gi;
-                  const filamentWeights = [...block.matchAll(filGramsRegex)].map((m) => parseFloat(m[1])).filter((n) => Number.isFinite(n));
-                  const filamentSum = filamentWeights.reduce((sum, n) => sum + n, 0);
-
                   const blockPlates = platesMatch ? parseInt(platesMatch[1]) : 0;
-                  const blockTimeSeconds = Math.round(((hoursMatch ? parseFloat(hoursMatch[1]) * 3600 : 0) + (minutesMatch ? parseInt(minutesMatch[1]) * 60 : 0)));
-                  const blockWeight = Math.max(directWeightMatch ? parseFloat(directWeightMatch[1]) : 0, filamentSum);
+                  const blockTimeSeconds = parseHoursAndMinutesToSeconds(block);
+                  const blockWeight = extractWeightFromBlock(block);
 
                   if (blockPlates > 0 || blockTimeSeconds > 0 || blockWeight > 0) {
                     parsedProfiles.push({
@@ -580,34 +597,50 @@ Deno.serve(async (req) => {
                   weightGrams = Math.max(...parsedProfiles.map((p) => p.weight_grams || 0));
                 }
 
-                // Fallback time from HTML
+                // Fallback time from HTML/markdown
                 if (timeSeconds === 0) {
-                  const allEstimatedTimes = [...html.matchAll(/"estimatedTime"\s*:\s*(\d+)/g)].map((m) => parseInt(m[1]));
-                  const allPredictions = [...html.matchAll(/"prediction"\s*:\s*(\d+)/g)].map((m) => parseInt(m[1]));
-                  const htmlTimes = [...allEstimatedTimes, ...allPredictions].filter((n) => Number.isFinite(n));
-                  if (htmlTimes.length > 0) {
-                    timeSeconds = Math.max(...htmlTimes);
+                  const htmlTimeValues = collectMetricValues(html, [
+                    "estimatedTime",
+                    "prediction",
+                    "time_seconds",
+                    "printTime",
+                    "totalTime",
+                  ]);
+                  const markdownSeconds = parseHoursAndMinutesToSeconds(markdown);
+                  const allTimeCandidates = [...htmlTimeValues, markdownSeconds].filter((n) => Number.isFinite(n) && n > 0);
+                  if (allTimeCandidates.length > 0) {
+                    timeSeconds = Math.max(...allTimeCandidates);
                   }
                 }
 
-                // Extract weight: prefer total/profile values, otherwise sum all plate weights
+                // Extract weight: try broad key set from rendered HTML, then markdown fallback
                 if (weightGrams === 0) {
-                  const totalWeightMatch = html.match(/"totalWeight"\s*:\s*(\d+(?:\.\d+)?)/);
-                  if (totalWeightMatch) {
-                    weightGrams = parseFloat(totalWeightMatch[1]);
-                  }
-                }
+                  const htmlWeightValues = collectMetricValues(html, [
+                    "totalWeight",
+                    "total_weight",
+                    "weight_grams",
+                    "weightGrams",
+                    "weight",
+                    "used_g",
+                    "usedG",
+                    "usedWeight",
+                    "filamentWeight",
+                    "materialWeight",
+                    "consumption",
+                    "filament_used_g",
+                  ]);
 
-                if (weightGrams === 0) {
-                  const allWeights = [...html.matchAll(/"weight"\s*:\s*(\d+(?:\.\d+)?)/g)];
-                  if (allWeights.length > 0) {
-                    weightGrams = allWeights.reduce((sum, m) => sum + parseFloat(m[1]), 0);
-                  }
-                }
+                  const markdownWeightValues = [
+                    ...collectMetricValues(markdown, ["total weight", "filament weight", "weight", "filament"]),
+                    ...[...markdown.matchAll(/(\d+(?:[.,]\d+)?)\s*(kg|g|grams?)\b/gi)].map((m) => metricToGrams(m[1], m[2])),
+                  ];
 
-                if (weightGrams === 0) {
-                  const weightM = markdown.match(/(\d{2,}(?:\.\d+)?)\s*g(?:rams?)?/i);
-                  if (weightM) weightGrams = parseFloat(weightM[1]);
+                  const candidates = [...htmlWeightValues, ...markdownWeightValues]
+                    .filter((n) => Number.isFinite(n) && n > 0.05 && n < 50000);
+
+                  if (candidates.length > 0) {
+                    weightGrams = Math.max(...candidates);
+                  }
                 }
 
                 // Extract filament colors from Bill of Materials section
@@ -651,7 +684,13 @@ Deno.serve(async (req) => {
                 }
 
                 const normalizedProfiles = parsedProfiles.length > 0
-                  ? parsedProfiles.map((p) => ({ ...p, filaments: filaments.length > 0 ? filaments : p.filaments }))
+                  ? parsedProfiles.map((p) => ({
+                      ...p,
+                      weight_grams: p.weight_grams || weightGrams,
+                      time_seconds: p.time_seconds || timeSeconds,
+                      plates: p.plates || totalPlates,
+                      filaments: filaments.length > 0 ? filaments : p.filaments,
+                    }))
                   : [{
                       name: "Opção 1",
                       weight_grams: weightGrams,
@@ -745,6 +784,52 @@ function maxMetric(...values: number[]): number {
   return values.reduce((acc, v) => (v > acc ? v : acc), 0);
 }
 
+function parseLooseMetric(value: unknown): number {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  if (typeof value !== "string") return 0;
+  const cleaned = value.replace(/\s+/g, " ").trim();
+  const m = cleaned.match(/(\d+(?:[.,]\d+)?)/);
+  if (!m) return 0;
+  const n = Number(m[1].replace(",", "."));
+  return Number.isFinite(n) ? n : 0;
+}
+
+function metricToGrams(value: unknown, explicitUnit?: string | null): number {
+  const n = parseLooseMetric(value);
+  if (n <= 0) return 0;
+  const unit = (explicitUnit || (typeof value === "string" ? (value.match(/\b(kg|kilograms?)\b/i)?.[1] || value.match(/\b(g|grams?)\b/i)?.[1]) : "") || "").toLowerCase();
+  if (unit.startsWith("kg") || unit.startsWith("kilo")) return n * 1000;
+  return n;
+}
+
+function collectMetricValues(source: string, keys: string[]): number[] {
+  const values: number[] = [];
+
+  for (const key of keys) {
+    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    const structuredRegex = new RegExp(
+      `["']?${escaped}["']?\\s*[:=]\\s*["']?([0-9]+(?:[.,][0-9]+)?)(?:\\s*(kg|kgs|kilograms?|g|grams?))?["']?`,
+      "gi"
+    );
+
+    const looseRegex = new RegExp(
+      `${escaped}[^0-9]{0,16}([0-9]+(?:[.,][0-9]+)?)(?:\\s*(kg|kgs|kilograms?|g|grams?))`,
+      "gi"
+    );
+
+    for (const regex of [structuredRegex, looseRegex]) {
+      let m: RegExpExecArray | null;
+      while ((m = regex.exec(source)) !== null) {
+        const grams = metricToGrams(m[1], m[2]);
+        if (grams > 0) values.push(grams);
+      }
+    }
+  }
+
+  return values;
+}
+
 function profileDisplayName(profile: any, idx: number): string {
   return profile?.name || profile?.profileName || profile?.title || `Opção ${idx + 1}`;
 }
@@ -773,32 +858,45 @@ function parseDesignToModel(d: any) {
     let summedPlateTime = 0;
 
     for (const plate of plates) {
-      summedPlateWeight += toPositiveNumber(plate.weight ?? plate.total_weight ?? plate.weight_grams);
-      summedPlateTime += toPositiveNumber(plate.prediction ?? plate.estimatedTime ?? plate.time_seconds);
+      summedPlateWeight += metricToGrams(
+        plate.weight ?? plate.total_weight ?? plate.weight_grams ?? plate.totalWeight,
+        plate.weight_unit || plate.unit
+      );
+      summedPlateTime += parseLooseMetric(plate.prediction ?? plate.estimatedTime ?? plate.time_seconds ?? plate.printTime);
 
       for (const fil of (plate.filaments || [])) {
-        addFilament(fil.type || "PLA", fil.color || "", toPositiveNumber(fil.used_g ?? fil.weight ?? fil.grams));
+        addFilament(
+          fil.type || "PLA",
+          fil.color || "",
+          metricToGrams(fil.used_g ?? fil.weight ?? fil.grams ?? fil.usedWeight, fil.unit)
+        );
       }
     }
 
     for (const m of (p.materialList || p.materials || [])) {
-      addFilament(m.type || "PLA", m.color || "", toPositiveNumber(m.weight ?? m.used_g ?? m.grams));
+      addFilament(
+        m.type || "PLA",
+        m.color || "",
+        metricToGrams(m.weight ?? m.used_g ?? m.grams ?? m.usedWeight, m.unit)
+      );
     }
 
     const filaments = Array.from(filamentMap.values());
     const filamentWeightSum = filaments.reduce((sum, f) => sum + toPositiveNumber(f.grams), 0);
 
     const declaredWeight = maxMetric(
-      toPositiveNumber(p.weight),
-      toPositiveNumber(p.total_weight),
-      toPositiveNumber(p.totalWeight),
-      toPositiveNumber(p.weight_grams)
+      metricToGrams(p.weight, p.weight_unit || p.unit),
+      metricToGrams(p.total_weight, p.weight_unit || p.unit),
+      metricToGrams(p.totalWeight, p.weight_unit || p.unit),
+      metricToGrams(p.weight_grams, "g"),
+      metricToGrams(p.used_g, "g")
     );
 
     const declaredTime = maxMetric(
-      toPositiveNumber(p.estimatedTime),
-      toPositiveNumber(p.estimated_time),
-      toPositiveNumber(p.time_seconds)
+      parseLooseMetric(p.estimatedTime),
+      parseLooseMetric(p.estimated_time),
+      parseLooseMetric(p.time_seconds),
+      parseLooseMetric(p.printTime)
     );
 
     return {
@@ -813,8 +911,18 @@ function parseDesignToModel(d: any) {
   if (profiles.length === 0) {
     profiles.push({
       name: "Opção 1",
-      weight_grams: maxMetric(toPositiveNumber(d.weight), toPositiveNumber(d.total_weight), toPositiveNumber(d.totalWeight)),
-      time_seconds: maxMetric(toPositiveNumber(d.estimatedTime), toPositiveNumber(d.estimated_time), toPositiveNumber(d.time_seconds)),
+      weight_grams: maxMetric(
+        metricToGrams(d.weight, d.weight_unit || d.unit),
+        metricToGrams(d.total_weight, d.weight_unit || d.unit),
+        metricToGrams(d.totalWeight, d.weight_unit || d.unit),
+        metricToGrams(d.weight_grams, "g")
+      ),
+      time_seconds: maxMetric(
+        parseLooseMetric(d.estimatedTime),
+        parseLooseMetric(d.estimated_time),
+        parseLooseMetric(d.time_seconds),
+        parseLooseMetric(d.printTime)
+      ),
       plates: toPositiveNumber(d.plateCount || d.plate_count),
       filaments: [],
     });
