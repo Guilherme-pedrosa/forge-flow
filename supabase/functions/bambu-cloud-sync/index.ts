@@ -490,7 +490,7 @@ Deno.serve(async (req) => {
                 "Content-Type": "application/json",
               },
               body: JSON.stringify({
-                url: `https://makerworld.com/en/models/${modelId}`,
+                url: `https://makerworld.com/en/models/${modelId}${hashSuffix}`,
                 formats: ["html", "markdown"],
                 waitFor: 5000,
               }),
