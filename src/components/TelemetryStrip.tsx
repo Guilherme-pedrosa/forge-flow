@@ -77,9 +77,9 @@ export function TelemetryStrip() {
 
         return (
           <div key={p.id} className="flex items-center gap-2 text-xs whitespace-nowrap">
-            <div className={cn("w-1.5 h-1.5 rounded-full flex-shrink-0", statusColors[p.status] ?? "bg-muted-foreground/30")} />
+            <div className={cn("w-1.5 h-1.5 rounded-full flex-shrink-0", statusColors[liveStatus] ?? "bg-muted-foreground/30")} />
             <span className="text-muted-foreground font-medium">{p.name}</span>
-            <span className="text-muted-foreground/60">{statusLabels[p.status] ?? p.status}</span>
+            <span className="text-muted-foreground/60">{statusLabels[liveStatus] ?? liveStatus}</span>
 
             {isPrinting && progress != null && (
               <>
