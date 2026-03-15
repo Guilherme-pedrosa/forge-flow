@@ -130,7 +130,7 @@ export default function Pedidos() {
   const { data: viewItems = [] } = useQuery({
     queryKey: ["order_items", viewOrderId],
     queryFn: async () => {
-      const { data, error } = await supabase.from("order_items").select("*, products(name)").eq("order_id", viewOrderId!).order("created_at");
+      const { data, error } = await supabase.from("order_items").select("*, products(name, photo_url)").eq("order_id", viewOrderId!).order("created_at");
       if (error) throw error;
       return data;
     },
