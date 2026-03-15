@@ -46,9 +46,8 @@ const fmtCurrency = (v: number | null) =>
 const fmtGrams = (v: number | null) => (v != null ? `${v.toLocaleString("pt-BR")}g` : "—");
 const fmtMinutes = (m: number | null) => {
   if (m == null || m === 0) return "—";
-  const h = Math.floor(m / 60);
-  const min = m % 60;
-  return h > 0 ? `${h}h${min > 0 ? `${min}m` : ""}` : `${min}m`;
+  const h = (m / 60).toFixed(1).replace(".", ",");
+  return `${h}h`;
 };
 const fmtDate = (d: string | null) => {
   if (!d) return "—";
