@@ -748,6 +748,7 @@ Deno.serve(async (req) => {
                   plates: totalPlates || normalizedProfiles[0]?.plates || 0,
                   profiles: normalizedProfiles,
                 });
+                strategyUsed = "firecrawl";
               }
             } else {
               console.error("Firecrawl error:", fcData);
