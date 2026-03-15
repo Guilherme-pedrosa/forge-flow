@@ -93,7 +93,11 @@ export default function Produtos() {
   const { data: printers = [] } = useQuery({
     queryKey: ["printers_for_cost"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("printers").select("id, name, power_watts, depreciation_per_hour, maintenance_cost_per_hour").eq("is_active", true).order("name");
+      const { data, error } = await supabase
+        .from("printers")
+        .select("id, name, power_watts, depreciation_per_hour, maintenance_cost_per_hour, acquisition_cost, useful_life_hours")
+        .eq("is_active", true)
+        .order("name");
       if (error) throw error;
       return data;
     },
@@ -111,13 +115,22 @@ export default function Produtos() {
     enabled: !!profile,
   });
 
+  const toNumber = (v: unknown) => {
+    if (typeof v === "string") {
+      const n = Number(v.replace(",", "."));
+      return Number.isFinite(n) ? n : 0;
+    }
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+
   const tenantSettings = useMemo(() => {
     const s = (tenant?.settings as any) || {};
     return {
-      energy_cost_kwh: s.energy_cost_kwh || 0,
-      labor_cost_hour: s.labor_cost_hour || 0,
-      overhead_percent: s.overhead_percent || 0,
-      target_margin: s.target_margin || 0,
+      energy_cost_kwh: toNumber(s.energy_cost_kwh),
+      labor_cost_hour: toNumber(s.labor_cost_hour),
+      overhead_percent: toNumber(s.overhead_percent),
+      target_margin: toNumber(s.target_margin),
     };
   }, [tenant]);
 
@@ -138,13 +151,16 @@ export default function Produtos() {
     const effectiveGrams = grams * (1 + lossCoeff);
     const materialCost = effectiveGrams * (baseCostPerGram + freightPerGram);
 
-    // Energy cost
-    const selectedPrinter = printers.find((p) => p.id === printerId);
+    // Energy + machine cost
+    const selectedPrinter = printers.find((p) => p.id === printerId) ?? printers[0];
     const powerKw = (selectedPrinter?.power_watts || 200) / 1000;
     const energyCost = powerKw * printHours * tenantSettings.energy_cost_kwh;
 
-    // Machine cost (depreciation + maintenance)
-    const depreciationPerHour = selectedPrinter?.depreciation_per_hour || 0;
+    const persistedDepreciation = selectedPrinter?.depreciation_per_hour || 0;
+    const derivedDepreciation = selectedPrinter && (selectedPrinter.acquisition_cost || 0) > 0 && (selectedPrinter.useful_life_hours || 0) > 0
+      ? (selectedPrinter.acquisition_cost || 0) / (selectedPrinter.useful_life_hours || 1)
+      : 0;
+    const depreciationPerHour = persistedDepreciation > 0 ? persistedDepreciation : derivedDepreciation;
     const maintenancePerHour = selectedPrinter?.maintenance_cost_per_hour || 0;
     const machineCost = (depreciationPerHour + maintenancePerHour) * printHours;
 
@@ -159,7 +175,17 @@ export default function Produtos() {
     const margin = tenantSettings.target_margin || 40;
     const suggestedPrice = margin < 100 ? total / (1 - margin / 100) : total * 2;
 
-    return { materialCost, energyCost, machineCost, laborCost, overhead, total, suggestedPrice };
+    return {
+      materialCost,
+      energyCost,
+      machineCost,
+      laborCost,
+      overhead,
+      total,
+      suggestedPrice,
+      selectedPrinterName: selectedPrinter?.name || null,
+      hasMachineRate: (depreciationPerHour + maintenancePerHour) > 0,
+    };
   }, [estGrams, estTime, postMinutes, materialId, printerId, materials, printers, tenantSettings]);
 
   const applyCalculatedCost = () => {
@@ -482,8 +508,11 @@ export default function Produtos() {
         <div><Label>Impressora</Label>
           <Select value={printerId || "none"} onValueChange={(v) => setPrinterId(v === "none" ? "" : v)}>
             <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-            <SelectContent><SelectItem value="none">Padrão (200W)</SelectItem>{printers.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent>
+            <SelectContent><SelectItem value="none">Automático</SelectItem>{printers.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent>
           </Select>
+          {!printerId && costBreakdown.selectedPrinterName && (
+            <p className="mt-1 text-[11px] text-muted-foreground">Usando {costBreakdown.selectedPrinterName} como referência de custo de máquina.</p>
+          )}
         </div>
         <div><Label>Tempo Impressão (min)</Label><Input type="number" value={estTime} onChange={(e) => setEstTime(e.target.value)} placeholder="120" /></div>
         <div><Label>Pós-Processo (min)</Label><Input type="number" value={postMinutes} onChange={(e) => setPostMinutes(e.target.value)} placeholder="15" /></div>
@@ -517,7 +546,10 @@ export default function Produtos() {
             <span className="text-right font-mono text-primary">{fmtCurrency(costBreakdown.suggestedPrice)}</span>
           </div>
           {tenantSettings.energy_cost_kwh === 0 && tenantSettings.labor_cost_hour === 0 && (
-            <p className="text-[11px] text-amber-600">⚠ Configure custos de energia/mão de obra em Configurações → Empresa</p>
+            <p className="text-[11px] text-muted-foreground">⚠ Configure custos de energia/mão de obra em Configurações → Empresa</p>
+          )}
+          {!costBreakdown.hasMachineRate && parseInt(estTime) > 0 && (
+            <p className="text-[11px] text-muted-foreground">⚠ Para calcular depreciação, preencha custo de aquisição e vida útil da impressora.</p>
           )}
         </div>
       )}
