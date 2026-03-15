@@ -135,6 +135,8 @@ export default function Compras() {
   const [marketplaceParsed, setMarketplaceParsed] = useState<any[]>([]);
   const [marketplaceSelectedIdx, setMarketplaceSelectedIdx] = useState(0);
   const [marketplacePaymentMethodId, setMarketplacePaymentMethodId] = useState("");
+  const [marketplaceInstallments, setMarketplaceInstallments] = useState("1");
+  const [marketplaceDueDate, setMarketplaceDueDate] = useState("");
   const marketplaceFileRef = useRef<HTMLInputElement>(null);
   const [nfeData, setNfeData] = useState<NfeData | null>(null);
   const [xmlRaw, setXmlRaw] = useState("");
@@ -145,9 +147,64 @@ export default function Compras() {
   const [expectedDate, setExpectedDate] = useState("");
   const [notes, setNotes] = useState("");
   const [paymentMethodId, setPaymentMethodId] = useState("");
+  const [installments, setInstallments] = useState("1");
+  const [dueDate, setDueDate] = useState("");
   const [manualItems, setManualItems] = useState<{ description: string; quantity: string; unitPrice: string }[]>([
     { description: "", quantity: "1", unitPrice: "0" },
   ]);
+
+  // NFe form
+  const [nfeInstallments, setNfeInstallments] = useState("1");
+  const [nfeDueDate, setNfeDueDate] = useState("");
+
+  // Helper: parse "3x de R$ 41,20" → 3
+  const parseInstallmentCount = (str: string | null | undefined): number => {
+    if (!str) return 1;
+    const match = str.match(/^(\d+)x/i);
+    return match ? parseInt(match[1], 10) : 1;
+  };
+
+  // Helper: generate installment AP entries
+  const generateInstallmentAP = (params: {
+    tenantId: string;
+    description: string;
+    totalAmount: number;
+    baseDueDate: string;
+    numInstallments: number;
+    vendorId: string | null;
+    paymentMethodId: string | null;
+    isPaid: boolean;
+    paymentDate: string | null;
+    notes: string;
+    createdBy: string;
+  }) => {
+    const { tenantId, description, totalAmount, baseDueDate, numInstallments, vendorId: vId, paymentMethodId: pmId, isPaid, paymentDate, notes: apNotes, createdBy } = params;
+    const n = Math.max(1, numInstallments);
+    const installmentAmount = Math.round((totalAmount / n) * 100) / 100;
+    const entries = [];
+    for (let i = 0; i < n; i++) {
+      const due = new Date(baseDueDate + "T00:00:00");
+      due.setDate(due.getDate() + i * 30);
+      const dueStr = due.toISOString().slice(0, 10);
+      const amt = i === n - 1 ? Math.round((totalAmount - installmentAmount * (n - 1)) * 100) / 100 : installmentAmount;
+      entries.push({
+        tenant_id: tenantId,
+        description: n > 1 ? `${description} (${i + 1}/${n})` : description,
+        amount: amt,
+        due_date: dueStr,
+        vendor_id: vId,
+        payment_method_id: pmId,
+        status: isPaid ? "paid" as const : "open" as const,
+        payment_date: isPaid ? paymentDate : null,
+        amount_paid: isPaid ? amt : 0,
+        installment_number: i + 1,
+        installment_total: n,
+        notes: apNotes,
+        created_by: createdBy,
+      });
+    }
+    return entries;
+  };
 
   const { data: orders = [], isLoading } = useQuery({
     queryKey: ["purchase_orders"],
