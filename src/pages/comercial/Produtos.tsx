@@ -164,6 +164,48 @@ export default function Produtos() {
     toast({ title: "Dados importados", description: "Preencha custo e preço para finalizar o cadastro." });
   };
 
+  const importFromMakerWorld = (model: any) => {
+    resetForm();
+    setName(model.title || "Produto MakerWorld");
+    setPhotoUrl(model.thumbnail || "");
+    setCategory("printed_part");
+    // Use first profile data if available
+    if (model.profiles?.length > 0) {
+      const p = model.profiles[0];
+      if (p.weight_grams) setEstGrams(p.weight_grams.toString());
+      if (p.time_seconds) setEstTime(Math.round(p.time_seconds / 60).toString());
+      const filInfo = p.filaments?.map((f: any) => `${f.type} ${f.grams}g`).join(", ") || "";
+      setNotes(`Importado do MakerWorld — ID: ${model.id}${filInfo ? `\nFilamentos: ${filInfo}` : ""}`);
+    } else {
+      setNotes(`Importado do MakerWorld — ID: ${model.id}`);
+    }
+    setDescription(model.description || "");
+    setBambuImportOpen(false);
+    setCreateOpen(true);
+    toast({ title: "Dados importados do MakerWorld" });
+  };
+
+  const fetchMakerWorld = async () => {
+    if (!makerWorldUrl.trim()) return;
+    setMakerWorldLoading(true);
+    setMakerWorldModels([]);
+    try {
+      const { data, error } = await supabase.functions.invoke("bambu-cloud-sync", {
+        body: { action: "makerworld", url: makerWorldUrl.trim() },
+      });
+      if (error) throw error;
+      if (data.error) throw new Error(data.error);
+      setMakerWorldModels(data.models || []);
+      if ((data.models || []).length === 0) {
+        toast({ title: "Nenhum modelo encontrado", description: "Verifique a URL e tente novamente.", variant: "destructive" });
+      }
+    } catch (e: any) {
+      toast({ title: "Erro ao buscar", description: e.message, variant: "destructive" });
+    } finally {
+      setMakerWorldLoading(false);
+    }
+  };
+
   const createMut = useMutation({
     mutationFn: async () => {
       if (!profile) throw new Error("Sem perfil");
