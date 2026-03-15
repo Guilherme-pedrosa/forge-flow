@@ -292,7 +292,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    // ── Fetch live telemetry (progress, temps, current task) ──
+    // ── Fetch live telemetry (progress, current task, ETA, filament) ──
     if (action === "telemetry") {
       const { data: conn } = await supabase
         .from("bambu_connections")
@@ -308,7 +308,6 @@ Deno.serve(async (req) => {
         );
       }
 
-      // Get all bambu_devices for this tenant
       const { data: devices } = await supabase
         .from("bambu_devices")
         .select("id, dev_id, printer_id")
@@ -324,119 +323,193 @@ Deno.serve(async (req) => {
       const accessToken = conn.access_token_encrypted;
       const telemetryResults = [];
 
-      // Fetch device list for online/status info
-      let cloudDeviceMap: Record<string, any> = {};
-      try {
-        const devicesRes = await fetch(
-          `${BAMBU_API}/v1/iot-service/api/user/bind`,
-          { headers: { Authorization: `Bearer ${accessToken}` } }
+      // Pull both basic bind status and live print status
+      const [bindRes, printRes] = await Promise.all([
+        fetch(`${BAMBU_API}/v1/iot-service/api/user/bind`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }),
+        fetch(`${BAMBU_API}/v1/iot-service/api/user/print?force=true`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+        }),
+      ]);
+
+      if (
+        bindRes.status === 401 ||
+        bindRes.status === 403 ||
+        printRes.status === 401 ||
+        printRes.status === 403
+      ) {
+        await supabase
+          .from("bambu_connections")
+          .update({ is_active: false, updated_at: new Date().toISOString() })
+          .eq("id", conn.id);
+
+        return new Response(
+          JSON.stringify({
+            error: "Token Bambu expirado. Reconecte em Integrações → Bambu Lab.",
+            token_expired: true,
+          }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
-        if (devicesRes.status === 401 || devicesRes.status === 403) {
-          await supabase
-            .from("bambu_connections")
-            .update({ is_active: false, updated_at: new Date().toISOString() })
-            .eq("id", conn.id);
-          return new Response(
-            JSON.stringify({ error: "Token Bambu expirado. Reconecte em Integrações → Bambu Lab.", token_expired: true }),
-            { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
-        const devicesData = await devicesRes.json();
-        if (devicesData.devices) {
-          for (const d of devicesData.devices) {
-            cloudDeviceMap[d.dev_id] = d;
-          }
-        }
-      } catch (e) {
-        console.error("Failed to fetch device list:", e);
+      }
+
+      const bindData = await bindRes.json().catch(() => ({}));
+      const printData = await printRes.json().catch(() => ({}));
+
+      const bindMap = new Map<string, any>();
+      for (const d of bindData?.devices ?? []) {
+        bindMap.set(String(d.dev_id), d);
+      }
+
+      const printMap = new Map<string, any>();
+      for (const d of printData?.devices ?? []) {
+        printMap.set(String(d.dev_id), d);
       }
 
       for (const device of devices) {
-        const cloudDev = cloudDeviceMap[device.dev_id];
-        const online = cloudDev?.online === true;
-        const printStatus = cloudDev?.print_status || null;
+        const bindDevice = bindMap.get(device.dev_id);
+        const livePrint = printMap.get(device.dev_id);
 
-        // Fetch running tasks for this device
-        let currentTaskName: string | null = null;
-        let progress: number | null = null;
+        const online =
+          (livePrint?.dev_online ?? bindDevice?.online ?? false) === true;
+
+        const cloudStatusRaw =
+          livePrint?.task_status ?? bindDevice?.print_status ?? null;
+        const cloudStatus = cloudStatusRaw ? String(cloudStatusRaw).toUpperCase() : null;
+
+        let currentTaskName: string | null =
+          livePrint?.task_name != null ? String(livePrint.task_name) : null;
+
+        let progress: number | null =
+          livePrint?.progress != null && !Number.isNaN(Number(livePrint.progress))
+            ? Number(livePrint.progress)
+            : null;
+
         let remainingTime: number | null = null;
-        let nozzleTemp: number | null = cloudDev?.nozzle_temper ?? null;
-        let bedTemp: number | null = cloudDev?.bed_temper ?? null;
-        let chamberTemp: number | null = cloudDev?.chamber_temper ?? null;
+        const predictionSeconds =
+          livePrint?.prediction != null && !Number.isNaN(Number(livePrint.prediction))
+            ? Number(livePrint.prediction)
+            : null;
 
+        if (predictionSeconds != null && progress != null) {
+          const remainingSeconds = Math.max(
+            0,
+            Math.round((predictionSeconds * (100 - progress)) / 100)
+          );
+          remainingTime = Math.round(remainingSeconds / 60);
+        }
+
+        let filamentGrams: number | null = null;
+        const taskId =
+          livePrint?.task_id != null ? String(livePrint.task_id) : null;
+
+        // Fallback to tasks endpoint (often contains weight and better labels)
         try {
           const tasksRes = await fetch(
-            `${BAMBU_API}/v1/user-service/my/tasks?deviceId=${device.dev_id}&limit=5`,
+            `${BAMBU_API}/v1/user-service/my/tasks?deviceId=${device.dev_id}&limit=30`,
             { headers: { Authorization: `Bearer ${accessToken}` } }
           );
-          const tasksData = await tasksRes.json();
-          if (tasksRes.ok && tasksData.hits) {
-            // Find the running task (status 0 = running)
-            const runningTask = tasksData.hits.find((t: any) => String(t.status) === "0");
-            if (runningTask) {
-              currentTaskName = runningTask.title || runningTask.designTitle || null;
-              progress = runningTask.progress != null ? Number(runningTask.progress) : null;
-              // Calculate remaining time from total and elapsed
-              if (runningTask.costTime != null && runningTask.totalTime != null) {
-                const remaining = Number(runningTask.totalTime) - Number(runningTask.costTime);
-                remainingTime = remaining > 0 ? Math.round(remaining / 60) : 0;
-              } else if (runningTask.remainTime != null) {
-                remainingTime = Math.round(Number(runningTask.remainTime) / 60);
+          const tasksData = await tasksRes.json().catch(() => ({}));
+
+          if (tasksRes.ok && Array.isArray(tasksData?.hits)) {
+            const hits = tasksData.hits as any[];
+            let activeTask =
+              (taskId
+                ? hits.find((t) => String(t?.id) === taskId)
+                : undefined) ??
+              hits.find((t) => {
+                const st = String(t?.status ?? "").toUpperCase();
+                return st === "0" || st === "1" || st === "RUNNING" || st === "PRINTING";
+              });
+
+            if (activeTask) {
+              if (!currentTaskName) {
+                currentTaskName =
+                  activeTask.title || activeTask.designTitle || activeTask.name || null;
+              }
+
+              if (
+                progress == null &&
+                activeTask.progress != null &&
+                !Number.isNaN(Number(activeTask.progress))
+              ) {
+                progress = Number(activeTask.progress);
+              }
+
+              if (remainingTime == null) {
+                if (
+                  activeTask.costTime != null &&
+                  activeTask.totalTime != null &&
+                  !Number.isNaN(Number(activeTask.costTime)) &&
+                  !Number.isNaN(Number(activeTask.totalTime))
+                ) {
+                  const remaining = Number(activeTask.totalTime) - Number(activeTask.costTime);
+                  remainingTime = remaining > 0 ? Math.round(remaining / 60) : 0;
+                } else if (
+                  activeTask.remainTime != null &&
+                  !Number.isNaN(Number(activeTask.remainTime))
+                ) {
+                  remainingTime = Math.round(Number(activeTask.remainTime) / 60);
+                }
+              }
+
+              if (
+                activeTask.weight != null &&
+                !Number.isNaN(Number(activeTask.weight))
+              ) {
+                filamentGrams = Number(activeTask.weight);
               }
             }
           }
         } catch (e) {
-          console.warn(`Failed to fetch tasks for ${device.dev_id}:`, e);
+          console.warn(`Telemetry tasks fallback failed for ${device.dev_id}:`, e);
         }
 
-        // Map Bambu print_status to our printer_status enum
+        // Map cloud status -> internal enum
         let printerStatus: string = "offline";
         if (online) {
-          const ps = printStatus?.toUpperCase();
-          if (ps === "RUNNING") printerStatus = "printing";
-          else if (ps === "PAUSE") printerStatus = "paused";
-          else if (ps === "FAILED") printerStatus = "error";
+          if (cloudStatus === "RUNNING" || cloudStatus === "PRINTING") printerStatus = "printing";
+          else if (cloudStatus === "PAUSE" || cloudStatus === "PAUSED") printerStatus = "paused";
+          else if (cloudStatus === "FAILED" || cloudStatus === "ERROR") printerStatus = "error";
           else printerStatus = "idle";
         }
 
-        // Update bambu_devices with telemetry
+        const amsData = {
+          source: "cloud",
+          task_id: taskId,
+          filament_grams: filamentGrams,
+        };
+
         await supabase
           .from("bambu_devices")
           .update({
             online,
-            print_status: printStatus,
-            nozzle_temp: nozzleTemp,
-            bed_temp: bedTemp,
-            chamber_temp: chamberTemp,
+            print_status: cloudStatus,
             progress,
             remaining_time: remainingTime,
             current_task: currentTaskName,
+            ams_data: amsData,
             last_seen_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           })
           .eq("id", device.id);
 
-        // Sync printer status too
         if (device.printer_id) {
           await supabase
             .from("printers")
-            .update({
-              status: printerStatus,
-              updated_at: new Date().toISOString(),
-            })
+            .update({ status: printerStatus, updated_at: new Date().toISOString() })
             .eq("id", device.printer_id);
         }
 
         telemetryResults.push({
           dev_id: device.dev_id,
           online,
-          print_status: printStatus,
+          print_status: cloudStatus,
           printer_status: printerStatus,
+          current_task: currentTaskName,
           progress,
           remaining_time: remainingTime,
-          current_task: currentTaskName,
-          nozzle_temp: nozzleTemp,
-          bed_temp: bedTemp,
+          filament_grams: filamentGrams,
         });
       }
 

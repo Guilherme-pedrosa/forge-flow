@@ -1,4 +1,4 @@
-import { Thermometer, Clock } from "lucide-react";
+import { Thermometer, Clock, Box } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -32,33 +32,25 @@ const fmtRemaining = (minutes: number | null | undefined) => {
   return h > 0 ? `${h}h${m > 0 ? `${m}m` : ""}` : `${m}m`;
 };
 
+const fmtFilament = (grams: number | null) => {
+  if (grams == null || Number.isNaN(grams)) return null;
+  return `${grams.toFixed(1)}g`;
+};
+
 export function TelemetryStrip() {
-  // Trigger telemetry sync via edge function every 30s
+  // Refresh telemetry snapshot from cloud
   useQuery({
     queryKey: ["telemetry-sync"],
     queryFn: async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return null;
-      
-      const projectId = import.meta.env.VITE_SUPABASE_PROJECT_ID;
-      const res = await fetch(
-        `https://${projectId}.supabase.co/functions/v1/bambu-cloud-sync`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${session.access_token}`,
-            apikey: import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-          },
-          body: JSON.stringify({ action: "telemetry" }),
-        }
-      );
-      if (!res.ok) return null;
-      return res.json();
+      const { error } = await supabase.functions.invoke("bambu-cloud-sync", {
+        body: { action: "telemetry" },
+      });
+      if (error) throw error;
+      return true;
     },
     refetchInterval: 30000,
-    retry: false,
     staleTime: 25000,
+    retry: false,
   });
 
   const { data: printers } = useQuery({
@@ -79,7 +71,7 @@ export function TelemetryStrip() {
     queryFn: async () => {
       const { data } = await supabase
         .from("bambu_devices")
-        .select("dev_id, nozzle_temp, bed_temp, progress, print_status, current_task, online, remaining_time");
+        .select("dev_id, nozzle_temp, bed_temp, progress, print_status, current_task, online, remaining_time, ams_data");
       return (data ?? []) as BambuDevice[];
     },
     refetchInterval: 15000,
@@ -92,10 +84,10 @@ export function TelemetryStrip() {
   const resolveStatus = (localStatus: string, device: BambuDevice | null | undefined): string => {
     if (!device) return localStatus;
     const bs = device.print_status?.toUpperCase();
-    if (bs === "RUNNING") return "printing";
-    if (bs === "PAUSE") return "paused";
-    if (bs === "FAILED") return "error";
-    if (bs === "IDLE" || bs === "FINISH") return "idle";
+    if (bs === "RUNNING" || bs === "PRINTING") return "printing";
+    if (bs === "PAUSE" || bs === "PAUSED") return "paused";
+    if (bs === "FAILED" || bs === "ERROR") return "error";
+    if (bs === "IDLE" || bs === "FINISH" || bs === "SUCCESS") return "idle";
     if (device.online === false) return "offline";
     return localStatus;
   };
@@ -108,6 +100,11 @@ export function TelemetryStrip() {
         const nozzle = device?.nozzle_temp;
         const progress = device?.progress;
         const remaining = fmtRemaining(device?.remaining_time);
+        const filament = fmtFilament(
+          device?.ams_data && typeof device.ams_data === "object"
+            ? Number((device.ams_data as Record<string, unknown>).filament_grams ?? NaN)
+            : null
+        );
         const isPrinting = liveStatus === "printing";
 
         return (
@@ -116,12 +113,18 @@ export function TelemetryStrip() {
             <span className="text-muted-foreground font-medium">{p.name}</span>
             <span className="text-muted-foreground/60">{statusLabels[liveStatus] ?? liveStatus}</span>
 
-            {isPrinting && progress != null && (
+            {isPrinting && (
               <>
-                <div className="w-16 h-1 bg-secondary rounded-full overflow-hidden">
-                  <div className="h-full bg-primary rounded-full transition-all" style={{ width: `${progress}%` }} />
-                </div>
-                <span className="font-mono text-primary">{progress}%</span>
+                {progress != null ? (
+                  <>
+                    <div className="w-16 h-1 bg-secondary rounded-full overflow-hidden">
+                      <div className="h-full bg-primary rounded-full transition-all" style={{ width: `${progress}%` }} />
+                    </div>
+                    <span className="font-mono text-primary">{progress}%</span>
+                  </>
+                ) : (
+                  <span className="text-muted-foreground/70 font-mono">% --</span>
+                )}
               </>
             )}
 
@@ -131,15 +134,21 @@ export function TelemetryStrip() {
               </span>
             )}
 
+            {isPrinting && filament && (
+              <span className="text-muted-foreground font-mono flex items-center gap-0.5">
+                <Box className="w-3 h-3" />{filament}
+              </span>
+            )}
+
             {nozzle != null && liveStatus !== "offline" && (
               <span className="text-muted-foreground font-mono flex items-center gap-0.5">
                 <Thermometer className="w-3 h-3" />{Math.round(nozzle)}°
               </span>
             )}
 
-            {device?.current_task && (
-              <span className="text-muted-foreground truncate max-w-[140px] italic">{device.current_task}</span>
-            )}
+            <span className="text-muted-foreground truncate max-w-[160px]">
+              {device?.current_task || (isPrinting ? "Tarefa em execução" : "")}
+            </span>
           </div>
         );
       })}
