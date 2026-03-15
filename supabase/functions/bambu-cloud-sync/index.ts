@@ -33,7 +33,7 @@ Deno.serve(async (req) => {
       error: userError,
     } = await createClient(
       Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_PUBLISHABLE_KEY")!
+      Deno.env.get("SUPABASE_ANON_KEY")!
     ).auth.getUser(authHeader.replace("Bearer ", ""));
 
     if (userError || !user) {
