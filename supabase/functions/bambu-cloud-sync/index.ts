@@ -446,26 +446,21 @@ Deno.serve(async (req) => {
 
       const models: any[] = [];
       const modelMatch = url.match(/\/models\/(\d+)/);
-      const userMatch = url.match(/@([^/\s?]+)/);
 
-      const fetchHeaders = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/html,application/xhtml+xml",
-        "Accept-Language": "en-US,en;q=0.9,pt-BR;q=0.8",
-        "Referer": "https://makerworld.com/",
-        "Origin": "https://makerworld.com",
-      };
+      const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
 
       if (modelMatch) {
-        // Single model page
         const modelId = modelMatch[1];
+
+        // Strategy 1: Try MakerWorld internal API (fast, no JS needed)
         try {
-          // Try MakerWorld internal API first
           const apiRes = await fetch(`https://makerworld.com/api/v1/design/detail/${modelId}`, {
-            headers: fetchHeaders,
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+              "Accept": "application/json",
+            },
           });
           const apiText = await apiRes.text();
-          
           if (apiRes.ok && apiText.trim()) {
             try {
               const data = JSON.parse(apiText);
@@ -474,91 +469,115 @@ Deno.serve(async (req) => {
                 models.push(parseDesignToModel(design));
               }
             } catch {
-              console.warn("MakerWorld API JSON parse failed, trying HTML scrape");
+              console.warn("MakerWorld API JSON parse failed");
             }
           }
+        } catch (e) {
+          console.warn("MakerWorld API call failed:", e);
+        }
 
-          // Fallback: scrape HTML
-          if (models.length === 0) {
-            const pageRes = await fetch(`https://makerworld.com/en/models/${modelId}`, {
-              headers: { ...fetchHeaders, "Accept": "text/html" },
+        // Strategy 2: Use Firecrawl to render JS and extract data
+        if (models.length === 0 && FIRECRAWL_API_KEY) {
+          try {
+            console.log("Using Firecrawl to scrape MakerWorld model:", modelId);
+            const firecrawlRes = await fetch("https://api.firecrawl.dev/v1/scrape", {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${FIRECRAWL_API_KEY}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                url: `https://makerworld.com/en/models/${modelId}`,
+                formats: ["html", "markdown"],
+                waitFor: 5000,
+              }),
+            });
+            const fcData = await firecrawlRes.json();
+            
+            if (firecrawlRes.ok && fcData.success !== false) {
+              const html = fcData.data?.html || fcData.html || "";
+              const markdown = fcData.data?.markdown || fcData.markdown || "";
+              
+              // Try __NEXT_DATA__ from rendered HTML
+              const extracted = extractFromHtml(html);
+              if (extracted) {
+                models.push(extracted);
+              }
+              
+              // Fallback: parse from markdown content
+              if (models.length === 0 && markdown) {
+                const titleM = markdown.match(/^#\s+(.+)/m);
+                const weightM = markdown.match(/(\d+(?:\.\d+)?)\s*g/i);
+                const timeM = markdown.match(/(\d+)\s*[hH]\s*(\d+)?\s*[mM]?/);
+                
+                // Extract from metadata in HTML
+                const ogTitle = html.match(/property="og:title"\s+content="([^"]+)"/);
+                const ogImage = html.match(/property="og:image"\s+content="([^"]+)"/);
+                const ogDesc = html.match(/property="og:description"\s+content="([^"]+)"/);
+                
+                const title = titleM?.[1] || ogTitle?.[1] || "Modelo MakerWorld";
+                const thumbnail = ogImage?.[1] || null;
+                
+                let weightGrams = 0;
+                let timeSeconds = 0;
+                
+                if (weightM) weightGrams = parseFloat(weightM[1]);
+                if (timeM) {
+                  timeSeconds = (parseInt(timeM[1]) || 0) * 3600 + (parseInt(timeM[2]) || 0) * 60;
+                }
+
+                // Try to extract from structured data in page
+                const profileDataMatch = html.match(/\"weight\"\s*:\s*(\d+(?:\.\d+)?)/);
+                const timeDataMatch = html.match(/\"estimatedTime\"\s*:\s*(\d+)/);
+                if (profileDataMatch) weightGrams = parseFloat(profileDataMatch[1]);
+                if (timeDataMatch) timeSeconds = parseInt(timeDataMatch[1]);
+                
+                models.push({
+                  id: modelId,
+                  title,
+                  thumbnail,
+                  description: ogDesc?.[1] || "",
+                  profiles: weightGrams > 0 ? [{
+                    name: "Default",
+                    weight_grams: weightGrams,
+                    time_seconds: timeSeconds,
+                    filaments: [],
+                  }] : [],
+                });
+              }
+            } else {
+              console.error("Firecrawl error:", fcData);
+            }
+          } catch (e) {
+            console.error("Firecrawl scrape error:", e);
+          }
+        }
+
+        // Strategy 3: Direct HTML fetch (last resort, usually blocked)
+        if (models.length === 0) {
+          try {
+            const pageRes = await fetch(`https://makerworld.com/en/models/${modelMatch[1]}`, {
+              headers: {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "text/html",
+              },
             });
             const html = await pageRes.text();
             const extracted = extractFromHtml(html);
             if (extracted) models.push(extracted);
-          }
-        } catch (e) {
-          console.error("MakerWorld single model error:", e);
-        }
-      } else if (userMatch) {
-        // User profile / collection
-        const userId = userMatch[1];
-        
-        // Try multiple API patterns
-        const apiUrls = [
-          `https://makerworld.com/api/v1/design/user/${userId}?offset=0&limit=50`,
-          `https://makerworld.com/api/v1/user/${userId}/designs?offset=0&limit=50`,
-        ];
-
-        for (const apiUrl of apiUrls) {
-          if (models.length > 0) break;
-          try {
-            const apiRes = await fetch(apiUrl, { headers: fetchHeaders });
-            const apiText = await apiRes.text();
-            if (apiRes.ok && apiText.trim()) {
-              const apiData = JSON.parse(apiText);
-              const designs = apiData?.hits || apiData?.designs || apiData?.data || [];
-              for (const d of designs) {
-                models.push(parseDesignToModel(d));
-              }
-            }
           } catch (e) {
-            console.warn(`MakerWorld API attempt failed for ${apiUrl}:`, e);
-          }
-        }
-
-        // Fallback: scrape the collection page HTML
-        if (models.length === 0) {
-          try {
-            const normalizedUrl = url.replace("/pt/", "/en/").replace("/pt?", "/en?");
-            const pageRes = await fetch(normalizedUrl, {
-              headers: { ...fetchHeaders, "Accept": "text/html,application/xhtml+xml" },
-            });
-            const html = await pageRes.text();
-            
-            // Try __NEXT_DATA__
-            const nextMatch = html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
-            if (nextMatch) {
-              try {
-                const nextData = JSON.parse(nextMatch[1]);
-                const pageProps = nextData?.props?.pageProps || {};
-                const designs = pageProps.designs || pageProps.collectionDesigns || pageProps.userDesigns || [];
-                for (const d of designs) {
-                  models.push(parseDesignToModel(d));
-                }
-              } catch {
-                console.warn("Failed to parse __NEXT_DATA__");
-              }
-            }
-
-            // If still nothing, try to find JSON-LD or og:tags
-            if (models.length === 0) {
-              const titleMatch = html.match(/<title>([^<]+)<\/title>/);
-              const ogImageMatch = html.match(/property="og:image"\s+content="([^"]+)"/);
-              if (titleMatch) {
-                console.log("Page title found:", titleMatch[1], "- but no model data could be extracted");
-              }
-            }
-          } catch (e) {
-            console.error("MakerWorld HTML scrape error:", e);
+            console.error("Direct HTML fetch error:", e);
           }
         }
       }
 
       if (models.length === 0) {
+        const hasFirecrawl = !!FIRECRAWL_API_KEY;
         return new Response(
           JSON.stringify({ 
-            error: "Não foi possível buscar modelos. O MakerWorld usa proteção Cloudflare que pode bloquear a busca. Tente colar a URL de um modelo específico (ex: makerworld.com/en/models/12345).",
+            error: hasFirecrawl 
+              ? "Não foi possível extrair dados do modelo. Verifique se a URL está correta."
+              : "Firecrawl não configurado. Conecte o Firecrawl para importar modelos do MakerWorld.",
             models: [] 
           }),
           { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
