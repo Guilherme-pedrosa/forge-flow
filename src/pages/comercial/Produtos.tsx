@@ -638,7 +638,7 @@ export default function Produtos() {
         <div><Label>Material</Label>
           <Select value={materialId || "none"} onValueChange={(v) => setMaterialId(v === "none" ? "" : v)}>
             <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-            <SelectContent><SelectItem value="none">Nenhum</SelectItem>{materials.map((m) => <SelectItem key={m.id} value={m.id}>{m.name} ({fmtCurrency(m.avg_cost)}/kg)</SelectItem>)}</SelectContent>
+            <SelectContent><SelectItem value="none">Nenhum</SelectItem>{materials.map((m) => <SelectItem key={m.id} value={m.id}>{m.name} ({fmtCurrency(m.avg_cost)}/{m.unit || 'un'})</SelectItem>)}</SelectContent>
           </Select>
         </div>
         <div><Label>Gramas Estimadas</Label><Input type="number" value={estGrams} onChange={(e) => setEstGrams(e.target.value)} placeholder="45" /></div>
