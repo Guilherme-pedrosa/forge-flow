@@ -356,6 +356,7 @@ export default function Produtos() {
     if (selectedProfileIndex == null && profiles.length > 1) {
       setMakerModelToImport(model);
       setMakerOptionIndex("0");
+      setBambuImportOpen(false);
       setMakerOptionOpen(true);
       return;
     }
