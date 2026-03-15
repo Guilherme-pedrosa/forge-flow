@@ -64,6 +64,7 @@ export default function Impressoras() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [detailPrinter, setDetailPrinter] = useState<PrinterRow | null>(null);
+  const [editPrinter, setEditPrinter] = useState<PrinterRow | null>(null);
   const [bambuCloudOpen, setBambuCloudOpen] = useState(false);
 
   // ── Fetch printers ──
@@ -286,6 +287,9 @@ export default function Impressoras() {
                           <DropdownMenuItem onClick={() => setDetailPrinter(p)}>
                             <Eye className="h-4 w-4 mr-2" /> Ver detalhes
                           </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => setEditPrinter(p)}>
+                            <Edit className="h-4 w-4 mr-2" /> Editar
+                          </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
                             className="text-destructive"
@@ -305,7 +309,8 @@ export default function Impressoras() {
       </div>
 
       <CreatePrinterDialog open={createOpen} onOpenChange={setCreateOpen} />
-      <PrinterDetailDialog printer={detailPrinter} onClose={() => setDetailPrinter(null)} />
+      <PrinterDetailDialog printer={detailPrinter} onClose={() => setDetailPrinter(null)} onEdit={(p) => { setDetailPrinter(null); setEditPrinter(p); }} />
+      <EditPrinterDialog printer={editPrinter} onClose={() => setEditPrinter(null)} />
       <BambuCloudDialog open={bambuCloudOpen} onOpenChange={setBambuCloudOpen} />
     </div>
   );
@@ -421,11 +426,15 @@ function CreatePrinterDialog({ open, onOpenChange }: { open: boolean; onOpenChan
 }
 
 // ── Detail Dialog ──
-function PrinterDetailDialog({ printer, onClose }: { printer: PrinterRow | null; onClose: () => void }) {
+function PrinterDetailDialog({ printer, onClose, onEdit }: { printer: PrinterRow | null; onClose: () => void; onEdit: (p: PrinterRow) => void }) {
   if (!printer) return null;
   const lifePercent = printer.useful_life_hours
     ? Math.min(((printer.total_print_hours ?? 0) / printer.useful_life_hours) * 100, 100)
     : 0;
+
+  const depHr = printer.depreciation_per_hour ?? 0;
+  const maintHr = printer.maintenance_cost_per_hour ?? 0;
+  const totalCostHr = depHr + maintHr;
 
   return (
     <Dialog open={!!printer} onOpenChange={() => onClose()}>
@@ -450,7 +459,22 @@ function PrinterDetailDialog({ printer, onClose }: { printer: PrinterRow | null;
             <div><span className="text-muted-foreground">Falhas:</span> <strong>{printer.total_failures ?? 0}</strong></div>
             <div><span className="text-muted-foreground">Potência:</span> <strong>{printer.power_watts ?? 0}W</strong></div>
             <div><span className="text-muted-foreground">IP:</span> <strong>{printer.ip_address || "—"}</strong></div>
-            <div><span className="text-muted-foreground">Custo:</span> <strong>{fmtCurrency(printer.acquisition_cost ?? 0)}</strong></div>
+            <div><span className="text-muted-foreground">Custo Aquisição:</span> <strong>{fmtCurrency(printer.acquisition_cost ?? 0)}</strong></div>
+          </div>
+
+          <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Custos por Hora</p>
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <span className="text-muted-foreground">Depreciação:</span>
+              <span className="font-mono text-right">{fmtCurrency(depHr)}/h</span>
+              <span className="text-muted-foreground">Manutenção:</span>
+              <span className="font-mono text-right">{fmtCurrency(maintHr)}/h</span>
+              <span className="font-semibold border-t pt-1">Custo Máquina:</span>
+              <span className="font-mono font-semibold text-right border-t pt-1">{fmtCurrency(totalCostHr)}/h</span>
+            </div>
+            {totalCostHr === 0 && (
+              <p className="text-[11px] text-muted-foreground">⚠ Configure custo de aquisição e vida útil para calcular depreciação.</p>
+            )}
           </div>
 
           {printer.useful_life_hours && printer.useful_life_hours > 0 && (
@@ -469,9 +493,170 @@ function PrinterDetailDialog({ printer, onClose }: { printer: PrinterRow | null;
           )}
         </div>
 
-        <DialogFooter>
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={() => onEdit(printer)}>
+            <Edit className="h-4 w-4 mr-1" /> Editar
+          </Button>
           <Button variant="outline" onClick={onClose}>Fechar</Button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ── Edit Dialog ──
+function EditPrinterDialog({ printer, onClose }: { printer: PrinterRow | null; onClose: () => void }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [loading, setLoading] = useState(false);
+
+  const [form, setForm] = useState({
+    name: "", brand: "", model: "", serial_number: "",
+    ip_address: "", power_watts: "", acquisition_cost: "", useful_life_hours: "",
+    maintenance_cost_per_hour: "",
+  });
+
+  useEffect(() => {
+    if (printer) {
+      setForm({
+        name: printer.name,
+        brand: printer.brand,
+        model: printer.model,
+        serial_number: printer.serial_number || "",
+        ip_address: printer.ip_address || "",
+        power_watts: (printer.power_watts ?? 150).toString(),
+        acquisition_cost: (printer.acquisition_cost ?? 0).toString(),
+        useful_life_hours: (printer.useful_life_hours ?? 10000).toString(),
+        maintenance_cost_per_hour: (printer.maintenance_cost_per_hour ?? 0).toString(),
+      });
+    }
+  }, [printer]);
+
+  if (!printer) return null;
+
+  const acquisitionCost = Number(form.acquisition_cost) || 0;
+  const usefulLifeHours = Number(form.useful_life_hours) || 10000;
+  const depreciationPerHour = acquisitionCost > 0 && usefulLifeHours > 0
+    ? acquisitionCost / usefulLifeHours
+    : 0;
+  const maintenanceCostHr = Number(form.maintenance_cost_per_hour) || 0;
+  const totalCostHr = depreciationPerHour + maintenanceCostHr;
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+
+    const { error } = await supabase.from("printers").update({
+      name: form.name,
+      brand: form.brand,
+      model: form.model,
+      serial_number: form.serial_number || null,
+      ip_address: form.ip_address || null,
+      power_watts: Number(form.power_watts) || 150,
+      acquisition_cost: acquisitionCost,
+      useful_life_hours: usefulLifeHours,
+      depreciation_per_hour: depreciationPerHour,
+      maintenance_cost_per_hour: maintenanceCostHr,
+    }).eq("id", printer.id);
+
+    setLoading(false);
+    if (error) {
+      toast({ variant: "destructive", title: "Erro ao atualizar", description: error.message });
+    } else {
+      toast({ title: "Impressora atualizada!" });
+      queryClient.invalidateQueries({ queryKey: ["printers"] });
+      queryClient.invalidateQueries({ queryKey: ["printers_for_cost"] });
+      onClose();
+    }
+  };
+
+  return (
+    <Dialog open={!!printer} onOpenChange={() => onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Editar Impressora</DialogTitle>
+          <DialogDescription>Atualize dados, custos e parâmetros de depreciação.</DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="grid gap-4 py-2 max-h-[60vh] overflow-y-auto pr-1">
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>Nome *</Label>
+              <Input value={form.name} onChange={(e) => setForm(f => ({ ...f, name: e.target.value }))} required />
+            </div>
+            <div className="space-y-2">
+              <Label>Marca</Label>
+              <Input value={form.brand} onChange={(e) => setForm(f => ({ ...f, brand: e.target.value }))} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>Modelo *</Label>
+              <Input value={form.model} onChange={(e) => setForm(f => ({ ...f, model: e.target.value }))} required />
+            </div>
+            <div className="space-y-2">
+              <Label>Nº Serial</Label>
+              <Input value={form.serial_number} onChange={(e) => setForm(f => ({ ...f, serial_number: e.target.value }))} />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>IP</Label>
+              <Input value={form.ip_address} onChange={(e) => setForm(f => ({ ...f, ip_address: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Potência (W)</Label>
+              <Input type="number" value={form.power_watts} onChange={(e) => setForm(f => ({ ...f, power_watts: e.target.value }))} />
+            </div>
+          </div>
+
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mt-2">Custos & Depreciação</p>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>Custo Aquisição (R$)</Label>
+              <Input type="number" step="0.01" placeholder="2500" value={form.acquisition_cost} onChange={(e) => setForm(f => ({ ...f, acquisition_cost: e.target.value }))} />
+            </div>
+            <div className="space-y-2">
+              <Label>Vida Útil (horas)</Label>
+              <Input type="number" placeholder="10000" value={form.useful_life_hours} onChange={(e) => setForm(f => ({ ...f, useful_life_hours: e.target.value }))} />
+              <p className="text-[10px] text-muted-foreground">Bambu A1: ~5.000-10.000h típico</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label>Custo Manutenção (R$/h)</Label>
+              <Input type="number" step="0.01" placeholder="0.15" value={form.maintenance_cost_per_hour} onChange={(e) => setForm(f => ({ ...f, maintenance_cost_per_hour: e.target.value }))} />
+              <p className="text-[10px] text-muted-foreground">Inclui nozzle, extrusor, correias, lubrificação</p>
+            </div>
+          </div>
+
+          {/* Live cost preview */}
+          <div className="rounded-lg border border-dashed bg-muted/30 p-3 space-y-2">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Custo Máquina Calculado</p>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+              <span className="text-muted-foreground">Depreciação</span>
+              <span className="text-right font-mono">{fmtCurrency(depreciationPerHour)}/h</span>
+              <span className="text-muted-foreground">Manutenção</span>
+              <span className="text-right font-mono">{fmtCurrency(maintenanceCostHr)}/h</span>
+              <span className="font-semibold text-foreground border-t pt-1 mt-1">Total Máquina</span>
+              <span className="text-right font-mono font-semibold text-foreground border-t pt-1 mt-1">{fmtCurrency(totalCostHr)}/h</span>
+            </div>
+            <div className="mt-2 p-2 rounded bg-muted/50 text-[11px] text-muted-foreground space-y-1">
+              <p className="font-medium text-foreground">📋 Referência Bambu Lab A1:</p>
+              <p>• Extrusor completo: ~R$ 180 a cada 3.000-5.000h</p>
+              <p>• Engrenagens extrusoras: ~R$ 60 a cada 2.000-3.000h</p>
+              <p>• Nozzle aço (PLA): milhares de horas; hardened ~R$ 50</p>
+              <p>• Sugestão manutenção: <strong>R$ 0,05 – R$ 0,15/h</strong></p>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={onClose}>Cancelar</Button>
+            <Button type="submit" disabled={loading}>
+              {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Salvar
+            </Button>
+          </DialogFooter>
+        </form>
       </DialogContent>
     </Dialog>
   );
