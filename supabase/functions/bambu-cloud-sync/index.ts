@@ -847,7 +847,7 @@ function profileDisplayName(profile: any, idx: number): string {
   return profile?.name || profile?.profileName || profile?.title || `Opção ${idx + 1}`;
 }
 
-function parseDesignToModel(d: any) {
+function parseDesignToModel(d: any, selectedProfileId?: string | null) {
   const sourceProfiles = d.profileList || d.profiles || [];
 
   const profiles = sourceProfiles.map((p: any, idx: number) => {
