@@ -514,7 +514,7 @@ export default function Compras() {
     e.target.value = "";
   };
 
-  const addManualItem = () => setManualItems([...manualItems, { description: "", quantity: "1", unitPrice: "0" }]);
+  const addManualItem = () => setManualItems([...manualItems, { description: "", quantity: "1", unitPrice: "0", inventoryItemId: "" }]);
   const removeManualItem = (idx: number) => setManualItems(manualItems.filter((_, i) => i !== idx));
   const updateManualItem = (idx: number, field: string, value: string) => {
     const updated = [...manualItems];
