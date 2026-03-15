@@ -493,7 +493,7 @@ export default function Compras() {
     setPaymentMethodId("");
     setInstallments("1");
     setDueDate("");
-    setManualItems([{ description: "", quantity: "1", unitPrice: "0" }]);
+    setManualItems([{ description: "", quantity: "1", unitPrice: "0", inventoryItemId: "" }]);
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
