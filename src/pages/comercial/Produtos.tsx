@@ -75,10 +75,10 @@ export default function Produtos() {
 
   // Marketplace fee config
   const [channelConfig, setChannelConfig] = useState([
-    { key: "shopee", name: "Shopee", fee: 20, freeShipping: false, freeShippingExtra: 6, enabled: true },
-    { key: "ml", name: "Mercado Livre", fee: 16, freeShipping: true, freeShippingExtra: 5, enabled: true },
-    { key: "tiktok", name: "TikTok Shop", fee: 8, freeShipping: false, freeShippingExtra: 0, enabled: true },
-    { key: "particular", name: "Particular", fee: 0, freeShipping: false, freeShippingExtra: 0, enabled: true },
+    { key: "shopee", name: "Shopee", fee: 20, freeShipping: false, freeShippingExtra: 6, freeShippingType: "percent" as "percent" | "fixed", enabled: true },
+    { key: "ml", name: "Mercado Livre", fee: 16, freeShipping: true, freeShippingExtra: 5, freeShippingType: "percent" as "percent" | "fixed", enabled: true },
+    { key: "tiktok", name: "TikTok Shop", fee: 8, freeShipping: false, freeShippingExtra: 0, freeShippingType: "percent" as "percent" | "fixed", enabled: true },
+    { key: "particular", name: "Particular", fee: 0, freeShipping: false, freeShippingExtra: 0, freeShippingType: "percent" as "percent" | "fixed", enabled: true },
   ]);
   const [showChannelConfig, setShowChannelConfig] = useState(false);
 
@@ -635,7 +635,7 @@ export default function Produtos() {
                       <span className="text-muted-foreground">%</span>
                     </div>
                     {ch.key !== "particular" && (
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex items-center gap-1.5 flex-wrap">
                         <Switch
                           checked={ch.freeShipping}
                           onCheckedChange={(v) => updateChannel(idx, "freeShipping", v)}
@@ -646,12 +646,24 @@ export default function Produtos() {
                           <div className="flex items-center gap-1">
                             <span className="text-muted-foreground">+</span>
                             <Input
-                              type="number" step="0.1" min="0" max="100"
-                              className="h-7 text-xs w-14 text-right"
+                              type="number" step="0.01" min="0"
+                              className="h-7 text-xs w-16 text-right"
                               value={ch.freeShippingExtra}
                               onChange={(e) => updateChannel(idx, "freeShippingExtra", parseFloat(e.target.value) || 0)}
                             />
-                            <span className="text-muted-foreground">%</span>
+                            <button
+                              type="button"
+                              className={cn(
+                                "h-7 px-1.5 rounded text-xs font-medium border transition-colors",
+                                ch.freeShippingType === "percent"
+                                  ? "bg-primary/10 text-primary border-primary/30"
+                                  : "bg-muted text-muted-foreground border-border hover:bg-muted/80"
+                              )}
+                              onClick={() => updateChannel(idx, "freeShippingType", ch.freeShippingType === "percent" ? "fixed" : "percent")}
+                              title="Clique para alternar entre % e R$"
+                            >
+                              {ch.freeShippingType === "percent" ? "%" : "R$"}
+                            </button>
                           </div>
                         )}
                       </div>
@@ -668,11 +680,15 @@ export default function Produtos() {
               <span className="font-medium text-muted-foreground text-right">Líquido</span>
               <span className="font-medium text-muted-foreground text-right">Lucro</span>
               {channelConfig.filter(ch => ch.enabled).map(ch => {
-                const totalFee = ch.fee + (ch.freeShipping ? ch.freeShippingExtra : 0);
-                const feeAmount = price * (totalFee / 100);
-                const net = price - feeAmount;
+                const baseFeeAmount = price * (ch.fee / 100);
+                const shippingAmount = ch.freeShipping
+                  ? (ch.freeShippingType === "percent" ? price * (ch.freeShippingExtra / 100) : ch.freeShippingExtra)
+                  : 0;
+                const totalDeduction = baseFeeAmount + shippingAmount;
+                const net = price - totalDeduction;
                 const profit = net - cost;
                 const profitPct = cost > 0 ? ((profit / cost) * 100) : 0;
+                const totalPct = ch.fee + (ch.freeShipping && ch.freeShippingType === "percent" ? ch.freeShippingExtra : 0);
                 return (
                   <div key={ch.key} className="contents">
                     <span className="font-medium">
@@ -680,7 +696,7 @@ export default function Produtos() {
                       {ch.freeShipping && <span className="text-[10px] text-muted-foreground ml-1">(c/ frete grátis)</span>}
                     </span>
                     <span className="text-right font-mono">
-                      {totalFee > 0 ? `${totalFee.toFixed(0)}% = ${fmtCurrency(feeAmount)}` : "—"}
+                      {totalDeduction > 0 ? `${fmtCurrency(totalDeduction)}` : "—"}
                     </span>
                     <span className="text-right font-mono">{fmtCurrency(net)}</span>
                     <span className={cn("text-right font-mono font-semibold", profit > 0 ? "text-green-600" : "text-destructive")}>
