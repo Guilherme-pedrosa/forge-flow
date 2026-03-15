@@ -1,9 +1,8 @@
-import { useState, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { ArgusBanner } from "@/components/shared/ArgusBanner";
 import {
   DollarSign,
-  Factory,
   AlertTriangle,
   TrendingUp,
   TrendingDown,
@@ -13,39 +12,49 @@ import {
   ArrowRight,
   RefreshCw,
   ShoppingCart,
+  Inbox,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-
-// Mock KPI data
-const kpis = [
-  { id: "cash", title: "Saldo em Caixa", value: 24680.42, previousValue: 21480.42, icon: "dollar" as const, format: "currency" as const, trend: "up" as const },
-  { id: "jobs", title: "Jobs em Andamento", value: 2, previousValue: 3, icon: "cart" as const, format: "number" as const, trend: "down" as const },
-  { id: "loss", title: "Taxa de Perda", value: 4.2, previousValue: 5.3, icon: "alert" as const, format: "percent" as const, trend: "down" as const },
-  { id: "margin", title: "Margem Média", value: 38.7, previousValue: 36.4, icon: "box" as const, format: "percent" as const, trend: "up" as const },
-];
-
-const recentJobs = [
-  { id: "JOB-0042", name: "Engrenagem Helicoidal v3", printer: "X1C-01", status: "printing" as const, material: "PLA Preto", grams: 84, eta: "2h 15m" },
-  { id: "JOB-0041", name: "Suporte ABS Reforçado", printer: "P1S-01", status: "printing" as const, material: "ABS Cinza", grams: 122, eta: "4h 32m" },
-  { id: "JOB-0040", name: "Caixa Eletrônica v2", printer: "X1C-02", status: "completed" as const, material: "PETG Branco", grams: 67, eta: "—" },
-  { id: "JOB-0039", name: "Tampa Rosqueável", printer: "X1C-01", status: "completed" as const, material: "PLA Preto", grams: 23, eta: "—" },
-  { id: "JOB-0038", name: "Bracket Motor NEMA17", printer: "A1-01", status: "failed" as const, material: "PETG Branco", grams: 45, eta: "—" },
-];
-
-const pendingPayables = [
-  { vendor: "Filament Express", due: "17 Mar", amount: 1240.00, status: "open" as const },
-  { vendor: "Energia Elétrica", due: "20 Mar", amount: 890.50, status: "open" as const },
-  { vendor: "Bambu Lab Store", due: "14 Mar", amount: 3200.00, status: "overdue" as const },
-];
-
-const inventoryAlerts = [
-  { name: "PETG Branco 1.75mm", supplier: "Esun · Lote #2024-089", stock: 156, min: 200, critical: true },
-  { name: "PLA Preto 1.75mm", supplier: "Bambu · Lote #2024-112", stock: 412, min: 500, critical: false },
-];
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
+import { Link } from "react-router-dom";
 
 const fmtCurrency = (v: number) =>
   v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
+const statusColors: Record<string, string> = {
+  printing: "bg-primary/10 text-primary border border-primary/20",
+  queued: "bg-blue-500/10 text-blue-600 border border-blue-500/20",
+  draft: "bg-muted text-muted-foreground border border-border",
+  completed: "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20",
+  ready: "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20",
+  failed: "bg-red-500/10 text-red-600 border border-red-500/20",
+  paused: "bg-amber-500/10 text-amber-600 border border-amber-500/20",
+  post_processing: "bg-violet-500/10 text-violet-600 border border-violet-500/20",
+  quality_check: "bg-cyan-500/10 text-cyan-600 border border-cyan-500/20",
+  open: "bg-amber-500/10 text-amber-600 border border-amber-500/20",
+  overdue: "bg-red-500/10 text-red-600 border border-red-500/20",
+  partial: "bg-orange-500/10 text-orange-600 border border-orange-500/20",
+};
+
+const statusLabels: Record<string, string> = {
+  draft: "Rascunho",
+  queued: "Na fila",
+  printing: "Imprimindo",
+  paused: "Pausado",
+  failed: "Falhou",
+  reprint: "Reimpressão",
+  post_processing: "Pós-processo",
+  quality_check: "Controle Qual.",
+  ready: "Pronto",
+  shipped: "Enviado",
+  completed: "Concluído",
+  open: "Aberto",
+  overdue: "Vencido",
+  partial: "Parcial",
+  paid: "Pago",
+};
 
 const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
   dollar: Wallet,
@@ -54,29 +63,165 @@ const iconMap: Record<string, React.ComponentType<{ className?: string }>> = {
   box: Package,
 };
 
-const statusColors: Record<string, string> = {
-  printing: "bg-primary/10 text-primary border border-primary/20",
-  completed: "bg-emerald-500/10 text-emerald-600 border border-emerald-500/20",
-  failed: "bg-red-500/10 text-red-600 border border-red-500/20",
-  open: "bg-amber-500/10 text-amber-600 border border-amber-500/20",
-  overdue: "bg-red-500/10 text-red-600 border border-red-500/20",
-};
-
-const statusLabels: Record<string, string> = {
-  printing: "Imprimindo",
-  completed: "Concluído",
-  failed: "Falhou",
-  open: "Aberto",
-  overdue: "Vencido",
-};
+interface DashboardData {
+  cashBalance: number;
+  activeJobs: number;
+  lossRate: number;
+  avgMargin: number;
+  recentJobs: any[];
+  pendingPayables: any[];
+  inventoryAlerts: any[];
+  argusMessage: string | null;
+}
 
 export default function Dashboard() {
+  const { profile } = useAuth();
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [data, setData] = useState<DashboardData>({
+    cashBalance: 0,
+    activeJobs: 0,
+    lossRate: 0,
+    avgMargin: 0,
+    recentJobs: [],
+    pendingPayables: [],
+    inventoryAlerts: [],
+    argusMessage: null,
+  });
 
-  const handleRefresh = () => {
-    setIsRefreshing(true);
-    setTimeout(() => setIsRefreshing(false), 1000);
+  const tenantId = profile?.tenant_id;
+
+  const fetchDashboard = async () => {
+    if (!tenantId) return;
+
+    try {
+      // Fetch all data in parallel
+      const [
+        jobsRes,
+        payablesRes,
+        inventoryRes,
+        bankRes,
+        productsRes,
+      ] = await Promise.all([
+        // Recent jobs (last 10)
+        supabase
+          .from("jobs")
+          .select("id, code, name, status, est_grams, est_time_minutes, printer_id, printers(name), inventory_items(name)")
+          .order("created_at", { ascending: false })
+          .limit(5),
+        // Pending payables
+        supabase
+          .from("accounts_payable")
+          .select("id, description, due_date, amount, amount_paid, status")
+          .in("status", ["open", "partial", "overdue"])
+          .order("due_date", { ascending: true })
+          .limit(5),
+        // Inventory items with low stock
+        supabase
+          .from("inventory_items")
+          .select("id, name, current_stock, min_stock, brand, unit")
+          .eq("is_active", true)
+          .order("name"),
+        // Bank accounts for cash balance
+        supabase
+          .from("bank_accounts")
+          .select("current_balance")
+          .eq("is_active", true),
+        // Products for margin
+        supabase
+          .from("products")
+          .select("margin_percent, sale_price")
+          .eq("is_active", true),
+      ]);
+
+      // Cash balance
+      const cashBalance = (bankRes.data || []).reduce((sum, b) => sum + Number(b.current_balance || 0), 0);
+
+      // Active jobs count
+      const allJobs = jobsRes.data || [];
+      const activeJobs = allJobs.filter((j) =>
+        ["queued", "printing", "paused", "post_processing", "quality_check"].includes(j.status)
+      ).length;
+
+      // Average margin from products
+      const prods = (productsRes.data || []).filter((p) => p.margin_percent != null && p.margin_percent > 0);
+      const avgMargin = prods.length > 0
+        ? prods.reduce((sum, p) => sum + Number(p.margin_percent), 0) / prods.length
+        : 0;
+
+      // Inventory alerts (items below min stock)
+      const alerts = (inventoryRes.data || []).filter(
+        (item) => item.min_stock != null && item.current_stock < item.min_stock
+      );
+
+      // Loss rate (failed jobs / total completed+failed)
+      // We'd need more data for a proper calculation, so let's just count from recent jobs
+      const finishedJobs = allJobs.filter((j) => ["completed", "failed"].includes(j.status));
+      const failedJobs = allJobs.filter((j) => j.status === "failed");
+      const lossRate = finishedJobs.length > 0 ? (failedJobs.length / finishedJobs.length) * 100 : 0;
+
+      // Argus message
+      let argusMessage: string | null = null;
+      if (alerts.length > 0) {
+        const names = alerts.slice(0, 2).map((a) => a.name).join(", ");
+        argusMessage = `${alerts.length} item(ns) de estoque abaixo do mínimo: ${names}. Considere criar pedido de reposição.`;
+      }
+
+      // Format payables with overdue check
+      const today = new Date().toISOString().split("T")[0];
+      const formattedPayables = (payablesRes.data || []).map((p) => ({
+        ...p,
+        status: p.status === "open" && p.due_date < today ? "overdue" : p.status,
+      }));
+
+      setData({
+        cashBalance,
+        activeJobs,
+        lossRate,
+        avgMargin,
+        recentJobs: allJobs,
+        pendingPayables: formattedPayables,
+        inventoryAlerts: alerts,
+        argusMessage,
+      });
+    } catch (err) {
+      console.error("Dashboard fetch error:", err);
+    } finally {
+      setLoading(false);
+    }
   };
+
+  useEffect(() => {
+    fetchDashboard();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId]);
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    await fetchDashboard();
+    setIsRefreshing(false);
+  };
+
+  const kpis = [
+    { id: "cash", title: "Saldo em Caixa", value: data.cashBalance, icon: "dollar" as const, format: "currency" as const },
+    { id: "jobs", title: "Jobs Ativos", value: data.activeJobs, icon: "cart" as const, format: "number" as const },
+    { id: "loss", title: "Taxa de Perda", value: data.lossRate, icon: "alert" as const, format: "percent" as const },
+    { id: "margin", title: "Margem Média", value: data.avgMargin, icon: "box" as const, format: "percent" as const },
+  ];
+
+  const fmtDuration = (minutes: number | null) => {
+    if (!minutes) return "—";
+    const h = minutes / 60;
+    return `${h.toFixed(1)}h`;
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -92,39 +237,30 @@ export default function Dashboard() {
       />
 
       {/* Argus AI Banner */}
-      <ArgusBanner
-        message="2 jobs finalizados hoje consumiram 189g de PETG Branco. Estoque abaixo do mínimo — considere criar pedido de reposição."
-        actionLabel="Ver estoque"
-        type="warning"
-      />
+      {data.argusMessage && (
+        <ArgusBanner
+          message={data.argusMessage}
+          actionLabel="Ver estoque"
+          type="warning"
+        />
+      )}
 
       {/* KPI Cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {kpis.map((kpi) => {
           const Icon = iconMap[kpi.icon];
-          const change = ((kpi.value - kpi.previousValue) / kpi.previousValue) * 100;
-          const isPositive = kpi.trend === "up" ? change > 0 : change < 0;
-
           return (
             <div key={kpi.id} className="kpi-card p-6">
               <div className="kpi-card-title">
                 <Icon className="h-4 w-4" />
                 <span className="uppercase tracking-wide">{kpi.title}</span>
               </div>
-              <div className="kpi-card-value mb-3 tabular-nums">
+              <div className="kpi-card-value mb-1 tabular-nums">
                 {kpi.format === "currency"
                   ? fmtCurrency(kpi.value)
                   : kpi.format === "percent"
-                  ? `${kpi.value}%`
+                  ? `${kpi.value.toFixed(1)}%`
                   : kpi.value}
-              </div>
-              <div className={cn(
-                "kpi-card-trend",
-                isPositive ? "kpi-card-trend-up" : "kpi-card-trend-down"
-              )}>
-                {change > 0 ? <TrendingUp className="h-3.5 w-3.5" /> : <TrendingDown className="h-3.5 w-3.5" />}
-                <span>{change > 0 ? "+" : ""}{Math.abs(change).toFixed(1)}%</span>
-                <span className="text-muted-foreground ml-1">vs mês anterior</span>
               </div>
             </div>
           );
@@ -140,42 +276,60 @@ export default function Dashboard() {
               <Printer className="w-4 h-4 text-muted-foreground" />
               <h3 className="text-sm font-semibold text-foreground">Jobs Recentes</h3>
             </div>
-            <button className="text-xs text-primary flex items-center gap-1 hover:underline font-medium">
+            <Link to="/producao/jobs" className="text-xs text-primary flex items-center gap-1 hover:underline font-medium">
               Ver todos <ArrowRight className="w-3 h-3" />
-            </button>
+            </Link>
           </div>
-          <div className="overflow-x-auto">
-            <table className="table-enterprise">
-              <thead>
-                <tr>
-                  <th>ID</th>
-                  <th>Job</th>
-                  <th>Impressora</th>
-                  <th>Material</th>
-                  <th className="text-right">Gramas</th>
-                  <th>Status</th>
-                  <th className="text-right">ETA</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recentJobs.map((job) => (
-                  <tr key={job.id} className="cursor-pointer">
-                    <td className="font-mono text-muted-foreground text-xs">{job.id}</td>
-                    <td className="font-medium text-foreground">{job.name}</td>
-                    <td className="font-mono text-muted-foreground text-xs">{job.printer}</td>
-                    <td className="text-muted-foreground">{job.material}</td>
-                    <td className="text-right font-mono tabular-nums">{job.grams}g</td>
-                    <td>
-                      <span className={cn("inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium", statusColors[job.status])}>
-                        {statusLabels[job.status]}
-                      </span>
-                    </td>
-                    <td className="text-right font-mono text-muted-foreground tabular-nums">{job.eta}</td>
+          {data.recentJobs.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+              <Inbox className="h-8 w-8 mb-2" />
+              <p className="text-sm">Nenhum job cadastrado ainda</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="table-enterprise">
+                <thead>
+                  <tr>
+                    <th>Código</th>
+                    <th>Job</th>
+                    <th>Impressora</th>
+                    <th>Material</th>
+                    <th className="text-right">Gramas</th>
+                    <th className="text-right">Tempo</th>
+                    <th>Status</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {data.recentJobs.map((job) => (
+                    <tr key={job.id} className="cursor-pointer">
+                      <td className="font-mono text-muted-foreground text-xs">{job.code}</td>
+                      <td className="font-medium text-foreground">{job.name}</td>
+                      <td className="text-muted-foreground text-xs">
+                        {(job as any).printers?.name || "—"}
+                      </td>
+                      <td className="text-muted-foreground">
+                        {(job as any).inventory_items?.name || "—"}
+                      </td>
+                      <td className="text-right font-mono tabular-nums">
+                        {job.est_grams ? `${job.est_grams}g` : "—"}
+                      </td>
+                      <td className="text-right font-mono text-muted-foreground tabular-nums">
+                        {fmtDuration(job.est_time_minutes)}
+                      </td>
+                      <td>
+                        <span className={cn(
+                          "inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium",
+                          statusColors[job.status] || "bg-muted text-muted-foreground border border-border"
+                        )}>
+                          {statusLabels[job.status] || job.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         {/* Right Column */}
@@ -187,26 +341,38 @@ export default function Dashboard() {
                 <DollarSign className="w-4 h-4 text-muted-foreground" />
                 <h3 className="text-sm font-semibold text-foreground">Contas a Pagar</h3>
               </div>
-              <button className="text-xs text-primary flex items-center gap-1 hover:underline font-medium">
+              <Link to="/financeiro/pagar" className="text-xs text-primary flex items-center gap-1 hover:underline font-medium">
                 Ver todas <ArrowRight className="w-3 h-3" />
-              </button>
+              </Link>
             </div>
-            <div className="divide-y divide-border">
-              {pendingPayables.map((p, i) => (
-                <div key={i} className="px-5 py-3 flex items-center justify-between hover:bg-muted/50 transition-colors cursor-pointer">
-                  <div>
-                    <p className="text-sm font-medium text-foreground">{p.vendor}</p>
-                    <p className="text-xs text-muted-foreground">Venc: {p.due}</p>
+            {data.pendingPayables.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+                <Inbox className="h-6 w-6 mb-1" />
+                <p className="text-xs">Nenhuma conta pendente</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-border">
+                {data.pendingPayables.map((p) => (
+                  <div key={p.id} className="px-5 py-3 flex items-center justify-between hover:bg-muted/50 transition-colors cursor-pointer">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-foreground truncate">{p.description}</p>
+                      <p className="text-xs text-muted-foreground">
+                        Venc: {new Date(p.due_date + "T12:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })}
+                      </p>
+                    </div>
+                    <div className="text-right flex items-center gap-3 flex-shrink-0">
+                      <span className={cn(
+                        "inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium",
+                        statusColors[p.status] || "bg-muted text-muted-foreground"
+                      )}>
+                        {statusLabels[p.status] || p.status}
+                      </span>
+                      <span className="font-mono text-sm font-semibold tabular-nums">{fmtCurrency(p.amount)}</span>
+                    </div>
                   </div>
-                  <div className="text-right flex items-center gap-3">
-                    <span className={cn("inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium", statusColors[p.status])}>
-                      {statusLabels[p.status]}
-                    </span>
-                    <span className="font-mono text-sm font-semibold tabular-nums">{fmtCurrency(p.amount)}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Inventory Alerts */}
@@ -215,22 +381,32 @@ export default function Dashboard() {
               <Package className="w-4 h-4 text-amber-500" />
               <h3 className="text-sm font-semibold text-foreground">Alertas de Estoque</h3>
             </div>
-            <div className="divide-y divide-border">
-              {inventoryAlerts.map((item, i) => (
-                <div key={i} className="px-5 py-3 flex items-center justify-between hover:bg-muted/50 transition-colors cursor-pointer">
-                  <div>
-                    <p className="text-sm font-medium text-foreground">{item.name}</p>
-                    <p className="text-xs text-muted-foreground">{item.supplier}</p>
+            {data.inventoryAlerts.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+                <Inbox className="h-6 w-6 mb-1" />
+                <p className="text-xs">Estoque OK — nenhum item abaixo do mínimo</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-border">
+                {data.inventoryAlerts.map((item) => (
+                  <div key={item.id} className="px-5 py-3 flex items-center justify-between hover:bg-muted/50 transition-colors cursor-pointer">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">{item.name}</p>
+                      {item.brand && <p className="text-xs text-muted-foreground">{item.brand}</p>}
+                    </div>
+                    <div className="text-right">
+                      <span className={cn(
+                        "font-mono text-sm font-semibold tabular-nums",
+                        item.current_stock <= 0 ? "text-destructive" : "text-amber-500"
+                      )}>
+                        {item.current_stock}{item.unit}
+                      </span>
+                      <p className="text-xs text-muted-foreground">mín: {item.min_stock}{item.unit}</p>
+                    </div>
                   </div>
-                  <div className="text-right">
-                    <span className={cn("font-mono text-sm font-semibold tabular-nums", item.critical ? "text-destructive" : "text-amber-500")}>
-                      {item.stock}g
-                    </span>
-                    <p className="text-xs text-muted-foreground">mín: {item.min}g</p>
-                  </div>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>
