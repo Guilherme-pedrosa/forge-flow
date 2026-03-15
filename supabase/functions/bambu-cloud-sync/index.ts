@@ -557,15 +557,27 @@ Deno.serve(async (req) => {
                     return metricToGrams(totalLabelMatch[1], totalLabelMatch[2]);
                   }
 
-                  const allWeightTokens = [...text.matchAll(/(\d+(?:[.,]\d+)?)\s*(kg|g|grams?)\b/gi)].map((m) => metricToGrams(m[1], m[2])).filter((n) => n > 0);
-                  if (allWeightTokens.length === 0) return 0;
+                  const tokens = [...text.matchAll(/(\d+(?:[.,]\d+)?)\s*(kg|g|grams?)\b/gi)]
+                    .map((m) => metricToGrams(m[1], m[2]))
+                    .filter((n) => n > 0);
 
-                  // If multiple tokens exist, assume they are per-color consumptions and sum them.
-                  if (allWeightTokens.length > 1) {
-                    return allWeightTokens.reduce((sum, n) => sum + n, 0);
+                  if (tokens.length === 0) return 0;
+                  if (tokens.length === 1) return tokens[0];
+
+                  // 2 tokens: likely per-color (e.g. 163g + 114g) → sum
+                  if (tokens.length === 2) return tokens[0] + tokens[1];
+
+                  // 3+ tokens: may contain component weights + total
+                  const sum = tokens.reduce((a, b) => a + b, 0);
+                  const max = Math.max(...tokens);
+                  const sumWithoutMax = sum - max;
+
+                  // If max ≈ sum of rest, max IS the total (not an addend)
+                  if (sumWithoutMax > 0 && Math.abs(max - sumWithoutMax) / sumWithoutMax <= 0.15) {
+                    return max;
                   }
 
-                  return allWeightTokens[0];
+                  return sum;
                 };
 
                 const profileBlocks = markdown
