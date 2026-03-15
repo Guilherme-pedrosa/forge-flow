@@ -356,13 +356,53 @@ export default function Produtos() {
         <div><Label>Material</Label>
           <Select value={materialId || "none"} onValueChange={(v) => setMaterialId(v === "none" ? "" : v)}>
             <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-            <SelectContent><SelectItem value="none">Nenhum</SelectItem>{materials.map((m) => <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>)}</SelectContent>
+            <SelectContent><SelectItem value="none">Nenhum</SelectItem>{materials.map((m) => <SelectItem key={m.id} value={m.id}>{m.name} ({fmtCurrency(m.avg_cost)}/kg)</SelectItem>)}</SelectContent>
           </Select>
         </div>
         <div><Label>Gramas Estimadas</Label><Input type="number" value={estGrams} onChange={(e) => setEstGrams(e.target.value)} placeholder="45" /></div>
+        <div><Label>Impressora</Label>
+          <Select value={printerId || "none"} onValueChange={(v) => setPrinterId(v === "none" ? "" : v)}>
+            <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+            <SelectContent><SelectItem value="none">Padrão (200W)</SelectItem>{printers.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent>
+          </Select>
+        </div>
         <div><Label>Tempo Impressão (min)</Label><Input type="number" value={estTime} onChange={(e) => setEstTime(e.target.value)} placeholder="120" /></div>
         <div><Label>Pós-Processo (min)</Label><Input type="number" value={postMinutes} onChange={(e) => setPostMinutes(e.target.value)} placeholder="15" /></div>
       </div>
+
+      {/* Cost breakdown */}
+      {(parseFloat(estGrams) > 0 || parseInt(estTime) > 0) && (
+        <div className="rounded-lg border border-dashed bg-muted/30 p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+              <Calculator className="h-3.5 w-3.5" /> Composição de Custo
+            </p>
+            <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={applyCalculatedCost}>
+              Aplicar Custo Calculado
+            </Button>
+          </div>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
+            <span className="text-muted-foreground">Material</span>
+            <span className="text-right font-mono">{fmtCurrency(costBreakdown.materialCost)}</span>
+            <span className="text-muted-foreground">Energia</span>
+            <span className="text-right font-mono">{fmtCurrency(costBreakdown.energyCost)}</span>
+            <span className="text-muted-foreground">Máquina (depr. + manutenção)</span>
+            <span className="text-right font-mono">{fmtCurrency(costBreakdown.machineCost)}</span>
+            <span className="text-muted-foreground">Mão de Obra</span>
+            <span className="text-right font-mono">{fmtCurrency(costBreakdown.laborCost)}</span>
+            <span className="text-muted-foreground">Overhead ({tenantSettings.overhead_percent}%)</span>
+            <span className="text-right font-mono">{fmtCurrency(costBreakdown.overhead)}</span>
+            <span className="font-semibold text-foreground border-t pt-1 mt-1">Custo Total</span>
+            <span className="text-right font-mono font-semibold text-foreground border-t pt-1 mt-1">{fmtCurrency(costBreakdown.total)}</span>
+            <span className="text-muted-foreground">Preço Sugerido ({tenantSettings.target_margin}% margem)</span>
+            <span className="text-right font-mono text-primary">{fmtCurrency(costBreakdown.suggestedPrice)}</span>
+          </div>
+          {tenantSettings.energy_cost_kwh === 0 && tenantSettings.labor_cost_hour === 0 && (
+            <p className="text-[11px] text-amber-600">⚠ Configure custos de energia/mão de obra em Configurações → Empresa</p>
+          )}
+        </div>
+      )}
+
       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Precificação</p>
       <div className="grid grid-cols-2 gap-3">
         <div><Label>Custo Estimado (R$)</Label><Input type="number" step="0.01" value={costEstimate} onChange={(e) => setCostEstimate(e.target.value)} placeholder="12.50" /></div>
