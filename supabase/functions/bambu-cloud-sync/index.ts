@@ -675,6 +675,11 @@ Deno.serve(async (req) => {
                 };
 
                 const extractWeightFromBlock = (text: string) => {
+                  // Skip blocks that are clearly BOM/store sections (spool sizes, not print weight)
+                  if (/bill of materials|refill|spool|add to cart|buy now/i.test(text)) {
+                    return 0;
+                  }
+
                   const totalLabelMatch = text.match(/total[^\n]{0,24}?(\d+(?:[.,]\d+)?)\s*(kg|g|grams?)/i);
                   if (totalLabelMatch) {
                     return metricToGrams(totalLabelMatch[1], totalLabelMatch[2]);
