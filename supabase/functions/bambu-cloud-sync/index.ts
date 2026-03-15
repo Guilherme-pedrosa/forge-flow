@@ -613,9 +613,13 @@ Deno.serve(async (req) => {
                 waitFor: 8000,
               }),
             });
+            if (!firecrawlRes.ok) {
+              console.warn("Strategy 2: Firecrawl returned", firecrawlRes.status, await firecrawlRes.text().catch(() => ""));
+              throw new Error(`Firecrawl HTTP ${firecrawlRes.status}`);
+            }
             const fcData = await firecrawlRes.json();
             
-            if (firecrawlRes.ok && fcData.success !== false) {
+            if (fcData.success !== false) {
               const html = fcData.data?.html || fcData.html || "";
               const markdown = fcData.data?.markdown || fcData.markdown || "";
               
