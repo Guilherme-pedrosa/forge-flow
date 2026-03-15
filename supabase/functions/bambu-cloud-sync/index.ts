@@ -736,45 +736,89 @@ Deno.serve(async (req) => {
 });
 
 // ── Helper: parse MakerWorld design object to our model format ──
+function toPositiveNumber(value: any): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function maxMetric(...values: number[]): number {
+  return values.reduce((acc, v) => (v > acc ? v : acc), 0);
+}
+
+function profileDisplayName(profile: any, idx: number): string {
+  return profile?.name || profile?.profileName || profile?.title || `Opção ${idx + 1}`;
+}
+
 function parseDesignToModel(d: any) {
-  const profiles = (d.profileList || d.profiles || []).map((p: any) => {
+  const sourceProfiles = d.profileList || d.profiles || [];
+
+  const profiles = sourceProfiles.map((p: any, idx: number) => {
     const ctx = p.context || {};
     const plates = ctx.plates || [];
-    let totalWeight = p.weight || p.total_weight || 0;
-    let totalTime = p.estimatedTime || p.estimated_time || 0;
-    const filaments: Array<{ type: string; color: string; grams: number }> = [];
-    const seenColors = new Set<string>();
 
-    // Sum across all plates
+    const filamentMap = new Map<string, { type: string; color: string; grams: number }>();
+    const addFilament = (type: string, color: string, grams: number) => {
+      const normalizedType = (type || "PLA").toUpperCase();
+      const normalizedColor = color || "";
+      const key = `${normalizedType}-${normalizedColor}`.toLowerCase();
+      const existing = filamentMap.get(key);
+      if (existing) {
+        existing.grams += grams;
+      } else {
+        filamentMap.set(key, { type: normalizedType, color: normalizedColor, grams });
+      }
+    };
+
+    let summedPlateWeight = 0;
+    let summedPlateTime = 0;
+
     for (const plate of plates) {
-      if (!totalWeight && plate.weight) totalWeight += Number(plate.weight);
-      if (!totalTime && plate.prediction) totalTime += Number(plate.prediction);
+      summedPlateWeight += toPositiveNumber(plate.weight ?? plate.total_weight ?? plate.weight_grams);
+      summedPlateTime += toPositiveNumber(plate.prediction ?? plate.estimatedTime ?? plate.time_seconds);
+
       for (const fil of (plate.filaments || [])) {
-        const colorKey = `${fil.type || "PLA"}-${fil.color || ""}`.toLowerCase();
-        if (!seenColors.has(colorKey)) {
-          seenColors.add(colorKey);
-          filaments.push({ type: fil.type || "PLA", color: fil.color || "", grams: Number(fil.used_g) || 0 });
-        }
+        addFilament(fil.type || "PLA", fil.color || "", toPositiveNumber(fil.used_g ?? fil.weight ?? fil.grams));
       }
     }
 
-    // Also check materialList
     for (const m of (p.materialList || p.materials || [])) {
-      const colorKey = `${m.type || "PLA"}-${m.color || ""}`.toLowerCase();
-      if (!seenColors.has(colorKey)) {
-        seenColors.add(colorKey);
-        filaments.push({ type: m.type || "PLA", color: m.color || "", grams: m.weight || 0 });
-      }
+      addFilament(m.type || "PLA", m.color || "", toPositiveNumber(m.weight ?? m.used_g ?? m.grams));
     }
+
+    const filaments = Array.from(filamentMap.values());
+    const filamentWeightSum = filaments.reduce((sum, f) => sum + toPositiveNumber(f.grams), 0);
+
+    const declaredWeight = maxMetric(
+      toPositiveNumber(p.weight),
+      toPositiveNumber(p.total_weight),
+      toPositiveNumber(p.totalWeight),
+      toPositiveNumber(p.weight_grams)
+    );
+
+    const declaredTime = maxMetric(
+      toPositiveNumber(p.estimatedTime),
+      toPositiveNumber(p.estimated_time),
+      toPositiveNumber(p.time_seconds)
+    );
 
     return {
-      name: p.name || "Default",
-      weight_grams: totalWeight,
-      time_seconds: totalTime,
-      plates: plates.length || p.plateCount || 0,
+      name: profileDisplayName(p, idx),
+      weight_grams: maxMetric(declaredWeight, summedPlateWeight, filamentWeightSum),
+      time_seconds: maxMetric(declaredTime, summedPlateTime),
+      plates: plates.length || toPositiveNumber(p.plateCount || p.plate_count),
       filaments,
     };
   });
+
+  if (profiles.length === 0) {
+    profiles.push({
+      name: "Opção 1",
+      weight_grams: maxMetric(toPositiveNumber(d.weight), toPositiveNumber(d.total_weight), toPositiveNumber(d.totalWeight)),
+      time_seconds: maxMetric(toPositiveNumber(d.estimatedTime), toPositiveNumber(d.estimated_time), toPositiveNumber(d.time_seconds)),
+      plates: toPositiveNumber(d.plateCount || d.plate_count),
+      filaments: [],
+    });
+  }
 
   return {
     id: d.id || d.designId || d.design_id || "",
@@ -784,7 +828,7 @@ function parseDesignToModel(d: any) {
     print_count: d.printCountStr || d.print_count || "0",
     download_count: d.downloadCountStr || d.download_count || "0",
     like_count: d.likeCount || d.like_count || 0,
-    plates: profiles[0]?.plates || 0,
+    plates: Math.max(...profiles.map((p: any) => p.plates || 0)),
     profiles,
   };
 }
