@@ -349,7 +349,7 @@ export default function Produtos() {
     resetForm();
     setName(proj.name || "Produto Bambu");
     setEstGrams(proj.total_weight_grams ? proj.total_weight_grams.toFixed(1) : "");
-    setEstTime(proj.total_time_seconds ? Math.round(proj.total_time_seconds / 60).toString() : "");
+    setEstTime(proj.total_time_seconds ? (proj.total_time_seconds / 3600).toFixed(2) : "");
     setPhotoUrl(proj.thumbnail || "");
     setCategory("printed_part");
     const filamentInfo = proj.filaments?.length > 0
