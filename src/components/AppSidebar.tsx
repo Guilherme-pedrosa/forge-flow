@@ -1,38 +1,16 @@
 import { NavLink, useLocation } from "react-router-dom";
 import {
-  LayoutDashboard,
-  ArrowUpFromLine,
-  ArrowDownToLine,
-  Wallet,
-  Landmark,
-  PiggyBank,
-  BookOpen,
-  Target,
-  Package,
-  ArrowRightLeft,
-  AlertTriangle,
-  Printer,
-  Hammer,
-  BarChart3,
-  ShoppingCart,
-  FileText,
-  Store,
-  Link2,
-  Building,
-  UserCog,
-  Plug,
-  FileText as LogsIcon,
-  ChevronLeft,
-  ChevronRight,
-  ChevronDown,
-  LogOut,
-  Factory,
-  X,
+  LayoutDashboard, ArrowUpFromLine, ArrowDownToLine, Wallet, PiggyBank,
+  BookOpen, Package, ArrowRightLeft, AlertTriangle, Printer, Hammer,
+  BarChart3, ShoppingCart, FileText, Store, Link2, Building, UserCog,
+  FileText as LogsIcon, ChevronLeft, ChevronRight, ChevronDown,
+  LogOut, Factory, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useEffect, useState } from "react";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface AppSidebarProps {
   collapsed: boolean;
@@ -57,9 +35,7 @@ interface MenuGroup {
 const menuGroups: MenuGroup[] = [
   {
     label: "",
-    items: [
-      { title: "Dashboard", icon: LayoutDashboard, href: "/" },
-    ],
+    items: [{ title: "Dashboard", icon: LayoutDashboard, href: "/" }],
     defaultOpen: true,
   },
   {
@@ -91,9 +67,7 @@ const menuGroups: MenuGroup[] = [
   },
   {
     label: "Planejamento",
-    items: [
-      { title: "Fila / Gantt", icon: BarChart3, href: "/planejamento/gantt" },
-    ],
+    items: [{ title: "Fila / Gantt", icon: BarChart3, href: "/planejamento/gantt" }],
   },
   {
     label: "Comercial",
@@ -122,17 +96,14 @@ const menuGroups: MenuGroup[] = [
 
 export function AppSidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: AppSidebarProps) {
   const location = useLocation();
+  const { profile, signOut } = useAuth();
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     const newOpenGroups: Record<string, boolean> = {};
     menuGroups.forEach((group) => {
-      if (group.defaultOpen) {
-        newOpenGroups[group.label] = true;
-      }
-      if (group.items.some(item => location.pathname === item.href)) {
-        newOpenGroups[group.label] = true;
-      }
+      if (group.defaultOpen) newOpenGroups[group.label] = true;
+      if (group.items.some(item => location.pathname === item.href)) newOpenGroups[group.label] = true;
     });
     setOpenGroups(newOpenGroups);
   }, [location.pathname]);
@@ -144,6 +115,10 @@ export function AppSidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: A
   const toggleGroup = (label: string) => {
     setOpenGroups(prev => ({ ...prev, [label]: !prev[label] }));
   };
+
+  const initials = profile?.display_name
+    ? profile.display_name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase()
+    : "??";
 
   const sidebarContent = (
     <div className="flex h-full flex-col">
@@ -171,7 +146,6 @@ export function AppSidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: A
         <nav className="space-y-0.5 px-3">
           {menuGroups.map((group, groupIndex) => {
             const isOpen = openGroups[group.label] ?? false;
-
             return (
               <div key={groupIndex} className={cn(group.label && "mt-4")}>
                 {group.label && (!collapsed || mobileOpen) && (
@@ -183,7 +157,6 @@ export function AppSidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: A
                     <ChevronDown className={cn("h-3 w-3 transition-transform duration-200", isOpen && "rotate-180")} />
                   </button>
                 )}
-
                 <ul className={cn(
                   "space-y-0.5 overflow-hidden transition-all duration-200",
                   group.label && (!collapsed || mobileOpen) && !isOpen && "max-h-0 opacity-0",
@@ -225,20 +198,26 @@ export function AppSidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: A
         </nav>
       </ScrollArea>
 
-      {/* Footer */}
+      {/* Footer - Real user data */}
       <div className="border-t border-sidebar-border p-3">
         <div className={cn("flex items-center gap-3", collapsed && !mobileOpen && "justify-center")}>
           <div className="h-9 w-9 rounded-full bg-sidebar-accent flex items-center justify-center text-sm font-medium text-sidebar-foreground flex-shrink-0">
-            AD
+            {initials}
           </div>
           {(!collapsed || mobileOpen) && (
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-sidebar-foreground truncate">Admin</p>
-              <p className="text-[11px] text-sidebar-foreground/50 truncate">admin@forge.app</p>
+              <p className="text-sm font-medium text-sidebar-foreground truncate">{profile?.display_name || "Carregando..."}</p>
+              <p className="text-[11px] text-sidebar-foreground/50 truncate">{profile?.email || ""}</p>
             </div>
           )}
           {(!collapsed || mobileOpen) && (
-            <Button variant="ghost" size="icon" className="h-8 w-8 text-sidebar-foreground/50 hover:text-sidebar-foreground hover:bg-sidebar-accent flex-shrink-0">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={signOut}
+              className="h-8 w-8 text-sidebar-foreground/50 hover:text-sidebar-foreground hover:bg-sidebar-accent flex-shrink-0"
+              title="Sair"
+            >
               <LogOut className="h-4 w-4" />
             </Button>
           )}
@@ -270,15 +249,12 @@ export function AppSidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: A
 
   return (
     <>
-      {/* Desktop sidebar */}
       <aside className={cn(
         "fixed left-0 top-0 z-40 hidden md:flex h-screen flex-col bg-sidebar transition-all duration-200",
         collapsed ? "w-16" : "w-60"
       )}>
         {sidebarContent}
       </aside>
-
-      {/* Mobile sidebar */}
       <aside className={cn(
         "fixed left-0 top-0 z-50 flex md:hidden h-screen w-72 flex-col bg-sidebar transition-transform duration-300 shadow-2xl",
         mobileOpen ? "translate-x-0" : "-translate-x-full"

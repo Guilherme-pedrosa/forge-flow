@@ -1487,6 +1487,14 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      bootstrap_tenant: {
+        Args: {
+          _display_name: string
+          _tenant_name: string
+          _tenant_slug: string
+        }
+        Returns: string
+      }
       get_user_tenant_id: { Args: never; Returns: string }
       has_role: {
         Args: {
