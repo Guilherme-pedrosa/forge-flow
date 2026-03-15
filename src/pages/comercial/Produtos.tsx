@@ -349,20 +349,32 @@ export default function Produtos() {
     }
   };
 
+  const saveExtraPhotos = async (productId: string) => {
+    if (!profile || extraPhotos.length === 0) return;
+    // Delete old extra photos
+    await supabase.from("product_photos").delete().eq("product_id", productId);
+    // Insert new ones
+    const rows = extraPhotos.map((url, i) => ({
+      product_id: productId, tenant_id: profile.tenant_id, url, sort_order: i,
+    }));
+    await supabase.from("product_photos").insert(rows);
+  };
+
   const createMut = useMutation({
     mutationFn: async () => {
       if (!profile) throw new Error("Sem perfil");
       const cost = costEstimate ? parseFloat(costEstimate) : 0;
       const price = salePrice ? parseFloat(salePrice) : 0;
       const margin = price > 0 ? ((price - cost) / price) * 100 : null;
-      const { error } = await supabase.from("products").insert({
+      const { data: inserted, error } = await supabase.from("products").insert({
         tenant_id: profile.tenant_id, name, description: description || null, sku: sku || null,
         category, material_id: materialId || null, est_grams: estGrams ? parseFloat(estGrams) : 0,
         est_time_minutes: estTime ? parseInt(estTime) : 0, post_process_minutes: postMinutes ? parseInt(postMinutes) : 0,
         cost_estimate: cost, sale_price: price, margin_percent: margin, notes: notes || null,
         photo_url: photoUrl || null,
-      });
+      }).select("id").single();
       if (error) throw error;
+      if (inserted) await saveExtraPhotos(inserted.id);
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["products"] }); setCreateOpen(false); resetForm(); toast({ title: "Produto criado" }); },
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
@@ -382,6 +394,7 @@ export default function Produtos() {
         photo_url: photoUrl || null,
       }).eq("id", editItem.id);
       if (error) throw error;
+      await saveExtraPhotos(editItem.id);
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["products"] }); setEditItem(null); resetForm(); toast({ title: "Produto atualizado" }); },
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
