@@ -1012,6 +1012,68 @@ export default function Produtos() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* MakerWorld option picker */}
+      <Dialog open={makerOptionOpen} onOpenChange={(open) => {
+        setMakerOptionOpen(open);
+        if (!open) {
+          setMakerModelToImport(null);
+          setMakerOptionIndex("0");
+        }
+      }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Escolha a opção de impressão</DialogTitle>
+            <DialogDescription>
+              Esse modelo tem múltiplos perfis. Selecione qual opção você quer importar para calcular gramatura e tempo corretamente.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2 max-h-[50vh] overflow-y-auto">
+            {(makerModelToImport?.profiles || []).map((p: any, idx: number) => {
+              const isActive = makerOptionIndex === String(idx);
+              return (
+                <button
+                  key={`${makerModelToImport?.id || "model"}-${idx}`}
+                  type="button"
+                  onClick={() => setMakerOptionIndex(String(idx))}
+                  className={cn(
+                    "w-full rounded-lg border p-3 text-left transition-colors",
+                    isActive ? "border-primary bg-primary/5" : "hover:bg-muted/40"
+                  )}
+                >
+                  <p className="text-sm font-medium text-foreground">{p.name || `Opção ${idx + 1}`}</p>
+                  <div className="mt-1 flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+                    {p.plates > 0 && <span>📋 {p.plates} placas</span>}
+                    {p.filaments?.length > 0 && <span>🎨 {p.filaments.length} cores</span>}
+                    {p.weight_grams > 0 && <span>⚖ {p.weight_grams}g</span>}
+                    {p.time_seconds > 0 && <span>⏱ {fmtDuration(p.time_seconds)}</span>}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => {
+              setMakerOptionOpen(false);
+              setMakerModelToImport(null);
+              setMakerOptionIndex("0");
+            }}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => {
+                if (!makerModelToImport) return;
+                importFromMakerWorld(makerModelToImport, Number(makerOptionIndex));
+              }}
+              disabled={!makerModelToImport}
+            >
+              Importar esta opção
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
