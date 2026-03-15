@@ -716,7 +716,7 @@ function JobDetailDialog({
             {job.margin_percent != null && (
               <div className="flex items-center justify-between text-sm p-3 rounded-lg bg-muted/50">
                 <span>Margem</span>
-                <span className={cn("font-bold", job.margin_percent >= 0 ? "text-green-600" : "text-destructive")}>
+                <span className={cn("font-bold", job.margin_percent >= 0 ? "text-success" : "text-destructive")}>
                   {job.margin_percent.toFixed(1)}%
                 </span>
               </div>
