@@ -71,7 +71,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!newSession) {
           setProfile(null);
           setLoading(false);
-          if (!PUBLIC_ROUTES.includes(location.pathname)) {
+          if (!PUBLIC_ROUTES.includes(locationRef.current)) {
             navigate("/login");
           }
           return;
