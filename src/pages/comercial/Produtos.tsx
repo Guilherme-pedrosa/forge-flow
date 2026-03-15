@@ -357,24 +357,35 @@ export default function Produtos() {
       const gallery = model.gallery.filter((u: string) => u !== model.thumbnail);
       setExtraPhotos(gallery.slice(0, 5));
     }
+
+    // Set plates count (all plates = 1 SKU, so printsPerPlate stays 1)
+    const plates = model.plates || model.profiles?.[0]?.plates || 0;
+
     // Use first profile data if available
+    const noteParts: string[] = [`Importado do MakerWorld — ID: ${model.id}`];
+
     if (model.profiles?.length > 0) {
       const p = model.profiles[0];
       if (p.weight_grams) setEstGrams(p.weight_grams.toString());
       if (p.time_seconds) setEstTime(Math.round(p.time_seconds / 60).toString());
-      // Set number of colors from filaments count
+
+      // Set number of colors from filaments count (unique colors across all plates)
       if (p.filaments?.length > 0) {
         setNumColors(String(p.filaments.length));
+        const filInfo = p.filaments.map((f: any) => `${f.color || "?"} (${f.type})`).join(", ");
+        noteParts.push(`Cores: ${p.filaments.length} — ${filInfo}`);
       }
-      const filInfo = p.filaments?.map((f: any) => `${f.type} ${f.grams}g`).join(", ") || "";
-      setNotes(`Importado do MakerWorld — ID: ${model.id}${filInfo ? `\nFilamentos: ${filInfo}` : ""}`);
-    } else {
-      setNotes(`Importado do MakerWorld — ID: ${model.id}`);
+
+      if (plates > 0) {
+        noteParts.push(`Placas de impressão: ${plates}`);
+      }
     }
+
+    setNotes(noteParts.join("\n"));
     setDescription(model.description || "");
     setBambuImportOpen(false);
     setCreateOpen(true);
-    toast({ title: "Dados importados do MakerWorld" });
+    toast({ title: "Dados importados do MakerWorld", description: plates > 0 ? `${plates} placas, ${model.profiles?.[0]?.filaments?.length || "?"} cores` : undefined });
   };
 
   const fetchMakerWorld = async () => {
