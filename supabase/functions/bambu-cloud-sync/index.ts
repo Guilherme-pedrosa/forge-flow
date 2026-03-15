@@ -455,7 +455,7 @@ Deno.serve(async (req) => {
 
       if (modelMatch) {
         const modelId = modelMatch[1];
-        const hashSuffix = hashProfileId ? `#profileId-${hashProfileId}` : "";
+        const hashSuffix = selectedProfileId ? `#profileId-${selectedProfileId}` : "";
 
         // Strategy 1: Try MakerWorld internal API (fast, no JS needed)
         try {
