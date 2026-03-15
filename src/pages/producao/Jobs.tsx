@@ -517,10 +517,10 @@ function CreateJobDialog({
             </div>
             <div className="grid gap-1.5">
               <Label>Impressora</Label>
-              <Select value={printerId} onValueChange={setPrinterId}>
+              <Select value={printerId || "pool"} onValueChange={(v) => setPrinterId(v === "pool" ? "" : v)}>
                 <SelectTrigger><SelectValue placeholder="Pool (auto)" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Pool (auto)</SelectItem>
+                  <SelectItem value="pool">Pool (auto)</SelectItem>
                   {printers.map(p => (
                     <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
                   ))}
