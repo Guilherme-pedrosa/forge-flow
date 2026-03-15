@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageHeader } from "@/components/shared/PageHeader";
 import {
-  Plus, Search, MoreHorizontal, Package, Edit, Trash2, Loader2, Image,
+  Plus, Search, MoreHorizontal, Package, Edit, Trash2, Loader2, Image, CloudDownload,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -26,6 +26,11 @@ import {
 import { useToast } from "@/hooks/use-toast";
 
 const fmtCurrency = (v: number | null) => v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
+const fmtDuration = (s: number | null) => {
+  if (!s) return "—";
+  const m = Math.round(s / 60);
+  return `${m} min`;
+};
 
 const categoryLabels: Record<string, string> = {
   printed_part: "Peça Impressa",
@@ -42,6 +47,7 @@ export default function Produtos() {
   const [search, setSearch] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [editItem, setEditItem] = useState<any>(null);
+  const [bambuImportOpen, setBambuImportOpen] = useState(false);
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -53,6 +59,7 @@ export default function Produtos() {
   const [postMinutes, setPostMinutes] = useState("");
   const [costEstimate, setCostEstimate] = useState("");
   const [salePrice, setSalePrice] = useState("");
+  const [photoUrl, setPhotoUrl] = useState("");
   const [notes, setNotes] = useState("");
 
   const { data: products = [], isLoading } = useQuery({
@@ -75,6 +82,22 @@ export default function Produtos() {
     enabled: !!profile,
   });
 
+  // Fetch Bambu tasks for import
+  const { data: bambuTasks = [], isLoading: bambuLoading } = useQuery({
+    queryKey: ["bambu_tasks_for_import"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("bambu_tasks")
+        .select("*, bambu_devices(name)")
+        .eq("status", "2") // completed only
+        .order("start_time", { ascending: false })
+        .limit(200);
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!profile && bambuImportOpen,
+  });
+
   const filtered = useMemo(() => {
     if (!search) return products;
     const s = search.toLowerCase();
@@ -83,14 +106,28 @@ export default function Produtos() {
 
   const resetForm = () => {
     setName(""); setDescription(""); setSku(""); setCategory("printed_part"); setMaterialId("");
-    setEstGrams(""); setEstTime(""); setPostMinutes(""); setCostEstimate(""); setSalePrice(""); setNotes("");
+    setEstGrams(""); setEstTime(""); setPostMinutes(""); setCostEstimate(""); setSalePrice(""); setPhotoUrl(""); setNotes("");
   };
 
   const openEdit = (p: any) => {
     setEditItem(p); setName(p.name); setDescription(p.description || ""); setSku(p.sku || "");
     setCategory(p.category); setMaterialId(p.material_id || ""); setEstGrams(p.est_grams?.toString() || "");
     setEstTime(p.est_time_minutes?.toString() || ""); setPostMinutes(p.post_process_minutes?.toString() || "");
-    setCostEstimate(p.cost_estimate?.toString() || ""); setSalePrice(p.sale_price?.toString() || ""); setNotes(p.notes || "");
+    setCostEstimate(p.cost_estimate?.toString() || ""); setSalePrice(p.sale_price?.toString() || "");
+    setPhotoUrl(p.photo_url || ""); setNotes(p.notes || "");
+  };
+
+  const importFromBambu = (task: any) => {
+    resetForm();
+    setName(task.design_title || "Produto Bambu");
+    setEstGrams(task.weight_grams?.toString() || "");
+    setEstTime(task.cost_time_seconds ? Math.round(task.cost_time_seconds / 60).toString() : "");
+    setPhotoUrl(task.cover_url || "");
+    setCategory("printed_part");
+    setNotes(`Importado da Bambu Lab — Task ID: ${task.bambu_task_id}`);
+    setBambuImportOpen(false);
+    setCreateOpen(true);
+    toast({ title: "Dados importados", description: "Preencha custo e preço para finalizar o cadastro." });
   };
 
   const createMut = useMutation({
@@ -104,6 +141,7 @@ export default function Produtos() {
         category, material_id: materialId || null, est_grams: estGrams ? parseFloat(estGrams) : 0,
         est_time_minutes: estTime ? parseInt(estTime) : 0, post_process_minutes: postMinutes ? parseInt(postMinutes) : 0,
         cost_estimate: cost, sale_price: price, margin_percent: margin, notes: notes || null,
+        photo_url: photoUrl || null,
       });
       if (error) throw error;
     },
@@ -122,6 +160,7 @@ export default function Produtos() {
         material_id: materialId || null, est_grams: estGrams ? parseFloat(estGrams) : 0,
         est_time_minutes: estTime ? parseInt(estTime) : 0, post_process_minutes: postMinutes ? parseInt(postMinutes) : 0,
         cost_estimate: cost, sale_price: price, margin_percent: margin, notes: notes || null,
+        photo_url: photoUrl || null,
       }).eq("id", editItem.id);
       if (error) throw error;
     },
@@ -140,6 +179,16 @@ export default function Produtos() {
 
   const formFields = (
     <div className="grid gap-4 max-h-[60vh] overflow-y-auto pr-1">
+      {/* Photo preview */}
+      {photoUrl && (
+        <div className="flex items-center gap-3">
+          <img src={photoUrl} alt="Preview" className="w-20 h-20 rounded-lg object-cover border" />
+          <div className="flex-1">
+            <p className="text-xs text-muted-foreground">Foto do Produto</p>
+            <Button variant="ghost" size="sm" className="text-destructive text-xs mt-1" onClick={() => setPhotoUrl("")}>Remover foto</Button>
+          </div>
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-3">
         <div className="col-span-2"><Label>Nome *</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Vaso Geométrico P" /></div>
         <div><Label>Categoria</Label>
@@ -167,6 +216,12 @@ export default function Produtos() {
         <div><Label>Custo Estimado (R$)</Label><Input type="number" step="0.01" value={costEstimate} onChange={(e) => setCostEstimate(e.target.value)} placeholder="12.50" /></div>
         <div><Label>Preço de Venda (R$)</Label><Input type="number" step="0.01" value={salePrice} onChange={(e) => setSalePrice(e.target.value)} placeholder="39.90" /></div>
       </div>
+      {!photoUrl && (
+        <div>
+          <Label>URL da Foto</Label>
+          <Input value={photoUrl} onChange={(e) => setPhotoUrl(e.target.value)} placeholder="https://..." />
+        </div>
+      )}
       <div><Label>Observações</Label><Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} /></div>
     </div>
   );
@@ -175,7 +230,16 @@ export default function Produtos() {
     <div className="space-y-6 animate-in fade-in duration-300">
       <PageHeader title="Produtos" description="Catálogo de produtos e serviços"
         breadcrumbs={[{ label: "Comercial" }, { label: "Produtos" }]}
-        actions={<Button size="sm" onClick={() => { resetForm(); setCreateOpen(true); }}><Plus className="h-4 w-4 mr-1" /> Novo Produto</Button>}
+        actions={
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="outline" onClick={() => setBambuImportOpen(true)}>
+              <CloudDownload className="h-4 w-4 mr-1" /> Importar da Bambu
+            </Button>
+            <Button size="sm" onClick={() => { resetForm(); setCreateOpen(true); }}>
+              <Plus className="h-4 w-4 mr-1" /> Novo Produto
+            </Button>
+          </div>
+        }
       />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -201,13 +265,22 @@ export default function Produtos() {
         ) : (
           <Table>
             <TableHeader><TableRow>
-              <TableHead>Produto</TableHead><TableHead>Categoria</TableHead><TableHead>Material</TableHead>
+              <TableHead></TableHead><TableHead>Produto</TableHead><TableHead>Categoria</TableHead><TableHead>Material</TableHead>
               <TableHead className="text-right">Custo</TableHead><TableHead className="text-right">Preço</TableHead>
               <TableHead className="text-right">Margem</TableHead><TableHead className="w-10" />
             </TableRow></TableHeader>
             <TableBody>
               {filtered.map((p: any) => (
                 <TableRow key={p.id} className="cursor-pointer hover:bg-muted/50" onClick={() => { openEdit(p); }}>
+                  <TableCell className="w-12">
+                    {p.photo_url ? (
+                      <img src={p.photo_url} alt="" className="w-10 h-10 rounded object-cover" />
+                    ) : (
+                      <div className="w-10 h-10 rounded bg-muted flex items-center justify-center">
+                        <Image className="h-4 w-4 text-muted-foreground" />
+                      </div>
+                    )}
+                  </TableCell>
                   <TableCell>
                     <div><p className="font-medium text-sm">{p.name}</p>{p.sku && <p className="text-xs text-muted-foreground">{p.sku}</p>}</div>
                   </TableCell>
@@ -233,6 +306,7 @@ export default function Produtos() {
         )}
       </div>
 
+      {/* Create dialog */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="max-w-lg"><DialogHeader><DialogTitle>Novo Produto</DialogTitle><DialogDescription>Cadastrar produto ou serviço</DialogDescription></DialogHeader>
           {formFields}
@@ -240,10 +314,58 @@ export default function Produtos() {
         </DialogContent>
       </Dialog>
 
+      {/* Edit dialog */}
       <Dialog open={!!editItem} onOpenChange={(o) => { if (!o) { setEditItem(null); resetForm(); } }}>
         <DialogContent className="max-w-lg"><DialogHeader><DialogTitle>Editar Produto</DialogTitle></DialogHeader>
           {formFields}
           <DialogFooter><Button variant="outline" onClick={() => { setEditItem(null); resetForm(); }}>Cancelar</Button><Button onClick={() => updateMut.mutate()} disabled={!name || updateMut.isPending}>{updateMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Salvar</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bambu Import dialog */}
+      <Dialog open={bambuImportOpen} onOpenChange={setBambuImportOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><CloudDownload className="h-5 w-5 text-primary" /> Importar da Bambu Lab</DialogTitle>
+            <DialogDescription>Selecione uma impressão concluída para importar foto, gramagem e tempo</DialogDescription>
+          </DialogHeader>
+          <div className="overflow-y-auto max-h-[55vh]">
+            {bambuLoading ? (
+              <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+            ) : bambuTasks.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                <CloudDownload className="h-8 w-8 mb-2 opacity-40" />
+                <p className="text-sm">Nenhuma impressão concluída encontrada</p>
+                <p className="text-xs mt-1">Conecte-se na página de Integrações → Bambu Lab e sincronize</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {bambuTasks.map((t: any) => (
+                  <button
+                    key={t.id}
+                    onClick={() => importFromBambu(t)}
+                    className="flex items-start gap-3 p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors text-left"
+                  >
+                    {t.cover_url ? (
+                      <img src={t.cover_url} alt="" className="w-14 h-14 rounded object-cover flex-shrink-0" />
+                    ) : (
+                      <div className="w-14 h-14 rounded bg-muted flex items-center justify-center flex-shrink-0">
+                        <Image className="h-5 w-5 text-muted-foreground" />
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-foreground truncate">{t.design_title || "Sem título"}</p>
+                      <p className="text-xs text-muted-foreground">{t.bambu_devices?.name || "—"}</p>
+                      <div className="flex items-center gap-3 mt-1 text-[11px] text-muted-foreground">
+                        {t.weight_grams != null && <span>{t.weight_grams}g</span>}
+                        {t.cost_time_seconds != null && <span>{fmtDuration(t.cost_time_seconds)}</span>}
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </div>
