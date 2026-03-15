@@ -129,6 +129,12 @@ export default function Compras() {
   const [createOpen, setCreateOpen] = useState(false);
   const [detailOrder, setDetailOrder] = useState<any>(null);
   const [xmlImportOpen, setXmlImportOpen] = useState(false);
+  const [marketplaceImportOpen, setMarketplaceImportOpen] = useState(false);
+  const [marketplaceImages, setMarketplaceImages] = useState<string[]>([]);
+  const [marketplaceParsing, setMarketplaceParsing] = useState(false);
+  const [marketplaceParsed, setMarketplaceParsed] = useState<any[]>([]);
+  const [marketplaceSelectedIdx, setMarketplaceSelectedIdx] = useState(0);
+  const marketplaceFileRef = useRef<HTMLInputElement>(null);
   const [nfeData, setNfeData] = useState<NfeData | null>(null);
   const [xmlRaw, setXmlRaw] = useState("");
 
