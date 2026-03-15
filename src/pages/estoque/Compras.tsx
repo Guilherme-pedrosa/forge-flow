@@ -405,6 +405,7 @@ export default function Compras() {
     setOrderDate(new Date().toISOString().slice(0, 10));
     setExpectedDate("");
     setNotes("");
+    setPaymentMethodId("");
     setManualItems([{ description: "", quantity: "1", unitPrice: "0" }]);
   };
 
