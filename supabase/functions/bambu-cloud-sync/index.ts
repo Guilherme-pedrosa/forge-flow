@@ -634,12 +634,12 @@ Deno.serve(async (req) => {
                   ]);
 
                   const markdownWeightValues = [
-                    ...collectMetricValues(markdown, ["total weight", "filament weight", "weight", "filament"]),
+                    ...collectMetricValues(markdown, ["total weight", "filament weight", "weight_grams", "used_g"]),
                     ...[...markdown.matchAll(/(\d+(?:[.,]\d+)?)\s*(kg|g|grams?)\b/gi)].map((m) => metricToGrams(m[1], m[2])),
                   ];
 
                   const candidates = [...htmlWeightValues, ...markdownWeightValues]
-                    .filter((n) => Number.isFinite(n) && n > 0.05 && n < 50000);
+                    .filter((n) => Number.isFinite(n) && n > 0.05 && n < 5000);
 
                   if (candidates.length > 0) {
                     weightGrams = Math.max(...candidates);
