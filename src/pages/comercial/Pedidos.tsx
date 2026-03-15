@@ -192,24 +192,46 @@ export default function Pedidos() {
   const discountNum = parseFloat(discountVal) || 0;
   const grandTotal = subtotal + shippingVal - discountNum;
 
+  // Convert any image URL to base64 (handles Supabase storage CORS)
+  const fetchImageAsBase64 = async (url: string): Promise<string> => {
+    try {
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      if (url.includes(supabaseUrl) && url.includes("/storage/v1/object/public/")) {
+        const storagePrefix = "/storage/v1/object/public/";
+        const idx = url.indexOf(storagePrefix);
+        const pathAfter = url.substring(idx + storagePrefix.length);
+        const slashIdx = pathAfter.indexOf("/");
+        const bucket = pathAfter.substring(0, slashIdx);
+        const filePath = pathAfter.substring(slashIdx + 1);
+        const { data, error } = await supabase.storage.from(bucket).download(filePath);
+        if (!error && data) {
+          return await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.readAsDataURL(data);
+          });
+        }
+      }
+      const res = await fetch(url, { mode: "cors" });
+      const blob = await res.blob();
+      return await new Promise<string>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result as string);
+        reader.readAsDataURL(blob);
+      });
+    } catch {
+      return "";
+    }
+  };
+
   // Print PDF
   const handlePrint = async () => {
     if (!printRef.current) return;
 
-    // Pre-fetch logo as base64 so it renders in the print window
+    // Pre-fetch logo as base64
     let logoBase64 = "";
     if (tenant?.logo_url) {
-      try {
-        const res = await fetch(tenant.logo_url);
-        const blob = await res.blob();
-        logoBase64 = await new Promise<string>((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result as string);
-          reader.readAsDataURL(blob);
-        });
-      } catch {
-        console.warn("Failed to fetch logo for PDF");
-      }
+      logoBase64 = await fetchImageAsBase64(tenant.logo_url);
     }
 
     const printWindow = window.open("", "_blank");
