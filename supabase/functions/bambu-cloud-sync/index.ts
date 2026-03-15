@@ -549,7 +549,8 @@ Deno.serve(async (req) => {
                 formats: [
                   { type: "json", schema: jsonSchema, prompt: "Extract 3D model info: title, description, thumbnail image URL, and for each print profile extract name, number of plates, total weight in grams, total print time in minutes, and list of filaments with type (PLA/PETG/ABS etc), color name, and weight in grams." },
                 ],
-                waitFor: 5000,
+                onlyMainContent: false,
+                waitFor: 8000,
               }),
             });
             const fcJsonData = await fcJsonRes.json();
