@@ -665,7 +665,7 @@ export default function Produtos() {
       </div>
 
       {/* Cost breakdown */}
-      {(parseFloat(estGrams) > 0 || parseInt(estTime) > 0) && (
+      {(parseFloat(estGrams) > 0 || parseFloat(estTime) > 0) && (
         <div className="rounded-lg border border-dashed bg-muted/30 p-3 space-y-2">
           <div className="flex items-center justify-between">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
