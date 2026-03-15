@@ -995,6 +995,7 @@ export default function Produtos() {
                           <p className="text-sm font-medium text-foreground truncate">{m.title}</p>
                           {m.description && <p className="text-xs text-muted-foreground truncate">{m.description}</p>}
                           <div className="flex items-center gap-3 mt-1 text-[11px] text-muted-foreground flex-wrap">
+                            {m.profiles?.length > 1 && <span>⚙ {m.profiles.length} opções</span>}
                             {m.plates > 0 && <span>📋 {m.plates} placas</span>}
                             {m.profiles?.[0]?.filaments?.length > 0 && <span>🎨 {m.profiles[0].filaments.length} cores</span>}
                             {m.profiles?.[0]?.weight_grams > 0 && <span>⚖ {m.profiles[0].weight_grams}g</span>}
