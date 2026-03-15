@@ -51,9 +51,12 @@ export default function Produtos() {
   const [editItem, setEditItem] = useState<any>(null);
   const [bambuImportOpen, setBambuImportOpen] = useState(false);
   const [bambuTab, setBambuTab] = useState<"projects" | "tasks" | "makerworld">("projects");
-  const [makerWorldUrl, setMakerWorldUrl] = useState(""); 
+  const [makerWorldUrl, setMakerWorldUrl] = useState("");
   const [makerWorldLoading, setMakerWorldLoading] = useState(false);
   const [makerWorldModels, setMakerWorldModels] = useState<any[]>([]);
+  const [makerOptionOpen, setMakerOptionOpen] = useState(false);
+  const [makerModelToImport, setMakerModelToImport] = useState<any | null>(null);
+  const [makerOptionIndex, setMakerOptionIndex] = useState("0");
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -347,45 +350,67 @@ export default function Produtos() {
     toast({ title: "Dados importados", description: "Preencha custo e preço para finalizar o cadastro." });
   };
 
-  const importFromMakerWorld = (model: any) => {
+  const importFromMakerWorld = (model: any, selectedProfileIndex?: number) => {
+    const profiles = Array.isArray(model.profiles) ? model.profiles : [];
+
+    if (selectedProfileIndex == null && profiles.length > 1) {
+      setMakerModelToImport(model);
+      setMakerOptionIndex("0");
+      setBambuImportOpen(false);
+      setMakerOptionOpen(true);
+      return;
+    }
+
+    const profileIdx = selectedProfileIndex ?? 0;
+    const selectedProfile = profiles[profileIdx] || profiles[0] || null;
+
     resetForm();
     setName(model.title || "Produto MakerWorld");
     setPhotoUrl(model.thumbnail || "");
     setCategory("printed_part");
-    // Set gallery photos
+
     if (model.gallery?.length > 0) {
       const gallery = model.gallery.filter((u: string) => u !== model.thumbnail);
       setExtraPhotos(gallery.slice(0, 5));
     }
 
-    // Set plates count (all plates = 1 SKU, so printsPerPlate stays 1)
-    const plates = model.plates || model.profiles?.[0]?.plates || 0;
+    const plates = selectedProfile?.plates || model.plates || 0;
+    const noteParts: string[] = [
+      `Importado do MakerWorld — ID: ${model.id}`,
+      selectedProfile?.name ? `Opção selecionada: ${selectedProfile.name}` : "",
+    ].filter(Boolean);
 
-    // Use first profile data if available
-    const noteParts: string[] = [`Importado do MakerWorld — ID: ${model.id}`];
+    if (selectedProfile) {
+      if (selectedProfile.weight_grams) setEstGrams(selectedProfile.weight_grams.toString());
+      if (selectedProfile.time_seconds) setEstTime(Math.round(selectedProfile.time_seconds / 60).toString());
 
-    if (model.profiles?.length > 0) {
-      const p = model.profiles[0];
-      if (p.weight_grams) setEstGrams(p.weight_grams.toString());
-      if (p.time_seconds) setEstTime(Math.round(p.time_seconds / 60).toString());
-
-      // Set number of colors from filaments count (unique colors across all plates)
-      if (p.filaments?.length > 0) {
-        setNumColors(String(p.filaments.length));
-        const filInfo = p.filaments.map((f: any) => `${f.color || "?"} (${f.type})`).join(", ");
-        noteParts.push(`Cores: ${p.filaments.length} — ${filInfo}`);
+      if (selectedProfile.filaments?.length > 0) {
+        setNumColors(String(selectedProfile.filaments.length));
+        const filInfo = selectedProfile.filaments
+          .map((f: any) => `${f.color || "?"} (${f.type})`)
+          .join(", ");
+        noteParts.push(`Cores: ${selectedProfile.filaments.length} — ${filInfo}`);
       }
+    }
 
-      if (plates > 0) {
-        noteParts.push(`Placas de impressão: ${plates}`);
-      }
+    if (plates > 0) {
+      noteParts.push(`Placas de impressão: ${plates}`);
     }
 
     setNotes(noteParts.join("\n"));
     setDescription(model.description || "");
+    setMakerOptionOpen(false);
+    setMakerModelToImport(null);
     setBambuImportOpen(false);
     setCreateOpen(true);
-    toast({ title: "Dados importados do MakerWorld", description: plates > 0 ? `${plates} placas, ${model.profiles?.[0]?.filaments?.length || "?"} cores` : undefined });
+    toast({
+      title: "Dados importados do MakerWorld",
+      description: selectedProfile?.name
+        ? `${selectedProfile.name} · ${selectedProfile?.weight_grams || "?"}g`
+        : plates > 0
+          ? `${plates} placas`
+          : undefined,
+    });
   };
 
   const fetchMakerWorld = async () => {
@@ -971,6 +996,7 @@ export default function Produtos() {
                           <p className="text-sm font-medium text-foreground truncate">{m.title}</p>
                           {m.description && <p className="text-xs text-muted-foreground truncate">{m.description}</p>}
                           <div className="flex items-center gap-3 mt-1 text-[11px] text-muted-foreground flex-wrap">
+                            {m.profiles?.length > 1 && <span>⚙ {m.profiles.length} opções</span>}
                             {m.plates > 0 && <span>📋 {m.plates} placas</span>}
                             {m.profiles?.[0]?.filaments?.length > 0 && <span>🎨 {m.profiles[0].filaments.length} cores</span>}
                             {m.profiles?.[0]?.weight_grams > 0 && <span>⚖ {m.profiles[0].weight_grams}g</span>}
@@ -985,6 +1011,68 @@ export default function Produtos() {
               </div>
             )}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* MakerWorld option picker */}
+      <Dialog open={makerOptionOpen} onOpenChange={(open) => {
+        setMakerOptionOpen(open);
+        if (!open) {
+          setMakerModelToImport(null);
+          setMakerOptionIndex("0");
+        }
+      }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Escolha a opção de impressão</DialogTitle>
+            <DialogDescription>
+              Esse modelo tem múltiplos perfis. Selecione qual opção você quer importar para calcular gramatura e tempo corretamente.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2 max-h-[50vh] overflow-y-auto">
+            {(makerModelToImport?.profiles || []).map((p: any, idx: number) => {
+              const isActive = makerOptionIndex === String(idx);
+              return (
+                <button
+                  key={`${makerModelToImport?.id || "model"}-${idx}`}
+                  type="button"
+                  onClick={() => setMakerOptionIndex(String(idx))}
+                  className={cn(
+                    "w-full rounded-lg border p-3 text-left transition-colors",
+                    isActive ? "border-primary bg-primary/5" : "hover:bg-muted/40"
+                  )}
+                >
+                  <p className="text-sm font-medium text-foreground">{p.name || `Opção ${idx + 1}`}</p>
+                  <div className="mt-1 flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+                    {p.plates > 0 && <span>📋 {p.plates} placas</span>}
+                    {p.filaments?.length > 0 && <span>🎨 {p.filaments.length} cores</span>}
+                    {p.weight_grams > 0 && <span>⚖ {p.weight_grams}g</span>}
+                    {p.time_seconds > 0 && <span>⏱ {fmtDuration(p.time_seconds)}</span>}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => {
+              setMakerOptionOpen(false);
+              setMakerModelToImport(null);
+              setMakerOptionIndex("0");
+            }}>
+              Cancelar
+            </Button>
+            <Button
+              onClick={() => {
+                if (!makerModelToImport) return;
+                importFromMakerWorld(makerModelToImport, Number(makerOptionIndex));
+              }}
+              disabled={!makerModelToImport}
+            >
+              Importar esta opção
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

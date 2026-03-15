@@ -527,68 +527,91 @@ Deno.serve(async (req) => {
                 
                 console.log("Extracted title:", title, "thumbnail:", thumbnail?.substring(0, 80));
                 
-                // Extract plates, time, colors, weight from markdown
+                // Extract profile options, time, colors and weight from markdown/html
                 let totalPlates = 0;
                 let timeSeconds = 0;
                 let weightGrams = 0;
                 const filaments: Array<{ type: string; color: string; grams: number }> = [];
-                
-                // Parse profiles section: "25.3 h" and "4plates"
-                const profileBlocks = markdown.split(/\* \* \*/);
-                for (const block of profileBlocks) {
+                const parsedProfiles: Array<{
+                  name: string;
+                  weight_grams: number;
+                  time_seconds: number;
+                  plates: number;
+                  filaments: Array<{ type: string; color: string; grams: number }>;
+                }> = [];
+
+                const profileBlocks = markdown
+                  .split(/\* \* \*/)
+                  .map((block) => block.trim())
+                  .filter(Boolean);
+
+                for (let idx = 0; idx < profileBlocks.length; idx++) {
+                  const block = profileBlocks[idx];
+                  const nameMatch = block.match(/(?:^|\n)#{2,4}\s*([^\n]+)/);
+                  const blockName = nameMatch?.[1]?.trim() || `Opção ${idx + 1}`;
+
                   const platesMatch = block.match(/(\d+)\s*plates?/i);
-                  const timeHMatch = block.match(/(\d+(?:\.\d+)?)\s*h\b/);
-                  if (platesMatch && !totalPlates) {
-                    totalPlates = parseInt(platesMatch[1]);
-                  }
-                  if (timeHMatch && !timeSeconds) {
-                    timeSeconds = Math.round(parseFloat(timeHMatch[1]) * 3600);
+                  const hoursMatch = block.match(/(\d+(?:\.\d+)?)\s*h\b/i);
+                  const minutesMatch = block.match(/(\d+)\s*min\b/i);
+                  const directWeightMatch = block.match(/(\d+(?:\.\d+)?)\s*g(?:rams?)?/i);
+
+                  const filGramsRegex = /(?:PLA|PETG|ABS|ASA|TPU|PC|PA|PVA)\s*\|\s*(\d+(?:\.\d+)?)\s*g/gi;
+                  const filamentWeights = [...block.matchAll(filGramsRegex)].map((m) => parseFloat(m[1])).filter((n) => Number.isFinite(n));
+                  const filamentSum = filamentWeights.reduce((sum, n) => sum + n, 0);
+
+                  const blockPlates = platesMatch ? parseInt(platesMatch[1]) : 0;
+                  const blockTimeSeconds = Math.round(((hoursMatch ? parseFloat(hoursMatch[1]) * 3600 : 0) + (minutesMatch ? parseInt(minutesMatch[1]) * 60 : 0)));
+                  const blockWeight = Math.max(directWeightMatch ? parseFloat(directWeightMatch[1]) : 0, filamentSum);
+
+                  if (blockPlates > 0 || blockTimeSeconds > 0 || blockWeight > 0) {
+                    parsedProfiles.push({
+                      name: blockName,
+                      weight_grams: blockWeight,
+                      time_seconds: blockTimeSeconds,
+                      plates: blockPlates,
+                      filaments: [],
+                    });
                   }
                 }
-                
+
+                if (parsedProfiles.length > 0) {
+                  totalPlates = Math.max(...parsedProfiles.map((p) => p.plates || 0));
+                  timeSeconds = Math.max(...parsedProfiles.map((p) => p.time_seconds || 0));
+                  weightGrams = Math.max(...parsedProfiles.map((p) => p.weight_grams || 0));
+                }
+
                 // Fallback time from HTML
                 if (timeSeconds === 0) {
-                  const timeMatch = html.match(/"estimatedTime"\s*:\s*(\d+)/);
-                  const predictionMatch = html.match(/"prediction"\s*:\s*(\d+)/);
-                  if (timeMatch) timeSeconds = parseInt(timeMatch[1]);
-                  else if (predictionMatch) timeSeconds = parseInt(predictionMatch[1]);
+                  const allEstimatedTimes = [...html.matchAll(/"estimatedTime"\s*:\s*(\d+)/g)].map((m) => parseInt(m[1]));
+                  const allPredictions = [...html.matchAll(/"prediction"\s*:\s*(\d+)/g)].map((m) => parseInt(m[1]));
+                  const htmlTimes = [...allEstimatedTimes, ...allPredictions].filter((n) => Number.isFinite(n));
+                  if (htmlTimes.length > 0) {
+                    timeSeconds = Math.max(...htmlTimes);
+                  }
                 }
-                
-                // Extract weight: sum all plate weights from JSON, or use total weight field
-                // First try to find a "totalWeight" or profile-level weight
-                const totalWeightMatch = html.match(/"totalWeight"\s*:\s*(\d+(?:\.\d+)?)/);
-                if (totalWeightMatch) {
-                  weightGrams = parseFloat(totalWeightMatch[1]);
+
+                // Extract weight: prefer total/profile values, otherwise sum all plate weights
+                if (weightGrams === 0) {
+                  const totalWeightMatch = html.match(/"totalWeight"\s*:\s*(\d+(?:\.\d+)?)/);
+                  if (totalWeightMatch) {
+                    weightGrams = parseFloat(totalWeightMatch[1]);
+                  }
                 }
-                // Fallback: sum all "weight" values from plate objects in HTML
+
                 if (weightGrams === 0) {
                   const allWeights = [...html.matchAll(/"weight"\s*:\s*(\d+(?:\.\d+)?)/g)];
                   if (allWeights.length > 0) {
                     weightGrams = allWeights.reduce((sum, m) => sum + parseFloat(m[1]), 0);
                   }
                 }
-                // Fallback: parse "563 g" pattern from markdown profile summary
+
                 if (weightGrams === 0) {
                   const weightM = markdown.match(/(\d{2,}(?:\.\d+)?)\s*g(?:rams?)?/i);
                   if (weightM) weightGrams = parseFloat(weightM[1]);
                 }
-                
-                // Also extract per-filament grams from markdown: "PLA | 523 g", "PLA | 32 g"
-                const filGramsRegex = /(?:PLA|PETG|ABS|ASA|TPU|PC|PA)\s*\|\s*(\d+(?:\.\d+)?)\s*g/gi;
-                let filGMatch;
-                const filGramsList: number[] = [];
-                while ((filGMatch = filGramsRegex.exec(markdown)) !== null) {
-                  filGramsList.push(parseFloat(filGMatch[1]));
-                }
-                // If we found per-filament grams and they sum to more than current weight, use that
-                if (filGramsList.length > 0) {
-                  const filSum = filGramsList.reduce((a, b) => a + b, 0);
-                  if (filSum > weightGrams) weightGrams = filSum;
-                }
-                
+
                 // Extract filament colors from Bill of Materials section
                 const bomSection = markdown.split(/### Bill of Materials/i)[1]?.split(/### Description/i)[0] || "";
-                // Match "Bambu Filaments" section entries like "Red (10200)", "Black (10101)", "Jade White (10100)"
                 const filColorRegex = /!\[.*?\].*?([A-Za-z\s]+)\s*\(\d{4,}\)/g;
                 let filMatch;
                 const seenColors = new Set<string>();
@@ -596,26 +619,19 @@ Deno.serve(async (req) => {
                   const color = filMatch[1].trim();
                   if (color && !seenColors.has(color.toLowerCase())) {
                     seenColors.add(color.toLowerCase());
-                    // Try to find material type near this entry
                     const nearbyPLA = bomSection.slice(Math.max(0, filMatch.index - 200), filMatch.index + 200);
                     const matType = nearbyPLA.match(/\b(PLA|PETG|ABS|ASA|TPU|PC|PA|PVA)\b/i)?.[1] || "PLA";
                     filaments.push({ type: matType.toUpperCase(), color, grams: 0 });
                   }
                 }
-                
-                // Fallback: count unique filament entries from BOM links
+
                 if (filaments.length === 0) {
-                  const filLinkRegex = /\[PLA|PETG|ABS|ASA|TPU/gi;
-                  const filLinks = bomSection.match(filLinkRegex);
-                  if (filLinks) {
-                    // Count unique filament product links
-                    const uniqueLinks = new Set(bomSection.match(/\[(?:PLA|PETG|ABS|ASA|TPU)[^\]]*\]/gi) || []);
-                    for (const link of uniqueLinks) {
-                      filaments.push({ type: link.match(/PLA|PETG|ABS|ASA|TPU/i)?.[0]?.toUpperCase() || "PLA", color: "", grams: 0 });
-                    }
+                  const uniqueLinks = new Set(bomSection.match(/\[(?:PLA|PETG|ABS|ASA|TPU|PC|PA|PVA)[^\]]*\]/gi) || []);
+                  for (const link of uniqueLinks) {
+                    filaments.push({ type: link.match(/PLA|PETG|ABS|ASA|TPU|PC|PA|PVA/i)?.[0]?.toUpperCase() || "PLA", color: "", grams: 0 });
                   }
                 }
-                
+
                 // Also try to get all gallery images
                 const allImages: string[] = [];
                 const imgRegex = /src="(https:\/\/makerworld\.bblmw\.com[^"]*\.(?:png|jpg|jpeg|webp)[^"]*)"/gi;
@@ -625,32 +641,35 @@ Deno.serve(async (req) => {
                     allImages.push(imgMatch[1]);
                   }
                 }
-                
-                // Also extract gallery from markdown (higher quality images)
+
                 const mdImgRegex = /!\[.*?\]\((https:\/\/makerworld\.bblmw\.com[^)]*w_1000[^)]*)\)/g;
                 let mdImg;
                 while ((mdImg = mdImgRegex.exec(markdown)) !== null) {
                   if (!allImages.includes(mdImg[1])) {
-                    allImages.unshift(mdImg[1]); // prepend higher quality
+                    allImages.unshift(mdImg[1]);
                   }
                 }
-                
-                console.log(`MakerWorld parsed: plates=${totalPlates}, time=${timeSeconds}s, weight=${weightGrams}g, colors=${filaments.length}, images=${allImages.length}`);
-                
+
+                const normalizedProfiles = parsedProfiles.length > 0
+                  ? parsedProfiles.map((p) => ({ ...p, filaments: filaments.length > 0 ? filaments : p.filaments }))
+                  : [{
+                      name: "Opção 1",
+                      weight_grams: weightGrams,
+                      time_seconds: timeSeconds,
+                      plates: totalPlates,
+                      filaments,
+                    }];
+
+                console.log(`MakerWorld parsed: options=${normalizedProfiles.length}, plates=${totalPlates}, time=${timeSeconds}s, weight=${weightGrams}g, colors=${filaments.length}, images=${allImages.length}`);
+
                 models.push({
                   id: modelId,
                   title,
                   thumbnail,
                   description: ogDesc?.[1] || "",
                   gallery: allImages.slice(0, 10),
-                  plates: totalPlates,
-                  profiles: [{
-                    name: "Default",
-                    weight_grams: weightGrams,
-                    time_seconds: timeSeconds,
-                    plates: totalPlates,
-                    filaments,
-                  }],
+                  plates: totalPlates || normalizedProfiles[0]?.plates || 0,
+                  profiles: normalizedProfiles,
                 });
               }
             } else {
@@ -717,45 +736,89 @@ Deno.serve(async (req) => {
 });
 
 // ── Helper: parse MakerWorld design object to our model format ──
+function toPositiveNumber(value: any): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function maxMetric(...values: number[]): number {
+  return values.reduce((acc, v) => (v > acc ? v : acc), 0);
+}
+
+function profileDisplayName(profile: any, idx: number): string {
+  return profile?.name || profile?.profileName || profile?.title || `Opção ${idx + 1}`;
+}
+
 function parseDesignToModel(d: any) {
-  const profiles = (d.profileList || d.profiles || []).map((p: any) => {
+  const sourceProfiles = d.profileList || d.profiles || [];
+
+  const profiles = sourceProfiles.map((p: any, idx: number) => {
     const ctx = p.context || {};
     const plates = ctx.plates || [];
-    let totalWeight = p.weight || p.total_weight || 0;
-    let totalTime = p.estimatedTime || p.estimated_time || 0;
-    const filaments: Array<{ type: string; color: string; grams: number }> = [];
-    const seenColors = new Set<string>();
 
-    // Sum across all plates
+    const filamentMap = new Map<string, { type: string; color: string; grams: number }>();
+    const addFilament = (type: string, color: string, grams: number) => {
+      const normalizedType = (type || "PLA").toUpperCase();
+      const normalizedColor = color || "";
+      const key = `${normalizedType}-${normalizedColor}`.toLowerCase();
+      const existing = filamentMap.get(key);
+      if (existing) {
+        existing.grams += grams;
+      } else {
+        filamentMap.set(key, { type: normalizedType, color: normalizedColor, grams });
+      }
+    };
+
+    let summedPlateWeight = 0;
+    let summedPlateTime = 0;
+
     for (const plate of plates) {
-      if (!totalWeight && plate.weight) totalWeight += Number(plate.weight);
-      if (!totalTime && plate.prediction) totalTime += Number(plate.prediction);
+      summedPlateWeight += toPositiveNumber(plate.weight ?? plate.total_weight ?? plate.weight_grams);
+      summedPlateTime += toPositiveNumber(plate.prediction ?? plate.estimatedTime ?? plate.time_seconds);
+
       for (const fil of (plate.filaments || [])) {
-        const colorKey = `${fil.type || "PLA"}-${fil.color || ""}`.toLowerCase();
-        if (!seenColors.has(colorKey)) {
-          seenColors.add(colorKey);
-          filaments.push({ type: fil.type || "PLA", color: fil.color || "", grams: Number(fil.used_g) || 0 });
-        }
+        addFilament(fil.type || "PLA", fil.color || "", toPositiveNumber(fil.used_g ?? fil.weight ?? fil.grams));
       }
     }
 
-    // Also check materialList
     for (const m of (p.materialList || p.materials || [])) {
-      const colorKey = `${m.type || "PLA"}-${m.color || ""}`.toLowerCase();
-      if (!seenColors.has(colorKey)) {
-        seenColors.add(colorKey);
-        filaments.push({ type: m.type || "PLA", color: m.color || "", grams: m.weight || 0 });
-      }
+      addFilament(m.type || "PLA", m.color || "", toPositiveNumber(m.weight ?? m.used_g ?? m.grams));
     }
+
+    const filaments = Array.from(filamentMap.values());
+    const filamentWeightSum = filaments.reduce((sum, f) => sum + toPositiveNumber(f.grams), 0);
+
+    const declaredWeight = maxMetric(
+      toPositiveNumber(p.weight),
+      toPositiveNumber(p.total_weight),
+      toPositiveNumber(p.totalWeight),
+      toPositiveNumber(p.weight_grams)
+    );
+
+    const declaredTime = maxMetric(
+      toPositiveNumber(p.estimatedTime),
+      toPositiveNumber(p.estimated_time),
+      toPositiveNumber(p.time_seconds)
+    );
 
     return {
-      name: p.name || "Default",
-      weight_grams: totalWeight,
-      time_seconds: totalTime,
-      plates: plates.length || p.plateCount || 0,
+      name: profileDisplayName(p, idx),
+      weight_grams: maxMetric(declaredWeight, summedPlateWeight, filamentWeightSum),
+      time_seconds: maxMetric(declaredTime, summedPlateTime),
+      plates: plates.length || toPositiveNumber(p.plateCount || p.plate_count),
       filaments,
     };
   });
+
+  if (profiles.length === 0) {
+    profiles.push({
+      name: "Opção 1",
+      weight_grams: maxMetric(toPositiveNumber(d.weight), toPositiveNumber(d.total_weight), toPositiveNumber(d.totalWeight)),
+      time_seconds: maxMetric(toPositiveNumber(d.estimatedTime), toPositiveNumber(d.estimated_time), toPositiveNumber(d.time_seconds)),
+      plates: toPositiveNumber(d.plateCount || d.plate_count),
+      filaments: [],
+    });
+  }
 
   return {
     id: d.id || d.designId || d.design_id || "",
@@ -765,7 +828,7 @@ function parseDesignToModel(d: any) {
     print_count: d.printCountStr || d.print_count || "0",
     download_count: d.downloadCountStr || d.download_count || "0",
     like_count: d.likeCount || d.like_count || 0,
-    plates: profiles[0]?.plates || 0,
+    plates: Math.max(...profiles.map((p: any) => p.plates || 0)),
     profiles,
   };
 }
