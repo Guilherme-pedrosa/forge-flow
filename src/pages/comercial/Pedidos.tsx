@@ -269,7 +269,7 @@ export default function Pedidos() {
       ${tenantSettings.email ? `<div class="company-detail">${tenantSettings.email}</div>` : ""}
       ${companyAddress ? `<div class="company-detail">${companyAddress}</div>` : ""}
     </div>
-    ${tenant?.logo_url ? `<img src="${tenant.logo_url}" class="logo" />` : ""}
+    ${logoBase64 ? `<img src="${logoBase64}" class="logo" />` : ""}
   </div>
 
   <div class="doc-title">
