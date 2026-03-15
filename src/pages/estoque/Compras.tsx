@@ -182,6 +182,16 @@ export default function Compras() {
     enabled: !!profile,
   });
 
+  const { data: paymentMethods = [] } = useQuery({
+    queryKey: ["payment_methods"],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("payment_methods").select("id, name, type").eq("is_active", true).order("name");
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!profile,
+  });
+
   const { data: orderItems = [] } = useQuery({
     queryKey: ["purchase_order_items", detailOrder?.id],
     queryFn: async () => {
