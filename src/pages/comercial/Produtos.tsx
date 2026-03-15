@@ -433,6 +433,11 @@ export default function Produtos() {
     setPhotoUrl(model.thumbnail || "");
     setCategory("printed_part");
 
+    // Auto-selecionar material pelo tipo do filamento
+    if (autoMatchedMaterial) {
+      setMaterialId(autoMatchedMaterial.id);
+    }
+
     if (model.gallery?.length > 0) {
       const gallery = model.gallery.filter((u: string) => u !== model.thumbnail);
       setExtraPhotos(gallery.slice(0, 5));
