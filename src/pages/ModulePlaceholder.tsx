@@ -1,216 +1,164 @@
 import { useMemo } from "react";
 import { useLocation } from "react-router-dom";
 import {
-  ArrowRight,
-  Boxes,
-  CircleDollarSign,
-  Clock3,
-  FileSpreadsheet,
-  Factory,
-  Printer,
-  Sparkles,
+  Clock, CheckCircle2, Hammer, AlertTriangle, CalendarDays,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { PageHeader } from "@/components/shared/PageHeader";
-import { ArgusBanner } from "@/components/shared/ArgusBanner";
 
-interface ModuleConfig {
+interface RoadmapItem {
+  feature: string;
+  status: "done" | "in_progress" | "planned";
+  description: string;
+}
+
+interface ModuleRoadmap {
   title: string;
   description: string;
-  actionLabel: string;
-  kpis: Array<{ label: string; value: string; trend: string; tone: "today" | "upcoming" | "paid" | "overdue" | "total" | "warning" }>;
-  tableColumns: string[];
-  tableRows: string[][];
-  aiMessage: string;
+  items: RoadmapItem[];
 }
 
-const configs: Record<string, ModuleConfig> = {
-  "/financeiro/receber": {
-    title: "Contas a Receber",
-    description: "Controle de entradas, títulos e recebimentos por cliente.",
-    actionLabel: "Novo Título",
-    aiMessage: "Existem 7 títulos próximos do vencimento. Recomendo priorizar cobrança dos 3 maiores valores para melhorar o caixa projetado.",
-    kpis: [
-      { label: "Previsto (30d)", value: "R$ 128.420,00", trend: "+8,4%", tone: "total" },
-      { label: "Recebido Hoje", value: "R$ 9.480,00", trend: "+12,1%", tone: "paid" },
-      { label: "A Vencer", value: "R$ 71.200,00", trend: "24 títulos", tone: "today" },
-      { label: "Em Atraso", value: "R$ 12.940,00", trend: "6 títulos", tone: "overdue" },
-    ],
-    tableColumns: ["Título", "Cliente", "Vencimento", "Valor", "Status", "Origem"],
-    tableRows: [
-      ["REC-1048", "Loja Alfa", "18/03/2026", "R$ 3.850,00", "Aberto", "Pedido #9021"],
-      ["REC-1047", "Studio 3D Pro", "17/03/2026", "R$ 1.420,00", "Parcial", "Pedido #9017"],
-      ["REC-1045", "MecParts", "15/03/2026", "R$ 7.920,00", "Vencido", "Pedido #9009"],
-      ["REC-1044", "AutoNexa", "14/03/2026", "R$ 2.760,00", "Recebido", "Pedido #9006"],
+const roadmaps: Record<string, ModuleRoadmap> = {
+  "/integracoes/ml": {
+    title: "Mercado Livre",
+    description: "Integração com o Mercado Livre para importação de pedidos, conciliação de repasses e sincronização de estoque.",
+    items: [
+      { feature: "Autenticação OAuth com ML", status: "planned", description: "Login seguro via API oficial do Mercado Livre" },
+      { feature: "Importação de pedidos", status: "planned", description: "Sync automático de vendas, itens e status" },
+      { feature: "Conciliação de repasses", status: "planned", description: "Match entre repasses ML e contas a receber" },
+      { feature: "Sincronização de estoque", status: "planned", description: "Atualizar estoque no ML quando houver movimentação" },
+      { feature: "Cálculo de taxas por venda", status: "planned", description: "Importar taxas, frete e comissões do ML" },
     ],
   },
-  "/financeiro/caixa": {
-    title: "Caixa & Bancos",
-    description: "Movimentações, saldos e conciliação de contas bancárias.",
-    actionLabel: "Nova Movimentação",
-    aiMessage: "Detectei 4 lançamentos sem conciliação há mais de 3 dias. Posso priorizar os itens com maior impacto no saldo diário.",
-    kpis: [
-      { label: "Saldo Consolidado", value: "R$ 94.780,55", trend: "+2,9%", tone: "total" },
-      { label: "Entradas Hoje", value: "R$ 11.920,00", trend: "17 lanç.", tone: "paid" },
-      { label: "Saídas Hoje", value: "R$ 8.640,00", trend: "12 lanç.", tone: "today" },
-      { label: "Não Conciliado", value: "R$ 4.220,00", trend: "4 lanç.", tone: "warning" },
+  "/producao/perdas": {
+    title: "Perdas & QC",
+    description: "Controle de qualidade e rastreamento de perdas de produção para análise de eficiência.",
+    items: [
+      { feature: "Registro de falhas por job", status: "done", description: "Campo failure_reason no job com status 'failed'" },
+      { feature: "Dashboard de taxa de falha", status: "planned", description: "KPIs de falhas por impressora, material e operador" },
+      { feature: "Checklist de QC por produto", status: "planned", description: "Critérios de aprovação configuráveis por produto" },
+      { feature: "Fotos de evidência (QC)", status: "done", description: "Upload de fotos por job já implementado" },
+      { feature: "Rastreamento de waste por material", status: "in_progress", description: "Consumo automático com perda registrada no movimento" },
     ],
-    tableColumns: ["Conta", "Descrição", "Data", "Valor", "Tipo", "Conciliação"],
-    tableRows: [
-      ["Itaú PJ", "Recebimento PIX", "15/03/2026", "R$ 2.180,00", "Entrada", "Conciliado"],
-      ["Nubank PJ", "Compra filamento", "15/03/2026", "R$ 1.290,00", "Saída", "Pendente"],
-      ["Itaú PJ", "Tarifa bancária", "14/03/2026", "R$ 89,90", "Saída", "Conciliado"],
-      ["Caixa", "Venda balcão", "14/03/2026", "R$ 640,00", "Entrada", "Pendente"],
+  },
+  "/producao/planejamento": {
+    title: "Planejamento / Gantt",
+    description: "Visão de capacidade e agendamento de produção com timeline visual.",
+    items: [
+      { feature: "Pipeline de status dos jobs", status: "done", description: "Workflow completo: fila → impressão → QC → pronto" },
+      { feature: "Explosão automática de pedidos", status: "done", description: "Pedido aprovado gera jobs automaticamente" },
+      { feature: "Gantt de produção", status: "planned", description: "Timeline visual com drag-and-drop por impressora" },
+      { feature: "Alocação de capacidade", status: "planned", description: "Estimativa de fila por impressora com ETA" },
+      { feature: "Alertas de SLA", status: "planned", description: "Notificações quando jobs ultrapassam prazo" },
     ],
   },
 };
 
-const fallbackConfig: ModuleConfig = {
-  title: "Módulo Operacional",
-  description: "Visão central do módulo com indicadores, fila e ações rápidas.",
-  actionLabel: "Nova Ação",
-  aiMessage: "O módulo já está com layout ERP completo. Posso seguir com CRUD real, filtros avançados e integrações deste fluxo.",
-  kpis: [
-    { label: "Pendências", value: "18", trend: "-2 hoje", tone: "today" },
-    { label: "Concluído", value: "42", trend: "+11 esta semana", tone: "paid" },
-    { label: "Atenção", value: "5", trend: "2 críticos", tone: "overdue" },
-    { label: "Total", value: "65", trend: "100% rastreado", tone: "total" },
-  ],
-  tableColumns: ["Código", "Descrição", "Responsável", "Prazo", "Status", "Prioridade"],
-  tableRows: [
-    ["ITM-801", "Revisar lote de produção", "Operação", "16/03/2026", "Em progresso", "Alta"],
-    ["ITM-798", "Separar itens para expedição", "Expedição", "16/03/2026", "Aberto", "Média"],
-    ["ITM-790", "Aprovar orçamento fornecedor", "Financeiro", "15/03/2026", "Aguardando", "Alta"],
-    ["ITM-777", "Atualizar ficha técnica", "Engenharia", "14/03/2026", "Concluído", "Baixa"],
+const fallbackRoadmap: ModuleRoadmap = {
+  title: "Módulo em desenvolvimento",
+  description: "Este módulo está no roadmap e será implementado em breve.",
+  items: [
+    { feature: "Layout e navegação", status: "done", description: "Estrutura de menu e rotas configurada" },
+    { feature: "CRUD principal", status: "planned", description: "Cadastro, edição e listagem de registros" },
+    { feature: "Filtros e busca", status: "planned", description: "Busca por texto e filtros por status" },
+    { feature: "Integração com outros módulos", status: "planned", description: "Vinculação com financeiro, estoque e produção" },
   ],
 };
 
-function toneClass(tone: ModuleConfig["kpis"][number]["tone"]) {
-  if (tone === "overdue") return "status-card-overdue";
-  if (tone === "paid") return "status-card-paid";
-  if (tone === "today") return "status-card-today";
-  if (tone === "upcoming" || tone === "warning") return "status-card-upcoming";
-  return "status-card-total";
-}
+const statusIcon = {
+  done: CheckCircle2,
+  in_progress: Hammer,
+  planned: Clock,
+};
 
-function statusBadgeClass(status: string) {
-  if (status === "Vencido" || status === "Pendente") return "badge-destructive";
-  if (status === "Recebido" || status === "Conciliado" || status === "Concluído") return "badge-success";
-  if (status === "Parcial" || status === "Em progresso") return "badge-warning";
-  return "badge-info";
-}
+const statusLabel = {
+  done: "Implementado",
+  in_progress: "Em progresso",
+  planned: "Planejado",
+};
+
+const statusColor = {
+  done: "text-emerald-600 bg-emerald-50 border-emerald-200",
+  in_progress: "text-amber-600 bg-amber-50 border-amber-200",
+  planned: "text-muted-foreground bg-muted/50 border-border",
+};
 
 export default function ModulePlaceholder() {
   const location = useLocation();
 
-  const config = useMemo(() => configs[location.pathname] ?? fallbackConfig, [location.pathname]);
+  const roadmap = useMemo(() => roadmaps[location.pathname] ?? fallbackRoadmap, [location.pathname]);
   const segments = location.pathname.split("/").filter(Boolean);
-  const breadcrumbs = segments.slice(0, -1).map((segment, index) => ({
+  const breadcrumbs = segments.map((segment, index) => ({
     label: segment.charAt(0).toUpperCase() + segment.slice(1),
-    href: `/${segments.slice(0, index + 1).join("/")}`,
   }));
 
+  const doneCount = roadmap.items.filter(i => i.status === "done").length;
+  const totalCount = roadmap.items.length;
+  const progress = totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0;
+
   return (
-    <div className="space-y-6 page-enter">
+    <div className="space-y-6 animate-in fade-in duration-300">
       <PageHeader
-        title={config.title}
-        description={config.description}
+        title={roadmap.title}
+        description={roadmap.description}
         breadcrumbs={breadcrumbs}
-        actions={
+      />
+
+      {/* Progress */}
+      <div className="rounded-xl border bg-card p-5">
+        <div className="flex items-center justify-between mb-3">
           <div className="flex items-center gap-2">
-            <Button variant="outline" className="gap-2">
-              <FileSpreadsheet className="h-4 w-4" />
-              Exportar
-            </Button>
-            <Button className="gap-2">
-              <CircleDollarSign className="h-4 w-4" />
-              {config.actionLabel}
-            </Button>
+            <CalendarDays className="h-4 w-4 text-muted-foreground" />
+            <span className="text-sm font-medium text-foreground">Progresso do módulo</span>
           </div>
-        }
-      />
-
-      <ArgusBanner
-        message={config.aiMessage}
-        actionLabel="Aplicar sugestão"
-        onAction={() => undefined}
-      />
-
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {config.kpis.map((kpi) => (
-          <div key={kpi.label} className={`status-card status-card-active ${toneClass(kpi.tone)}`}>
-            <span className="status-card-count">{kpi.value}</span>
-            <span className="status-card-value">{kpi.trend}</span>
-            <span className="status-card-label">{kpi.label}</span>
-          </div>
-        ))}
+          <span className="text-sm font-bold text-foreground">{progress}%</span>
+        </div>
+        <div className="h-2 bg-muted rounded-full overflow-hidden">
+          <div
+            className="h-full bg-primary rounded-full transition-all duration-500"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+        <div className="flex items-center gap-4 mt-3 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1"><CheckCircle2 className="h-3 w-3 text-emerald-600" /> {doneCount} implementados</span>
+          <span className="flex items-center gap-1"><Hammer className="h-3 w-3 text-amber-600" /> {roadmap.items.filter(i => i.status === "in_progress").length} em progresso</span>
+          <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {roadmap.items.filter(i => i.status === "planned").length} planejados</span>
+        </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-3">
-        <section className="lg:col-span-2 card-enterprise !p-0 overflow-hidden">
-          <div className="px-6 py-4 border-b border-border flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-foreground">Fila operacional</h3>
-            <button className="text-xs text-primary flex items-center gap-1 font-medium hover:underline">
-              Ver completo <ArrowRight className="h-3 w-3" />
-            </button>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="table-enterprise">
-              <thead>
-                <tr>
-                  {config.tableColumns.map((col) => (
-                    <th key={col}>{col}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {config.tableRows.map((row) => (
-                  <tr key={row[0]}>
-                    {row.map((cell, idx) => {
-                      const isStatus = idx === row.length - 2;
-                      return (
-                        <td key={`${row[0]}-${idx}`}>
-                          {isStatus ? (
-                            <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${statusBadgeClass(cell)}`}>
-                              {cell}
-                            </span>
-                          ) : (
-                            cell
-                          )}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <aside className="space-y-4">
-          <div className="card-enterprise space-y-3">
-            <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-              <Sparkles className="h-4 w-4 text-primary" />
-              Particularidades 3D
+      {/* Feature List */}
+      <div className="rounded-xl border bg-card overflow-hidden divide-y">
+        {roadmap.items.map((item, i) => {
+          const Icon = statusIcon[item.status];
+          return (
+            <div key={i} className="flex items-start gap-4 px-6 py-4">
+              <div className={cn("mt-0.5 rounded-full p-1.5 border", statusColor[item.status])}>
+                <Icon className="h-3.5 w-3.5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium text-foreground">{item.feature}</p>
+                  <span className={cn(
+                    "inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold border",
+                    statusColor[item.status],
+                  )}>
+                    {statusLabel[item.status]}
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-0.5">{item.description}</p>
+              </div>
             </div>
-            <div className="space-y-2 text-sm text-muted-foreground">
-              <p className="flex items-center gap-2"><Printer className="h-4 w-4" /> SLA dos jobs por impressora</p>
-              <p className="flex items-center gap-2"><Boxes className="h-4 w-4" /> Consumo real de filamento por lote</p>
-              <p className="flex items-center gap-2"><Clock3 className="h-4 w-4" /> ETA dinâmico com fila de impressão</p>
-              <p className="flex items-center gap-2"><Factory className="h-4 w-4" /> Custos por máquina e setup</p>
-            </div>
-          </div>
+          );
+        })}
+      </div>
 
-          <div className="card-enterprise space-y-3">
-            <h4 className="text-sm font-semibold text-foreground">Próximos passos</h4>
-            <ul className="space-y-2 text-sm text-muted-foreground">
-              <li>• CRUD completo com dados reais</li>
-              <li>• Filtros avançados e paginação</li>
-              <li>• Fluxo de aprovação por perfil</li>
-              <li>• Integração com anexos e auditoria</li>
-            </ul>
-          </div>
-        </aside>
+      {/* CTA */}
+      <div className="rounded-xl border border-dashed bg-muted/30 p-6 text-center">
+        <AlertTriangle className="h-5 w-5 text-muted-foreground mx-auto mb-2" />
+        <p className="text-sm font-medium text-foreground">Módulo em construção</p>
+        <p className="text-xs text-muted-foreground mt-1">
+          As funcionalidades listadas acima estão sendo implementadas progressivamente.
+        </p>
       </div>
     </div>
   );
