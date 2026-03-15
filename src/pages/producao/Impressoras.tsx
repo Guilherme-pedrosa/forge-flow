@@ -328,6 +328,13 @@ function CreatePrinterDialog({ open, onOpenChange }: { open: boolean; onOpenChan
     if (!profile) return;
     setLoading(true);
 
+    const powerWatts = Number(form.power_watts) || 150;
+    const acquisitionCost = Number(form.acquisition_cost) || 0;
+    const usefulLifeHours = Number(form.useful_life_hours) || 10000;
+    const depreciationPerHour = acquisitionCost > 0 && usefulLifeHours > 0
+      ? acquisitionCost / usefulLifeHours
+      : 0;
+
     const { error } = await supabase.from("printers").insert({
       tenant_id: profile.tenant_id,
       name: form.name,
@@ -335,9 +342,10 @@ function CreatePrinterDialog({ open, onOpenChange }: { open: boolean; onOpenChan
       model: form.model,
       serial_number: form.serial_number || null,
       ip_address: form.ip_address || null,
-      power_watts: Number(form.power_watts) || 150,
-      acquisition_cost: Number(form.acquisition_cost) || 0,
-      useful_life_hours: Number(form.useful_life_hours) || 10000,
+      power_watts: powerWatts,
+      acquisition_cost: acquisitionCost,
+      useful_life_hours: usefulLifeHours,
+      depreciation_per_hour: depreciationPerHour,
     });
 
     setLoading(false);

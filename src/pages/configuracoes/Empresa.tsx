@@ -22,6 +22,13 @@ export default function Empresa() {
   const [overheadPercent, setOverheadPercent] = useState("");
   const [targetMargin, setTargetMargin] = useState("");
 
+  const parseLocaleNumber = (value: string) => {
+    const normalized = value.trim().replace(",", ".");
+    if (!normalized) return 0;
+    const n = Number(normalized);
+    return Number.isFinite(n) ? n : 0;
+  };
+
   const { data: tenant, isLoading } = useQuery({
     queryKey: ["tenant"],
     queryFn: async () => {
@@ -51,13 +58,19 @@ export default function Empresa() {
       if (!profile) throw new Error("Sem perfil");
       const settings = {
         ...((tenant?.settings as any) || {}),
-        energy_cost_kwh: energyCostKwh ? parseFloat(energyCostKwh) : null,
-        labor_cost_hour: laborCostHour ? parseFloat(laborCostHour) : null,
-        overhead_percent: overheadPercent ? parseFloat(overheadPercent) : null,
-        target_margin: targetMargin ? parseFloat(targetMargin) : null,
+        energy_cost_kwh: parseLocaleNumber(energyCostKwh),
+        labor_cost_hour: parseLocaleNumber(laborCostHour),
+        overhead_percent: parseLocaleNumber(overheadPercent),
+        target_margin: parseLocaleNumber(targetMargin),
       };
-      const { error } = await supabase.from("tenants").update({ name, currency, timezone, settings }).eq("id", profile.tenant_id);
+      const { data, error } = await supabase
+        .from("tenants")
+        .update({ name, currency, timezone, settings })
+        .eq("id", profile.tenant_id)
+        .select("id")
+        .maybeSingle();
       if (error) throw error;
+      if (!data) throw new Error("Sem permissão para salvar configurações da empresa.");
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["tenant"] }); toast({ title: "Configurações salvas" }); },
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
