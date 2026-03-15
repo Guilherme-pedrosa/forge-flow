@@ -362,6 +362,10 @@ export default function Produtos() {
       const p = model.profiles[0];
       if (p.weight_grams) setEstGrams(p.weight_grams.toString());
       if (p.time_seconds) setEstTime(Math.round(p.time_seconds / 60).toString());
+      // Set number of colors from filaments count
+      if (p.filaments?.length > 0) {
+        setNumColors(String(p.filaments.length));
+      }
       const filInfo = p.filaments?.map((f: any) => `${f.type} ${f.grams}g`).join(", ") || "";
       setNotes(`Importado do MakerWorld — ID: ${model.id}${filInfo ? `\nFilamentos: ${filInfo}` : ""}`);
     } else {
