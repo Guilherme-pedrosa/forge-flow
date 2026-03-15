@@ -399,18 +399,25 @@ export default function Compras() {
         if (ie) throw ie;
       }
 
-      // Create accounts_payable for NFe
+      // Create accounts_payable for NFe (with installments)
       if (nfeData.total > 0) {
-        await supabase.from("accounts_payable").insert({
-          tenant_id: profile.tenant_id,
+        const apDueDate = nfeDueDate || nfeData.issueDate || new Date().toISOString().slice(0, 10);
+        const numInst = parseInt(nfeInstallments || "1", 10);
+        const entries = generateInstallmentAP({
+          tenantId: profile.tenant_id,
           description: `NFe ${nfeData.nfeNumber} - ${nfeData.vendorName || "Fornecedor"}`,
-          amount: nfeData.total,
-          due_date: nfeData.issueDate || new Date().toISOString().slice(0, 10),
-          vendor_id: vid,
-          status: "open",
+          totalAmount: nfeData.total,
+          baseDueDate: apDueDate,
+          numInstallments: numInst,
+          vendorId: vid,
+          paymentMethodId: null,
+          isPaid: false,
+          paymentDate: null,
           notes: `Ref. NFe ${nfeData.nfeNumber} - Pedido ${code}`,
-          created_by: profile.user_id,
+          createdBy: profile.user_id,
         });
+        const { error: apErr } = await supabase.from("accounts_payable").insert(entries);
+        if (apErr) throw apErr;
       }
     },
     onSuccess: () => {
