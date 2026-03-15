@@ -924,6 +924,7 @@ function parseDesignToModel(d: any, selectedProfileId?: string | null) {
 
   if (profiles.length === 0) {
     profiles.push({
+      profile_id: selectedProfileId || d.profile_id || d.profileId || null,
       name: "Opção 1",
       weight_grams: maxMetric(
         metricToGrams(d.weight, d.weight_unit || d.unit),
