@@ -420,14 +420,7 @@ export default function Produtos() {
       selectedProfile?.name ? `Profile: ${selectedProfile.name}` : "",
     ].filter(Boolean);
 
-    if (resolvedWeight > 0) {
-      setEstGrams(resolvedWeight.toFixed(1).replace(/\.0$/, ""));
-    }
-
-    if (resolvedTimeSeconds > 0) {
-      const minutes = Math.round(resolvedTimeSeconds / 60);
-      setEstTime(minutes.toString());
-    }
+    noteParts.push("⚠ Peso e tempo não foram preenchidos automaticamente. Preencha manualmente.");
 
     if (selectedProfile?.filaments?.length > 0) {
       setNumColors(String(selectedProfile.filaments.length));
