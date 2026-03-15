@@ -7,6 +7,7 @@ import { AppLayout } from "@/components/AppLayout";
 import Dashboard from "./pages/Dashboard";
 import ModulePlaceholder from "./pages/ModulePlaceholder";
 import ContasPagar from "./pages/financeiro/ContasPagar";
+import Impressoras from "./pages/producao/Impressoras";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
