@@ -5,7 +5,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { PageHeader } from "@/components/shared/PageHeader";
 import {
   Plus, Search, MoreHorizontal, Loader2, Upload, FileText,
-  Trash2, Eye, CheckCircle2, Package, ShoppingCart,
+  Trash2, Eye, CheckCircle2, Package, ShoppingCart, Camera,
+  Image as ImageIcon, Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -128,6 +129,12 @@ export default function Compras() {
   const [createOpen, setCreateOpen] = useState(false);
   const [detailOrder, setDetailOrder] = useState<any>(null);
   const [xmlImportOpen, setXmlImportOpen] = useState(false);
+  const [marketplaceImportOpen, setMarketplaceImportOpen] = useState(false);
+  const [marketplaceImages, setMarketplaceImages] = useState<string[]>([]);
+  const [marketplaceParsing, setMarketplaceParsing] = useState(false);
+  const [marketplaceParsed, setMarketplaceParsed] = useState<any[]>([]);
+  const [marketplaceSelectedIdx, setMarketplaceSelectedIdx] = useState(0);
+  const marketplaceFileRef = useRef<HTMLInputElement>(null);
   const [nfeData, setNfeData] = useState<NfeData | null>(null);
   const [xmlRaw, setXmlRaw] = useState("");
 
@@ -399,7 +406,136 @@ export default function Compras() {
     setManualItems(updated);
   };
 
-  // KPIs
+  // ── Marketplace Screenshot Import ──
+  const handleMarketplaceUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    
+    // Convert files to base64 previews
+    const previews: string[] = [];
+    for (const file of files) {
+      const url = URL.createObjectURL(file);
+      previews.push(url);
+    }
+    setMarketplaceImages(previews);
+    setMarketplaceParsing(true);
+    setMarketplaceParsed([]);
+
+    try {
+      const allPurchases: any[] = [];
+      for (const file of files) {
+        const base64 = await fileToBase64(file);
+        const { data, error } = await supabase.functions.invoke("parse-purchase-receipt", {
+          body: { imageBase64: base64, mimeType: file.type },
+        });
+        if (error) throw error;
+        if (data?.error) throw new Error(data.error);
+        if (data?.purchases) allPurchases.push(...data.purchases);
+      }
+      setMarketplaceParsed(allPurchases);
+      setMarketplaceSelectedIdx(0);
+      if (allPurchases.length === 0) {
+        toast({ title: "Nenhuma compra identificada", description: "Não foi possível extrair dados da imagem.", variant: "destructive" });
+      }
+    } catch (err: any) {
+      toast({ title: "Erro ao processar", description: err.message, variant: "destructive" });
+    } finally {
+      setMarketplaceParsing(false);
+    }
+    e.target.value = "";
+  };
+
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        resolve(result.split(",")[1]); // Remove data:xxx;base64, prefix
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const marketplaceLabels: Record<string, string> = {
+    mercado_livre: "Mercado Livre",
+    shopee: "Shopee",
+    tiktok_shop: "TikTok Shop",
+    amazon: "Amazon",
+    magalu: "Magazine Luiza",
+    outro: "Outro",
+  };
+
+  const importMarketplaceMut = useMutation({
+    mutationFn: async (purchase: any) => {
+      if (!profile) throw new Error("Sem perfil");
+
+      // Find or create vendor
+      let vid: string | null = null;
+      if (purchase.vendor_name) {
+        const { data: existingVendor } = await supabase
+          .from("vendors")
+          .select("id")
+          .ilike("name", purchase.vendor_name)
+          .maybeSingle();
+        if (existingVendor) {
+          vid = existingVendor.id;
+        } else {
+          const { data: newVendor } = await supabase.from("vendors").insert({
+            tenant_id: profile.tenant_id,
+            name: purchase.vendor_name,
+          }).select("id").single();
+          if (newVendor) vid = newVendor.id;
+        }
+      }
+
+      const code = `PC-${String(orders.length + 1).padStart(4, "0")}`;
+      const marketplace = marketplaceLabels[purchase.marketplace] || purchase.marketplace || "Marketplace";
+      const { data: po, error } = await supabase.from("purchase_orders").insert({
+        tenant_id: profile.tenant_id,
+        code,
+        vendor_id: vid,
+        order_date: purchase.order_date || new Date().toISOString().slice(0, 10),
+        subtotal: purchase.subtotal || purchase.total || 0,
+        discount: purchase.discount || 0,
+        shipping: purchase.shipping || 0,
+        total: purchase.total || 0,
+        status: purchase.status === "concluido" ? "received" : "pending",
+        received_date: purchase.status === "concluido" ? (purchase.order_date || new Date().toISOString().slice(0, 10)) : null,
+        notes: `Importado de ${marketplace}${purchase.payment_installments ? ` | Pgto: ${purchase.payment_installments}` : ""}${purchase.notes ? ` | ${purchase.notes}` : ""}`,
+        created_by: profile.user_id,
+      }).select().single();
+      if (error) throw error;
+
+      if (purchase.items?.length > 0) {
+        const rows = purchase.items.map((i: any) => ({
+          tenant_id: profile.tenant_id,
+          purchase_order_id: po.id,
+          description: `${i.description}${i.color ? ` - ${i.color}` : ""}${i.variant ? ` (${i.variant})` : ""}`,
+          quantity: i.quantity || 1,
+          unit_price: i.unit_price || 0,
+          total: i.total || (i.quantity || 1) * (i.unit_price || 0),
+        }));
+        const { error: ie } = await supabase.from("purchase_order_items").insert(rows);
+        if (ie) throw ie;
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["purchase_orders"] });
+      qc.invalidateQueries({ queryKey: ["vendors"] });
+      // Remove imported purchase from list
+      setMarketplaceParsed(prev => prev.filter((_, i) => i !== marketplaceSelectedIdx));
+      setMarketplaceSelectedIdx(0);
+      toast({ title: "Compra importada!" });
+      if (marketplaceParsed.length <= 1) {
+        setMarketplaceImportOpen(false);
+        setMarketplaceImages([]);
+        setMarketplaceParsed([]);
+      }
+    },
+    onError: (e: any) => toast({ title: "Erro ao importar", description: e.message, variant: "destructive" }),
+  });
+
   const totalOrders = orders.length;
   const pendingOrders = orders.filter((o: any) => o.status === "draft" || o.status === "pending").length;
   const totalValue = orders.reduce((s: number, o: any) => s + (o.total || 0), 0);
@@ -412,6 +548,9 @@ export default function Compras() {
         breadcrumbs={[{ label: "Estoque", href: "/estoque/itens" }, { label: "Compras" }]}
         actions={
           <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => { setMarketplaceImages([]); setMarketplaceParsed([]); setMarketplaceImportOpen(true); }}>
+              <Camera className="h-4 w-4 mr-1" /> Screenshot Compra
+            </Button>
             <Button variant="outline" size="sm" onClick={() => { setNfeData(null); setXmlRaw(""); setXmlImportOpen(true); }}>
               <Upload className="h-4 w-4 mr-1" /> Importar XML
             </Button>
@@ -714,6 +853,151 @@ export default function Compras() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Marketplace Screenshot Import Dialog */}
+      <Dialog open={marketplaceImportOpen} onOpenChange={setMarketplaceImportOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-primary" />
+              Importar via Screenshot
+            </DialogTitle>
+            <DialogDescription>
+              Envie screenshots de compras do Mercado Livre, Shopee, TikTok Shop e outros marketplaces
+            </DialogDescription>
+          </DialogHeader>
+
+          {marketplaceParsed.length === 0 ? (
+            <div className="flex flex-col items-center gap-4 py-8">
+              {marketplaceParsing ? (
+                <>
+                  <div className="w-20 h-20 rounded-2xl bg-primary/10 flex items-center justify-center">
+                    <Loader2 className="h-10 w-10 text-primary animate-spin" />
+                  </div>
+                  <p className="text-sm text-muted-foreground">Analisando imagem com IA...</p>
+                  <p className="text-xs text-muted-foreground">Reconhecendo itens, preços e fornecedor</p>
+                </>
+              ) : (
+                <>
+                  <div className="w-20 h-20 rounded-2xl bg-muted flex items-center justify-center">
+                    <ImageIcon className="h-10 w-10 text-muted-foreground" />
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm font-medium">Envie uma ou mais screenshots</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Suporta Mercado Livre, Shopee, TikTok Shop, Amazon, Magazine Luiza
+                    </p>
+                  </div>
+                  <input
+                    ref={marketplaceFileRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={handleMarketplaceUpload}
+                  />
+                  <Button onClick={() => marketplaceFileRef.current?.click()}>
+                    <Camera className="h-4 w-4 mr-2" /> Selecionar Screenshots
+                  </Button>
+                </>
+              )}
+
+              {/* Preview uploaded images */}
+              {marketplaceImages.length > 0 && (
+                <div className="flex gap-2 flex-wrap justify-center">
+                  {marketplaceImages.map((src, i) => (
+                    <img key={i} src={src} alt={`Screenshot ${i + 1}`} className="h-24 rounded-lg border object-cover" />
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {/* Purchase tabs if multiple */}
+              {marketplaceParsed.length > 1 && (
+                <div className="flex gap-1 overflow-x-auto pb-1">
+                  {marketplaceParsed.map((p, i) => (
+                    <Button
+                      key={i}
+                      variant={marketplaceSelectedIdx === i ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setMarketplaceSelectedIdx(i)}
+                      className="text-xs whitespace-nowrap"
+                    >
+                      {marketplaceLabels[p.marketplace] || "Compra"} #{i + 1}
+                    </Button>
+                  ))}
+                </div>
+              )}
+
+              {(() => {
+                const p = marketplaceParsed[marketplaceSelectedIdx];
+                if (!p) return null;
+                return (
+                  <div className="space-y-4">
+                    <div className="rounded-lg border bg-muted/50 p-4 grid grid-cols-2 gap-3 text-sm">
+                      <div><span className="text-muted-foreground">Marketplace:</span> <span className="font-medium">{marketplaceLabels[p.marketplace] || p.marketplace}</span></div>
+                      <div><span className="text-muted-foreground">Loja:</span> <span className="font-medium">{p.vendor_name || "—"}</span></div>
+                      <div><span className="text-muted-foreground">Data:</span> {p.order_date || "—"}</div>
+                      <div><span className="text-muted-foreground">Status:</span> {p.status || "—"}</div>
+                      {p.shipping > 0 && <div><span className="text-muted-foreground">Frete:</span> {fmtCurrency(p.shipping)}</div>}
+                      {p.discount > 0 && <div><span className="text-muted-foreground">Desconto:</span> {fmtCurrency(p.discount)}</div>}
+                      <div className="col-span-2"><span className="text-muted-foreground font-semibold">Total:</span> <span className="font-bold text-lg">{fmtCurrency(p.total)}</span></div>
+                      {p.payment_installments && (
+                        <div className="col-span-2"><span className="text-muted-foreground">Pagamento:</span> {p.payment_installments}</div>
+                      )}
+                    </div>
+
+                    <div>
+                      <Label className="mb-2 block">Itens ({p.items?.length || 0})</Label>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Descrição</TableHead>
+                            <TableHead className="text-right">Qtd</TableHead>
+                            <TableHead className="text-right">Preço</TableHead>
+                            <TableHead className="text-right">Total</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {(p.items || []).map((item: any, idx: number) => (
+                            <TableRow key={idx}>
+                              <TableCell className="text-sm">
+                                {item.description}
+                                {item.color && <span className="text-xs text-muted-foreground ml-1">({item.color})</span>}
+                              </TableCell>
+                              <TableCell className="text-right text-sm">{item.quantity}</TableCell>
+                              <TableCell className="text-right text-sm">{fmtCurrency(item.unit_price)}</TableCell>
+                              <TableCell className="text-right text-sm font-mono">{fmtCurrency(item.total)}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
+          <DialogFooter>
+            {marketplaceParsed.length > 0 && (
+              <>
+                <Button variant="outline" onClick={() => { setMarketplaceParsed([]); setMarketplaceImages([]); }}>
+                  Enviar outra
+                </Button>
+                <Button
+                  onClick={() => importMarketplaceMut.mutate(marketplaceParsed[marketplaceSelectedIdx])}
+                  disabled={importMarketplaceMut.isPending}
+                >
+                  {importMarketplaceMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
+                  Importar Compra
+                </Button>
+              </>
+            )}
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
