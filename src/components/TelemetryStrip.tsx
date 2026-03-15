@@ -6,6 +6,7 @@ import type { Tables } from "@/integrations/supabase/types";
 
 type PrinterRow = Tables<"printers">;
 type BambuDevice = Tables<"bambu_devices">;
+type JobRow = Tables<"jobs">;
 
 const statusColors: Record<string, string> = {
   printing: "bg-success animate-pulse-glow",
@@ -37,8 +38,18 @@ const fmtFilament = (grams: number | null) => {
   return `${grams.toFixed(1)}g`;
 };
 
+const deriveProgressFromJob = (job: JobRow | null): number | null => {
+  if (!job || !job.started_at || !job.est_time_minutes || job.est_time_minutes <= 0) {
+    return null;
+  }
+
+  const elapsedMinutes =
+    (Date.now() - new Date(job.started_at).getTime()) / (1000 * 60);
+  const pct = Math.max(0, Math.min(99, Math.round((elapsedMinutes / job.est_time_minutes) * 100)));
+  return Number.isFinite(pct) ? pct : null;
+};
+
 export function TelemetryStrip() {
-  // Refresh telemetry snapshot from cloud
   useQuery({
     queryKey: ["telemetry-sync"],
     queryFn: async () => {
@@ -71,13 +82,27 @@ export function TelemetryStrip() {
     queryFn: async () => {
       const { data } = await supabase
         .from("bambu_devices")
-        .select("dev_id, nozzle_temp, bed_temp, progress, print_status, current_task, online, remaining_time, ams_data");
+        .select("dev_id, nozzle_temp, progress, print_status, current_task, online, remaining_time, ams_data");
       return (data ?? []) as BambuDevice[];
     },
     refetchInterval: 15000,
   });
 
+  const { data: activeJobs } = useQuery({
+    queryKey: ["telemetry-active-jobs"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("jobs")
+        .select("id, name, code, status, printer_id, started_at, est_time_minutes, est_grams")
+        .in("status", ["printing", "queued", "paused"])
+        .order("updated_at", { ascending: false });
+      return (data ?? []) as JobRow[];
+    },
+    refetchInterval: 15000,
+  });
+
   const deviceMap = new Map(devices?.map((d) => [d.dev_id, d]) ?? []);
+  const jobMap = new Map((activeJobs ?? []).map((j) => [j.printer_id, j]));
 
   if (!printers?.length) return null;
 
@@ -97,14 +122,30 @@ export function TelemetryStrip() {
       {printers.map((p) => {
         const device = p.bambu_device_id ? deviceMap.get(p.bambu_device_id) : null;
         const liveStatus = resolveStatus(p.status, device);
-        const nozzle = device?.nozzle_temp;
-        const progress = device?.progress;
+        const linkedJob = jobMap.get(p.id) ?? null;
+
+        const progressFromDevice = device?.progress ?? null;
+        const progressFromJob = deriveProgressFromJob(linkedJob);
+        const progress = progressFromDevice ?? progressFromJob;
+
         const remaining = fmtRemaining(device?.remaining_time);
-        const filament = fmtFilament(
+
+        const filamentFromDevice =
           device?.ams_data && typeof device.ams_data === "object"
             ? Number((device.ams_data as Record<string, unknown>).filament_grams ?? NaN)
-            : null
+            : null;
+
+        const filamentFromJob = linkedJob?.est_grams ?? null;
+        const filament = fmtFilament(
+          filamentFromDevice != null && !Number.isNaN(filamentFromDevice)
+            ? filamentFromDevice
+            : filamentFromJob
         );
+
+        const taskName =
+          device?.current_task || linkedJob?.name || (linkedJob?.code ? `Job ${linkedJob.code}` : null);
+
+        const nozzle = device?.nozzle_temp;
         const isPrinting = liveStatus === "printing";
 
         return (
@@ -146,9 +187,9 @@ export function TelemetryStrip() {
               </span>
             )}
 
-            <span className="text-muted-foreground truncate max-w-[160px]">
-              {device?.current_task || (isPrinting ? "Tarefa em execução" : "")}
-            </span>
+            {taskName && (
+              <span className="text-muted-foreground truncate max-w-[170px]">{taskName}</span>
+            )}
           </div>
         );
       })}
