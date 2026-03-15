@@ -461,8 +461,14 @@ Deno.serve(async (req) => {
         try {
           const apiRes = await fetch(`https://makerworld.com/api/v1/design/detail/${modelId}`, {
             headers: {
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-              "Accept": "application/json",
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+              "Accept": "application/json, text/plain, */*",
+              "Accept-Language": "en-US,en;q=0.9",
+              "Referer": `https://makerworld.com/en/models/${modelId}`,
+              "Origin": "https://makerworld.com",
+              "Sec-Fetch-Dest": "empty",
+              "Sec-Fetch-Mode": "cors",
+              "Sec-Fetch-Site": "same-origin",
             },
           });
           const apiText = await apiRes.text();
@@ -470,11 +476,9 @@ Deno.serve(async (req) => {
             try {
               const data = JSON.parse(apiText);
               const design = data?.design || data;
-              // Validate we actually got meaningful data (not empty object)
               const hasContent = design?.id || design?.title || design?.profileList?.length > 0 || design?.profiles?.length > 0;
               if (hasContent) {
                 const parsed = parseDesignToModel(design, selectedProfileId);
-                // Verify the parsed result has meaningful data (weight or time > 0)
                 const firstProfile = parsed.profiles?.[0];
                 const hasWeight = firstProfile?.weight_grams > 0;
                 const hasTime = firstProfile?.time_seconds > 0;
@@ -483,7 +487,7 @@ Deno.serve(async (req) => {
                   strategyUsed = "api_internal";
                   console.log(`Strategy 1 OK: weight=${firstProfile?.weight_grams}g, time=${firstProfile?.time_seconds}s`);
                 } else {
-                  console.warn("Strategy 1 returned 0 weight and 0 time, falling through to Strategy 2");
+                  console.warn("Strategy 1 returned 0 weight and 0 time, falling through");
                 }
               } else {
                 console.warn("Strategy 1 returned empty/minimal data:", apiText.slice(0, 200));
