@@ -277,6 +277,10 @@ export default function Itens() {
           <Input type="number" step="0.01" value={avgCost} onChange={(e) => setAvgCost(e.target.value)} placeholder="0.08" />
         </div>
         <div>
+          <Label>Custo Frete (R$)</Label>
+          <Input type="number" step="0.01" value={freightCost} onChange={(e) => setFreightCost(e.target.value)} placeholder="0.00" />
+        </div>
+        <div>
           <Label>Coef. Perda (%)</Label>
           <Input type="number" step="0.01" value={lossCoefficient} onChange={(e) => setLossCoefficient(e.target.value)} placeholder="0.05" />
         </div>
