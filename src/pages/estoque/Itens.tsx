@@ -135,6 +135,7 @@ export default function Itens() {
         unit,
         min_stock: minStock ? parseFloat(minStock) : 0,
         avg_cost: avgCost ? parseFloat(avgCost) : 0,
+        current_stock: currentStock ? parseFloat(currentStock) : 0,
         loss_coefficient: parseFloat(lossCoefficient) || 0.05,
         notes: notes || null,
       });
