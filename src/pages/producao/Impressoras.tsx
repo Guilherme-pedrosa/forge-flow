@@ -64,6 +64,7 @@ export default function Impressoras() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [detailPrinter, setDetailPrinter] = useState<PrinterRow | null>(null);
+  const [bambuCloudOpen, setBambuCloudOpen] = useState(false);
 
   // ── Fetch printers ──
   const { data: printers = [], isLoading } = useQuery({
