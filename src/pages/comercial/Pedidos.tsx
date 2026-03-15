@@ -247,14 +247,31 @@ export default function Pedidos() {
     const cfg = statusConfig[viewOrder.status] || statusConfig.draft;
     const customerName = (viewOrder as any).customers?.name || "—";
 
-    const itemsHtml = viewItems.map((item: any) => `
+    // Pre-fetch product images as base64
+    const itemImageMap = new Map<string, string>();
+    await Promise.all(viewItems.map(async (item: any) => {
+      const photoUrl = item.products?.photo_url;
+      if (photoUrl) {
+        const b64 = await fetchImageAsBase64(photoUrl);
+        if (b64) itemImageMap.set(item.id, b64);
+      }
+    }));
+
+    const itemsHtml = viewItems.map((item: any) => {
+      const imgB64 = itemImageMap.get(item.id);
+      return `
       <tr>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">${item.description}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            ${imgB64 ? `<img src="${imgB64}" style="width:48px;height:48px;object-fit:cover;border-radius:6px;flex-shrink:0;" />` : ""}
+            <span>${item.description}</span>
+          </div>
+        </td>
         <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:center;">${item.quantity}</td>
         <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right;font-family:monospace;">${fmtCurrency(item.unit_price)}</td>
         <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right;font-family:monospace;font-weight:600;">${fmtCurrency(item.total)}</td>
       </tr>
-    `).join("");
+    `}).join("");
 
     const html = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>${viewOrder.code}</title>
