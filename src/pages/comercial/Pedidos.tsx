@@ -425,6 +425,11 @@ export default function Pedidos() {
         let seq = (jobCount ?? 0) + 1;
         const datePart = new Date().toISOString().slice(0, 10).replace(/-/g, "");
 
+        // Fetch order data once
+        const { data: orderData } = await supabase.from("orders").select("code, due_date").eq("id", id).single();
+        const orderCode = orderData?.code || id;
+        const orderDueDate = orderData?.due_date || null;
+
         const jobInserts: any[] = [];
         for (const item of (items || [])) {
           const prod = item.products as any;
@@ -434,7 +439,6 @@ export default function Pedidos() {
             const minutes = prod?.est_time_minutes || null;
             const materialId = prod?.material_id || null;
 
-            // Calculate estimated costs
             let estMaterialCost = 0;
             if (grams && materialId) {
               const mat = mList.find((m: any) => m.id === materialId);
@@ -445,7 +449,6 @@ export default function Pedidos() {
             }
             let estMachineCost = 0;
             let estEnergyCost = 0;
-            // Use first idle printer as default
             const defaultPrinter = pList[0];
             if (minutes && defaultPrinter) {
               const hours = minutes / 60;
@@ -457,11 +460,11 @@ export default function Pedidos() {
               tenant_id: profile.tenant_id,
               code,
               name: prod?.name || item.description,
-              description: `Pedido ${(await supabase.from("orders").select("code").eq("id", id).single()).data?.code || id} — ${item.description}`,
+              description: `Pedido ${orderCode} — ${item.description}`,
               product_id: prod?.id || null,
               material_id: materialId,
               order_id: id,
-              due_date: (await supabase.from("orders").select("due_date").eq("id", id).single()).data?.due_date || null,
+              due_date: orderDueDate,
               priority: 5,
               est_time_minutes: minutes,
               est_grams: grams,
@@ -478,19 +481,6 @@ export default function Pedidos() {
         }
 
         if (jobInserts.length > 0) {
-          // Fetch order data once to avoid repeated queries
-          const { data: orderData } = await supabase.from("orders").select("code, due_date").eq("id", id).single();
-          const orderCode = orderData?.code || id;
-          const orderDueDate = orderData?.due_date || null;
-
-          // Fix descriptions and due_dates with pre-fetched data
-          for (const j of jobInserts) {
-            if (j.description.includes("Pedido ")) {
-              j.description = `Pedido ${orderCode} — ${j.name}`;
-            }
-            if (!j.due_date) j.due_date = orderDueDate;
-          }
-
           const { error: jobErr } = await supabase.from("jobs").insert(jobInserts);
           if (jobErr) throw jobErr;
         }
