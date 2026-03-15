@@ -1040,23 +1040,26 @@ function parseDesignToModel(d: any, selectedProfileId?: string | null) {
       metricToGrams(d.weight_grams, "g")
     );
 
-    const topLevelComputedWeight = maxMetric(topLevelSummedPlateWeight, topLevelFilamentWeight);
-    const topLevelDeclaredTooHigh = topLevelComputedWeight > 0 && topLevelDeclaredWeight > topLevelComputedWeight * 1.25;
-    const topLevelSafeWeight = topLevelDeclaredTooHigh
-      ? topLevelComputedWeight
-      : maxMetric(topLevelDeclaredWeight, topLevelComputedWeight);
+    const topLevelSafeWeight =
+      topLevelFilamentWeight > 0
+        ? topLevelFilamentWeight
+        : topLevelSummedPlateWeight > 0
+          ? topLevelSummedPlateWeight
+          : topLevelDeclaredWeight;
+
+    const topLevelDeclaredTime = maxMetric(
+      parseLooseMetric(d.estimatedTime),
+      parseLooseMetric(d.estimated_time),
+      parseLooseMetric(d.time_seconds),
+      parseLooseMetric(d.printTime)
+    );
+    const topLevelSafeTime = topLevelSummedPlateTime > 0 ? topLevelSummedPlateTime : topLevelDeclaredTime;
 
     profiles.push({
       profile_id: selectedProfileId || d.profile_id || d.profileId || null,
       name: "Opção 1",
       weight_grams: topLevelSafeWeight,
-      time_seconds: maxMetric(
-        parseLooseMetric(d.estimatedTime),
-        parseLooseMetric(d.estimated_time),
-        parseLooseMetric(d.time_seconds),
-        parseLooseMetric(d.printTime),
-        topLevelSummedPlateTime
-      ),
+      time_seconds: topLevelSafeTime,
       plates: toPositiveNumber(d.plateCount || d.plate_count || topLevelPlates.length),
       filaments: topLevelFilaments,
     });
