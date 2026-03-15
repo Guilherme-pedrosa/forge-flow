@@ -684,7 +684,13 @@ Deno.serve(async (req) => {
                 }
 
                 const normalizedProfiles = parsedProfiles.length > 0
-                  ? parsedProfiles.map((p) => ({ ...p, filaments: filaments.length > 0 ? filaments : p.filaments }))
+                  ? parsedProfiles.map((p) => ({
+                      ...p,
+                      weight_grams: p.weight_grams || weightGrams,
+                      time_seconds: p.time_seconds || timeSeconds,
+                      plates: p.plates || totalPlates,
+                      filaments: filaments.length > 0 ? filaments : p.filaments,
+                    }))
                   : [{
                       name: "Opção 1",
                       weight_grams: weightGrams,
