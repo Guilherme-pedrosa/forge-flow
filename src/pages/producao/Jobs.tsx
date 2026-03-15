@@ -111,7 +111,7 @@ export default function Jobs() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("jobs")
-        .select("*")
+        .select("*, orders(code)")
         .order("created_at", { ascending: false });
       if (error) throw error;
       return data;
@@ -387,7 +387,12 @@ export default function Jobs() {
             ) : (
               filtered.map((job) => (
                 <TableRow key={job.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setDetailJob(job)}>
-                  <TableCell className="font-mono text-xs font-semibold">{job.code}</TableCell>
+                  <TableCell className="font-mono text-xs font-semibold">
+                    <div>{job.code}</div>
+                    {(job as any).orders?.code && (
+                      <span className="text-[10px] text-primary font-normal">{(job as any).orders.code}</span>
+                    )}
+                  </TableCell>
                   <TableCell>
                     <div>
                       <p className="font-medium text-sm">{job.name}</p>
@@ -866,6 +871,9 @@ function JobDetailDialog({
               <InfoRow icon={AlertTriangle} label="Prioridade" value={priorityLabel(job.priority)} />
               <InfoRow icon={Timer} label="Tempo estimado" value={fmtMinutes(job.est_time_minutes)} />
               <InfoRow icon={Weight} label="Gramas est." value={fmtGrams(job.est_grams)} />
+              {job.order_id && (
+                <InfoRow icon={FileText} label="Pedido" value={(job as any).orders?.code || "Vinculado"} />
+              )}
             </div>
 
             {available.length > 0 && (
