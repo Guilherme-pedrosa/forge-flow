@@ -910,7 +910,18 @@ function profileDisplayName(profile: any, idx: number): string {
 }
 
 function parseDesignToModel(d: any, selectedProfileId?: string | null) {
-  const sourceProfiles = d.profileList || d.profiles || [];
+  let sourceProfiles = d.profileList || d.profiles || [];
+
+  if (selectedProfileId && Array.isArray(sourceProfiles) && sourceProfiles.length > 1) {
+    const targetId = String(selectedProfileId);
+    const selectedIdx = sourceProfiles.findIndex((p: any) =>
+      String(p?.profile_id || p?.profileId || p?.id || p?.profile_id_str || "") === targetId
+    );
+    if (selectedIdx > 0) {
+      const selected = sourceProfiles[selectedIdx];
+      sourceProfiles = [selected, ...sourceProfiles.slice(0, selectedIdx), ...sourceProfiles.slice(selectedIdx + 1)];
+    }
+  }
 
   const profiles = sourceProfiles.map((p: any, idx: number) => {
     const ctx = p.context || {};
