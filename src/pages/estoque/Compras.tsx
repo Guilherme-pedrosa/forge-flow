@@ -855,6 +855,151 @@ export default function Compras() {
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Marketplace Screenshot Import Dialog */}
+      <Dialog open={marketplaceImportOpen} onOpenChange={setMarketplaceImportOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Sparkles className="h-5 w-5 text-primary" />
+              Importar via Screenshot
+            </DialogTitle>
+            <DialogDescription>
+              Envie screenshots de compras do Mercado Livre, Shopee, TikTok Shop e outros marketplaces
+            </DialogDescription>
+          </DialogHeader>
+
+          {marketplaceParsed.length === 0 ? (
+            <div className="flex flex-col items-center gap-4 py-8">
+              {marketplaceParsing ? (
+                <>
+                  <div className="w-20 h-20 rounded-2xl bg-primary/10 flex items-center justify-center">
+                    <Loader2 className="h-10 w-10 text-primary animate-spin" />
+                  </div>
+                  <p className="text-sm text-muted-foreground">Analisando imagem com IA...</p>
+                  <p className="text-xs text-muted-foreground">Reconhecendo itens, preços e fornecedor</p>
+                </>
+              ) : (
+                <>
+                  <div className="w-20 h-20 rounded-2xl bg-muted flex items-center justify-center">
+                    <ImageIcon className="h-10 w-10 text-muted-foreground" />
+                  </div>
+                  <div className="text-center">
+                    <p className="text-sm font-medium">Envie uma ou mais screenshots</p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Suporta Mercado Livre, Shopee, TikTok Shop, Amazon, Magazine Luiza
+                    </p>
+                  </div>
+                  <input
+                    ref={marketplaceFileRef}
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={handleMarketplaceUpload}
+                  />
+                  <Button onClick={() => marketplaceFileRef.current?.click()}>
+                    <Camera className="h-4 w-4 mr-2" /> Selecionar Screenshots
+                  </Button>
+                </>
+              )}
+
+              {/* Preview uploaded images */}
+              {marketplaceImages.length > 0 && (
+                <div className="flex gap-2 flex-wrap justify-center">
+                  {marketplaceImages.map((src, i) => (
+                    <img key={i} src={src} alt={`Screenshot ${i + 1}`} className="h-24 rounded-lg border object-cover" />
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {/* Purchase tabs if multiple */}
+              {marketplaceParsed.length > 1 && (
+                <div className="flex gap-1 overflow-x-auto pb-1">
+                  {marketplaceParsed.map((p, i) => (
+                    <Button
+                      key={i}
+                      variant={marketplaceSelectedIdx === i ? "default" : "outline"}
+                      size="sm"
+                      onClick={() => setMarketplaceSelectedIdx(i)}
+                      className="text-xs whitespace-nowrap"
+                    >
+                      {marketplaceLabels[p.marketplace] || "Compra"} #{i + 1}
+                    </Button>
+                  ))}
+                </div>
+              )}
+
+              {(() => {
+                const p = marketplaceParsed[marketplaceSelectedIdx];
+                if (!p) return null;
+                return (
+                  <div className="space-y-4">
+                    <div className="rounded-lg border bg-muted/50 p-4 grid grid-cols-2 gap-3 text-sm">
+                      <div><span className="text-muted-foreground">Marketplace:</span> <span className="font-medium">{marketplaceLabels[p.marketplace] || p.marketplace}</span></div>
+                      <div><span className="text-muted-foreground">Loja:</span> <span className="font-medium">{p.vendor_name || "—"}</span></div>
+                      <div><span className="text-muted-foreground">Data:</span> {p.order_date || "—"}</div>
+                      <div><span className="text-muted-foreground">Status:</span> {p.status || "—"}</div>
+                      {p.shipping > 0 && <div><span className="text-muted-foreground">Frete:</span> {fmtCurrency(p.shipping)}</div>}
+                      {p.discount > 0 && <div><span className="text-muted-foreground">Desconto:</span> {fmtCurrency(p.discount)}</div>}
+                      <div className="col-span-2"><span className="text-muted-foreground font-semibold">Total:</span> <span className="font-bold text-lg">{fmtCurrency(p.total)}</span></div>
+                      {p.payment_installments && (
+                        <div className="col-span-2"><span className="text-muted-foreground">Pagamento:</span> {p.payment_installments}</div>
+                      )}
+                    </div>
+
+                    <div>
+                      <Label className="mb-2 block">Itens ({p.items?.length || 0})</Label>
+                      <Table>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead>Descrição</TableHead>
+                            <TableHead className="text-right">Qtd</TableHead>
+                            <TableHead className="text-right">Preço</TableHead>
+                            <TableHead className="text-right">Total</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {(p.items || []).map((item: any, idx: number) => (
+                            <TableRow key={idx}>
+                              <TableCell className="text-sm">
+                                {item.description}
+                                {item.color && <span className="text-xs text-muted-foreground ml-1">({item.color})</span>}
+                              </TableCell>
+                              <TableCell className="text-right text-sm">{item.quantity}</TableCell>
+                              <TableCell className="text-right text-sm">{fmtCurrency(item.unit_price)}</TableCell>
+                              <TableCell className="text-right text-sm font-mono">{fmtCurrency(item.total)}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          )}
+
+          <DialogFooter>
+            {marketplaceParsed.length > 0 && (
+              <>
+                <Button variant="outline" onClick={() => { setMarketplaceParsed([]); setMarketplaceImages([]); }}>
+                  Enviar outra
+                </Button>
+                <Button
+                  onClick={() => importMarketplaceMut.mutate(marketplaceParsed[marketplaceSelectedIdx])}
+                  disabled={importMarketplaceMut.isPending}
+                >
+                  {importMarketplaceMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
+                  Importar Compra
+                </Button>
+              </>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
