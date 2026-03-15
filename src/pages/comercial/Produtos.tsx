@@ -29,8 +29,8 @@ import { useToast } from "@/hooks/use-toast";
 const fmtCurrency = (v: number | null) => v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
 const fmtDuration = (s: number | null) => {
   if (!s) return "—";
-  const m = Math.round(s / 60);
-  return `${m} min`;
+  const h = (s / 60).toFixed(1).replace(".", ",");
+  return `${h}h`;
 };
 
 const categoryLabels: Record<string, string> = {
