@@ -200,7 +200,7 @@ export default function Produtos() {
 
   const resetForm = () => {
     setName(""); setDescription(""); setSku(""); setCategory("printed_part"); setMaterialId("");
-    setEstGrams(""); setEstTime(""); setPostMinutes(""); setCostEstimate(""); setSalePrice(""); setPhotoUrl(""); setNotes("");
+    setEstGrams(""); setEstTime(""); setPostMinutes(""); setCostEstimate(""); setSalePrice(""); setPhotoUrl(""); setNotes(""); setPrinterId("");
   };
 
   const openEdit = (p: any) => {
@@ -208,7 +208,7 @@ export default function Produtos() {
     setCategory(p.category); setMaterialId(p.material_id || ""); setEstGrams(p.est_grams?.toString() || "");
     setEstTime(p.est_time_minutes?.toString() || ""); setPostMinutes(p.post_process_minutes?.toString() || "");
     setCostEstimate(p.cost_estimate?.toString() || ""); setSalePrice(p.sale_price?.toString() || "");
-    setPhotoUrl(p.photo_url || ""); setNotes(p.notes || "");
+    setPhotoUrl(p.photo_url || ""); setNotes(p.notes || ""); setPrinterId("");
   };
 
   const importFromBambuTask = (task: any) => {
