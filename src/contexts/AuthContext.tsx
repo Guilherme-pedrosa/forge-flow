@@ -83,9 +83,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setProfile(p);
           setLoading(false);
 
-          if (!p && location.pathname !== "/setup") {
+          if (!p && locationRef.current !== "/setup") {
             navigate("/setup");
-          } else if (p && PUBLIC_ROUTES.includes(location.pathname)) {
+          } else if (p && PUBLIC_ROUTES.includes(locationRef.current)) {
             navigate("/");
           }
         }, 0);
