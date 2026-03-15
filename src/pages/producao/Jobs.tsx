@@ -391,29 +391,67 @@ function CreateJobDialog({
   onOpenChange,
   printers,
   materials,
+  products,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   printers: PrinterRow[];
   materials: InventoryRow[];
+  products: ProductRow[];
 }) {
   const { profile } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
+  const [productId, setProductId] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [materialId, setMaterialId] = useState("");
+  const [secondaryMaterialId, setSecondaryMaterialId] = useState("");
   const [printerId, setPrinterId] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [priority, setPriority] = useState("5");
   const [estTimeMinutes, setEstTimeMinutes] = useState("");
   const [estGrams, setEstGrams] = useState("");
+  const [numColors, setNumColors] = useState("1");
+  const [purgeWasteGrams, setPurgeWasteGrams] = useState("");
   const [saving, setSaving] = useState(false);
 
+  const PURGE_GRAMS_PER_COLOR_CHANGE = 20;
+
   const reset = () => {
-    setName(""); setDescription(""); setMaterialId(""); setPrinterId("");
-    setDueDate(""); setPriority("5"); setEstTimeMinutes(""); setEstGrams("");
+    setProductId(""); setName(""); setDescription(""); setMaterialId(""); setSecondaryMaterialId("");
+    setPrinterId(""); setDueDate(""); setPriority("5"); setEstTimeMinutes(""); setEstGrams("");
+    setNumColors("1"); setPurgeWasteGrams("");
+  };
+
+  const handleProductSelect = (id: string) => {
+    setProductId(id);
+    if (!id) return;
+    const p = products.find(pr => pr.id === id);
+    if (!p) return;
+    setName(p.name);
+    setDescription(p.description || "");
+    if (p.material_id) setMaterialId(p.material_id);
+    if (p.est_time_minutes) setEstTimeMinutes(String(p.est_time_minutes));
+    if (p.est_grams) setEstGrams(String(p.est_grams));
+    const colors = (p as any).num_colors || 1;
+    setNumColors(String(colors));
+    if (colors > 1) {
+      setPurgeWasteGrams(String((colors - 1) * PURGE_GRAMS_PER_COLOR_CHANGE));
+    } else {
+      setPurgeWasteGrams(""); setSecondaryMaterialId("");
+    }
+  };
+
+  const handleColorsChange = (v: string) => {
+    setNumColors(v);
+    const c = parseInt(v) || 1;
+    if (c > 1) {
+      setPurgeWasteGrams(String((c - 1) * PURGE_GRAMS_PER_COLOR_CHANGE));
+    } else {
+      setPurgeWasteGrams(""); setSecondaryMaterialId("");
+    }
   };
 
   const handleSave = async () => {
@@ -422,10 +460,8 @@ function CreateJobDialog({
       return;
     }
     if (!profile?.tenant_id) return;
-
     setSaving(true);
     try {
-      // Generate code: OI-YYYYMMDD-XXX
       const now = new Date();
       const datePart = now.toISOString().slice(0, 10).replace(/-/g, "");
       const { count } = await supabase
@@ -435,16 +471,32 @@ function CreateJobDialog({
       const seq = String((count ?? 0) + 1).padStart(3, "0");
       const code = `OI-${datePart}-${seq}`;
 
-      // Calc estimated costs
       const grams = estGrams ? Number(estGrams) : null;
       const minutes = estTimeMinutes ? Number(estTimeMinutes) : null;
+      const colors = parseInt(numColors) || 1;
+      const purge = parseFloat(purgeWasteGrams) || 0;
+
       let estMaterialCost = 0;
       if (grams && materialId) {
         const mat = materials.find(m => m.id === materialId);
         if (mat && mat.avg_cost > 0) {
-          estMaterialCost = (grams / 1000) * mat.avg_cost; // avg_cost per kg
+          const isKg = mat.unit === "kg";
+          const costPerGram = isKg ? mat.avg_cost / 1000 : mat.avg_cost;
+          const lossCoeff = (mat as any).loss_coefficient || 0.05;
+          estMaterialCost = grams * (1 + lossCoeff) * costPerGram;
         }
       }
+      if (colors > 1 && purge > 0) {
+        const purgeMat = secondaryMaterialId
+          ? materials.find(m => m.id === secondaryMaterialId)
+          : materials.find(m => m.id === materialId);
+        if (purgeMat && purgeMat.avg_cost > 0) {
+          const isKg = purgeMat.unit === "kg";
+          const costPerGram = isKg ? purgeMat.avg_cost / 1000 : purgeMat.avg_cost;
+          estMaterialCost += purge * costPerGram;
+        }
+      }
+
       let estMachineCost = 0;
       if (minutes && printerId) {
         const printer = printers.find(p => p.id === printerId);
@@ -457,7 +509,7 @@ function CreateJobDialog({
       if (minutes && printerId) {
         const printer = printers.find(p => p.id === printerId);
         if (printer) {
-          const kwhRate = 0.85; // BRL per kWh — could be a setting
+          const kwhRate = 0.85;
           estEnergyCost = ((printer.power_watts ?? 150) / 1000) * (minutes / 60) * kwhRate;
         }
       }
@@ -468,22 +520,25 @@ function CreateJobDialog({
         code,
         name: name.trim(),
         description: description.trim() || null,
+        product_id: productId || null,
         material_id: materialId || null,
+        secondary_material_id: secondaryMaterialId || null,
         printer_id: printerId || null,
         due_date: dueDate || null,
         priority: Number(priority),
         est_time_minutes: minutes,
         est_grams: grams,
+        num_colors: colors,
+        purge_waste_grams: purge,
         est_material_cost: estMaterialCost,
         est_machine_cost: estMachineCost,
         est_energy_cost: estEnergyCost,
         est_total_cost: estTotalCost,
         created_by: profile.user_id,
         status: "draft",
-      });
+      } as any);
 
       if (error) throw error;
-
       queryClient.invalidateQueries({ queryKey: ["jobs"] });
       toast({ title: "OI criada", description: code });
       reset();
@@ -495,15 +550,32 @@ function CreateJobDialog({
     }
   };
 
+  const isMultiColor = parseInt(numColors) > 1;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Nova Ordem de Impressão</DialogTitle>
-          <DialogDescription>Preencha os dados da peça e estimativas do slicer.</DialogDescription>
+          <DialogDescription>Selecione um produto ou preencha manualmente.</DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-4 py-2">
+          <div className="grid gap-1.5">
+            <Label>Produto cadastrado</Label>
+            <Select value={productId || "none"} onValueChange={(v) => handleProductSelect(v === "none" ? "" : v)}>
+              <SelectTrigger><SelectValue placeholder="Selecionar produto..." /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">— Nenhum (manual) —</SelectItem>
+                {products.map(p => (
+                  <SelectItem key={p.id} value={p.id}>
+                    {p.name}{p.sku ? ` (${p.sku})` : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
           <div className="grid gap-1.5">
             <Label>Peça / Nome *</Label>
             <Input placeholder="Ex: Suporte GoPro v2" value={name} onChange={e => setName(e.target.value)} />
@@ -516,7 +588,28 @@ function CreateJobDialog({
 
           <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-1.5">
-              <Label>Material</Label>
+              <Label>Nº de Cores</Label>
+              <Select value={numColors} onValueChange={handleColorsChange}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1">1 cor</SelectItem>
+                  <SelectItem value="2">2 cores</SelectItem>
+                  <SelectItem value="3">3 cores</SelectItem>
+                  <SelectItem value="4">4 cores (AMS)</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {isMultiColor && (
+              <div className="grid gap-1.5">
+                <Label>Perda purga/torre (g)</Label>
+                <Input type="number" placeholder="20" value={purgeWasteGrams} onChange={e => setPurgeWasteGrams(e.target.value)} />
+              </div>
+            )}
+          </div>
+
+          <div className={cn("grid gap-3", isMultiColor ? "grid-cols-1" : "grid-cols-2")}>
+            <div className="grid gap-1.5">
+              <Label>{isMultiColor ? "Material principal (cor 1)" : "Material"}</Label>
               <Select value={materialId} onValueChange={setMaterialId}>
                 <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
                 <SelectContent>
@@ -528,19 +621,61 @@ function CreateJobDialog({
                 </SelectContent>
               </Select>
             </div>
-            <div className="grid gap-1.5">
-              <Label>Impressora</Label>
-              <Select value={printerId || "pool"} onValueChange={(v) => setPrinterId(v === "pool" ? "" : v)}>
-                <SelectTrigger><SelectValue placeholder="Pool (auto)" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="pool">Pool (auto)</SelectItem>
-                  {printers.map(p => (
-                    <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            {isMultiColor && (
+              <div className="grid gap-1.5">
+                <Label>Material secundário (cor 2+)</Label>
+                <Select value={secondaryMaterialId || "same"} onValueChange={(v) => setSecondaryMaterialId(v === "same" ? "" : v)}>
+                  <SelectTrigger><SelectValue placeholder="Mesmo que principal" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="same">Mesmo que principal</SelectItem>
+                    {materials.map(m => (
+                      <SelectItem key={m.id} value={m.id}>
+                        {m.name}{m.color ? ` (${m.color})` : ""}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+            {!isMultiColor && (
+              <div className="grid gap-1.5">
+                <Label>Impressora</Label>
+                <Select value={printerId || "pool"} onValueChange={(v) => setPrinterId(v === "pool" ? "" : v)}>
+                  <SelectTrigger><SelectValue placeholder="Pool (auto)" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="pool">Pool (auto)</SelectItem>
+                    {printers.map(p => (
+                      <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
           </div>
+
+          {isMultiColor && (
+            <>
+              <div className="grid gap-1.5">
+                <Label>Impressora</Label>
+                <Select value={printerId || "pool"} onValueChange={(v) => setPrinterId(v === "pool" ? "" : v)}>
+                  <SelectTrigger><SelectValue placeholder="Pool (auto)" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="pool">Pool (auto)</SelectItem>
+                    {printers.map(p => (
+                      <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  <AlertTriangle className="h-3 w-3 inline mr-1" />
+                  Impressão multicolor: torre de purga consome ~{purgeWasteGrams || PURGE_GRAMS_PER_COLOR_CHANGE}g extras.
+                  {parseInt(numColors) >= 3 && " Com 3+ cores, considere ~25-40g de perda."}
+                </p>
+              </div>
+            </>
+          )}
 
           <div className="grid grid-cols-3 gap-3">
             <div className="grid gap-1.5">
