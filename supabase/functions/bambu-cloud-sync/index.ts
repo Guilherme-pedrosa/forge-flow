@@ -944,9 +944,15 @@ function parseDesignToModel(d: any, selectedProfileId?: string | null) {
     }
   }
 
+  console.log("parseDesignToModel: sourceProfiles count =", sourceProfiles.length);
+  if (sourceProfiles.length > 0) {
+    console.log("parseDesignToModel: profile[0] keys =", Object.keys(sourceProfiles[0]).join(", "));
+    console.log("parseDesignToModel: profile[0] sample =", JSON.stringify(sourceProfiles[0]).slice(0, 2000));
+  }
+
   const profiles = sourceProfiles.map((p: any, idx: number) => {
-    const ctx = p.context || {};
-    const plates = ctx.plates || [];
+    const ctx = p.context || p.picData || {};
+    const plates = ctx.plates || p.plates || [];
 
     const filamentMap = new Map<string, { type: string; color: string; grams: number }>();
     const addFilament = (type: string, color: string, grams: number) => {
