@@ -445,7 +445,7 @@ Deno.serve(async (req) => {
       }
 
       const models: any[] = [];
-      let strategyUsed: "api_internal" | "firecrawl" | "direct_html" | null = null;
+      let strategyUsed: "api_internal" | "firecrawl" | "firecrawl_json" | "direct_html" | "direct_html_parsed" | null = null;
       const modelMatch = url.match(/\/models\/(\d+)/);
       const hashProfileId = url.match(/profileId-(\d+)/i)?.[1] || null;
       const queryProfileId = url.match(/[?&]profileId=(\d+)/i)?.[1] || null;
