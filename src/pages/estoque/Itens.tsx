@@ -67,6 +67,7 @@ export default function Itens() {
   const [lossCoefficient, setLossCoefficient] = useState("0.05");
   const [notes, setNotes] = useState("");
   const [currentStock, setCurrentStock] = useState("");
+  const [freightCost, setFreightCost] = useState("");
 
   const { data: items = [], isLoading } = useQuery({
     queryKey: ["inventory_items"],
@@ -100,7 +101,7 @@ export default function Itens() {
   const resetForm = () => {
     setName(""); setCategory("filament"); setMaterialType(""); setColor("");
     setDiameter(""); setBrand(""); setSku(""); setUnit("g"); setMinStock("");
-    setAvgCost(""); setLossCoefficient("0.05"); setNotes(""); setCurrentStock("");
+    setAvgCost(""); setLossCoefficient("0.05"); setNotes(""); setCurrentStock(""); setFreightCost("");
   };
 
   const openEdit = (item: ItemRow) => {
@@ -118,6 +119,7 @@ export default function Itens() {
     setLossCoefficient(item.loss_coefficient?.toString() || "0.05");
     setNotes(item.notes || "");
     setCurrentStock(item.current_stock?.toString() || "0");
+    setFreightCost((item as any).freight_cost?.toString() || "");
   };
 
   const createMut = useMutation({
@@ -138,7 +140,8 @@ export default function Itens() {
         current_stock: currentStock ? parseFloat(currentStock) : 0,
         loss_coefficient: parseFloat(lossCoefficient) || 0.05,
         notes: notes || null,
-      });
+        freight_cost: freightCost ? parseFloat(freightCost) : 0,
+      } as any);
       if (error) throw error;
     },
     onSuccess: () => {
@@ -168,7 +171,8 @@ export default function Itens() {
         current_stock: newStock,
         loss_coefficient: parseFloat(lossCoefficient) || 0.05,
         notes: notes || null,
-      }).eq("id", editItem.id);
+        freight_cost: freightCost ? parseFloat(freightCost) : 0,
+      } as any).eq("id", editItem.id);
       if (error) throw error;
       // If stock changed, create an adjustment movement for audit trail
       if (newStock !== editItem.current_stock) {
@@ -271,6 +275,10 @@ export default function Itens() {
         <div>
           <Label>Custo Médio (R$)</Label>
           <Input type="number" step="0.01" value={avgCost} onChange={(e) => setAvgCost(e.target.value)} placeholder="0.08" />
+        </div>
+        <div>
+          <Label>Custo Frete (R$)</Label>
+          <Input type="number" step="0.01" value={freightCost} onChange={(e) => setFreightCost(e.target.value)} placeholder="0.00" />
         </div>
         <div>
           <Label>Coef. Perda (%)</Label>

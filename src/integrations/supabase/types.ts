@@ -855,6 +855,7 @@ export type Database = {
           created_at: string
           current_stock: number
           diameter: number | null
+          freight_cost: number | null
           id: string
           is_active: boolean
           last_cost: number | null
@@ -877,6 +878,7 @@ export type Database = {
           created_at?: string
           current_stock?: number
           diameter?: number | null
+          freight_cost?: number | null
           id?: string
           is_active?: boolean
           last_cost?: number | null
@@ -899,6 +901,7 @@ export type Database = {
           created_at?: string
           current_stock?: number
           diameter?: number | null
+          freight_cost?: number | null
           id?: string
           is_active?: boolean
           last_cost?: number | null
