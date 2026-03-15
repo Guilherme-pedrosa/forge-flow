@@ -560,7 +560,7 @@ Deno.serve(async (req) => {
               throw new Error(`Firecrawl HTTP ${fcJsonRes.status}`);
             }
             const fcJsonData = await fcJsonRes.json();
-            const extracted = fcJsonData?.data?.json || fcJsonData?.json;
+            const extracted = fcJsonData?.data?.extract || fcJsonData?.data?.json || fcJsonData?.extract || fcJsonData?.json;
 
             if (extracted?.title && (extracted?.profiles?.length > 0)) {
               const hasData = extracted.profiles.some((p: any) => p.weight_grams > 0 || p.time_minutes > 0);
