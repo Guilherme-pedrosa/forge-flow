@@ -250,11 +250,11 @@
     @apply text-[12px] font-medium text-muted-foreground mt-1;
   }
 
-  .status-card-overdue { @apply border-b-destructive; }
-  .status-card-today { @apply border-b-warning; }
-  .status-card-upcoming { @apply border-b-info; }
-  .status-card-paid { @apply border-b-success; }
-  .status-card-total { @apply border-b-muted-foreground; }
+  .status-card-overdue { border-bottom-color: hsl(var(--destructive)); }
+  .status-card-today { border-bottom-color: hsl(var(--warning)); }
+  .status-card-upcoming { border-bottom-color: hsl(var(--info)); }
+  .status-card-paid { border-bottom-color: hsl(var(--success)); }
+  .status-card-total { border-bottom-color: hsl(var(--muted-foreground)); }
 
   /* Enterprise Table */
   .table-enterprise {
