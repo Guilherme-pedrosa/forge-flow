@@ -58,7 +58,7 @@ function AuthenticatedRoutes() {
         <Route path="/comercial/clientes" element={<Clientes />} />
         <Route path="/comercial/marketplaces" element={<ModulePlaceholder />} />
         {/* Integrações */}
-        <Route path="/integracoes/bambu" element={<ModulePlaceholder />} />
+        <Route path="/integracoes/bambu" element={<BambuLab />} />
         <Route path="/integracoes/ml" element={<ModulePlaceholder />} />
         {/* Config */}
         <Route path="/configuracoes" element={<Empresa />} />
