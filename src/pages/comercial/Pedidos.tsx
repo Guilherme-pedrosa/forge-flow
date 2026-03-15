@@ -786,6 +786,43 @@ export default function Pedidos() {
                 </Table>
               </div>
 
+              {/* Linked Jobs */}
+              {linkedJobs.length > 0 && (
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Ordens de Impressão ({linkedJobs.length})</p>
+                  <div className="rounded-lg border overflow-hidden">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="bg-muted/50">
+                          <TableHead>Código</TableHead>
+                          <TableHead>Peça</TableHead>
+                          <TableHead>Status</TableHead>
+                          <TableHead className="text-right">Custo</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {linkedJobs.map((j: any) => {
+                          const jCfg = { draft: "bg-muted text-muted-foreground", queued: "bg-primary/10 text-primary", printing: "bg-emerald-100 text-emerald-700", completed: "bg-emerald-100 text-emerald-700", failed: "bg-destructive/10 text-destructive" } as Record<string, string>;
+                          const statusLabels: Record<string, string> = { draft: "Rascunho", queued: "Na fila", printing: "Imprimindo", paused: "Pausado", failed: "Falhou", reprint: "Reimpressão", post_processing: "Pós-processo", quality_check: "QC", ready: "Pronto", shipped: "Enviado", completed: "Concluído" };
+                          return (
+                            <TableRow key={j.id}>
+                              <TableCell className="font-mono text-xs">{j.code}</TableCell>
+                              <TableCell className="text-sm">{j.name}</TableCell>
+                              <TableCell>
+                                <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold", jCfg[j.status] || "bg-muted text-muted-foreground")}>
+                                  {statusLabels[j.status] || j.status}
+                                </span>
+                              </TableCell>
+                              <TableCell className="text-right font-mono text-xs">{fmtCurrency(j.actual_total_cost || j.est_total_cost)}</TableCell>
+                            </TableRow>
+                          );
+                        })}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              )}
+
               <div className="flex justify-between items-end">
                 <Button variant="outline" size="sm" onClick={handlePrint}>
                   <Printer className="h-4 w-4 mr-1" /> Imprimir / PDF
