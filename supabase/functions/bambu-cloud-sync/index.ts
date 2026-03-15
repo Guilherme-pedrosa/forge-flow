@@ -391,7 +391,6 @@ async function fetchAndSyncDevices(
 
     // Auto-create printer if not linked
     if (!printerId) {
-      // Check if printer already linked by bambu_device_id
       const { data: existingPrinter } = await supabase
         .from("printers")
         .select("id")
@@ -402,17 +401,12 @@ async function fetchAndSyncDevices(
       if (existingPrinter) {
         printerId = existingPrinter.id;
       } else {
-        // Determine brand from model name
-        const brand = model.toLowerCase().includes("bambu")
-          ? "Bambu Lab"
-          : "Bambu Lab";
-
         const { data: newPrinter } = await supabase
           .from("printers")
           .insert({
             tenant_id: tenantId,
             name,
-            brand,
+            brand: "Bambu Lab",
             model,
             bambu_device_id: devId,
             bambu_access_code: accessCode,
@@ -423,15 +417,108 @@ async function fetchAndSyncDevices(
         printerId = newPrinter!.id;
       }
 
-      // Link bambu_device to printer
       await supabase
         .from("bambu_devices")
         .update({ printer_id: printerId })
         .eq("id", bambuDeviceId);
     }
 
+    // Fetch task history for this device
+    await fetchAndSyncTasks(supabase, accessToken, devId, bambuDeviceId, tenantId, printerId);
+
     syncedDevices.push({ dev_id: devId, name, model, online });
   }
 
   return syncedDevices;
+}
+
+// ── Fetch task history from Bambu Cloud and upsert into DB ──
+async function fetchAndSyncTasks(
+  supabase: ReturnType<typeof createClient>,
+  accessToken: string,
+  devId: string,
+  bambuDeviceId: string,
+  tenantId: string,
+  printerId: string | null
+) {
+  try {
+    const tasksRes = await fetch(
+      `${BAMBU_API}/v1/user-service/my/tasks?deviceId=${devId}&limit=500`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }
+    );
+
+    const tasksData = await tasksRes.json();
+
+    if (!tasksRes.ok || !tasksData.hits) {
+      console.warn(`Failed to fetch tasks for device ${devId}:`, tasksData);
+      return;
+    }
+
+    const tasks = tasksData.hits || [];
+    let totalPrints = 0;
+    let totalPrintSeconds = 0;
+    let totalFailures = 0;
+
+    for (const task of tasks) {
+      const bambuTaskId = String(task.id);
+      const designTitle = task.title || null;
+      const status = task.status != null ? String(task.status) : null;
+      const startTime = task.startTime || null;
+      const endTime = task.endTime || null;
+      const weightGrams = task.weight != null ? Number(task.weight) : null;
+      const costTimeSeconds = task.costTime != null ? Number(task.costTime) : null;
+      const coverUrl = task.cover || null;
+
+      // Count stats: status 0 = running, 1 = paused, 2 = completed, 3 = failed
+      totalPrints++;
+      if (costTimeSeconds) {
+        totalPrintSeconds += costTimeSeconds;
+      }
+      if (status === "3") {
+        totalFailures++;
+      }
+
+      // Upsert task
+      const { data: existingTask } = await supabase
+        .from("bambu_tasks")
+        .select("id")
+        .eq("bambu_task_id", bambuTaskId)
+        .eq("tenant_id", tenantId)
+        .maybeSingle();
+
+      if (!existingTask) {
+        await supabase.from("bambu_tasks").insert({
+          bambu_task_id: bambuTaskId,
+          bambu_device_id: bambuDeviceId,
+          tenant_id: tenantId,
+          design_title: designTitle,
+          status,
+          start_time: startTime,
+          end_time: endTime,
+          weight_grams: weightGrams,
+          cost_time_seconds: costTimeSeconds,
+          cover_url: coverUrl,
+          raw_data: task,
+        });
+      }
+    }
+
+    // Update printer stats
+    if (printerId && totalPrints > 0) {
+      const totalPrintHours = Math.round((totalPrintSeconds / 3600) * 100) / 100;
+      await supabase
+        .from("printers")
+        .update({
+          total_prints: totalPrints,
+          total_print_hours: totalPrintHours,
+          total_failures: totalFailures,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", printerId);
+    }
+  } catch (err) {
+    console.error(`Error fetching tasks for device ${devId}:`, err);
+  }
 }
