@@ -472,17 +472,8 @@ Deno.serve(async (req) => {
               const design = data?.design || data;
               if (design?.id || design?.title) {
                 const parsed = parseDesignToModel(design, selectedProfileId);
-                const hasMatchedProfile = !selectedProfileId || parsed.profiles.some((p: any) => String(p?.profile_id || "") === String(selectedProfileId));
-                const hasAnyProfileId = parsed.profiles.some((p: any) => !!p?.profile_id);
-                const hasFilamentEvidence = parsed.profiles.some((p: any) => Array.isArray(p?.filaments) && p.filaments.some((f: any) => toPositiveNumber(f?.grams) > 0));
-                const lowConfidence = !hasMatchedProfile || (!hasAnyProfileId && !hasFilamentEvidence && parsed.profiles.length <= 1);
-
-                if (lowConfidence && FIRECRAWL_API_KEY) {
-                  console.log("MakerWorld API result low-confidence; trying Firecrawl fallback");
-                } else {
-                  models.push(parsed);
-                  strategyUsed = "api_internal";
-                }
+                models.push(parsed);
+                strategyUsed = "api_internal";
               }
             } catch {
               console.warn("MakerWorld API JSON parse failed");
