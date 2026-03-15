@@ -225,7 +225,7 @@ export default function Jobs() {
     <div className="space-y-6">
       <PageHeader
         title="Ordens de Impressão"
-        subtitle="Gerencie a produção: crie, acompanhe e apure custos reais de cada OI."
+        description="Gerencie a produção: crie, acompanhe e apure custos reais de cada OI."
       />
 
       {/* KPI Filter Strip */}
