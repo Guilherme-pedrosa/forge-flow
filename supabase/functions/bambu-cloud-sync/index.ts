@@ -633,7 +633,28 @@ Deno.serve(async (req) => {
                   }
                 }
 
-                // Extract weight: try broad key set from rendered HTML, then markdown fallback
+                // Extract weight: first prefer material-tagged tokens (e.g. "163 g PETG" + "114 g PETG")
+                if (weightGrams === 0) {
+                  const plainHtml = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+                  const materialWeightTokens = [
+                    ...(`${plainHtml}\n${markdown}`).matchAll(
+                      /(\d+(?:[.,]\d+)?)\s*(kg|g|grams?)\s*(PLA|PETG|ABS|ASA|TPU|PC|PA|PVA)\b/gi
+                    ),
+                  ]
+                    .map((m) => metricToGrams(m[1], m[2]))
+                    .filter((n) => Number.isFinite(n) && n > 0.05 && n < 5000);
+
+                  if (materialWeightTokens.length >= 2) {
+                    const dedup = Array.from(new Set(materialWeightTokens.map((n) => Math.round(n * 10) / 10)));
+                    const materialWeightSum = dedup.reduce((sum, n) => sum + n, 0);
+                    if (materialWeightSum > 0) {
+                      console.log("MakerWorld material weight sum:", dedup.join("+"), "=", materialWeightSum);
+                      weightGrams = materialWeightSum;
+                    }
+                  }
+                }
+
+                // Fallback: broad key extraction from rendered HTML/markdown
                 if (weightGrams === 0) {
                   const htmlWeightValues = collectMetricValues(html, [
                     "totalWeight",
