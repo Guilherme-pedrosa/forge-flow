@@ -550,6 +550,12 @@ export default function Compras() {
       }
       setMarketplaceParsed(allPurchases);
       setMarketplaceSelectedIdx(0);
+      // Auto-detect installments from AI
+      if (allPurchases.length > 0) {
+        const firstPurchase = allPurchases[0];
+        const detectedInst = parseInstallmentCount(firstPurchase.payment_installments);
+        if (detectedInst > 1) setMarketplaceInstallments(String(detectedInst));
+      }
       if (allPurchases.length === 0) {
         toast({ title: "Nenhuma compra identificada", description: "Não foi possível extrair dados da imagem.", variant: "destructive" });
       }
