@@ -406,7 +406,136 @@ export default function Compras() {
     setManualItems(updated);
   };
 
-  // KPIs
+  // ── Marketplace Screenshot Import ──
+  const handleMarketplaceUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    
+    // Convert files to base64 previews
+    const previews: string[] = [];
+    for (const file of files) {
+      const url = URL.createObjectURL(file);
+      previews.push(url);
+    }
+    setMarketplaceImages(previews);
+    setMarketplaceParsing(true);
+    setMarketplaceParsed([]);
+
+    try {
+      const allPurchases: any[] = [];
+      for (const file of files) {
+        const base64 = await fileToBase64(file);
+        const { data, error } = await supabase.functions.invoke("parse-purchase-receipt", {
+          body: { imageBase64: base64, mimeType: file.type },
+        });
+        if (error) throw error;
+        if (data?.error) throw new Error(data.error);
+        if (data?.purchases) allPurchases.push(...data.purchases);
+      }
+      setMarketplaceParsed(allPurchases);
+      setMarketplaceSelectedIdx(0);
+      if (allPurchases.length === 0) {
+        toast({ title: "Nenhuma compra identificada", description: "Não foi possível extrair dados da imagem.", variant: "destructive" });
+      }
+    } catch (err: any) {
+      toast({ title: "Erro ao processar", description: err.message, variant: "destructive" });
+    } finally {
+      setMarketplaceParsing(false);
+    }
+    e.target.value = "";
+  };
+
+  const fileToBase64 = (file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        resolve(result.split(",")[1]); // Remove data:xxx;base64, prefix
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const marketplaceLabels: Record<string, string> = {
+    mercado_livre: "Mercado Livre",
+    shopee: "Shopee",
+    tiktok_shop: "TikTok Shop",
+    amazon: "Amazon",
+    magalu: "Magazine Luiza",
+    outro: "Outro",
+  };
+
+  const importMarketplaceMut = useMutation({
+    mutationFn: async (purchase: any) => {
+      if (!profile) throw new Error("Sem perfil");
+
+      // Find or create vendor
+      let vid: string | null = null;
+      if (purchase.vendor_name) {
+        const { data: existingVendor } = await supabase
+          .from("vendors")
+          .select("id")
+          .ilike("name", purchase.vendor_name)
+          .maybeSingle();
+        if (existingVendor) {
+          vid = existingVendor.id;
+        } else {
+          const { data: newVendor } = await supabase.from("vendors").insert({
+            tenant_id: profile.tenant_id,
+            name: purchase.vendor_name,
+          }).select("id").single();
+          if (newVendor) vid = newVendor.id;
+        }
+      }
+
+      const code = `PC-${String(orders.length + 1).padStart(4, "0")}`;
+      const marketplace = marketplaceLabels[purchase.marketplace] || purchase.marketplace || "Marketplace";
+      const { data: po, error } = await supabase.from("purchase_orders").insert({
+        tenant_id: profile.tenant_id,
+        code,
+        vendor_id: vid,
+        order_date: purchase.order_date || new Date().toISOString().slice(0, 10),
+        subtotal: purchase.subtotal || purchase.total || 0,
+        discount: purchase.discount || 0,
+        shipping: purchase.shipping || 0,
+        total: purchase.total || 0,
+        status: purchase.status === "concluido" ? "received" : "pending",
+        received_date: purchase.status === "concluido" ? (purchase.order_date || new Date().toISOString().slice(0, 10)) : null,
+        notes: `Importado de ${marketplace}${purchase.payment_installments ? ` | Pgto: ${purchase.payment_installments}` : ""}${purchase.notes ? ` | ${purchase.notes}` : ""}`,
+        created_by: profile.user_id,
+      }).select().single();
+      if (error) throw error;
+
+      if (purchase.items?.length > 0) {
+        const rows = purchase.items.map((i: any) => ({
+          tenant_id: profile.tenant_id,
+          purchase_order_id: po.id,
+          description: `${i.description}${i.color ? ` - ${i.color}` : ""}${i.variant ? ` (${i.variant})` : ""}`,
+          quantity: i.quantity || 1,
+          unit_price: i.unit_price || 0,
+          total: i.total || (i.quantity || 1) * (i.unit_price || 0),
+        }));
+        const { error: ie } = await supabase.from("purchase_order_items").insert(rows);
+        if (ie) throw ie;
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["purchase_orders"] });
+      qc.invalidateQueries({ queryKey: ["vendors"] });
+      // Remove imported purchase from list
+      setMarketplaceParsed(prev => prev.filter((_, i) => i !== marketplaceSelectedIdx));
+      setMarketplaceSelectedIdx(0);
+      toast({ title: "Compra importada!" });
+      if (marketplaceParsed.length <= 1) {
+        setMarketplaceImportOpen(false);
+        setMarketplaceImages([]);
+        setMarketplaceParsed([]);
+      }
+    },
+    onError: (e: any) => toast({ title: "Erro ao importar", description: e.message, variant: "destructive" }),
+  });
+
   const totalOrders = orders.length;
   const pendingOrders = orders.filter((o: any) => o.status === "draft" || o.status === "pending").length;
   const totalValue = orders.reduce((s: number, o: any) => s + (o.total || 0), 0);
