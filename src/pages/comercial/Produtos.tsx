@@ -307,6 +307,11 @@ export default function Produtos() {
     setName(model.title || "Produto MakerWorld");
     setPhotoUrl(model.thumbnail || "");
     setCategory("printed_part");
+    // Set gallery photos
+    if (model.gallery?.length > 0) {
+      const gallery = model.gallery.filter((u: string) => u !== model.thumbnail);
+      setExtraPhotos(gallery.slice(0, 5));
+    }
     // Use first profile data if available
     if (model.profiles?.length > 0) {
       const p = model.profiles[0];
