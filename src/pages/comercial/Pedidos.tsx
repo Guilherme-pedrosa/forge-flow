@@ -344,7 +344,17 @@ export default function Pedidos() {
 
     printWindow.document.write(html);
     printWindow.document.close();
-    printWindow.onload = () => { printWindow.print(); };
+    printWindow.onload = () => {
+      const images = Array.from(printWindow.document.images);
+      Promise.all(images.map((img) => (
+        img.complete
+          ? Promise.resolve()
+          : new Promise<void>((resolve) => {
+              img.onload = () => resolve();
+              img.onerror = () => resolve();
+            })
+      ))).finally(() => printWindow.print());
+    };
   };
 
   // Mutations
