@@ -312,48 +312,74 @@ Deno.serve(async (req) => {
       let projects: any[] = [];
       let apiError = "";
 
-      // Attempt 1: /v1/iot-service/api/user/project
-      try {
-        const projectsRes = await fetch(`${BAMBU_API}/v1/iot-service/api/user/project`, {
-          headers: { Authorization: `Bearer ${conn.access_token_encrypted}` },
-        });
+      const projectEndpoints = [
+        `${BAMBU_API}/v1/iot-service/api/user/project?page=1&limit=50`,
+        `${BAMBU_API}/v1/iot-service/api/user/project`,
+      ];
 
-        if (projectsRes.status === 401 || projectsRes.status === 403) {
-          // Token expired - mark connection as needing re-auth
-          await supabase
-            .from("bambu_connections")
-            .update({ is_active: false, updated_at: new Date().toISOString() })
-            .eq("id", conn.id);
+      for (const endpoint of projectEndpoints) {
+        try {
+          const projectsRes = await fetch(endpoint, {
+            headers: {
+              Authorization: `Bearer ${conn.access_token_encrypted}`,
+              "Accept": "application/json, text/plain, */*",
+              "Content-Type": "application/json",
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            },
+          });
 
-          return new Response(
-            JSON.stringify({ 
-              error: "Token Bambu expirado. Vá em Integrações → Bambu Lab e reconecte sua conta.", 
-              token_expired: true,
-              projects: [] 
-            }),
-            { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
+          if (projectsRes.status === 401 || projectsRes.status === 403) {
+            // Token expired - mark connection as needing re-auth
+            await supabase
+              .from("bambu_connections")
+              .update({ is_active: false, updated_at: new Date().toISOString() })
+              .eq("id", conn.id);
 
-        const rawText = await projectsRes.text();
-        if (rawText && rawText.trim()) {
+            return new Response(
+              JSON.stringify({ 
+                error: "Token Bambu expirado. Vá em Integrações → Bambu Lab e reconecte sua conta.", 
+                token_expired: true,
+                projects: [] 
+              }),
+              { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+            );
+          }
+
+          const rawText = await projectsRes.text();
+          if (!rawText || !rawText.trim()) {
+            apiError = `API Bambu retornou resposta vazia (${projectsRes.status}).`;
+            continue;
+          }
+
+          let projectsData: any;
           try {
-            const projectsData = JSON.parse(rawText);
-            if (projectsData.message === "success" && projectsData.projects) {
-              projects = projectsData.projects;
-            } else {
-              apiError = projectsData.message || "Resposta inesperada da API";
-            }
+            projectsData = JSON.parse(rawText);
           } catch {
             console.error("Bambu projects non-JSON:", rawText.slice(0, 200));
             apiError = "API Bambu retornou resposta inválida";
+            continue;
           }
-        } else {
-          apiError = "API Bambu retornou resposta vazia. Token pode ter expirado.";
+
+          const parsedProjects =
+            projectsData?.projects ||
+            projectsData?.data?.projects ||
+            projectsData?.data?.list ||
+            [];
+
+          if (Array.isArray(parsedProjects) && parsedProjects.length > 0) {
+            projects = parsedProjects;
+            break;
+          }
+
+          apiError =
+            projectsData?.message ||
+            projectsData?.error ||
+            projectsData?.data?.message ||
+            "Resposta inesperada da API";
+        } catch (e) {
+          console.error("Bambu projects fetch error:", e);
+          apiError = "Erro ao conectar com API Bambu";
         }
-      } catch (e) {
-        console.error("Bambu projects fetch error:", e);
-        apiError = "Erro ao conectar com API Bambu";
       }
 
       if (projects.length === 0 && apiError) {
