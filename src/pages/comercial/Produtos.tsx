@@ -80,7 +80,7 @@ export default function Produtos() {
   const { data: materials = [] } = useQuery({
     queryKey: ["inventory_items"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("inventory_items").select("id, name, avg_cost").eq("is_active", true).order("name");
+      const { data, error } = await supabase.from("inventory_items").select("id, name, avg_cost, freight_cost, loss_coefficient, unit").eq("is_active", true).order("name");
       if (error) throw error;
       return data;
     },
@@ -126,10 +126,14 @@ export default function Produtos() {
     const printHours = printMinutes / 60;
     const laborHours = postMin / 60;
 
-    // Material cost
+    // Material cost (avg_cost is per unit; if unit=g, cost is per gram; if unit=kg, divide by 1000)
     const selectedMaterial = materials.find((m) => m.id === materialId);
-    const materialCostPerGram = selectedMaterial ? selectedMaterial.avg_cost / 1000 : 0;
-    const materialCost = grams * materialCostPerGram;
+    const isKg = selectedMaterial?.unit === "kg";
+    const baseCostPerGram = selectedMaterial ? (isKg ? selectedMaterial.avg_cost / 1000 : selectedMaterial.avg_cost) : 0;
+    const freightPerGram = selectedMaterial?.freight_cost ? (isKg ? selectedMaterial.freight_cost / 1000 : selectedMaterial.freight_cost) : 0;
+    const lossCoeff = selectedMaterial?.loss_coefficient || 0.05;
+    const effectiveGrams = grams * (1 + lossCoeff);
+    const materialCost = effectiveGrams * (baseCostPerGram + freightPerGram);
 
     // Energy cost
     const selectedPrinter = printers.find((p) => p.id === printerId);
