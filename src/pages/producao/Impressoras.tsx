@@ -287,6 +287,9 @@ export default function Impressoras() {
                           <DropdownMenuItem onClick={() => setDetailPrinter(p)}>
                             <Eye className="h-4 w-4 mr-2" /> Ver detalhes
                           </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => setEditPrinter(p)}>
+                            <Edit className="h-4 w-4 mr-2" /> Editar
+                          </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
                             className="text-destructive"
