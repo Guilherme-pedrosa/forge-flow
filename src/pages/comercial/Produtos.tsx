@@ -409,18 +409,57 @@ export default function Produtos() {
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 
+  const allPhotos = [photoUrl, ...extraPhotos].filter(Boolean);
+
   const formFields = (
     <div className="grid gap-4 max-h-[60vh] overflow-y-auto pr-1">
-      {/* Photo preview */}
-      {photoUrl && (
-        <div className="flex items-center gap-3">
-          <img src={photoUrl} alt="Preview" className="w-20 h-20 rounded-lg object-cover border" />
-          <div className="flex-1">
-            <p className="text-xs text-muted-foreground">Foto do Produto</p>
-            <Button variant="ghost" size="sm" className="text-destructive text-xs mt-1" onClick={() => setPhotoUrl("")}>Remover foto</Button>
-          </div>
+      {/* Photos gallery */}
+      <div>
+        <Label className="mb-2 block">Fotos do Produto</Label>
+        <div className="flex flex-wrap gap-2">
+          {allPhotos.map((url, i) => (
+            <div key={i} className="relative group">
+              <img src={url} alt={`Foto ${i + 1}`} className="w-20 h-20 rounded-lg object-cover border" />
+              {i === 0 && <span className="absolute bottom-0 left-0 right-0 bg-primary/80 text-primary-foreground text-[9px] text-center rounded-b-lg">Principal</span>}
+              <button
+                type="button"
+                onClick={() => removePhoto(url)}
+                className="absolute -top-1.5 -right-1.5 bg-destructive text-destructive-foreground rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
+          {/* Upload button */}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploadingPhoto}
+            className="w-20 h-20 rounded-lg border-2 border-dashed border-muted-foreground/30 flex flex-col items-center justify-center gap-1 text-muted-foreground hover:border-primary hover:text-primary transition-colors"
+          >
+            {uploadingPhoto ? <Loader2 className="h-5 w-5 animate-spin" /> : <Upload className="h-5 w-5" />}
+            <span className="text-[10px]">{uploadingPhoto ? "..." : "Adicionar"}</span>
+          </button>
         </div>
-      )}
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={handlePhotoUpload}
+        />
+        {allPhotos.length === 0 && (
+          <div className="mt-2">
+            <Input
+              placeholder="Ou cole uma URL de imagem..."
+              value={photoUrl}
+              onChange={(e) => setPhotoUrl(e.target.value)}
+              className="text-xs"
+            />
+          </div>
+        )}
+      </div>
       <div className="grid grid-cols-2 gap-3">
         <div className="col-span-2"><Label>Nome *</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Vaso Geométrico P" /></div>
         <div><Label>Categoria</Label>
