@@ -287,6 +287,7 @@ export default function Impressoras() {
 
       <CreatePrinterDialog open={createOpen} onOpenChange={setCreateOpen} />
       <PrinterDetailDialog printer={detailPrinter} onClose={() => setDetailPrinter(null)} />
+      <BambuCloudDialog open={bambuCloudOpen} onOpenChange={setBambuCloudOpen} />
     </div>
   );
 }
