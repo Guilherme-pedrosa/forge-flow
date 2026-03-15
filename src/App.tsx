@@ -21,7 +21,7 @@ const App = () => (
           <Routes>
             <Route path="/" element={<Dashboard />} />
             {/* Financeiro */}
-            <Route path="/financeiro/pagar" element={<ModulePlaceholder />} />
+            <Route path="/financeiro/pagar" element={<ContasPagar />} />
             <Route path="/financeiro/receber" element={<ModulePlaceholder />} />
             <Route path="/financeiro/caixa" element={<ModulePlaceholder />} />
             <Route path="/financeiro/conciliacao" element={<ModulePlaceholder />} />
