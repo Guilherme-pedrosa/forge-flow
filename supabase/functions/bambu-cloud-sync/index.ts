@@ -633,11 +633,16 @@ Deno.serve(async (req) => {
                   }
                 }
 
+                const profileMarkdownSlice = markdown.split(/### Description/i)[0] || markdown;
+                const profileStartIdx = html.toLowerCase().indexOf("print profile");
+                const profileHtmlSlice =
+                  profileStartIdx >= 0 ? html.slice(profileStartIdx, profileStartIdx + 20000) : html;
+
                 // Extract weight: first prefer material-tagged tokens (e.g. "163 g PETG" + "114 g PETG")
                 if (weightGrams === 0) {
-                  const plainHtml = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+                  const plainProfileHtml = profileHtmlSlice.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
                   const materialWeightTokens = [
-                    ...(`${plainHtml}\n${markdown}`).matchAll(
+                    ...(`${plainProfileHtml}\n${profileMarkdownSlice}`).matchAll(
                       /(\d+(?:[.,]\d+)?)\s*(kg|g|grams?)\s*(PLA|PETG|ABS|ASA|TPU|PC|PA|PVA)\b/gi
                     ),
                   ]
@@ -654,26 +659,21 @@ Deno.serve(async (req) => {
                   }
                 }
 
-                // Fallback: broad key extraction from rendered HTML/markdown
+                // Fallback: scoped extraction only in print-profile area (avoid CSS false positives like font-weight:700)
                 if (weightGrams === 0) {
-                  const htmlWeightValues = collectMetricValues(html, [
-                    "totalWeight",
-                    "total_weight",
-                    "weight_grams",
-                    "weightGrams",
-                    "weight",
-                    "used_g",
-                    "usedG",
-                    "usedWeight",
-                    "filamentWeight",
-                    "materialWeight",
-                    "consumption",
-                    "filament_used_g",
-                  ]);
+                  const htmlWeightValues = [
+                    ...collectMetricValues(
+                      profileHtmlSlice,
+                      ["totalWeight", "total_weight", "weight", "usedWeight", "filamentWeight", "materialWeight", "consumption"],
+                      { requireUnit: true }
+                    ),
+                    ...collectMetricValues(profileHtmlSlice, ["weight_grams", "weightGrams", "used_g", "usedG", "filament_used_g"]),
+                  ];
 
                   const markdownWeightValues = [
-                    ...collectMetricValues(markdown, ["total weight", "filament weight", "weight_grams", "used_g"]),
-                    ...[...markdown.matchAll(/(\d+(?:[.,]\d+)?)\s*(kg|g|grams?)\b/gi)].map((m) => metricToGrams(m[1], m[2])),
+                    ...collectMetricValues(profileMarkdownSlice, ["total weight", "filament weight", "weight"], { requireUnit: true }),
+                    ...collectMetricValues(profileMarkdownSlice, ["weight_grams", "used_g", "weight grams"]),
+                    ...[...profileMarkdownSlice.matchAll(/(\d+(?:[.,]\d+)?)\s*(kg|g|grams?)\b/gi)].map((m) => metricToGrams(m[1], m[2])),
                   ];
 
                   const candidates = [...htmlWeightValues, ...markdownWeightValues]
@@ -889,14 +889,23 @@ function metricToGrams(value: unknown, explicitUnit?: string | null): number {
   return n;
 }
 
-function collectMetricValues(source: string, keys: string[]): number[] {
+function collectMetricValues(
+  source: string,
+  keys: string[],
+  options?: { requireUnit?: boolean }
+): number[] {
   const values: number[] = [];
+  const requireUnit = options?.requireUnit ?? false;
 
   for (const key of keys) {
     const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
     const structuredRegex = new RegExp(
-      `["']?${escaped}["']?\\s*[:=]\\s*["']?([0-9]+(?:[.,][0-9]+)?)(?:\\s*(kg|kgs|kilograms?|g|grams?))?["']?`,
+      `["']?${escaped}["']?\\s*[:=]\\s*["']?([0-9]+(?:[.,][0-9]+)?)${
+        requireUnit
+          ? `\\s*(kg|kgs|kilograms?|g|grams?)`
+          : `(?:\\s*(kg|kgs|kilograms?|g|grams?))?`
+      }["']?`,
       "gi"
     );
 
