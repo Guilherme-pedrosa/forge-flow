@@ -957,23 +957,60 @@ function parseDesignToModel(d: any, selectedProfileId?: string | null) {
   });
 
   if (profiles.length === 0) {
+    const topLevelPlates = Array.isArray(d.plates)
+      ? d.plates
+      : Array.isArray(d.context?.plates)
+        ? d.context.plates
+        : [];
+
+    const topLevelFilaments = (d.materialList || d.materials || d.filaments || [])
+      .map((m: any) => ({
+        type: (m?.type || "PLA").toUpperCase(),
+        color: m?.color || "",
+        grams: metricToGrams(m?.weight ?? m?.used_g ?? m?.grams ?? m?.usedWeight, m?.unit),
+      }))
+      .filter((f: any) => f.grams > 0 || f.type || f.color);
+
+    const topLevelSummedPlateWeight = topLevelPlates.reduce(
+      (sum: number, plate: any) =>
+        sum + metricToGrams(plate?.weight ?? plate?.total_weight ?? plate?.weight_grams ?? plate?.totalWeight, plate?.weight_unit || plate?.unit),
+      0
+    );
+
+    const topLevelSummedPlateTime = topLevelPlates.reduce(
+      (sum: number, plate: any) =>
+        sum + parseLooseMetric(plate?.prediction ?? plate?.estimatedTime ?? plate?.time_seconds ?? plate?.printTime),
+      0
+    );
+
+    const topLevelFilamentWeight = topLevelFilaments.reduce((sum: number, f: any) => sum + toPositiveNumber(f.grams), 0);
+
+    const topLevelDeclaredWeight = maxMetric(
+      metricToGrams(d.weight, d.weight_unit || d.unit),
+      metricToGrams(d.total_weight, d.weight_unit || d.unit),
+      metricToGrams(d.totalWeight, d.weight_unit || d.unit),
+      metricToGrams(d.weight_grams, "g")
+    );
+
+    const topLevelComputedWeight = maxMetric(topLevelSummedPlateWeight, topLevelFilamentWeight);
+    const topLevelDeclaredTooHigh = topLevelComputedWeight > 0 && topLevelDeclaredWeight > topLevelComputedWeight * 1.25;
+    const topLevelSafeWeight = topLevelDeclaredTooHigh
+      ? topLevelComputedWeight
+      : maxMetric(topLevelDeclaredWeight, topLevelComputedWeight);
+
     profiles.push({
       profile_id: selectedProfileId || d.profile_id || d.profileId || null,
       name: "Opção 1",
-      weight_grams: maxMetric(
-        metricToGrams(d.weight, d.weight_unit || d.unit),
-        metricToGrams(d.total_weight, d.weight_unit || d.unit),
-        metricToGrams(d.totalWeight, d.weight_unit || d.unit),
-        metricToGrams(d.weight_grams, "g")
-      ),
+      weight_grams: topLevelSafeWeight,
       time_seconds: maxMetric(
         parseLooseMetric(d.estimatedTime),
         parseLooseMetric(d.estimated_time),
         parseLooseMetric(d.time_seconds),
-        parseLooseMetric(d.printTime)
+        parseLooseMetric(d.printTime),
+        topLevelSummedPlateTime
       ),
-      plates: toPositiveNumber(d.plateCount || d.plate_count),
-      filaments: [],
+      plates: toPositiveNumber(d.plateCount || d.plate_count || topLevelPlates.length),
+      filaments: topLevelFilaments,
     });
   }
 
