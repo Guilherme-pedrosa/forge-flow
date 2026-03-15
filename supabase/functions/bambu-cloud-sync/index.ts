@@ -436,7 +436,7 @@ Deno.serve(async (req) => {
 
     // ── Fetch MakerWorld models ──
     if (action === "makerworld") {
-      const { url } = body;
+      const { url, selected_profile_id } = body;
       if (!url) {
         return new Response(
           JSON.stringify({ error: "URL é obrigatória" }),
@@ -446,11 +446,14 @@ Deno.serve(async (req) => {
 
       const models: any[] = [];
       const modelMatch = url.match(/\/models\/(\d+)/);
+      const hashProfileId = url.match(/profileId-(\d+)/i)?.[1] || null;
+      const selectedProfileId = selected_profile_id || hashProfileId;
 
       const FIRECRAWL_API_KEY = Deno.env.get("FIRECRAWL_API_KEY");
 
       if (modelMatch) {
         const modelId = modelMatch[1];
+        const hashSuffix = hashProfileId ? `#profileId-${hashProfileId}` : "";
 
         // Strategy 1: Try MakerWorld internal API (fast, no JS needed)
         try {
@@ -466,7 +469,7 @@ Deno.serve(async (req) => {
               const data = JSON.parse(apiText);
               const design = data?.design || data;
               if (design?.id || design?.title) {
-                models.push(parseDesignToModel(design));
+                models.push(parseDesignToModel(design, selectedProfileId));
               }
             } catch {
               console.warn("MakerWorld API JSON parse failed");
