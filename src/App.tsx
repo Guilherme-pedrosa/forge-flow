@@ -18,6 +18,7 @@ import Movimentacoes from "./pages/estoque/Movimentacoes";
 import Alertas from "./pages/estoque/Alertas";
 import Compras from "./pages/estoque/Compras";
 import Jobs from "./pages/producao/Jobs";
+import MargemSKU from "./pages/producao/MargemSKU";
 import Impressoras from "./pages/producao/Impressoras";
 import Produtos from "./pages/comercial/Produtos";
 import Pedidos from "./pages/comercial/Pedidos";
@@ -50,6 +51,7 @@ function AuthenticatedRoutes() {
         <Route path="/estoque/compras" element={<Compras />} />
         {/* Produção */}
         <Route path="/producao/jobs" element={<Jobs />} />
+        <Route path="/producao/margem" element={<MargemSKU />} />
         <Route path="/producao/impressoras" element={<Impressoras />} />
         <Route path="/producao/perdas" element={<ModulePlaceholder />} />
         {/* Planejamento */}
