@@ -1,95 +1,36 @@
 import { useState, useMemo } from "react";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
 import { PageHeader } from "@/components/shared/PageHeader";
-import { ArgusBanner } from "@/components/shared/ArgusBanner";
 import {
-  Plus,
-  Search,
-  MoreHorizontal,
-  Paperclip,
-  DollarSign,
-  AlertTriangle,
-  CheckCircle2,
-  Clock,
-  XCircle,
-  Download,
-  Receipt,
-  Eye,
-  Edit,
-  Copy,
-  Trash2,
-  Calendar,
+  Plus, Search, MoreHorizontal, Loader2, DollarSign, AlertTriangle,
+  CheckCircle2, Clock, Trash2, Edit, Receipt, Calendar, Download,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogFooter,
-} from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
+  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
+} from "@/components/ui/table";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import { useToast } from "@/hooks/use-toast";
+import type { Enums } from "@/integrations/supabase/types";
 
-// ─── Types ────────────────────────────────────
-type PayableStatus = "open" | "partial" | "paid" | "overdue" | "cancelled";
-type StatusFilter = PayableStatus | "all" | "today";
+type PayableStatus = Enums<"payable_status">;
+type StatusFilter = PayableStatus | "all";
 
-interface Payable {
-  id: string;
-  description: string;
-  vendor: string;
-  amount: number;
-  amountPaid: number;
-  dueDate: string;
-  competenceDate: string;
-  status: PayableStatus;
-  account: string;
-  costCenter: string;
-  paymentMethod: string;
-  installment: string;
-  attachments: number;
-}
-
-// ─── Mock Data ────────────────────────────────
-const mockPayables: Payable[] = [
-  { id: "AP-0001", description: "Filamento PLA Preto 10kg", vendor: "Bambu Lab Store", amount: 3200.00, amountPaid: 0, dueDate: "2026-03-14", competenceDate: "2026-03-01", status: "overdue", account: "3.1.01 - Matéria Prima", costCenter: "CC01 - Produção", paymentMethod: "PIX", installment: "1/1", attachments: 1 },
-  { id: "AP-0002", description: "Energia Elétrica - Mar/2026", vendor: "CEMIG", amount: 890.50, amountPaid: 0, dueDate: "2026-03-20", competenceDate: "2026-03-01", status: "open", account: "3.1.04 - Energia", costCenter: "CC01 - Produção", paymentMethod: "Boleto", installment: "1/1", attachments: 0 },
-  { id: "AP-0003", description: "Filamento PETG Branco 5kg", vendor: "Filament Express", amount: 1240.00, amountPaid: 620.00, dueDate: "2026-03-17", competenceDate: "2026-02-15", status: "partial", account: "3.1.01 - Matéria Prima", costCenter: "CC01 - Produção", paymentMethod: "PIX", installment: "1/2", attachments: 2 },
-  { id: "AP-0004", description: "Manutenção Preventiva X1C-02", vendor: "TechPrint Serviços", amount: 450.00, amountPaid: 450.00, dueDate: "2026-03-10", competenceDate: "2026-03-10", status: "paid", account: "3.1.05 - Manutenção", costCenter: "CC02 - Manutenção", paymentMethod: "PIX", installment: "1/1", attachments: 1 },
-  { id: "AP-0005", description: "Álcool Isopropílico 5L", vendor: "Quimisa", amount: 89.90, amountPaid: 89.90, dueDate: "2026-03-08", competenceDate: "2026-03-05", status: "paid", account: "3.1.02 - Insumos", costCenter: "CC01 - Produção", paymentMethod: "Cartão", installment: "1/1", attachments: 0 },
-  { id: "AP-0006", description: "Aluguel Galpão - Mar/2026", vendor: "Imobiliária Central", amount: 3500.00, amountPaid: 0, dueDate: "2026-03-05", competenceDate: "2026-03-01", status: "overdue", account: "3.2.01 - Aluguel", costCenter: "CC03 - Administrativo", paymentMethod: "Boleto", installment: "1/1", attachments: 1 },
-  { id: "AP-0007", description: "Nozzle 0.4mm Hardened (5x)", vendor: "Bambu Lab Store", amount: 275.00, amountPaid: 0, dueDate: "2026-03-25", competenceDate: "2026-03-15", status: "open", account: "3.1.03 - Peças", costCenter: "CC02 - Manutenção", paymentMethod: "PIX", installment: "1/1", attachments: 0 },
-  { id: "AP-0008", description: "Internet Fibra 500Mbps", vendor: "Vivo Empresas", amount: 249.90, amountPaid: 0, dueDate: "2026-03-22", competenceDate: "2026-03-01", status: "open", account: "3.2.02 - Telecom", costCenter: "CC03 - Administrativo", paymentMethod: "Débito Auto", installment: "1/1", attachments: 0 },
-  { id: "AP-0009", description: "Embalagens personalizadas (500un)", vendor: "PackPrint", amount: 1800.00, amountPaid: 0, dueDate: "2026-03-28", competenceDate: "2026-03-12", status: "open", account: "3.1.02 - Insumos", costCenter: "CC04 - Expedição", paymentMethod: "Boleto", installment: "1/3", attachments: 1 },
-  { id: "AP-0010", description: "Software CAD - Licença anual", vendor: "Autodesk", amount: 2400.00, amountPaid: 2400.00, dueDate: "2026-02-28", competenceDate: "2026-02-01", status: "paid", account: "3.2.03 - Software", costCenter: "CC03 - Administrativo", paymentMethod: "Cartão", installment: "1/1", attachments: 1 },
-];
-
-// ─── Helpers ──────────────────────────────────
 const fmtCurrency = (v: number) =>
   new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(v);
 
@@ -98,463 +39,354 @@ const fmtDate = (d: string) => {
   return `${day}/${m}/${y}`;
 };
 
-// ─── Main Component ───────────────────────────
+const statusConfig: Record<PayableStatus, { label: string; className: string }> = {
+  open: { label: "Aberto", className: "bg-primary/10 text-primary" },
+  partial: { label: "Parcial", className: "bg-amber-100 text-amber-700" },
+  paid: { label: "Pago", className: "bg-emerald-100 text-emerald-700" },
+  overdue: { label: "Vencido", className: "bg-destructive/10 text-destructive" },
+  cancelled: { label: "Cancelado", className: "bg-muted text-muted-foreground" },
+};
+
 export default function ContasPagar() {
+  const { profile } = useAuth();
+  const { toast } = useToast();
+  const qc = useQueryClient();
+
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [createOpen, setCreateOpen] = useState(false);
 
-  // Status card calculations
-  const { counts, amounts, filteredPayables } = useMemo(() => {
+  // Form state
+  const [description, setDescription] = useState("");
+  const [vendorId, setVendorId] = useState("");
+  const [amount, setAmount] = useState("");
+  const [dueDate, setDueDate] = useState("");
+  const [competenceDate, setCompetenceDate] = useState("");
+  const [accountId, setAccountId] = useState("");
+  const [costCenterId, setCostCenterId] = useState("");
+  const [paymentMethodId, setPaymentMethodId] = useState("");
+  const [notes, setNotes] = useState("");
+
+  // ─── Queries ──────────────────────────────────
+  const { data: payables = [], isLoading } = useQuery({
+    queryKey: ["accounts_payable"],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from("accounts_payable")
+        .select("*, vendors(name), chart_of_accounts(code, name), cost_centers(code, name), payment_methods(name)")
+        .order("due_date");
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!profile,
+  });
+
+  const { data: vendors = [] } = useQuery({
+    queryKey: ["vendors"],
+    queryFn: async () => {
+      const { data } = await supabase.from("vendors").select("id, name").eq("is_active", true).order("name");
+      return data ?? [];
+    },
+    enabled: !!profile,
+  });
+
+  const { data: accounts = [] } = useQuery({
+    queryKey: ["chart_of_accounts"],
+    queryFn: async () => {
+      const { data } = await supabase.from("chart_of_accounts").select("id, code, name").eq("is_active", true).eq("account_type", "expense").order("code");
+      return data ?? [];
+    },
+    enabled: !!profile,
+  });
+
+  const { data: costCenters = [] } = useQuery({
+    queryKey: ["cost_centers"],
+    queryFn: async () => {
+      const { data } = await supabase.from("cost_centers").select("id, code, name").eq("is_active", true).order("code");
+      return data ?? [];
+    },
+    enabled: !!profile,
+  });
+
+  const { data: paymentMethods = [] } = useQuery({
+    queryKey: ["payment_methods"],
+    queryFn: async () => {
+      const { data } = await supabase.from("payment_methods").select("id, name").eq("is_active", true).order("name");
+      return data ?? [];
+    },
+    enabled: !!profile,
+  });
+
+  // ─── Computed ─────────────────────────────────
+  const { counts, filteredPayables } = useMemo(() => {
     const today = new Date().toISOString().split("T")[0];
-    const calc = {
+    const calc: Record<string, { count: number; amount: number }> = {
       all: { count: 0, amount: 0 },
       overdue: { count: 0, amount: 0 },
-      today: { count: 0, amount: 0 },
       open: { count: 0, amount: 0 },
       paid: { count: 0, amount: 0 },
     };
 
-    mockPayables.forEach((p) => {
+    payables.forEach((p: any) => {
       calc.all.count++;
       calc.all.amount += p.amount;
-
-      if (p.status === "paid") {
-        calc.paid.count++;
-        calc.paid.amount += p.amountPaid;
-      } else if (p.dueDate === today) {
-        calc.today.count++;
-        calc.today.amount += p.amount - p.amountPaid;
-      } else if (p.dueDate < today && p.status !== "cancelled") {
-        calc.overdue.count++;
-        calc.overdue.amount += p.amount - p.amountPaid;
-      } else {
-        calc.open.count++;
-        calc.open.amount += p.amount - p.amountPaid;
-      }
+      if (p.status === "paid") { calc.paid.count++; calc.paid.amount += p.amount_paid; }
+      else if (p.status === "overdue" || (p.due_date < today && !["paid", "cancelled"].includes(p.status))) {
+        calc.overdue.count++; calc.overdue.amount += p.amount - p.amount_paid;
+      } else { calc.open.count++; calc.open.amount += p.amount - p.amount_paid; }
     });
 
-    let filtered = [...mockPayables];
+    let filtered = [...payables];
     if (statusFilter !== "all") {
-      filtered = filtered.filter((p) => {
+      filtered = filtered.filter((p: any) => {
         if (statusFilter === "paid") return p.status === "paid";
-        if (statusFilter === "overdue") return p.status === "overdue";
-        if (statusFilter === "today") return p.dueDate === today;
-        if (statusFilter === "open") return p.status === "open" || p.status === "partial";
-        if (statusFilter === "cancelled") return p.status === "cancelled";
-        return true;
+        if (statusFilter === "overdue") return p.status === "overdue" || (p.due_date < today && !["paid", "cancelled"].includes(p.status));
+        if (statusFilter === "open") return ["open", "partial"].includes(p.status);
+        return p.status === statusFilter;
       });
     }
     if (search) {
       const q = search.toLowerCase();
-      filtered = filtered.filter((p) =>
-        p.description.toLowerCase().includes(q) ||
-        p.vendor.toLowerCase().includes(q) ||
-        p.id.toLowerCase().includes(q)
+      filtered = filtered.filter((p: any) =>
+        p.description.toLowerCase().includes(q) || p.vendors?.name?.toLowerCase().includes(q)
       );
     }
-    filtered.sort((a, b) => a.dueDate.localeCompare(b.dueDate));
-    return { counts: calc, amounts: calc, filteredPayables: filtered };
-  }, [search, statusFilter]);
+    return { counts: calc, filteredPayables: filtered };
+  }, [payables, search, statusFilter]);
 
-  const statusCards: { key: StatusFilter; label: string; count: number; amount: number; colorClass: string; countColor: string }[] = [
-    { key: "overdue", label: "Vencidos", count: counts.overdue.count, amount: amounts.overdue.amount, colorClass: "status-card-overdue", countColor: "text-destructive" },
-    { key: "today", label: "Vence Hoje", count: counts.today.count, amount: amounts.today.amount, colorClass: "status-card-today", countColor: "text-amber-500" },
-    { key: "open", label: "A Vencer", count: counts.open.count, amount: amounts.open.amount, colorClass: "status-card-upcoming", countColor: "text-primary" },
-    { key: "paid", label: "Pagos", count: counts.paid.count, amount: amounts.paid.amount, colorClass: "status-card-paid", countColor: "text-emerald-600" },
-    { key: "all", label: "Total", count: counts.all.count, amount: amounts.all.amount, colorClass: "status-card-total", countColor: "text-foreground" },
-  ];
+  // ─── Mutations ────────────────────────────────
+  const resetForm = () => {
+    setDescription(""); setVendorId(""); setAmount(""); setDueDate("");
+    setCompetenceDate(""); setAccountId(""); setCostCenterId("");
+    setPaymentMethodId(""); setNotes("");
+  };
+
+  const createMut = useMutation({
+    mutationFn: async () => {
+      if (!profile) throw new Error("Sem perfil");
+      const { error } = await supabase.from("accounts_payable").insert({
+        tenant_id: profile.tenant_id,
+        description,
+        vendor_id: vendorId || null,
+        amount: parseFloat(amount),
+        due_date: dueDate,
+        competence_date: competenceDate || null,
+        account_id: accountId || null,
+        cost_center_id: costCenterId || null,
+        payment_method_id: paymentMethodId || null,
+        notes: notes || null,
+        created_by: profile.user_id,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["accounts_payable"] });
+      setCreateOpen(false); resetForm();
+      toast({ title: "Conta criada" });
+    },
+    onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
+  });
+
+  const payMut = useMutation({
+    mutationFn: async (id: string) => {
+      const item = payables.find((p: any) => p.id === id);
+      if (!item) return;
+      const { error } = await supabase.from("accounts_payable").update({
+        status: "paid" as PayableStatus,
+        amount_paid: item.amount,
+        payment_date: new Date().toISOString().slice(0, 10),
+      }).eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["accounts_payable"] }); toast({ title: "Pagamento registrado" }); },
+    onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await supabase.from("accounts_payable").delete().eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["accounts_payable"] }); toast({ title: "Conta removida" }); },
+    onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
+  });
 
   const toggleSelect = (id: string) => {
-    const newSet = new Set(selectedIds);
-    if (newSet.has(id)) newSet.delete(id); else newSet.add(id);
-    setSelectedIds(newSet);
+    const s = new Set(selectedIds);
+    s.has(id) ? s.delete(id) : s.add(id);
+    setSelectedIds(s);
   };
 
-  const toggleSelectAll = () => {
-    const selectableIds = filteredPayables.filter(p => p.status !== "paid").map(p => p.id);
-    if (selectableIds.every(id => selectedIds.has(id))) {
-      setSelectedIds(new Set());
-    } else {
-      setSelectedIds(new Set(selectableIds));
-    }
-  };
-
-  const allSelected = filteredPayables.filter(p => p.status !== "paid").length > 0 &&
-    filteredPayables.filter(p => p.status !== "paid").every(p => selectedIds.has(p.id));
-
-  const selectedTotal = Array.from(selectedIds).reduce((sum, id) => {
-    const p = mockPayables.find(x => x.id === id);
-    return sum + (p?.amount || 0);
-  }, 0);
+  const statusCards: { key: StatusFilter; label: string; count: number; amount: number; countColor: string }[] = [
+    { key: "overdue", label: "Vencidos", count: counts.overdue.count, amount: counts.overdue.amount, countColor: "text-destructive" },
+    { key: "open", label: "A Vencer", count: counts.open.count, amount: counts.open.amount, countColor: "text-primary" },
+    { key: "paid", label: "Pagos", count: counts.paid.count, amount: counts.paid.amount, countColor: "text-emerald-600" },
+    { key: "all", label: "Total", count: counts.all.count, amount: counts.all.amount, countColor: "text-foreground" },
+  ];
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-6 animate-in fade-in duration-300">
       <PageHeader
         title="Contas a Pagar"
         description="Gerencie lançamentos, vencimentos e pagamentos"
         breadcrumbs={[{ label: "Financeiro" }, { label: "Contas a Pagar" }]}
         actions={
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" className="gap-2 text-xs bg-card">
-              <Download className="h-3.5 w-3.5" />
-              Exportar
-            </Button>
-            <Button size="sm" className="gap-2 text-xs" onClick={() => setCreateOpen(true)}>
-              <Plus className="h-3.5 w-3.5" />
-              Nova Conta
-            </Button>
-          </div>
+          <Button size="sm" className="gap-2 text-xs" onClick={() => setCreateOpen(true)}>
+            <Plus className="h-3.5 w-3.5" /> Nova Conta
+          </Button>
         }
       />
 
-      {/* Argus AI Banner */}
-      <ArgusBanner
-        message="3 contas vencem esta semana totalizando R$ 5.330,50. Sugiro priorizar Bambu Lab Store (vencido há 1 dia)."
-        actionLabel="Ver sugestão"
-        type="warning"
-      />
-
-      {/* Status Cards (Filter) */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+      {/* Status Cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {statusCards.map((card) => {
           const isActive = statusFilter === card.key;
           return (
-            <button
-              key={card.key}
-              onClick={() => setStatusFilter(card.key)}
-              className={cn(
-                "status-card text-left",
-                isActive && "status-card-active",
-                isActive && card.colorClass
-              )}
+            <button key={card.key} onClick={() => setStatusFilter(card.key)}
+              className={cn("rounded-xl border bg-card p-4 text-left transition-all", isActive && "ring-2 ring-primary/50")}
             >
-              <span className={cn("status-card-count", card.countColor)}>{card.count}</span>
-              <span className="status-card-value">R$ {card.amount.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}</span>
-              <span className="status-card-label">{card.label}</span>
+              <span className={cn("text-2xl font-bold", card.countColor)}>{card.count}</span>
+              <p className="text-xs text-muted-foreground mt-1">{fmtCurrency(card.amount)}</p>
+              <p className="text-xs text-muted-foreground">{card.label}</p>
             </button>
           );
         })}
       </div>
 
       {/* Search */}
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="Buscar por descrição, fornecedor ou ID..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pl-9 h-9 bg-card border-border text-sm"
-          />
-        </div>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Calendar className="h-4 w-4" />
-          <span>Março 2026</span>
-        </div>
+      <div className="relative max-w-md">
+        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+        <Input placeholder="Buscar por descrição ou fornecedor..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
       </div>
 
-      {/* Bulk Actions Bar */}
+      {/* Bulk */}
       {selectedIds.size > 0 && (
-        <div className="bulk-actions-bar animate-fade-in">
-          <span className="text-sm font-medium text-primary">
-            {selectedIds.size} selecionado(s) · {fmtCurrency(selectedTotal)}
-          </span>
-          <div className="flex items-center gap-2 ml-auto">
-            <Button size="sm" variant="outline" className="text-xs gap-1.5">
-              <DollarSign className="h-3.5 w-3.5" />
-              Pagar selecionados
-            </Button>
-            <Button size="sm" variant="outline" className="text-xs gap-1.5 text-destructive border-destructive/30 hover:bg-destructive/5">
-              <Trash2 className="h-3.5 w-3.5" />
-              Excluir
-            </Button>
-            <Button size="sm" variant="ghost" className="text-xs" onClick={() => setSelectedIds(new Set())}>
-              Limpar
-            </Button>
-          </div>
+        <div className="flex items-center gap-3 p-3 rounded-lg border bg-card">
+          <span className="text-sm font-medium text-primary">{selectedIds.size} selecionado(s)</span>
+          <Button size="sm" variant="outline" className="text-xs gap-1.5 ml-auto" onClick={() => {
+            selectedIds.forEach((id) => payMut.mutate(id));
+            setSelectedIds(new Set());
+          }}>
+            <DollarSign className="h-3.5 w-3.5" /> Pagar selecionados
+          </Button>
+          <Button size="sm" variant="ghost" className="text-xs" onClick={() => setSelectedIds(new Set())}>Limpar</Button>
         </div>
       )}
 
       {/* Table */}
-      <div className="card-enterprise !p-0 overflow-hidden">
-        <div className="border rounded-lg overflow-hidden overflow-x-auto">
+      <div className="rounded-xl border bg-card overflow-hidden">
+        {isLoading ? (
+          <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+        ) : filteredPayables.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+            <Receipt className="h-10 w-10 mb-3 opacity-40" /><p className="font-medium">Nenhuma conta encontrada</p>
+          </div>
+        ) : (
           <Table>
-            <TableHeader>
-              <TableRow className="bg-muted/50 hover:bg-muted/50">
-                <TableHead className="w-12">
-                  <Checkbox checked={allSelected} onCheckedChange={toggleSelectAll} />
-                </TableHead>
-                <TableHead className="min-w-[200px] text-xs font-semibold text-muted-foreground uppercase">Descrição</TableHead>
-                <TableHead className="text-xs font-semibold text-muted-foreground uppercase">Fornecedor</TableHead>
-                <TableHead className="text-xs font-semibold text-muted-foreground uppercase">Vencimento</TableHead>
-                <TableHead className="text-xs font-semibold text-muted-foreground uppercase">Plano de Contas</TableHead>
-                <TableHead className="text-xs font-semibold text-muted-foreground uppercase">Centro de Custo</TableHead>
-                <TableHead className="text-right text-xs font-semibold text-muted-foreground uppercase">Valor</TableHead>
-                <TableHead className="text-xs font-semibold text-muted-foreground uppercase">Status</TableHead>
-                <TableHead className="w-12"></TableHead>
-              </TableRow>
-            </TableHeader>
+            <TableHeader><TableRow>
+              <TableHead className="w-10"><Checkbox /></TableHead>
+              <TableHead>Descrição</TableHead>
+              <TableHead>Fornecedor</TableHead>
+              <TableHead>Vencimento</TableHead>
+              <TableHead className="text-right">Valor</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead className="w-10" />
+            </TableRow></TableHeader>
             <TableBody>
-              {filteredPayables.map((p) => {
-                const isSelected = selectedIds.has(p.id);
-                const canSelect = p.status !== "paid";
-
+              {filteredPayables.map((p: any) => {
+                const cfg = statusConfig[p.status as PayableStatus] || statusConfig.open;
                 return (
-                  <TableRow
-                    key={p.id}
-                    className={cn(
-                      "group transition-colors cursor-pointer hover:bg-muted/50",
-                      isSelected && "bg-primary/5"
-                    )}
-                  >
+                  <TableRow key={p.id} className={cn(selectedIds.has(p.id) && "bg-primary/5")}>
                     <TableCell onClick={(e) => e.stopPropagation()}>
-                      <Checkbox
-                        checked={isSelected}
-                        onCheckedChange={() => toggleSelect(p.id)}
-                        disabled={!canSelect}
-                      />
+                      <Checkbox checked={selectedIds.has(p.id)} onCheckedChange={() => toggleSelect(p.id)} disabled={p.status === "paid"} />
                     </TableCell>
                     <TableCell>
-                      <div className="space-y-0.5">
-                        <span className="font-medium text-foreground line-clamp-1">{p.description}</span>
-                        <div className="flex items-center gap-2">
-                          {p.installment !== "1/1" && (
-                            <code className="text-[11px] bg-muted px-1.5 py-0.5 rounded font-mono text-muted-foreground">{p.installment}</code>
-                          )}
-                          {p.attachments > 0 && (
-                            <span className="flex items-center gap-0.5 text-muted-foreground">
-                              <Paperclip className="w-3 h-3" />
-                              <span className="text-[11px]">{p.attachments}</span>
-                            </span>
-                          )}
-                        </div>
-                      </div>
+                      <p className="font-medium text-sm">{p.description}</p>
+                      {p.chart_of_accounts && <p className="text-[11px] text-muted-foreground">{p.chart_of_accounts.code} - {p.chart_of_accounts.name}</p>}
                     </TableCell>
-                    <TableCell>
-                      <span className="text-sm font-medium text-primary hover:underline cursor-pointer">{p.vendor}</span>
-                    </TableCell>
-                    <TableCell>
-                      <span className={cn(
-                        "text-sm tabular-nums",
-                        p.status === "overdue" ? "text-destructive font-medium" : "text-foreground"
-                      )}>
-                        {fmtDate(p.dueDate)}
-                      </span>
-                    </TableCell>
-                    <TableCell>
-                      <span className="text-xs text-muted-foreground">{p.account}</span>
-                    </TableCell>
-                    <TableCell>
-                      <span className="text-xs text-muted-foreground">{p.costCenter}</span>
-                    </TableCell>
+                    <TableCell className="text-sm">{p.vendors?.name || "—"}</TableCell>
+                    <TableCell className={cn("text-sm tabular-nums", p.status === "overdue" && "text-destructive font-medium")}>{fmtDate(p.due_date)}</TableCell>
                     <TableCell className="text-right">
-                      <span className="font-semibold tabular-nums">{fmtCurrency(p.amount)}</span>
-                      {p.amountPaid > 0 && p.amountPaid < p.amount && (
-                        <p className="text-[11px] text-emerald-600">Pago: {fmtCurrency(p.amountPaid)}</p>
+                      <span className="font-semibold tabular-nums text-sm">{fmtCurrency(p.amount)}</span>
+                      {p.amount_paid > 0 && p.amount_paid < p.amount && (
+                        <p className="text-[11px] text-emerald-600">Pago: {fmtCurrency(p.amount_paid)}</p>
                       )}
                     </TableCell>
                     <TableCell>
-                      <StatusBadge status={p.status} />
+                      <span className={cn("inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-semibold", cfg.className)}>{cfg.label}</span>
                     </TableCell>
-                    <TableCell onClick={(e) => e.stopPropagation()}>
+                    <TableCell>
                       <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end" className="w-48">
-                          <DropdownMenuItem className="gap-2"><Eye className="h-4 w-4" /> Ver detalhes</DropdownMenuItem>
-                          <DropdownMenuItem className="gap-2"><Edit className="h-4 w-4" /> Editar</DropdownMenuItem>
-                          {p.status !== "paid" && (
-                            <DropdownMenuItem className="gap-2"><DollarSign className="h-4 w-4" /> Registrar pagamento</DropdownMenuItem>
-                          )}
+                        <DropdownMenuTrigger asChild><Button variant="ghost" size="icon" className="h-7 w-7"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          {p.status !== "paid" && <DropdownMenuItem onClick={() => payMut.mutate(p.id)}><DollarSign className="h-3.5 w-3.5 mr-2" /> Pagar Total</DropdownMenuItem>}
                           <DropdownMenuSeparator />
-                          <DropdownMenuItem className="gap-2"><Paperclip className="h-4 w-4" /> Anexar arquivo</DropdownMenuItem>
-                          <DropdownMenuItem className="gap-2"><Copy className="h-4 w-4" /> Duplicar</DropdownMenuItem>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem className="gap-2 text-destructive focus:text-destructive">
-                            <Trash2 className="h-4 w-4" /> Excluir
-                          </DropdownMenuItem>
+                          <DropdownMenuItem className="text-destructive" onClick={() => deleteMut.mutate(p.id)}><Trash2 className="h-3.5 w-3.5 mr-2" /> Excluir</DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>
                   </TableRow>
                 );
               })}
-              {filteredPayables.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={9} className="text-center py-16">
-                    <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-muted flex items-center justify-center">
-                      <Receipt className="h-8 w-8 text-muted-foreground" />
-                    </div>
-                    <h3 className="text-lg font-medium text-foreground">Nenhuma conta encontrada</h3>
-                    <p className="mt-2 text-sm text-muted-foreground max-w-sm mx-auto">
-                      Não há contas a pagar para os filtros selecionados.
-                    </p>
-                  </TableCell>
-                </TableRow>
-              )}
             </TableBody>
           </Table>
-        </div>
-
-        {/* Footer */}
-        <div className="px-6 py-3 border-t border-border flex items-center justify-between text-sm text-muted-foreground">
-          <span>{filteredPayables.length} de {mockPayables.length} registros</span>
-          <span className="font-medium tabular-nums">
-            Total: {fmtCurrency(filteredPayables.reduce((s, p) => s + p.amount, 0))}
-          </span>
+        )}
+        <div className="px-6 py-3 border-t flex justify-between text-sm text-muted-foreground">
+          <span>{filteredPayables.length} registros</span>
+          <span className="font-medium tabular-nums">Total: {fmtCurrency(filteredPayables.reduce((s: number, p: any) => s + p.amount, 0))}</span>
         </div>
       </div>
 
       {/* Create Dialog */}
-      <CreatePayableDialog open={createOpen} onOpenChange={setCreateOpen} />
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="sm:max-w-[550px]">
+          <DialogHeader><DialogTitle className="flex items-center gap-2"><Receipt className="h-5 w-5 text-primary" /> Nova Conta a Pagar</DialogTitle></DialogHeader>
+          <div className="grid gap-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label className="text-xs">Descrição *</Label><Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Filamento PLA" /></div>
+              <div><Label className="text-xs">Fornecedor</Label>
+                <Select value={vendorId || "none"} onValueChange={(v) => setVendorId(v === "none" ? "" : v)}>
+                  <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                  <SelectContent><SelectItem value="none">Nenhum</SelectItem>{vendors.map((v) => <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
+              <div><Label className="text-xs">Valor *</Label><Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} /></div>
+              <div><Label className="text-xs">Vencimento *</Label><Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></div>
+              <div><Label className="text-xs">Competência</Label><Input type="date" value={competenceDate} onChange={(e) => setCompetenceDate(e.target.value)} /></div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label className="text-xs">Plano de Contas</Label>
+                <Select value={accountId || "none"} onValueChange={(v) => setAccountId(v === "none" ? "" : v)}>
+                  <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                  <SelectContent><SelectItem value="none">Nenhum</SelectItem>{accounts.map((a) => <SelectItem key={a.id} value={a.id}>{a.code} - {a.name}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+              <div><Label className="text-xs">Centro de Custo</Label>
+                <Select value={costCenterId || "none"} onValueChange={(v) => setCostCenterId(v === "none" ? "" : v)}>
+                  <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                  <SelectContent><SelectItem value="none">Nenhum</SelectItem>{costCenters.map((c) => <SelectItem key={c.id} value={c.id}>{c.code} - {c.name}</SelectItem>)}</SelectContent>
+                </Select>
+              </div>
+            </div>
+            <div><Label className="text-xs">Forma de Pagamento</Label>
+              <Select value={paymentMethodId || "none"} onValueChange={(v) => setPaymentMethodId(v === "none" ? "" : v)}>
+                <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
+                <SelectContent><SelectItem value="none">Nenhum</SelectItem>{paymentMethods.map((m) => <SelectItem key={m.id} value={m.id}>{m.name}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            <div><Label className="text-xs">Observações</Label><Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} /></div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancelar</Button>
+            <Button onClick={() => createMut.mutate()} disabled={!description || !amount || !dueDate || createMut.isPending}>
+              {createMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Criar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
-  );
-}
-
-// ─── Status Badge ─────────────────────────────
-function StatusBadge({ status }: { status: PayableStatus }) {
-  const config: Record<PayableStatus, { label: string; className: string }> = {
-    open: { label: "Aberto", className: "badge-warning" },
-    partial: { label: "Parcial", className: "badge-info" },
-    paid: { label: "Pago", className: "badge-success" },
-    overdue: { label: "Vencido", className: "badge-destructive" },
-    cancelled: { label: "Cancelado", className: "bg-muted text-muted-foreground border border-border" },
-  };
-  const c = config[status];
-  return (
-    <span className={cn("inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium", c.className)}>
-      {c.label}
-    </span>
-  );
-}
-
-// ─── Create Dialog ────────────────────────────
-function CreatePayableDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[600px] gap-0">
-        <DialogHeader className="pb-4 border-b border-border">
-          <DialogTitle className="text-base font-semibold flex items-center gap-2">
-            <Receipt className="w-5 h-5 text-primary" />
-            Nova Conta a Pagar
-          </DialogTitle>
-        </DialogHeader>
-
-        <div className="grid gap-4 py-5">
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-muted-foreground">Descrição *</Label>
-              <Input className="h-9 text-sm" placeholder="Ex: Filamento PLA Preto 10kg" />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-muted-foreground">Fornecedor</Label>
-              <Select>
-                <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="bambu">Bambu Lab Store</SelectItem>
-                  <SelectItem value="filament">Filament Express</SelectItem>
-                  <SelectItem value="cemig">CEMIG</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-3 gap-3">
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-muted-foreground">Valor *</Label>
-              <Input className="h-9 text-sm tabular-nums" placeholder="R$ 0,00" />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-muted-foreground">Vencimento *</Label>
-              <Input className="h-9 text-sm" type="date" />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-muted-foreground">Competência</Label>
-              <Input className="h-9 text-sm" type="date" />
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-muted-foreground">Plano de Contas</Label>
-              <Select>
-                <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="mp">3.1.01 - Matéria Prima</SelectItem>
-                  <SelectItem value="ins">3.1.02 - Insumos</SelectItem>
-                  <SelectItem value="pec">3.1.03 - Peças</SelectItem>
-                  <SelectItem value="ene">3.1.04 - Energia</SelectItem>
-                  <SelectItem value="man">3.1.05 - Manutenção</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-muted-foreground">Centro de Custo</Label>
-              <Select>
-                <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="prod">CC01 - Produção</SelectItem>
-                  <SelectItem value="mnt">CC02 - Manutenção</SelectItem>
-                  <SelectItem value="adm">CC03 - Administrativo</SelectItem>
-                  <SelectItem value="exp">CC04 - Expedição</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-3 gap-3">
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-muted-foreground">Forma de Pagamento</Label>
-              <Select>
-                <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="pix">PIX</SelectItem>
-                  <SelectItem value="boleto">Boleto</SelectItem>
-                  <SelectItem value="cartao">Cartão</SelectItem>
-                  <SelectItem value="debito">Débito Automático</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-muted-foreground">Nº Parcelas</Label>
-              <Input className="h-9 text-sm tabular-nums" type="number" defaultValue={1} min={1} max={48} />
-            </div>
-            <div className="space-y-1.5">
-              <Label className="text-xs font-medium text-muted-foreground">Conta Bancária</Label>
-              <Select>
-                <SelectTrigger className="h-9 text-sm"><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="bb">Banco do Brasil</SelectItem>
-                  <SelectItem value="nubank">Nubank PJ</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label className="text-xs font-medium text-muted-foreground">Observações</Label>
-            <Textarea className="text-sm min-h-[60px] resize-none" placeholder="Notas, NF, referências..." />
-          </div>
-
-          <div className="flex items-center gap-2 p-3 rounded-lg bg-muted text-sm text-muted-foreground">
-            <Paperclip className="w-4 h-4 flex-shrink-0" />
-            Anexos podem ser adicionados após salvar o registro.
-          </div>
-        </div>
-
-        <DialogFooter className="pt-3 border-t border-border gap-2">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>Cancelar</Button>
-          <Button className="gap-2" onClick={() => onOpenChange(false)}>
-            <Plus className="h-4 w-4" />
-            Criar Conta
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }

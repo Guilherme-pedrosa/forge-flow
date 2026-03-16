@@ -29,8 +29,8 @@ export default function DRE() {
       const { data, error } = await supabase
         .from("accounts_receivable")
         .select("amount, amount_received, status, receipt_date, competence_date, created_at")
-        .or(`competence_date.gte.${startDate},receipt_date.gte.${startDate}`)
-        .or(`competence_date.lte.${endDate},receipt_date.lte.${endDate}`);
+        .gte("competence_date", startDate)
+        .lte("competence_date", endDate);
       if (error) throw error;
       return data;
     },
@@ -43,8 +43,8 @@ export default function DRE() {
       const { data, error } = await supabase
         .from("accounts_payable")
         .select("amount, amount_paid, status, payment_date, competence_date, created_at, description")
-        .or(`competence_date.gte.${startDate},payment_date.gte.${startDate}`)
-        .or(`competence_date.lte.${endDate},payment_date.lte.${endDate}`);
+        .gte("competence_date", startDate)
+        .lte("competence_date", endDate);
       if (error) throw error;
       return data;
     },
