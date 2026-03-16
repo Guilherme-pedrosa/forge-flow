@@ -51,6 +51,7 @@ function AuthenticatedRoutes() {
         <Route path="/estoque/compras" element={<Compras />} />
         {/* Produção */}
         <Route path="/producao/jobs" element={<Jobs />} />
+        <Route path="/producao/margem" element={<MargemSKU />} />
         <Route path="/producao/impressoras" element={<Impressoras />} />
         <Route path="/producao/perdas" element={<ModulePlaceholder />} />
         {/* Planejamento */}

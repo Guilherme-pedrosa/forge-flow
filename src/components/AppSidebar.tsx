@@ -62,6 +62,7 @@ const menuGroups: MenuGroup[] = [
     label: "Produção",
     items: [
       { title: "Jobs", icon: Hammer, href: "/producao/jobs" },
+      { title: "Margem por SKU", icon: BarChart3, href: "/producao/margem" },
       { title: "Impressoras", icon: Printer, href: "/producao/impressoras" },
       { title: "Perdas / QC", icon: AlertTriangle, href: "/producao/perdas" },
     ],
