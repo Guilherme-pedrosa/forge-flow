@@ -349,6 +349,33 @@ export default function Dashboard() {
 
         {/* Right Column */}
         <div className="space-y-6">
+          {/* Order Pipeline */}
+          <div className="card-enterprise !p-0 overflow-hidden">
+            <div className="px-5 py-3.5 border-b border-border flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Factory className="w-4 h-4 text-muted-foreground" />
+                <h3 className="text-sm font-semibold text-foreground">Pipeline de Pedidos</h3>
+              </div>
+              <Link to="/comercial/pedidos" className="text-xs text-primary flex items-center gap-1 hover:underline font-medium">
+                Ver todos <ArrowRight className="w-3 h-3" />
+              </Link>
+            </div>
+            <div className="p-4 grid grid-cols-5 gap-2 text-center">
+              {[
+                { key: "draft", label: "Rascunho" },
+                { key: "approved", label: "Aprovado" },
+                { key: "in_production", label: "Produção" },
+                { key: "ready", label: "Pronto" },
+                { key: "shipped", label: "Enviado" },
+              ].map((s) => (
+                <div key={s.key} className="flex flex-col items-center gap-1">
+                  <span className="text-xl font-bold text-foreground tabular-nums">{data.orderPipeline[s.key] || 0}</span>
+                  <span className="text-[10px] text-muted-foreground leading-tight">{s.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
           {/* Payables */}
           <div className="card-enterprise !p-0 overflow-hidden">
             <div className="px-5 py-3.5 border-b border-border flex items-center justify-between">
