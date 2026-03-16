@@ -221,7 +221,7 @@ export default function Dashboard() {
     { id: "cash", title: "Saldo em Caixa", value: data.cashBalance, icon: "dollar" as const, format: "currency" as const },
     { id: "jobs", title: "Jobs Ativos", value: data.activeJobs, icon: "cart" as const, format: "number" as const },
     { id: "loss", title: "Taxa de Perda", value: data.lossRate, icon: "alert" as const, format: "percent" as const },
-    { id: "margin", title: "Margem Média", value: data.avgMargin, icon: "box" as const, format: "percent" as const },
+    { id: "margin", title: "Margem Real", value: data.avgMargin, icon: "box" as const, format: "percent" as const },
   ];
 
   const fmtDuration = (minutes: number | null) => {
