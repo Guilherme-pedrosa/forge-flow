@@ -51,6 +51,9 @@ const deriveProgressFromJob = (job: JobRow | null): number | null => {
 };
 
 export function TelemetryStrip() {
+  const { session } = useAuth();
+  const isAuthenticated = !!session?.access_token;
+
   useQuery({
     queryKey: ["telemetry-sync"],
     queryFn: async () => {
@@ -63,6 +66,7 @@ export function TelemetryStrip() {
     refetchInterval: 30000,
     staleTime: 25000,
     retry: false,
+    enabled: isAuthenticated,
   });
 
   const { data: printers } = useQuery({
