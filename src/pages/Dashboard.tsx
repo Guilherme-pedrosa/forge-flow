@@ -95,79 +95,88 @@ export default function Dashboard() {
     if (!tenantId) return;
 
     try {
-      // Fetch all data in parallel
       const [
         jobsRes,
+        completedJobsRes,
         payablesRes,
         inventoryRes,
         bankRes,
         productsRes,
+        ordersRes,
       ] = await Promise.all([
-        // Recent jobs (last 10)
         supabase
           .from("jobs")
           .select("id, code, name, status, est_grams, est_time_minutes, printer_id, printers(name), inventory_items!jobs_material_id_fkey(name)")
           .order("created_at", { ascending: false })
           .limit(5),
-        // Pending payables
+        // Completed jobs for real margin
+        supabase
+          .from("jobs")
+          .select("sale_price, actual_total_cost, est_total_cost, status")
+          .in("status", ["completed", "shipped"]),
         supabase
           .from("accounts_payable")
           .select("id, description, due_date, amount, amount_paid, status")
           .in("status", ["open", "partial", "overdue"])
           .order("due_date", { ascending: true })
           .limit(5),
-        // Inventory items with low stock
         supabase
           .from("inventory_items")
           .select("id, name, current_stock, min_stock, brand, unit")
           .eq("is_active", true)
           .order("name"),
-        // Bank accounts for cash balance
         supabase
           .from("bank_accounts")
           .select("current_balance")
           .eq("is_active", true),
-        // Products for margin
         supabase
           .from("products")
           .select("margin_percent, sale_price")
           .eq("is_active", true),
+        // Orders pipeline
+        supabase
+          .from("orders")
+          .select("status")
+          .not("status", "eq", "cancelled"),
       ]);
 
-      // Cash balance
       const cashBalance = (bankRes.data || []).reduce((sum, b) => sum + Number(b.current_balance || 0), 0);
 
-      // Active jobs count
       const allJobs = jobsRes.data || [];
       const activeJobs = allJobs.filter((j) =>
         ["queued", "printing", "paused", "post_processing", "quality_check"].includes(j.status)
       ).length;
 
-      // Average margin from products
-      const prods = (productsRes.data || []).filter((p) => p.margin_percent != null && p.margin_percent > 0);
-      const avgMargin = prods.length > 0
-        ? prods.reduce((sum, p) => sum + Number(p.margin_percent), 0) / prods.length
-        : 0;
+      // Real margin from completed jobs
+      const completed = completedJobsRes.data || [];
+      const totalRevenue = completed.reduce((s, j: any) => s + (j.sale_price || 0), 0);
+      const totalActualCost = completed.reduce((s, j: any) => s + (j.actual_total_cost || j.est_total_cost || 0), 0);
+      const realMargin = totalRevenue > 0 ? ((totalRevenue - totalActualCost) / totalRevenue) * 100 : 0;
 
-      // Inventory alerts (items below min stock)
       const alerts = (inventoryRes.data || []).filter(
         (item) => item.min_stock != null && item.current_stock < item.min_stock
       );
 
-      // Loss rate (failed jobs / total completed+failed)
-      // We'd need more data for a proper calculation, so let's just count from recent jobs
       const finishedJobs = allJobs.filter((j) => ["completed", "failed"].includes(j.status));
       const failedJobs = allJobs.filter((j) => j.status === "failed");
       const lossRate = finishedJobs.length > 0 ? (failedJobs.length / finishedJobs.length) * 100 : 0;
 
-      // Argus message
+      // Order pipeline counts
+      const ordersList = ordersRes.data || [];
+      const orderPipeline = {
+        draft: ordersList.filter(o => o.status === "draft").length,
+        approved: ordersList.filter(o => o.status === "approved").length,
+        in_production: ordersList.filter(o => o.status === "in_production").length,
+        ready: ordersList.filter(o => o.status === "ready").length,
+        shipped: ordersList.filter(o => o.status === "shipped").length,
+      };
+
       let argusMessage: string | null = null;
       if (alerts.length > 0) {
         const names = alerts.slice(0, 2).map((a) => a.name).join(", ");
         argusMessage = `${alerts.length} item(ns) de estoque abaixo do mínimo: ${names}. Considere criar pedido de reposição.`;
       }
 
-      // Format payables with overdue check
       const today = new Date().toISOString().split("T")[0];
       const formattedPayables = (payablesRes.data || []).map((p) => ({
         ...p,
@@ -178,11 +187,13 @@ export default function Dashboard() {
         cashBalance,
         activeJobs,
         lossRate,
-        avgMargin,
+        avgMargin: realMargin,
         recentJobs: allJobs,
         pendingPayables: formattedPayables,
         inventoryAlerts: alerts,
         argusMessage,
+        completedJobCount: completed.length,
+        orderPipeline,
       });
     } catch (err) {
       console.error("Dashboard fetch error:", err);
