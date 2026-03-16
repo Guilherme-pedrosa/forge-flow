@@ -72,6 +72,8 @@ interface DashboardData {
   pendingPayables: any[];
   inventoryAlerts: any[];
   argusMessage: string | null;
+  completedJobCount: number;
+  orderPipeline: Record<string, number>;
 }
 
 export default function Dashboard() {
