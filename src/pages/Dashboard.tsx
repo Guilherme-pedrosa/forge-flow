@@ -89,6 +89,8 @@ export default function Dashboard() {
     pendingPayables: [],
     inventoryAlerts: [],
     argusMessage: null,
+    completedJobCount: 0,
+    orderPipeline: {},
   });
 
   const tenantId = profile?.tenant_id;
