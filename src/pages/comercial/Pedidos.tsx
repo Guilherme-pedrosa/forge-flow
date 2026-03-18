@@ -632,7 +632,7 @@ export default function Pedidos() {
 
           <div className="flex-1 overflow-y-auto space-y-5 pr-1">
             {/* Customer + Date */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <Label>Cliente</Label>
                 <Select value={customerId || "none"} onValueChange={(v) => setCustomerId(v === "none" ? "" : v)}>
@@ -646,6 +646,10 @@ export default function Pedidos() {
               <div>
                 <Label>Data de Entrega</Label>
                 <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+              </div>
+              <div>
+                <Label>Vencimento Financeiro</Label>
+                <Input type="date" value={paymentDueDate} onChange={(e) => setPaymentDueDate(e.target.value)} />
               </div>
             </div>
 
