@@ -538,11 +538,22 @@ export default function Pedidos() {
 
   const deleteMut = useMutation({
     mutationFn: async (id: string) => {
+      // Delete linked jobs first
+      await supabase.from("jobs").delete().eq("order_id", id);
+      // Delete linked AR entries
+      await supabase.from("accounts_receivable").delete().eq("origin_id", id).eq("origin_type", "order");
+      // Delete order items
       await supabase.from("order_items").delete().eq("order_id", id);
+      // Delete order
       const { error } = await supabase.from("orders").delete().eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["orders"] }); toast({ title: "Pedido removido" }); },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["orders"] });
+      qc.invalidateQueries({ queryKey: ["jobs"] });
+      qc.invalidateQueries({ queryKey: ["accounts_receivable"] });
+      toast({ title: "Pedido removido" });
+    },
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 
