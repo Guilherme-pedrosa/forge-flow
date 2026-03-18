@@ -417,6 +417,34 @@ export default function Pedidos() {
       const { error } = await supabase.from("orders").update(updates).eq("id", id);
       if (error) throw error;
 
+      // ── Gerar Contas a Receber ao aprovar ──
+      if (status === "approved" && profile) {
+        const { data: orderData } = await supabase.from("orders").select("*").eq("id", id).single();
+        if (orderData) {
+          // Check if AR already exists for this order
+          const { data: existingAR } = await supabase.from("accounts_receivable")
+            .select("id")
+            .eq("origin_id", id)
+            .eq("origin_type", "order");
+          
+          if (!existingAR || existingAR.length === 0) {
+            const { error: arErr } = await supabase.from("accounts_receivable").insert({
+              tenant_id: profile.tenant_id,
+              description: `Pedido ${orderData.code}`,
+              amount: orderData.total || 0,
+              due_date: (orderData as any).payment_due_date || orderData.due_date || new Date().toISOString().slice(0, 10),
+              competence_date: new Date().toISOString().slice(0, 10),
+              customer_id: orderData.customer_id || null,
+              origin_id: id,
+              origin_type: "order",
+              created_by: profile.user_id,
+              status: "open",
+            });
+            if (arErr) console.error("Erro ao criar conta a receber:", arErr);
+          }
+        }
+      }
+
       // ── Explosão: ao mover para "Em Produção", criar Jobs automáticos ──
       if (status === "in_production" && profile) {
         const { data: items, error: itemsErr } = await supabase
