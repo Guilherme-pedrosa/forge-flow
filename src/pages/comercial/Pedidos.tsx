@@ -73,6 +73,7 @@ export default function Pedidos() {
   // Form state
   const [customerId, setCustomerId] = useState("");
   const [dueDate, setDueDate] = useState("");
+  const [paymentDueDate, setPaymentDueDate] = useState("");
   const [notes, setNotes] = useState("");
   const [shipping, setShipping] = useState("");
   const [discountVal, setDiscountVal] = useState("");
@@ -80,7 +81,7 @@ export default function Pedidos() {
   const [lines, setLines] = useState<OrderLineItem[]>([newLine()]);
 
   const resetForm = () => {
-    setCustomerId(""); setDueDate(""); setNotes(""); setShipping(""); setDiscountVal("");
+    setCustomerId(""); setDueDate(""); setPaymentDueDate(""); setNotes(""); setShipping(""); setDiscountVal("");
     setDeliveryAddress(""); setLines([newLine()]);
   };
 
