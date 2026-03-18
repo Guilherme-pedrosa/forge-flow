@@ -1323,6 +1323,7 @@ export type Database = {
           due_date: string | null
           id: string
           notes: string | null
+          payment_due_date: string | null
           status: string
           tenant_id: string
           total: number
@@ -1338,6 +1339,7 @@ export type Database = {
           due_date?: string | null
           id?: string
           notes?: string | null
+          payment_due_date?: string | null
           status?: string
           tenant_id: string
           total?: number
@@ -1353,6 +1355,7 @@ export type Database = {
           due_date?: string | null
           id?: string
           notes?: string | null
+          payment_due_date?: string | null
           status?: string
           tenant_id?: string
           total?: number

@@ -73,6 +73,7 @@ export default function Pedidos() {
   // Form state
   const [customerId, setCustomerId] = useState("");
   const [dueDate, setDueDate] = useState("");
+  const [paymentDueDate, setPaymentDueDate] = useState("");
   const [notes, setNotes] = useState("");
   const [shipping, setShipping] = useState("");
   const [discountVal, setDiscountVal] = useState("");
@@ -80,7 +81,7 @@ export default function Pedidos() {
   const [lines, setLines] = useState<OrderLineItem[]>([newLine()]);
 
   const resetForm = () => {
-    setCustomerId(""); setDueDate(""); setNotes(""); setShipping(""); setDiscountVal("");
+    setCustomerId(""); setDueDate(""); setPaymentDueDate(""); setNotes(""); setShipping(""); setDiscountVal("");
     setDeliveryAddress(""); setLines([newLine()]);
   };
 
@@ -377,10 +378,11 @@ export default function Pedidos() {
       const code = `ORC-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${String(orders.length + 1).padStart(3, "0")}`;
       const { data: order, error } = await supabase.from("orders").insert({
         tenant_id: profile.tenant_id, code, customer_id: customerId || null,
-        due_date: dueDate || null, total: grandTotal, discount: discountNum,
+        due_date: dueDate || null, payment_due_date: paymentDueDate || null,
+        total: grandTotal, discount: discountNum,
         notes: [deliveryAddress ? `📍 Entrega: ${deliveryAddress}` : "", notes].filter(Boolean).join("\n") || null,
         created_by: profile.user_id,
-      }).select("id").single();
+      } as any).select("id").single();
       if (error) throw error;
 
       const validLines = lines.filter((l) => l.description);
@@ -414,6 +416,34 @@ export default function Pedidos() {
       if (status === "approved") updates.approved_at = new Date().toISOString();
       const { error } = await supabase.from("orders").update(updates).eq("id", id);
       if (error) throw error;
+
+      // ── Gerar Contas a Receber ao aprovar ──
+      if (status === "approved" && profile) {
+        const { data: orderData } = await supabase.from("orders").select("*").eq("id", id).single();
+        if (orderData) {
+          // Check if AR already exists for this order
+          const { data: existingAR } = await supabase.from("accounts_receivable")
+            .select("id")
+            .eq("origin_id", id)
+            .eq("origin_type", "order");
+          
+          if (!existingAR || existingAR.length === 0) {
+            const { error: arErr } = await supabase.from("accounts_receivable").insert({
+              tenant_id: profile.tenant_id,
+              description: `Pedido ${orderData.code}`,
+              amount: orderData.total || 0,
+              due_date: (orderData as any).payment_due_date || orderData.due_date || new Date().toISOString().slice(0, 10),
+              competence_date: new Date().toISOString().slice(0, 10),
+              customer_id: orderData.customer_id || null,
+              origin_id: id,
+              origin_type: "order",
+              created_by: profile.user_id,
+              status: "open",
+            });
+            if (arErr) console.error("Erro ao criar conta a receber:", arErr);
+          }
+        }
+      }
 
       // ── Explosão: ao mover para "Em Produção", criar Jobs automáticos ──
       if (status === "in_production" && profile) {
@@ -500,6 +530,7 @@ export default function Pedidos() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["orders"] });
       qc.invalidateQueries({ queryKey: ["jobs"] });
+      qc.invalidateQueries({ queryKey: ["accounts_receivable"] });
       toast({ title: "Status atualizado" });
     },
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
@@ -602,7 +633,7 @@ export default function Pedidos() {
 
           <div className="flex-1 overflow-y-auto space-y-5 pr-1">
             {/* Customer + Date */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <Label>Cliente</Label>
                 <Select value={customerId || "none"} onValueChange={(v) => setCustomerId(v === "none" ? "" : v)}>
@@ -616,6 +647,10 @@ export default function Pedidos() {
               <div>
                 <Label>Data de Entrega</Label>
                 <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+              </div>
+              <div>
+                <Label>Vencimento Financeiro</Label>
+                <Input type="date" value={paymentDueDate} onChange={(e) => setPaymentDueDate(e.target.value)} />
               </div>
             </div>
 
@@ -735,7 +770,7 @@ export default function Pedidos() {
 
           {viewOrder && (
             <div className="space-y-4" ref={printRef}>
-              <div className="grid grid-cols-2 gap-4 text-sm">
+              <div className="grid grid-cols-3 gap-4 text-sm">
                 <div>
                   <p className="text-xs text-muted-foreground">Cliente</p>
                   <p className="font-medium">{(viewOrder as any).customers?.name || "—"}</p>
@@ -743,6 +778,10 @@ export default function Pedidos() {
                 <div>
                   <p className="text-xs text-muted-foreground">Data de Entrega</p>
                   <p className="font-medium">{viewOrder.due_date ? new Date(viewOrder.due_date + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Vencimento Financeiro</p>
+                  <p className="font-medium">{(viewOrder as any).payment_due_date ? new Date((viewOrder as any).payment_due_date + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</p>
                 </div>
               </div>
 
