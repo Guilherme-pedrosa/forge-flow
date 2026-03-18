@@ -378,10 +378,11 @@ export default function Pedidos() {
       const code = `ORC-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${String(orders.length + 1).padStart(3, "0")}`;
       const { data: order, error } = await supabase.from("orders").insert({
         tenant_id: profile.tenant_id, code, customer_id: customerId || null,
-        due_date: dueDate || null, total: grandTotal, discount: discountNum,
+        due_date: dueDate || null, payment_due_date: paymentDueDate || null,
+        total: grandTotal, discount: discountNum,
         notes: [deliveryAddress ? `📍 Entrega: ${deliveryAddress}` : "", notes].filter(Boolean).join("\n") || null,
         created_by: profile.user_id,
-      }).select("id").single();
+      } as any).select("id").single();
       if (error) throw error;
 
       const validLines = lines.filter((l) => l.description);
