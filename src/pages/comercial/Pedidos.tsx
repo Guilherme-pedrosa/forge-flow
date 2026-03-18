@@ -770,7 +770,7 @@ export default function Pedidos() {
 
           {viewOrder && (
             <div className="space-y-4" ref={printRef}>
-              <div className="grid grid-cols-2 gap-4 text-sm">
+              <div className="grid grid-cols-3 gap-4 text-sm">
                 <div>
                   <p className="text-xs text-muted-foreground">Cliente</p>
                   <p className="font-medium">{(viewOrder as any).customers?.name || "—"}</p>
@@ -778,6 +778,10 @@ export default function Pedidos() {
                 <div>
                   <p className="text-xs text-muted-foreground">Data de Entrega</p>
                   <p className="font-medium">{viewOrder.due_date ? new Date(viewOrder.due_date + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground">Vencimento Financeiro</p>
+                  <p className="font-medium">{(viewOrder as any).payment_due_date ? new Date((viewOrder as any).payment_due_date + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</p>
                 </div>
               </div>
 
