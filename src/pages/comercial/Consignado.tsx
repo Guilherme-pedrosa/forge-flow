@@ -688,14 +688,16 @@ export default function Consignado() {
                           <TableRow>
                             <TableHead>Produto</TableHead>
                             <TableHead className="text-center">Atual</TableHead>
-                            <TableHead className="text-center">Colocados</TableHead>
+                            <TableHead className="text-right">Preço Venda</TableHead>
+                            <TableHead className="text-right">Preço Consig. (−20%)</TableHead>
                             <TableHead className="text-center">Vendidos</TableHead>
-                            <TableHead className="text-center">Devolvidos</TableHead>
                             <TableHead className="text-right">Valor (estoque)</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {viewLocItems.map((item: any) => (
+                          {viewLocItems.map((item: any) => {
+                            const csgPrice = getConsignmentPrice(item.products?.sale_price ?? null, item.products?.cost_estimate ?? null);
+                            return (
                             <TableRow key={item.id}>
                               <TableCell className="text-sm font-medium">
                                 <div className="flex items-center gap-2">
@@ -706,13 +708,19 @@ export default function Consignado() {
                                 </div>
                               </TableCell>
                               <TableCell className="text-center font-bold">{item.current_qty}</TableCell>
-                              <TableCell className="text-center text-muted-foreground">{item.total_placed}</TableCell>
+                              <TableCell className="text-right font-mono text-sm text-muted-foreground line-through">
+                                {fmtCurrency(item.products?.sale_price || 0)}
+                              </TableCell>
+                              <TableCell className="text-right font-mono text-sm font-semibold text-primary">
+                                {fmtCurrency(csgPrice)}
+                              </TableCell>
                               <TableCell className="text-center text-emerald-600 font-medium">{item.total_sold}</TableCell>
-                              <TableCell className="text-center text-muted-foreground">{item.total_returned}</TableCell>
                               <TableCell className="text-right font-mono text-sm">
-                                {fmtCurrency(item.current_qty * (item.products?.sale_price || 0))}
+                                {fmtCurrency(item.current_qty * csgPrice)}
                               </TableCell>
                             </TableRow>
+                            );
+                          })}
                           ))}
                         </TableBody>
                       </Table>
