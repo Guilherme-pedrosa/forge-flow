@@ -100,7 +100,7 @@ export default function Consignado() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("consignment_items")
-        .select("*, products(name, photo_url, sale_price), consignment_locations(name)")
+        .select("*, products(name, photo_url, sale_price, cost_estimate), consignment_locations(name)")
         .order("created_at", { ascending: false });
       if (error) throw error;
       return data;
