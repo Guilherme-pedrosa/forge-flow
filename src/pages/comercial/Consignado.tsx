@@ -57,11 +57,8 @@ export default function Consignado() {
   const [movementType, setMovementType] = useState<string>("placement");
 
   // Location form
+  const [locCustomerName, setLocCustomerName] = useState("");
   const [locName, setLocName] = useState("");
-  const [locCustomerId, setLocCustomerId] = useState("");
-  const [locContact, setLocContact] = useState("");
-  const [locPhone, setLocPhone] = useState("");
-  const [locAddress, setLocAddress] = useState("");
   const [locNotes, setLocNotes] = useState("");
 
   // Movement form
@@ -163,16 +160,46 @@ export default function Consignado() {
   // ── Mutations ──
   const createLocMut = useMutation({
     mutationFn: async () => {
-      if (!profile || !locCustomerId) throw new Error("Selecione um cliente");
-      const c = customers.find((x) => x.id === locCustomerId) as any;
-      const addr = c?.address as any;
-      const addrStr = addr ? [addr.street, addr.number, addr.complement, addr.neighborhood, addr.city, addr.state].filter(Boolean).join(", ") : null;
+      if (!profile) throw new Error("Sem perfil");
+      if (!locCustomerName.trim()) throw new Error("Informe o nome do cliente");
+      if (!locName.trim()) throw new Error("Informe o nome do ponto");
+
+      const customerName = locCustomerName.trim();
+      const { data: existingCustomer, error: customerFindErr } = await supabase
+        .from("customers")
+        .select("id, name, phone, address")
+        .eq("tenant_id", profile.tenant_id)
+        .eq("name", customerName)
+        .limit(1)
+        .maybeSingle();
+      if (customerFindErr) throw customerFindErr;
+
+      let customer = existingCustomer as any;
+      if (!customer) {
+        const { data: createdCustomer, error: customerCreateErr } = await supabase
+          .from("customers")
+          .insert({
+            tenant_id: profile.tenant_id,
+            name: customerName,
+            is_active: true,
+          } as any)
+          .select("id, name, phone, address")
+          .single();
+        if (customerCreateErr) throw customerCreateErr;
+        customer = createdCustomer;
+      }
+
+      const addr = customer?.address as any;
+      const addrStr = addr
+        ? [addr.street, addr.number, addr.complement, addr.neighborhood, addr.city, addr.state].filter(Boolean).join(", ")
+        : null;
+
       const { error } = await supabase.from("consignment_locations").insert({
         tenant_id: profile.tenant_id,
-        name: locName || c?.name || "Ponto",
-        customer_id: locCustomerId,
-        contact_name: c?.name || null,
-        phone: c?.phone || null,
+        name: locName.trim(),
+        customer_id: customer.id,
+        contact_name: customer?.name || null,
+        phone: customer?.phone || null,
         address: addrStr || null,
         notes: locNotes || null,
       } as any);
@@ -180,8 +207,9 @@ export default function Consignado() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["consignment_locations"] });
+      qc.invalidateQueries({ queryKey: ["customers_consignment"] });
       setCreateLocOpen(false);
-      setLocName(""); setLocCustomerId(""); setLocContact(""); setLocPhone(""); setLocAddress(""); setLocNotes("");
+      setLocCustomerName(""); setLocName(""); setLocNotes("");
       toast({ title: "Ponto criado" });
     },
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
@@ -575,23 +603,29 @@ export default function Consignado() {
           <DialogHeader><DialogTitle>Novo Ponto de Consignação</DialogTitle></DialogHeader>
           <div className="grid gap-4">
             <div>
-              <Label>Cliente *</Label>
-              <Select value={locCustomerId || "none"} onValueChange={(v) => setLocCustomerId(v === "none" ? "" : v)}>
-                <SelectTrigger><SelectValue placeholder="Selecione o cliente" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Selecione…</SelectItem>
-                  {customers.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <Label>Nome do Cliente *</Label>
+              <Input
+                value={locCustomerName}
+                onChange={(e) => setLocCustomerName(e.target.value)}
+                placeholder="Ex: AnaLu Unhas"
+              />
             </div>
             <div>
               <Label>Nome do Ponto *</Label>
-              <Input value={locName} onChange={(e) => setLocName(e.target.value)} placeholder="Ex: Loja Centro, Vitrine Shopping…" />
+              <Input
+                value={locName}
+                onChange={(e) => setLocName(e.target.value)}
+                placeholder="Ex: Vitrine Loja Centro"
+              />
+            </div>
+            <div>
+              <Label>Observações</Label>
+              <Textarea value={locNotes} onChange={(e) => setLocNotes(e.target.value)} rows={2} />
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateLocOpen(false)}>Cancelar</Button>
-            <Button onClick={() => createLocMut.mutate()} disabled={!locCustomerId || !locName || createLocMut.isPending}>
+            <Button onClick={() => createLocMut.mutate()} disabled={!locCustomerName.trim() || !locName.trim() || createLocMut.isPending}>
               {createLocMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Criar
             </Button>
           </DialogFooter>
