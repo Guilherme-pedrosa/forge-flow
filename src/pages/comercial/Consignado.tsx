@@ -105,7 +105,7 @@ export default function Consignado() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("products")
-        .select("id, name, sale_price, photo_url")
+        .select("id, name, sale_price, cost_estimate, photo_url")
         .eq("is_active", true)
         .order("name");
       if (error) throw error;
