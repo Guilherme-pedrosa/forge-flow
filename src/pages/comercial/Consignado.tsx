@@ -166,7 +166,7 @@ export default function Consignado() {
   // ── Mutations ──
   const resetLocForm = () => {
     setLocMode("existing"); setLocCustomerId(""); setLocName("");
-    setNewCustName(""); setNewCustPhone(""); setNewCustEmail(""); setNewCustDocument("");
+    setNewCustName(""); setNewCustPhone(""); setNewCustEmail(""); setNewCustDocument(""); setNewCustBirthday("");
   };
 
   const createLocMut = useMutation({
