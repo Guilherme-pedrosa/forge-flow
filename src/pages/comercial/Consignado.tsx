@@ -159,11 +159,12 @@ export default function Consignado() {
       const { error } = await supabase.from("consignment_locations").insert({
         tenant_id: profile.tenant_id,
         name: locName,
+        customer_id: locCustomerId || null,
         contact_name: locContact || null,
         phone: locPhone || null,
         address: locAddress || null,
         notes: locNotes || null,
-      });
+      } as any);
       if (error) throw error;
     },
     onSuccess: () => {
