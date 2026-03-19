@@ -163,38 +163,41 @@ export default function Consignado() {
   const totalValueOut = Object.values(locationSummary).reduce((s, v) => s + v.totalValue, 0);
 
   // ── Mutations ──
+  const resetLocForm = () => {
+    setLocMode("existing"); setLocCustomerId(""); setLocName("");
+    setNewCustName(""); setNewCustPhone(""); setNewCustEmail(""); setNewCustDocument("");
+  };
+
   const createLocMut = useMutation({
     mutationFn: async () => {
       if (!profile) throw new Error("Sem perfil");
-      if (!locCustomerName.trim()) throw new Error("Informe o nome do cliente");
       if (!locName.trim()) throw new Error("Informe o nome do ponto");
 
-      const customerName = locCustomerName.trim();
-      const { data: existingCustomer, error: customerFindErr } = await supabase
-        .from("customers")
-        .select("id, name, phone, address")
-        .eq("tenant_id", profile.tenant_id)
-        .eq("name", customerName)
-        .limit(1)
-        .maybeSingle();
-      if (customerFindErr) throw customerFindErr;
+      let customerId: string;
 
-      let customer = existingCustomer as any;
-      if (!customer) {
-        const { data: createdCustomer, error: customerCreateErr } = await supabase
+      if (locMode === "existing") {
+        if (!locCustomerId) throw new Error("Selecione um cliente");
+        customerId = locCustomerId;
+      } else {
+        if (!newCustName.trim()) throw new Error("Informe o nome do cliente");
+        const { data: created, error: custErr } = await supabase
           .from("customers")
           .insert({
             tenant_id: profile.tenant_id,
-            name: customerName,
+            name: newCustName.trim(),
+            phone: newCustPhone || null,
+            email: newCustEmail || null,
+            document: newCustDocument || null,
             is_active: true,
-          } as any)
-          .select("id, name, phone, address")
+          })
+          .select("id")
           .single();
-        if (customerCreateErr) throw customerCreateErr;
-        customer = createdCustomer;
+        if (custErr) throw custErr;
+        customerId = created.id;
       }
 
-      const addr = customer?.address as any;
+      const c = customers.find((x) => x.id === customerId) as any;
+      const addr = c?.address as any;
       const addrStr = addr
         ? [addr.street, addr.number, addr.complement, addr.neighborhood, addr.city, addr.state].filter(Boolean).join(", ")
         : null;
@@ -202,11 +205,10 @@ export default function Consignado() {
       const { error } = await supabase.from("consignment_locations").insert({
         tenant_id: profile.tenant_id,
         name: locName.trim(),
-        customer_id: customer.id,
-        contact_name: customer?.name || null,
-        phone: customer?.phone || null,
+        customer_id: customerId,
+        contact_name: c?.name || newCustName.trim(),
+        phone: c?.phone || newCustPhone || null,
         address: addrStr || null,
-        notes: locNotes || null,
       } as any);
       if (error) throw error;
     },
@@ -214,7 +216,7 @@ export default function Consignado() {
       qc.invalidateQueries({ queryKey: ["consignment_locations"] });
       qc.invalidateQueries({ queryKey: ["customers_consignment"] });
       setCreateLocOpen(false);
-      setLocCustomerName(""); setLocName(""); setLocNotes("");
+      resetLocForm();
       toast({ title: "Ponto criado" });
     },
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
