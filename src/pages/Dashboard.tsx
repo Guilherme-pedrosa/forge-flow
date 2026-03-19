@@ -76,6 +76,7 @@ interface DashboardData {
   argusMessage: string | null;
   completedJobCount: number;
   orderPipeline: Record<string, number>;
+  upcomingBirthdays: any[];
 }
 
 export default function Dashboard() {
