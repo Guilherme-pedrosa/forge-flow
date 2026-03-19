@@ -163,14 +163,17 @@ export default function Consignado() {
   // ── Mutations ──
   const createLocMut = useMutation({
     mutationFn: async () => {
-      if (!profile) throw new Error("Sem perfil");
+      if (!profile || !locCustomerId) throw new Error("Selecione um cliente");
+      const c = customers.find((x) => x.id === locCustomerId) as any;
+      const addr = c?.address as any;
+      const addrStr = addr ? [addr.street, addr.number, addr.complement, addr.neighborhood, addr.city, addr.state].filter(Boolean).join(", ") : null;
       const { error } = await supabase.from("consignment_locations").insert({
         tenant_id: profile.tenant_id,
-        name: locName,
-        customer_id: locCustomerId || null,
-        contact_name: locContact || null,
-        phone: locPhone || null,
-        address: locAddress || null,
+        name: locName || c?.name || "Ponto",
+        customer_id: locCustomerId,
+        contact_name: c?.name || null,
+        phone: c?.phone || null,
+        address: addrStr || null,
         notes: locNotes || null,
       } as any);
       if (error) throw error;
