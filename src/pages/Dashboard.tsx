@@ -14,6 +14,7 @@ import {
   ShoppingCart,
   Inbox,
   Factory,
+  Cake,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -75,6 +76,7 @@ interface DashboardData {
   argusMessage: string | null;
   completedJobCount: number;
   orderPipeline: Record<string, number>;
+  upcomingBirthdays: any[];
 }
 
 export default function Dashboard() {
@@ -92,6 +94,7 @@ export default function Dashboard() {
     argusMessage: null,
     completedJobCount: 0,
     orderPipeline: {},
+    upcomingBirthdays: [],
   });
 
   const tenantId = profile?.tenant_id;
@@ -108,13 +111,13 @@ export default function Dashboard() {
         bankRes,
         productsRes,
         ordersRes,
+        customersRes,
       ] = await Promise.all([
         supabase
           .from("jobs")
           .select("id, code, name, status, est_grams, est_time_minutes, printer_id, printers(name), inventory_items!jobs_material_id_fkey(name)")
           .order("created_at", { ascending: false })
           .limit(5),
-        // Completed jobs for real margin
         supabase
           .from("jobs")
           .select("sale_price, actual_total_cost, est_total_cost, status")
@@ -138,11 +141,15 @@ export default function Dashboard() {
           .from("products")
           .select("margin_percent, sale_price")
           .eq("is_active", true),
-        // Orders pipeline
         supabase
           .from("orders")
           .select("status")
           .not("status", "eq", "cancelled"),
+        supabase
+          .from("customers")
+          .select("id, name, birthday, phone")
+          .eq("is_active", true)
+          .not("birthday", "is", null),
       ]);
 
       const cashBalance = (bankRes.data || []).reduce((sum, b) => sum + Number(b.current_balance || 0), 0);
@@ -182,11 +189,26 @@ export default function Dashboard() {
         argusMessage = `${alerts.length} item(ns) de estoque abaixo do mínimo: ${names}. Considere criar pedido de reposição.`;
       }
 
-      const today = new Date().toISOString().split("T")[0];
+      const todayStr = new Date().toISOString().split("T")[0];
       const formattedPayables = (payablesRes.data || []).map((p) => ({
         ...p,
-        status: p.status === "open" && p.due_date < today ? "overdue" : p.status,
+        status: p.status === "open" && p.due_date < todayStr ? "overdue" : p.status,
       }));
+
+      // Upcoming birthdays (next 30 days)
+      const allCustomers = customersRes.data || [];
+      const todayDate = new Date();
+      const upcomingBirthdays = allCustomers
+        .map((c: any) => {
+          const bday = new Date(c.birthday + "T00:00:00");
+          const thisYear = new Date(todayDate.getFullYear(), bday.getMonth(), bday.getDate());
+          if (thisYear < todayDate) thisYear.setFullYear(thisYear.getFullYear() + 1);
+          const diffDays = Math.round((thisYear.getTime() - todayDate.getTime()) / (1000 * 60 * 60 * 24));
+          return { ...c, nextBirthday: thisYear, daysUntil: diffDays };
+        })
+        .filter((c: any) => c.daysUntil >= 0 && c.daysUntil <= 30)
+        .sort((a: any, b: any) => a.daysUntil - b.daysUntil)
+        .slice(0, 5);
 
       setData({
         cashBalance,
@@ -199,6 +221,7 @@ export default function Dashboard() {
         argusMessage,
         completedJobCount: completed.length,
         orderPipeline,
+        upcomingBirthdays,
       });
     } catch (err) {
       console.error("Dashboard fetch error:", err);
@@ -446,6 +469,49 @@ export default function Dashboard() {
                       </span>
                       <p className="text-xs text-muted-foreground">mín: {item.min_stock}{item.unit}</p>
                     </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Upcoming Birthdays */}
+          <div className="card-enterprise !p-0 overflow-hidden">
+            <div className="px-5 py-3.5 border-b border-border flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Cake className="w-4 h-4 text-pink-500" />
+                <h3 className="text-sm font-semibold text-foreground">Aniversários Próximos</h3>
+              </div>
+              <Link to="/comercial/clientes" className="text-xs text-primary flex items-center gap-1 hover:underline font-medium">
+                Ver clientes <ArrowRight className="w-3 h-3" />
+              </Link>
+            </div>
+            {data.upcomingBirthdays.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+                <Inbox className="h-6 w-6 mb-1" />
+                <p className="text-xs">Nenhum aniversário nos próximos 30 dias</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-border">
+                {data.upcomingBirthdays.map((c: any) => (
+                  <div key={c.id} className="px-5 py-3 flex items-center justify-between hover:bg-muted/50 transition-colors">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-foreground truncate">{c.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {new Date(c.birthday + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "long" })}
+                        {c.phone && ` · ${c.phone}`}
+                      </p>
+                    </div>
+                    <span className={cn(
+                      "inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium shrink-0",
+                      c.daysUntil === 0
+                        ? "bg-pink-500/10 text-pink-600 border border-pink-500/20"
+                        : c.daysUntil <= 7
+                        ? "bg-amber-500/10 text-amber-600 border border-amber-500/20"
+                        : "bg-muted text-muted-foreground border border-border"
+                    )}>
+                      {c.daysUntil === 0 ? "🎂 Hoje!" : c.daysUntil === 1 ? "Amanhã" : `em ${c.daysUntil} dias`}
+                    </span>
                   </div>
                 ))}
               </div>

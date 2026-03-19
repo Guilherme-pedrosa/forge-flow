@@ -65,6 +65,7 @@ export default function Consignado() {
   const [newCustPhone, setNewCustPhone] = useState("");
   const [newCustEmail, setNewCustEmail] = useState("");
   const [newCustDocument, setNewCustDocument] = useState("");
+  const [newCustBirthday, setNewCustBirthday] = useState("");
 
   // Movement form
   const [movProductId, setMovProductId] = useState("");
@@ -165,7 +166,7 @@ export default function Consignado() {
   // ── Mutations ──
   const resetLocForm = () => {
     setLocMode("existing"); setLocCustomerId(""); setLocName("");
-    setNewCustName(""); setNewCustPhone(""); setNewCustEmail(""); setNewCustDocument("");
+    setNewCustName(""); setNewCustPhone(""); setNewCustEmail(""); setNewCustDocument(""); setNewCustBirthday("");
   };
 
   const createLocMut = useMutation({
@@ -188,6 +189,7 @@ export default function Consignado() {
             phone: newCustPhone || null,
             email: newCustEmail || null,
             document: newCustDocument || null,
+            birthday: newCustBirthday || null,
             is_active: true,
           })
           .select("id")
@@ -638,6 +640,7 @@ export default function Consignado() {
                   <div><Label>CPF/CNPJ</Label><Input value={newCustDocument} onChange={(e) => setNewCustDocument(e.target.value)} placeholder="000.000.000-00" /></div>
                 </div>
                 <div><Label>E-mail</Label><Input value={newCustEmail} onChange={(e) => setNewCustEmail(e.target.value)} placeholder="cliente@email.com" /></div>
+                <div><Label>Data de Nascimento</Label><Input type="date" value={newCustBirthday} onChange={(e) => setNewCustBirthday(e.target.value)} /></div>
               </>
             )}
 
