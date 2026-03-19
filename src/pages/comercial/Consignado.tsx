@@ -247,6 +247,9 @@ export default function Consignado() {
       // ── Auto-criar Pedido + Conta a Receber na venda ──
       if (movementType === "sale") {
         const loc = locations.find((l: any) => l.id === viewLocId);
+        if (!(loc as any)?.customer_id) {
+          throw new Error("Este ponto não tem um cliente vinculado. Edite o ponto e associe um cliente antes de registrar vendas.");
+        }
         const product = products.find((p: any) => p.id === movProductId);
         const unitPrice = price || product?.sale_price || 0;
         const saleTotal = unitPrice * qty;
@@ -595,7 +598,11 @@ export default function Consignado() {
           {viewLoc && (
             <div className="space-y-4">
               {/* Location info */}
-              <div className="grid grid-cols-3 gap-4 text-sm">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+                <div>
+                  <p className="text-xs text-muted-foreground">Cliente</p>
+                  <p className="font-medium">{(viewLoc as any).customers?.name || <span className="text-destructive">Nenhum vinculado</span>}</p>
+                </div>
                 <div>
                   <p className="text-xs text-muted-foreground">Contato</p>
                   <p className="font-medium">{viewLoc.contact_name || "—"}</p>
@@ -609,6 +616,26 @@ export default function Consignado() {
                   <p className="font-medium">{viewLoc.address || "—"}</p>
                 </div>
               </div>
+
+              {/* Edit customer link if missing */}
+              {!(viewLoc as any).customer_id && (
+                <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">
+                  <span className="text-destructive">⚠ Vincule um cliente a este ponto para registrar vendas.</span>
+                  <Select value="" onValueChange={async (val) => {
+                    const { error } = await supabase.from("consignment_locations").update({ customer_id: val } as any).eq("id", viewLocId!);
+                    if (error) { toast({ title: "Erro", description: error.message, variant: "destructive" }); return; }
+                    qc.invalidateQueries({ queryKey: ["consignment_locations"] });
+                    toast({ title: "Cliente vinculado!" });
+                  }}>
+                    <SelectTrigger className="w-[200px] h-8">
+                      <SelectValue placeholder="Selecionar cliente" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {customers.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
 
               {/* Action buttons */}
               <div className="flex flex-wrap gap-2">
