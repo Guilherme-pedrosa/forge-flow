@@ -57,9 +57,14 @@ export default function Consignado() {
   const [movementType, setMovementType] = useState<string>("placement");
 
   // Location form
-  const [locCustomerName, setLocCustomerName] = useState("");
+  const [locMode, setLocMode] = useState<"existing" | "new">("existing");
+  const [locCustomerId, setLocCustomerId] = useState("");
   const [locName, setLocName] = useState("");
-  const [locNotes, setLocNotes] = useState("");
+  // New customer fields
+  const [newCustName, setNewCustName] = useState("");
+  const [newCustPhone, setNewCustPhone] = useState("");
+  const [newCustEmail, setNewCustEmail] = useState("");
+  const [newCustDocument, setNewCustDocument] = useState("");
 
   // Movement form
   const [movProductId, setMovProductId] = useState("");
@@ -158,38 +163,41 @@ export default function Consignado() {
   const totalValueOut = Object.values(locationSummary).reduce((s, v) => s + v.totalValue, 0);
 
   // ── Mutations ──
+  const resetLocForm = () => {
+    setLocMode("existing"); setLocCustomerId(""); setLocName("");
+    setNewCustName(""); setNewCustPhone(""); setNewCustEmail(""); setNewCustDocument("");
+  };
+
   const createLocMut = useMutation({
     mutationFn: async () => {
       if (!profile) throw new Error("Sem perfil");
-      if (!locCustomerName.trim()) throw new Error("Informe o nome do cliente");
       if (!locName.trim()) throw new Error("Informe o nome do ponto");
 
-      const customerName = locCustomerName.trim();
-      const { data: existingCustomer, error: customerFindErr } = await supabase
-        .from("customers")
-        .select("id, name, phone, address")
-        .eq("tenant_id", profile.tenant_id)
-        .eq("name", customerName)
-        .limit(1)
-        .maybeSingle();
-      if (customerFindErr) throw customerFindErr;
+      let customerId: string;
 
-      let customer = existingCustomer as any;
-      if (!customer) {
-        const { data: createdCustomer, error: customerCreateErr } = await supabase
+      if (locMode === "existing") {
+        if (!locCustomerId) throw new Error("Selecione um cliente");
+        customerId = locCustomerId;
+      } else {
+        if (!newCustName.trim()) throw new Error("Informe o nome do cliente");
+        const { data: created, error: custErr } = await supabase
           .from("customers")
           .insert({
             tenant_id: profile.tenant_id,
-            name: customerName,
+            name: newCustName.trim(),
+            phone: newCustPhone || null,
+            email: newCustEmail || null,
+            document: newCustDocument || null,
             is_active: true,
-          } as any)
-          .select("id, name, phone, address")
+          })
+          .select("id")
           .single();
-        if (customerCreateErr) throw customerCreateErr;
-        customer = createdCustomer;
+        if (custErr) throw custErr;
+        customerId = created.id;
       }
 
-      const addr = customer?.address as any;
+      const c = customers.find((x) => x.id === customerId) as any;
+      const addr = c?.address as any;
       const addrStr = addr
         ? [addr.street, addr.number, addr.complement, addr.neighborhood, addr.city, addr.state].filter(Boolean).join(", ")
         : null;
@@ -197,11 +205,10 @@ export default function Consignado() {
       const { error } = await supabase.from("consignment_locations").insert({
         tenant_id: profile.tenant_id,
         name: locName.trim(),
-        customer_id: customer.id,
-        contact_name: customer?.name || null,
-        phone: customer?.phone || null,
+        customer_id: customerId,
+        contact_name: c?.name || newCustName.trim(),
+        phone: c?.phone || newCustPhone || null,
         address: addrStr || null,
-        notes: locNotes || null,
       } as any);
       if (error) throw error;
     },
@@ -209,7 +216,7 @@ export default function Consignado() {
       qc.invalidateQueries({ queryKey: ["consignment_locations"] });
       qc.invalidateQueries({ queryKey: ["customers_consignment"] });
       setCreateLocOpen(false);
-      setLocCustomerName(""); setLocName(""); setLocNotes("");
+      resetLocForm();
       toast({ title: "Ponto criado" });
     },
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
@@ -598,34 +605,57 @@ export default function Consignado() {
       )}
 
       {/* ── Create Location Dialog ── */}
-      <Dialog open={createLocOpen} onOpenChange={setCreateLocOpen}>
-        <DialogContent className="max-w-sm">
+      <Dialog open={createLocOpen} onOpenChange={(o) => { if (!o) { setCreateLocOpen(false); resetLocForm(); } else setCreateLocOpen(true); }}>
+        <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Novo Ponto de Consignação</DialogTitle></DialogHeader>
           <div className="grid gap-4">
-            <div>
-              <Label>Nome do Cliente *</Label>
-              <Input
-                value={locCustomerName}
-                onChange={(e) => setLocCustomerName(e.target.value)}
-                placeholder="Ex: AnaLu Unhas"
-              />
+            {/* Toggle mode */}
+            <div className="flex gap-2">
+              <Button type="button" size="sm" variant={locMode === "existing" ? "default" : "outline"} onClick={() => setLocMode("existing")} className="flex-1">
+                Cliente existente
+              </Button>
+              <Button type="button" size="sm" variant={locMode === "new" ? "default" : "outline"} onClick={() => setLocMode("new")} className="flex-1">
+                Novo cliente
+              </Button>
             </div>
+
+            {locMode === "existing" ? (
+              <div>
+                <Label>Cliente *</Label>
+                <Select value={locCustomerId || "none"} onValueChange={(v) => setLocCustomerId(v === "none" ? "" : v)}>
+                  <SelectTrigger><SelectValue placeholder="Selecione o cliente" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Selecione…</SelectItem>
+                    {customers.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : (
+              <>
+                <div><Label>Nome do Cliente *</Label><Input value={newCustName} onChange={(e) => setNewCustName(e.target.value)} placeholder="Ex: AnaLu Unhas" /></div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div><Label>Telefone</Label><Input value={newCustPhone} onChange={(e) => setNewCustPhone(e.target.value)} placeholder="(62) 99999-9999" /></div>
+                  <div><Label>CPF/CNPJ</Label><Input value={newCustDocument} onChange={(e) => setNewCustDocument(e.target.value)} placeholder="000.000.000-00" /></div>
+                </div>
+                <div><Label>E-mail</Label><Input value={newCustEmail} onChange={(e) => setNewCustEmail(e.target.value)} placeholder="cliente@email.com" /></div>
+              </>
+            )}
+
             <div>
               <Label>Nome do Ponto *</Label>
-              <Input
-                value={locName}
-                onChange={(e) => setLocName(e.target.value)}
-                placeholder="Ex: Vitrine Loja Centro"
-              />
-            </div>
-            <div>
-              <Label>Observações</Label>
-              <Textarea value={locNotes} onChange={(e) => setLocNotes(e.target.value)} rows={2} />
+              <Input value={locName} onChange={(e) => setLocName(e.target.value)} placeholder="Ex: Vitrine Loja Centro" />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateLocOpen(false)}>Cancelar</Button>
-            <Button onClick={() => createLocMut.mutate()} disabled={!locCustomerName.trim() || !locName.trim() || createLocMut.isPending}>
+            <Button variant="outline" onClick={() => { setCreateLocOpen(false); resetLocForm(); }}>Cancelar</Button>
+            <Button
+              onClick={() => createLocMut.mutate()}
+              disabled={
+                !locName.trim() ||
+                (locMode === "existing" ? !locCustomerId : !newCustName.trim()) ||
+                createLocMut.isPending
+              }
+            >
               {createLocMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Criar
             </Button>
           </DialogFooter>
