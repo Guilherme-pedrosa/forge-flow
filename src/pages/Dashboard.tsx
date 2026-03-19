@@ -195,6 +195,21 @@ export default function Dashboard() {
         status: p.status === "open" && p.due_date < today ? "overdue" : p.status,
       }));
 
+      // Upcoming birthdays (next 30 days)
+      const allCustomers = customersRes.data || [];
+      const today = new Date();
+      const upcomingBirthdays = allCustomers
+        .map((c: any) => {
+          const bday = new Date(c.birthday + "T00:00:00");
+          const thisYear = new Date(today.getFullYear(), bday.getMonth(), bday.getDate());
+          if (thisYear < today) thisYear.setFullYear(thisYear.getFullYear() + 1);
+          const diffDays = Math.round((thisYear.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+          return { ...c, nextBirthday: thisYear, daysUntil: diffDays };
+        })
+        .filter((c: any) => c.daysUntil >= 0 && c.daysUntil <= 30)
+        .sort((a: any, b: any) => a.daysUntil - b.daysUntil)
+        .slice(0, 5);
+
       setData({
         cashBalance,
         activeJobs,
@@ -206,6 +221,7 @@ export default function Dashboard() {
         argusMessage,
         completedJobCount: completed.length,
         orderPipeline,
+        upcomingBirthdays,
       });
     } catch (err) {
       console.error("Dashboard fetch error:", err);
