@@ -65,6 +65,7 @@ export default function Consignado() {
   const [newCustPhone, setNewCustPhone] = useState("");
   const [newCustEmail, setNewCustEmail] = useState("");
   const [newCustDocument, setNewCustDocument] = useState("");
+  const [newCustBirthday, setNewCustBirthday] = useState("");
 
   // Movement form
   const [movProductId, setMovProductId] = useState("");
