@@ -30,6 +30,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 const fmtCurrency = (v: number | null) =>
   v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
 
+/** Preço consignado = 80% do sale_price, mas nunca abaixo do custo */
+const getConsignmentPrice = (salePrice: number | null, costEstimate: number | null) => {
+  const sp = salePrice || 0;
+  const cost = costEstimate || 0;
+  const discounted = Math.round(sp * 0.8 * 100) / 100;
+  return Math.max(discounted, cost);
+};
+
 const movementLabels: Record<string, { label: string; color: string; icon: typeof Plus }> = {
   placement: { label: "Colocação", color: "bg-primary/10 text-primary", icon: ArrowUpFromLine },
   sale: { label: "Venda", color: "bg-emerald-100 text-emerald-700", icon: ShoppingCart },
