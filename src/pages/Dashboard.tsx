@@ -94,6 +94,7 @@ export default function Dashboard() {
     argusMessage: null,
     completedJobCount: 0,
     orderPipeline: {},
+    upcomingBirthdays: [],
   });
 
   const tenantId = profile?.tenant_id;
