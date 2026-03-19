@@ -440,7 +440,7 @@ export default function Pedidos() {
               created_by: profile.user_id,
               status: "open",
             });
-            if (arErr) console.error("Erro ao criar conta a receber:", arErr);
+            if (arErr) throw new Error(`Erro ao criar conta a receber: ${arErr.message}`);
           }
         }
       }
