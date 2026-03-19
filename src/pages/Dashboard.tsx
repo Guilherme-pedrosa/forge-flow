@@ -111,13 +111,13 @@ export default function Dashboard() {
         bankRes,
         productsRes,
         ordersRes,
+        customersRes,
       ] = await Promise.all([
         supabase
           .from("jobs")
           .select("id, code, name, status, est_grams, est_time_minutes, printer_id, printers(name), inventory_items!jobs_material_id_fkey(name)")
           .order("created_at", { ascending: false })
           .limit(5),
-        // Completed jobs for real margin
         supabase
           .from("jobs")
           .select("sale_price, actual_total_cost, est_total_cost, status")
@@ -141,11 +141,15 @@ export default function Dashboard() {
           .from("products")
           .select("margin_percent, sale_price")
           .eq("is_active", true),
-        // Orders pipeline
         supabase
           .from("orders")
           .select("status")
           .not("status", "eq", "cancelled"),
+        supabase
+          .from("customers")
+          .select("id, name, birthday, phone")
+          .eq("is_active", true)
+          .not("birthday", "is", null),
       ]);
 
       const cashBalance = (bankRes.data || []).reduce((sum, b) => sum + Number(b.current_balance || 0), 0);
