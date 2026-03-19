@@ -57,9 +57,14 @@ export default function Consignado() {
   const [movementType, setMovementType] = useState<string>("placement");
 
   // Location form
-  const [locCustomerName, setLocCustomerName] = useState("");
+  const [locMode, setLocMode] = useState<"existing" | "new">("existing");
+  const [locCustomerId, setLocCustomerId] = useState("");
   const [locName, setLocName] = useState("");
-  const [locNotes, setLocNotes] = useState("");
+  // New customer fields
+  const [newCustName, setNewCustName] = useState("");
+  const [newCustPhone, setNewCustPhone] = useState("");
+  const [newCustEmail, setNewCustEmail] = useState("");
+  const [newCustDocument, setNewCustDocument] = useState("");
 
   // Movement form
   const [movProductId, setMovProductId] = useState("");
