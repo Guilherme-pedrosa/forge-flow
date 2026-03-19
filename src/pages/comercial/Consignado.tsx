@@ -404,7 +404,8 @@ export default function Consignado() {
                     </div>
                     <div>
                       <p className="font-semibold text-sm text-foreground">{loc.name}</p>
-                      {loc.contact_name && <p className="text-xs text-muted-foreground">{loc.contact_name}</p>}
+                      {(loc as any).customers?.name && <p className="text-xs text-muted-foreground">{(loc as any).customers.name}</p>}
+                      {!(loc as any).customers?.name && loc.contact_name && <p className="text-xs text-muted-foreground">{loc.contact_name}</p>}
                     </div>
                   </div>
                   <DropdownMenu>
