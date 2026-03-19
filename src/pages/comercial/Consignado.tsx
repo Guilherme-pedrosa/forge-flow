@@ -571,27 +571,43 @@ export default function Consignado() {
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Novo Ponto de Consignação</DialogTitle></DialogHeader>
           <div className="grid gap-4">
-            <div><Label>Nome do Ponto *</Label><Input value={locName} onChange={(e) => setLocName(e.target.value)} placeholder="Loja Centro" /></div>
             <div>
-              <Label>Cliente (para faturamento)</Label>
-              <Select value={locCustomerId || "none"} onValueChange={(v) => setLocCustomerId(v === "none" ? "" : v)}>
+              <Label>Cliente *</Label>
+              <Select value={locCustomerId || "none"} onValueChange={(v) => {
+                const cid = v === "none" ? "" : v;
+                setLocCustomerId(cid);
+                if (cid) {
+                  const c = customers.find((x) => x.id === cid) as any;
+                  if (c) {
+                    if (!locName) setLocName(c.name);
+                    if (!locPhone && c.phone) setLocPhone(c.phone);
+                    if (!locContact) setLocContact(c.name);
+                    if (!locAddress && c.address) {
+                      const a = c.address as any;
+                      const parts = [a.street, a.number, a.complement, a.neighborhood, a.city, a.state].filter(Boolean);
+                      if (parts.length) setLocAddress(parts.join(", "));
+                    }
+                  }
+                }
+              }}>
                 <SelectTrigger><SelectValue placeholder="Selecione o cliente" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="none">Sem cliente</SelectItem>
+                  <SelectItem value="none">Selecione…</SelectItem>
                   {customers.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
+            <div><Label>Nome do Ponto</Label><Input value={locName} onChange={(e) => setLocName(e.target.value)} placeholder="Preenchido automaticamente" /></div>
             <div className="grid grid-cols-2 gap-3">
-              <div><Label>Contato</Label><Input value={locContact} onChange={(e) => setLocContact(e.target.value)} placeholder="João Silva" /></div>
-              <div><Label>Telefone</Label><Input value={locPhone} onChange={(e) => setLocPhone(e.target.value)} placeholder="(62) 99999-9999" /></div>
+              <div><Label>Contato</Label><Input value={locContact} onChange={(e) => setLocContact(e.target.value)} /></div>
+              <div><Label>Telefone</Label><Input value={locPhone} onChange={(e) => setLocPhone(e.target.value)} /></div>
             </div>
-            <div><Label>Endereço</Label><Input value={locAddress} onChange={(e) => setLocAddress(e.target.value)} placeholder="Rua X, 123 - Centro" /></div>
+            <div><Label>Endereço</Label><Input value={locAddress} onChange={(e) => setLocAddress(e.target.value)} /></div>
             <div><Label>Observações</Label><Textarea value={locNotes} onChange={(e) => setLocNotes(e.target.value)} rows={2} /></div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateLocOpen(false)}>Cancelar</Button>
-            <Button onClick={() => createLocMut.mutate()} disabled={!locName || createLocMut.isPending}>
+            <Button onClick={() => createLocMut.mutate()} disabled={!locCustomerId || !locName || createLocMut.isPending}>
               {createLocMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Criar
             </Button>
           </DialogFooter>
