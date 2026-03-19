@@ -170,7 +170,7 @@ export default function Consignado() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["consignment_locations"] });
       setCreateLocOpen(false);
-      setLocName(""); setLocContact(""); setLocPhone(""); setLocAddress(""); setLocNotes("");
+      setLocName(""); setLocCustomerId(""); setLocContact(""); setLocPhone(""); setLocAddress(""); setLocNotes("");
       toast({ title: "Ponto criado" });
     },
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
