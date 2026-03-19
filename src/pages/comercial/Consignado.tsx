@@ -323,6 +323,8 @@ export default function Consignado() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["consignment_items"] });
       qc.invalidateQueries({ queryKey: ["consignment_movements"] });
+      qc.invalidateQueries({ queryKey: ["orders"] });
+      qc.invalidateQueries({ queryKey: ["accounts_receivable"] });
       setMovementOpen(false);
       setMovProductId(""); setMovQty(""); setMovPrice(""); setMovNotes("");
       toast({ title: "Movimento registrado" });
