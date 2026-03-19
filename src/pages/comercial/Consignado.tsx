@@ -244,6 +244,61 @@ export default function Consignado() {
           break;
       }
 
+      // ── Auto-criar Pedido + Conta a Receber na venda ──
+      if (movementType === "sale") {
+        const loc = locations.find((l: any) => l.id === viewLocId);
+        const product = products.find((p: any) => p.id === movProductId);
+        const unitPrice = price || product?.sale_price || 0;
+        const saleTotal = unitPrice * qty;
+
+        // Count existing orders for code generation
+        const { count: orderCount } = await supabase
+          .from("orders")
+          .select("*", { count: "exact", head: true })
+          .eq("tenant_id", profile.tenant_id);
+
+        const code = `CSG-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${String((orderCount ?? 0) + 1).padStart(3, "0")}`;
+
+        const { data: order, error: orderErr } = await supabase.from("orders").insert({
+          tenant_id: profile.tenant_id,
+          code,
+          customer_id: (loc as any)?.customer_id || null,
+          total: saleTotal,
+          status: "approved",
+          approved_at: new Date().toISOString(),
+          notes: `Venda consignado — ${loc?.name || ""}${movNotes ? `\n${movNotes}` : ""}`,
+          created_by: profile.user_id,
+        } as any).select("id").single();
+        if (orderErr) throw orderErr;
+
+        // Create order item
+        const { error: itemErr } = await supabase.from("order_items").insert({
+          tenant_id: profile.tenant_id,
+          order_id: order.id,
+          product_id: movProductId,
+          description: product?.name || "Produto consignado",
+          quantity: qty,
+          unit_price: unitPrice,
+          total: saleTotal,
+        });
+        if (itemErr) throw itemErr;
+
+        // Create AR
+        const { error: arErr } = await supabase.from("accounts_receivable").insert({
+          tenant_id: profile.tenant_id,
+          description: `Consignado ${loc?.name} — ${code}`,
+          amount: saleTotal,
+          due_date: new Date().toISOString().slice(0, 10),
+          competence_date: new Date().toISOString().slice(0, 10),
+          customer_id: (loc as any)?.customer_id || null,
+          origin_id: order.id,
+          origin_type: "order",
+          created_by: profile.user_id,
+          status: "open",
+        });
+        if (arErr) throw new Error(`Erro ao criar conta a receber: ${arErr.message}`);
+      }
+
       if (existing) {
         const { error } = await supabase.from("consignment_items").update({
           current_qty: newQty,
