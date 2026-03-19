@@ -247,6 +247,9 @@ export default function Consignado() {
       // ── Auto-criar Pedido + Conta a Receber na venda ──
       if (movementType === "sale") {
         const loc = locations.find((l: any) => l.id === viewLocId);
+        if (!(loc as any)?.customer_id) {
+          throw new Error("Este ponto não tem um cliente vinculado. Edite o ponto e associe um cliente antes de registrar vendas.");
+        }
         const product = products.find((p: any) => p.id === movProductId);
         const unitPrice = price || product?.sale_price || 0;
         const saleTotal = unitPrice * qty;
