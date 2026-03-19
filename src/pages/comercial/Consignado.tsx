@@ -68,9 +68,19 @@ export default function Consignado() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("consignment_locations")
-        .select("*")
+        .select("*, customers(name)")
         .eq("is_active", true)
         .order("name");
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!profile,
+  });
+
+  const { data: customers = [] } = useQuery({
+    queryKey: ["customers_consignment"],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("customers").select("id, name").eq("is_active", true).order("name");
       if (error) throw error;
       return data;
     },
