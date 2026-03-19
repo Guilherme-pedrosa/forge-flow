@@ -721,7 +721,6 @@ export default function Consignado() {
                             </TableRow>
                             );
                           })}
-                          ))}
                         </TableBody>
                       </Table>
                     </div>
