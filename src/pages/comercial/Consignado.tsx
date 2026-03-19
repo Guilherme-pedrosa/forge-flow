@@ -50,6 +50,7 @@ export default function Consignado() {
 
   // Location form
   const [locName, setLocName] = useState("");
+  const [locCustomerId, setLocCustomerId] = useState("");
   const [locContact, setLocContact] = useState("");
   const [locPhone, setLocPhone] = useState("");
   const [locAddress, setLocAddress] = useState("");
@@ -67,9 +68,19 @@ export default function Consignado() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("consignment_locations")
-        .select("*")
+        .select("*, customers(name)")
         .eq("is_active", true)
         .order("name");
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!profile,
+  });
+
+  const { data: customers = [] } = useQuery({
+    queryKey: ["customers_consignment"],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("customers").select("id, name").eq("is_active", true).order("name");
       if (error) throw error;
       return data;
     },
@@ -148,17 +159,18 @@ export default function Consignado() {
       const { error } = await supabase.from("consignment_locations").insert({
         tenant_id: profile.tenant_id,
         name: locName,
+        customer_id: locCustomerId || null,
         contact_name: locContact || null,
         phone: locPhone || null,
         address: locAddress || null,
         notes: locNotes || null,
-      });
+      } as any);
       if (error) throw error;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["consignment_locations"] });
       setCreateLocOpen(false);
-      setLocName(""); setLocContact(""); setLocPhone(""); setLocAddress(""); setLocNotes("");
+      setLocName(""); setLocCustomerId(""); setLocContact(""); setLocPhone(""); setLocAddress(""); setLocNotes("");
       toast({ title: "Ponto criado" });
     },
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
@@ -232,6 +244,61 @@ export default function Consignado() {
           break;
       }
 
+      // ── Auto-criar Pedido + Conta a Receber na venda ──
+      if (movementType === "sale") {
+        const loc = locations.find((l: any) => l.id === viewLocId);
+        const product = products.find((p: any) => p.id === movProductId);
+        const unitPrice = price || product?.sale_price || 0;
+        const saleTotal = unitPrice * qty;
+
+        // Count existing orders for code generation
+        const { count: orderCount } = await supabase
+          .from("orders")
+          .select("*", { count: "exact", head: true })
+          .eq("tenant_id", profile.tenant_id);
+
+        const code = `CSG-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${String((orderCount ?? 0) + 1).padStart(3, "0")}`;
+
+        const { data: order, error: orderErr } = await supabase.from("orders").insert({
+          tenant_id: profile.tenant_id,
+          code,
+          customer_id: (loc as any)?.customer_id || null,
+          total: saleTotal,
+          status: "approved",
+          approved_at: new Date().toISOString(),
+          notes: `Venda consignado — ${loc?.name || ""}${movNotes ? `\n${movNotes}` : ""}`,
+          created_by: profile.user_id,
+        } as any).select("id").single();
+        if (orderErr) throw orderErr;
+
+        // Create order item
+        const { error: itemErr } = await supabase.from("order_items").insert({
+          tenant_id: profile.tenant_id,
+          order_id: order.id,
+          product_id: movProductId,
+          description: product?.name || "Produto consignado",
+          quantity: qty,
+          unit_price: unitPrice,
+          total: saleTotal,
+        });
+        if (itemErr) throw itemErr;
+
+        // Create AR
+        const { error: arErr } = await supabase.from("accounts_receivable").insert({
+          tenant_id: profile.tenant_id,
+          description: `Consignado ${loc?.name} — ${code}`,
+          amount: saleTotal,
+          due_date: new Date().toISOString().slice(0, 10),
+          competence_date: new Date().toISOString().slice(0, 10),
+          customer_id: (loc as any)?.customer_id || null,
+          origin_id: order.id,
+          origin_type: "order",
+          created_by: profile.user_id,
+          status: "open",
+        });
+        if (arErr) throw new Error(`Erro ao criar conta a receber: ${arErr.message}`);
+      }
+
       if (existing) {
         const { error } = await supabase.from("consignment_items").update({
           current_qty: newQty,
@@ -256,6 +323,8 @@ export default function Consignado() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["consignment_items"] });
       qc.invalidateQueries({ queryKey: ["consignment_movements"] });
+      qc.invalidateQueries({ queryKey: ["orders"] });
+      qc.invalidateQueries({ queryKey: ["accounts_receivable"] });
       setMovementOpen(false);
       setMovProductId(""); setMovQty(""); setMovPrice(""); setMovNotes("");
       toast({ title: "Movimento registrado" });
@@ -335,7 +404,8 @@ export default function Consignado() {
                     </div>
                     <div>
                       <p className="font-semibold text-sm text-foreground">{loc.name}</p>
-                      {loc.contact_name && <p className="text-xs text-muted-foreground">{loc.contact_name}</p>}
+                      {(loc as any).customers?.name && <p className="text-xs text-muted-foreground">{(loc as any).customers.name}</p>}
+                      {!(loc as any).customers?.name && loc.contact_name && <p className="text-xs text-muted-foreground">{loc.contact_name}</p>}
                     </div>
                   </div>
                   <DropdownMenu>
@@ -380,6 +450,16 @@ export default function Consignado() {
           <DialogHeader><DialogTitle>Novo Ponto de Consignação</DialogTitle></DialogHeader>
           <div className="grid gap-4">
             <div><Label>Nome do Ponto *</Label><Input value={locName} onChange={(e) => setLocName(e.target.value)} placeholder="Loja Centro" /></div>
+            <div>
+              <Label>Cliente (para faturamento)</Label>
+              <Select value={locCustomerId || "none"} onValueChange={(v) => setLocCustomerId(v === "none" ? "" : v)}>
+                <SelectTrigger><SelectValue placeholder="Selecione o cliente" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Sem cliente</SelectItem>
+                  {customers.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <div><Label>Contato</Label><Input value={locContact} onChange={(e) => setLocContact(e.target.value)} placeholder="João Silva" /></div>
               <div><Label>Telefone</Label><Input value={locPhone} onChange={(e) => setLocPhone(e.target.value)} placeholder="(62) 99999-9999" /></div>
