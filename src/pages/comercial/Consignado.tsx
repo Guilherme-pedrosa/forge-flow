@@ -332,6 +332,39 @@ export default function Consignado() {
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 
+  const returnAllMut = useMutation({
+    mutationFn: async () => {
+      if (!profile || !viewLocId) throw new Error("Sem contexto");
+      const itemsToReturn = viewLocItems.filter((i: any) => i.current_qty > 0);
+      if (itemsToReturn.length === 0) throw new Error("Nenhum item para recolher");
+
+      for (const item of itemsToReturn as any[]) {
+        // Insert return movement
+        await supabase.from("consignment_movements").insert({
+          tenant_id: profile.tenant_id,
+          location_id: viewLocId,
+          product_id: item.product_id,
+          movement_type: "return" as any,
+          quantity: item.current_qty,
+          notes: "Recolhimento total",
+          created_by: profile.user_id,
+        }).then(({ error }) => { if (error) throw error; });
+
+        // Zero out the item
+        await supabase.from("consignment_items").update({
+          current_qty: 0,
+          total_returned: item.total_returned + item.current_qty,
+        }).eq("id", item.id).then(({ error }) => { if (error) throw error; });
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["consignment_items"] });
+      qc.invalidateQueries({ queryKey: ["consignment_movements"] });
+      toast({ title: "Todos os itens foram recolhidos" });
+    },
+    onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
+  });
+
   const openMovement = (type: string) => {
     setMovementType(type);
     setMovProductId("");
@@ -518,6 +551,11 @@ export default function Consignado() {
                 <Button size="sm" variant="outline" onClick={() => openMovement("return")}>
                   <ArrowDownToLine className="h-3.5 w-3.5 mr-1" /> Devolver
                 </Button>
+                {viewLocItems.some((i: any) => i.current_qty > 0) && (
+                  <Button size="sm" variant="outline" className="text-destructive border-destructive/30 hover:bg-destructive/5" onClick={() => returnAllMut.mutate()} disabled={returnAllMut.isPending}>
+                    {returnAllMut.isPending ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Package className="h-3.5 w-3.5 mr-1" />} Recolher Tudo
+                  </Button>
+                )}
               </div>
 
               <Tabs defaultValue="stock" className="w-full">
