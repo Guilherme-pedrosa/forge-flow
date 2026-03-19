@@ -88,7 +88,7 @@ export default function Consignado() {
   const { data: customers = [] } = useQuery({
     queryKey: ["customers_consignment"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("customers").select("id, name").eq("is_active", true).order("name");
+      const { data, error } = await supabase.from("customers").select("id, name, phone, address").eq("is_active", true).order("name");
       if (error) throw error;
       return data;
     },
