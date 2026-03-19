@@ -449,6 +449,16 @@ export default function Consignado() {
           <DialogHeader><DialogTitle>Novo Ponto de Consignação</DialogTitle></DialogHeader>
           <div className="grid gap-4">
             <div><Label>Nome do Ponto *</Label><Input value={locName} onChange={(e) => setLocName(e.target.value)} placeholder="Loja Centro" /></div>
+            <div>
+              <Label>Cliente (para faturamento)</Label>
+              <Select value={locCustomerId || "none"} onValueChange={(v) => setLocCustomerId(v === "none" ? "" : v)}>
+                <SelectTrigger><SelectValue placeholder="Selecione o cliente" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">Sem cliente</SelectItem>
+                  {customers.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <div><Label>Contato</Label><Input value={locContact} onChange={(e) => setLocContact(e.target.value)} placeholder="João Silva" /></div>
               <div><Label>Telefone</Label><Input value={locPhone} onChange={(e) => setLocPhone(e.target.value)} placeholder="(62) 99999-9999" /></div>
