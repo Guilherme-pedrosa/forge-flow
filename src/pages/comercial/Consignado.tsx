@@ -518,6 +518,11 @@ export default function Consignado() {
                 <Button size="sm" variant="outline" onClick={() => openMovement("return")}>
                   <ArrowDownToLine className="h-3.5 w-3.5 mr-1" /> Devolver
                 </Button>
+                {viewLocItems.some((i: any) => i.current_qty > 0) && (
+                  <Button size="sm" variant="outline" className="text-destructive border-destructive/30 hover:bg-destructive/5" onClick={() => returnAllMut.mutate()} disabled={returnAllMut.isPending}>
+                    {returnAllMut.isPending ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Package className="h-3.5 w-3.5 mr-1" />} Recolher Tudo
+                  </Button>
+                )}
               </div>
 
               <Tabs defaultValue="stock" className="w-full">
