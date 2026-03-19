@@ -814,6 +814,7 @@ export type Database = {
           address: string | null
           contact_name: string | null
           created_at: string
+          customer_id: string | null
           id: string
           is_active: boolean
           name: string
@@ -826,6 +827,7 @@ export type Database = {
           address?: string | null
           contact_name?: string | null
           created_at?: string
+          customer_id?: string | null
           id?: string
           is_active?: boolean
           name: string
@@ -838,6 +840,7 @@ export type Database = {
           address?: string | null
           contact_name?: string | null
           created_at?: string
+          customer_id?: string | null
           id?: string
           is_active?: boolean
           name?: string
@@ -847,6 +850,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "consignment_locations_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "consignment_locations_tenant_id_fkey"
             columns: ["tenant_id"]
