@@ -62,6 +62,7 @@ const newLine = (): OrderLineItem => ({
 
 export default function Pedidos() {
   const { profile } = useAuth();
+  const navigate = useNavigate();
   const { toast } = useToast();
   const qc = useQueryClient();
   const printRef = useRef<HTMLDivElement>(null);
