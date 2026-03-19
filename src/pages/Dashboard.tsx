@@ -373,6 +373,57 @@ export default function Dashboard() {
 
         {/* Right Column */}
         <div className="space-y-6">
+          {/* Upcoming Birthdays — PROMINENT */}
+          <div className="rounded-xl border-2 border-pink-500/30 bg-gradient-to-br from-pink-500/5 via-card to-card overflow-hidden shadow-md">
+            <div className="px-5 py-4 border-b border-pink-500/20 flex items-center justify-between bg-pink-500/5">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-pink-500/15 flex items-center justify-center">
+                  <Cake className="w-4 h-4 text-pink-500" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-foreground">🎂 Aniversários Próximos</h3>
+                  <p className="text-[11px] text-muted-foreground">Próximos 30 dias</p>
+                </div>
+              </div>
+              <Link to="/comercial/clientes" className="text-xs text-pink-600 flex items-center gap-1 hover:underline font-semibold">
+                Ver clientes <ArrowRight className="w-3 h-3" />
+              </Link>
+            </div>
+            {data.upcomingBirthdays.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
+                <Cake className="h-8 w-8 mb-2 text-pink-300" />
+                <p className="text-sm font-medium">Nenhum aniversário nos próximos 30 dias</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Cadastre a data de nascimento dos clientes</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-border">
+                {data.upcomingBirthdays.map((c: any) => (
+                  <div key={c.id} className="px-5 py-3.5 flex items-center justify-between hover:bg-pink-500/5 transition-colors">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-foreground truncate">{c.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {new Date(c.birthday + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "long" })}
+                        {c.phone && ` · ${c.phone}`}
+                      </p>
+                    </div>
+                    <span className={cn(
+                      "inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold shrink-0",
+                      c.daysUntil === 0
+                        ? "bg-pink-500 text-white shadow-sm"
+                        : c.daysUntil <= 3
+                        ? "bg-pink-500/15 text-pink-600 border border-pink-500/30"
+                        : c.daysUntil <= 7
+                        ? "bg-amber-500/15 text-amber-600 border border-amber-500/30"
+                        : "bg-muted text-muted-foreground border border-border"
+                    )}>
+                      {c.daysUntil === 0 ? "🎂 Hoje!" : c.daysUntil === 1 ? "Amanhã" : `em ${c.daysUntil} dias`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
           {/* Order Pipeline */}
           <div className="card-enterprise !p-0 overflow-hidden">
             <div className="px-5 py-3.5 border-b border-border flex items-center justify-between">
@@ -469,49 +520,6 @@ export default function Dashboard() {
                       </span>
                       <p className="text-xs text-muted-foreground">mín: {item.min_stock}{item.unit}</p>
                     </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Upcoming Birthdays */}
-          <div className="card-enterprise !p-0 overflow-hidden">
-            <div className="px-5 py-3.5 border-b border-border flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Cake className="w-4 h-4 text-pink-500" />
-                <h3 className="text-sm font-semibold text-foreground">Aniversários Próximos</h3>
-              </div>
-              <Link to="/comercial/clientes" className="text-xs text-primary flex items-center gap-1 hover:underline font-medium">
-                Ver clientes <ArrowRight className="w-3 h-3" />
-              </Link>
-            </div>
-            {data.upcomingBirthdays.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
-                <Inbox className="h-6 w-6 mb-1" />
-                <p className="text-xs">Nenhum aniversário nos próximos 30 dias</p>
-              </div>
-            ) : (
-              <div className="divide-y divide-border">
-                {data.upcomingBirthdays.map((c: any) => (
-                  <div key={c.id} className="px-5 py-3 flex items-center justify-between hover:bg-muted/50 transition-colors">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-medium text-foreground truncate">{c.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {new Date(c.birthday + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "long" })}
-                        {c.phone && ` · ${c.phone}`}
-                      </p>
-                    </div>
-                    <span className={cn(
-                      "inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium shrink-0",
-                      c.daysUntil === 0
-                        ? "bg-pink-500/10 text-pink-600 border border-pink-500/20"
-                        : c.daysUntil <= 7
-                        ? "bg-amber-500/10 text-amber-600 border border-amber-500/20"
-                        : "bg-muted text-muted-foreground border border-border"
-                    )}>
-                      {c.daysUntil === 0 ? "🎂 Hoje!" : c.daysUntil === 1 ? "Amanhã" : `em ${c.daysUntil} dias`}
-                    </span>
                   </div>
                 ))}
               </div>
