@@ -30,6 +30,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 const fmtCurrency = (v: number | null) =>
   v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
 
+/** Preço consignado = 80% do sale_price, mas nunca abaixo do custo */
+const getConsignmentPrice = (salePrice: number | null, costEstimate: number | null) => {
+  const sp = salePrice || 0;
+  const cost = costEstimate || 0;
+  const discounted = Math.round(sp * 0.8 * 100) / 100;
+  return Math.max(discounted, cost);
+};
+
 const movementLabels: Record<string, { label: string; color: string; icon: typeof Plus }> = {
   placement: { label: "Colocação", color: "bg-primary/10 text-primary", icon: ArrowUpFromLine },
   sale: { label: "Venda", color: "bg-emerald-100 text-emerald-700", icon: ShoppingCart },
@@ -92,7 +100,7 @@ export default function Consignado() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("consignment_items")
-        .select("*, products(name, photo_url, sale_price), consignment_locations(name)")
+        .select("*, products(name, photo_url, sale_price, cost_estimate), consignment_locations(name)")
         .order("created_at", { ascending: false });
       if (error) throw error;
       return data;
@@ -105,7 +113,7 @@ export default function Consignado() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("products")
-        .select("id, name, sale_price, photo_url")
+        .select("id, name, sale_price, cost_estimate, photo_url")
         .eq("is_active", true)
         .order("name");
       if (error) throw error;
@@ -251,7 +259,7 @@ export default function Consignado() {
           throw new Error("Este ponto não tem um cliente vinculado. Edite o ponto e associe um cliente antes de registrar vendas.");
         }
         const product = products.find((p: any) => p.id === movProductId);
-        const unitPrice = price || product?.sale_price || 0;
+        const unitPrice = price || getConsignmentPrice(product?.sale_price ?? null, product?.cost_estimate ?? null);
         const saleTotal = unitPrice * qty;
 
         // Count existing orders for code generation
@@ -372,18 +380,23 @@ export default function Consignado() {
     if (!viewLoc) return;
     const today = new Date().toLocaleDateString("pt-BR");
     const itemsWithStock = viewLocItems.filter((i: any) => i.current_qty > 0);
-    const totalValue = itemsWithStock.reduce((sum: number, i: any) => sum + i.current_qty * (i.products?.sale_price || 0), 0);
+    const totalValue = itemsWithStock.reduce((sum: number, i: any) => {
+      const csg = getConsignmentPrice(i.products?.sale_price ?? null, i.products?.cost_estimate ?? null);
+      return sum + i.current_qty * csg;
+    }, 0);
     const customerName = (viewLoc as any).customers?.name || viewLoc.contact_name || "—";
 
-    const rows = itemsWithStock.map((item: any, idx: number) => `
+    const rows = itemsWithStock.map((item: any, idx: number) => {
+      const csg = getConsignmentPrice(item.products?.sale_price ?? null, item.products?.cost_estimate ?? null);
+      return `
       <tr>
         <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:center">${idx + 1}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #ddd">${item.products?.name || "—"}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:center">${item.current_qty}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right">${fmtCurrency(item.products?.sale_price || 0)}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right">${fmtCurrency(item.current_qty * (item.products?.sale_price || 0))}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right">${fmtCurrency(csg)}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right">${fmtCurrency(item.current_qty * csg)}</td>
       </tr>
-    `).join("");
+    `;}).join("");
 
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Consignado - ${viewLoc.name}</title>
       <style>
@@ -680,14 +693,16 @@ export default function Consignado() {
                           <TableRow>
                             <TableHead>Produto</TableHead>
                             <TableHead className="text-center">Atual</TableHead>
-                            <TableHead className="text-center">Colocados</TableHead>
+                            <TableHead className="text-right">Preço Venda</TableHead>
+                            <TableHead className="text-right">Preço Consig. (−20%)</TableHead>
                             <TableHead className="text-center">Vendidos</TableHead>
-                            <TableHead className="text-center">Devolvidos</TableHead>
                             <TableHead className="text-right">Valor (estoque)</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {viewLocItems.map((item: any) => (
+                          {viewLocItems.map((item: any) => {
+                            const csgPrice = getConsignmentPrice(item.products?.sale_price ?? null, item.products?.cost_estimate ?? null);
+                            return (
                             <TableRow key={item.id}>
                               <TableCell className="text-sm font-medium">
                                 <div className="flex items-center gap-2">
@@ -698,14 +713,19 @@ export default function Consignado() {
                                 </div>
                               </TableCell>
                               <TableCell className="text-center font-bold">{item.current_qty}</TableCell>
-                              <TableCell className="text-center text-muted-foreground">{item.total_placed}</TableCell>
+                              <TableCell className="text-right font-mono text-sm text-muted-foreground line-through">
+                                {fmtCurrency(item.products?.sale_price || 0)}
+                              </TableCell>
+                              <TableCell className="text-right font-mono text-sm font-semibold text-primary">
+                                {fmtCurrency(csgPrice)}
+                              </TableCell>
                               <TableCell className="text-center text-emerald-600 font-medium">{item.total_sold}</TableCell>
-                              <TableCell className="text-center text-muted-foreground">{item.total_returned}</TableCell>
                               <TableCell className="text-right font-mono text-sm">
-                                {fmtCurrency(item.current_qty * (item.products?.sale_price || 0))}
+                                {fmtCurrency(item.current_qty * csgPrice)}
                               </TableCell>
                             </TableRow>
-                          ))}
+                            );
+                          })}
                         </TableBody>
                       </Table>
                     </div>
@@ -771,13 +791,25 @@ export default function Consignado() {
           <div className="grid gap-4">
             <div>
               <Label>Produto *</Label>
-              <Select value={movProductId || "none"} onValueChange={(v) => setMovProductId(v === "none" ? "" : v)}>
+              <Select value={movProductId || "none"} onValueChange={(v) => {
+                const pid = v === "none" ? "" : v;
+                setMovProductId(pid);
+                if (movementType === "sale" && pid) {
+                  const p = products.find((x) => x.id === pid);
+                  if (p) setMovPrice(String(getConsignmentPrice(p.sale_price ?? null, p.cost_estimate ?? null)));
+                }
+              }}>
                 <SelectTrigger><SelectValue placeholder="Selecione um produto" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">Selecione…</SelectItem>
-                  {products.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>{p.name}{p.sale_price ? ` (${fmtCurrency(p.sale_price)})` : ""}</SelectItem>
-                  ))}
+                  {products.map((p) => {
+                    const csg = getConsignmentPrice(p.sale_price ?? null, p.cost_estimate ?? null);
+                    return (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name} — {fmtCurrency(csg)}{movementType === "sale" && p.sale_price ? ` (era ${fmtCurrency(p.sale_price)})` : ""}
+                      </SelectItem>
+                    );
+                  })}
                 </SelectContent>
               </Select>
             </div>
