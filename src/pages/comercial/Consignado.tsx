@@ -380,18 +380,23 @@ export default function Consignado() {
     if (!viewLoc) return;
     const today = new Date().toLocaleDateString("pt-BR");
     const itemsWithStock = viewLocItems.filter((i: any) => i.current_qty > 0);
-    const totalValue = itemsWithStock.reduce((sum: number, i: any) => sum + i.current_qty * (i.products?.sale_price || 0), 0);
+    const totalValue = itemsWithStock.reduce((sum: number, i: any) => {
+      const csg = getConsignmentPrice(i.products?.sale_price ?? null, i.products?.cost_estimate ?? null);
+      return sum + i.current_qty * csg;
+    }, 0);
     const customerName = (viewLoc as any).customers?.name || viewLoc.contact_name || "—";
 
-    const rows = itemsWithStock.map((item: any, idx: number) => `
+    const rows = itemsWithStock.map((item: any, idx: number) => {
+      const csg = getConsignmentPrice(item.products?.sale_price ?? null, item.products?.cost_estimate ?? null);
+      return `
       <tr>
         <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:center">${idx + 1}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #ddd">${item.products?.name || "—"}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:center">${item.current_qty}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right">${fmtCurrency(item.products?.sale_price || 0)}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right">${fmtCurrency(item.current_qty * (item.products?.sale_price || 0))}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right">${fmtCurrency(csg)}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right">${fmtCurrency(item.current_qty * csg)}</td>
       </tr>
-    `).join("");
+    `;}).join("");
 
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Consignado - ${viewLoc.name}</title>
       <style>
