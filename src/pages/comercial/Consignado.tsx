@@ -50,6 +50,7 @@ export default function Consignado() {
 
   // Location form
   const [locName, setLocName] = useState("");
+  const [locCustomerId, setLocCustomerId] = useState("");
   const [locContact, setLocContact] = useState("");
   const [locPhone, setLocPhone] = useState("");
   const [locAddress, setLocAddress] = useState("");
