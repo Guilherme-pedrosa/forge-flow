@@ -815,7 +815,8 @@ export default function Produtos() {
                       ) : "—"}
                     </span>
                     <span className="text-right font-mono">{fmtCurrency(net)}</span>
-                    <span className={cn("text-right font-mono font-semibold", profit > 0 ? "text-green-600" : "text-destructive")}>
+                    <span className="text-right font-mono text-muted-foreground">{fmtCurrency(cost)}</span>
+                    <span className={cn("text-right font-mono font-semibold", profit > 0 ? "text-success" : "text-destructive")}>
                       {fmtCurrency(profit)} <span className="text-muted-foreground font-normal">({profitPct.toFixed(0)}%)</span>
                     </span>
                   </div>
