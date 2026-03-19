@@ -603,23 +603,29 @@ export default function Consignado() {
           <DialogHeader><DialogTitle>Novo Ponto de Consignação</DialogTitle></DialogHeader>
           <div className="grid gap-4">
             <div>
-              <Label>Cliente *</Label>
-              <Select value={locCustomerId || "none"} onValueChange={(v) => setLocCustomerId(v === "none" ? "" : v)}>
-                <SelectTrigger><SelectValue placeholder="Selecione o cliente" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Selecione…</SelectItem>
-                  {customers.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <Label>Nome do Cliente *</Label>
+              <Input
+                value={locCustomerName}
+                onChange={(e) => setLocCustomerName(e.target.value)}
+                placeholder="Ex: AnaLu Unhas"
+              />
             </div>
             <div>
               <Label>Nome do Ponto *</Label>
-              <Input value={locName} onChange={(e) => setLocName(e.target.value)} placeholder="Ex: Loja Centro, Vitrine Shopping…" />
+              <Input
+                value={locName}
+                onChange={(e) => setLocName(e.target.value)}
+                placeholder="Ex: Vitrine Loja Centro"
+              />
+            </div>
+            <div>
+              <Label>Observações</Label>
+              <Textarea value={locNotes} onChange={(e) => setLocNotes(e.target.value)} rows={2} />
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateLocOpen(false)}>Cancelar</Button>
-            <Button onClick={() => createLocMut.mutate()} disabled={!locCustomerId || !locName || createLocMut.isPending}>
+            <Button onClick={() => createLocMut.mutate()} disabled={!locCustomerName.trim() || !locName.trim() || createLocMut.isPending}>
               {createLocMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Criar
             </Button>
           </DialogFooter>
