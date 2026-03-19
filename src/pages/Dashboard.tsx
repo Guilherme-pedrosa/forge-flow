@@ -189,21 +189,21 @@ export default function Dashboard() {
         argusMessage = `${alerts.length} item(ns) de estoque abaixo do mínimo: ${names}. Considere criar pedido de reposição.`;
       }
 
-      const today = new Date().toISOString().split("T")[0];
+      const todayStr = new Date().toISOString().split("T")[0];
       const formattedPayables = (payablesRes.data || []).map((p) => ({
         ...p,
-        status: p.status === "open" && p.due_date < today ? "overdue" : p.status,
+        status: p.status === "open" && p.due_date < todayStr ? "overdue" : p.status,
       }));
 
       // Upcoming birthdays (next 30 days)
       const allCustomers = customersRes.data || [];
-      const today = new Date();
+      const todayDate = new Date();
       const upcomingBirthdays = allCustomers
         .map((c: any) => {
           const bday = new Date(c.birthday + "T00:00:00");
-          const thisYear = new Date(today.getFullYear(), bday.getMonth(), bday.getDate());
-          if (thisYear < today) thisYear.setFullYear(thisYear.getFullYear() + 1);
-          const diffDays = Math.round((thisYear.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+          const thisYear = new Date(todayDate.getFullYear(), bday.getMonth(), bday.getDate());
+          if (thisYear < todayDate) thisYear.setFullYear(thisYear.getFullYear() + 1);
+          const diffDays = Math.round((thisYear.getTime() - todayDate.getTime()) / (1000 * 60 * 60 * 24));
           return { ...c, nextBirthday: thisYear, daysUntil: diffDays };
         })
         .filter((c: any) => c.daysUntil >= 0 && c.daysUntil <= 30)
