@@ -780,10 +780,11 @@ export default function Produtos() {
               </div>
             )}
 
-            <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-3 gap-y-1.5 text-xs items-center">
+            <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-x-3 gap-y-1.5 text-xs items-center">
               <span className="font-medium text-muted-foreground">Canal</span>
               <span className="font-medium text-muted-foreground text-right">Taxa</span>
               <span className="font-medium text-muted-foreground text-right">Líquido</span>
+              <span className="font-medium text-muted-foreground text-right">Custo</span>
               <span className="font-medium text-muted-foreground text-right">Lucro</span>
               {channelConfig.filter(ch => ch.enabled).map(ch => {
                 const baseFeeAmount = price * (ch.fee / 100);
@@ -814,7 +815,8 @@ export default function Produtos() {
                       ) : "—"}
                     </span>
                     <span className="text-right font-mono">{fmtCurrency(net)}</span>
-                    <span className={cn("text-right font-mono font-semibold", profit > 0 ? "text-green-600" : "text-destructive")}>
+                    <span className="text-right font-mono text-muted-foreground">{fmtCurrency(cost)}</span>
+                    <span className={cn("text-right font-mono font-semibold", profit > 0 ? "text-success" : "text-destructive")}>
                       {fmtCurrency(profit)} <span className="text-muted-foreground font-normal">({profitPct.toFixed(0)}%)</span>
                     </span>
                   </div>
