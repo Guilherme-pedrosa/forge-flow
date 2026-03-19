@@ -780,10 +780,11 @@ export default function Produtos() {
               </div>
             )}
 
-            <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-3 gap-y-1.5 text-xs items-center">
+            <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-x-3 gap-y-1.5 text-xs items-center">
               <span className="font-medium text-muted-foreground">Canal</span>
               <span className="font-medium text-muted-foreground text-right">Taxa</span>
               <span className="font-medium text-muted-foreground text-right">Líquido</span>
+              <span className="font-medium text-muted-foreground text-right">Custo</span>
               <span className="font-medium text-muted-foreground text-right">Lucro</span>
               {channelConfig.filter(ch => ch.enabled).map(ch => {
                 const baseFeeAmount = price * (ch.fee / 100);
