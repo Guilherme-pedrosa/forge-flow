@@ -163,14 +163,17 @@ export default function Consignado() {
   // ── Mutations ──
   const createLocMut = useMutation({
     mutationFn: async () => {
-      if (!profile) throw new Error("Sem perfil");
+      if (!profile || !locCustomerId) throw new Error("Selecione um cliente");
+      const c = customers.find((x) => x.id === locCustomerId) as any;
+      const addr = c?.address as any;
+      const addrStr = addr ? [addr.street, addr.number, addr.complement, addr.neighborhood, addr.city, addr.state].filter(Boolean).join(", ") : null;
       const { error } = await supabase.from("consignment_locations").insert({
         tenant_id: profile.tenant_id,
-        name: locName,
-        customer_id: locCustomerId || null,
-        contact_name: locContact || null,
-        phone: locPhone || null,
-        address: locAddress || null,
+        name: locName || c?.name || "Ponto",
+        customer_id: locCustomerId,
+        contact_name: c?.name || null,
+        phone: c?.phone || null,
+        address: addrStr || null,
         notes: locNotes || null,
       } as any);
       if (error) throw error;
@@ -568,28 +571,12 @@ export default function Consignado() {
 
       {/* ── Create Location Dialog ── */}
       <Dialog open={createLocOpen} onOpenChange={setCreateLocOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-sm">
           <DialogHeader><DialogTitle>Novo Ponto de Consignação</DialogTitle></DialogHeader>
           <div className="grid gap-4">
             <div>
               <Label>Cliente *</Label>
-              <Select value={locCustomerId || "none"} onValueChange={(v) => {
-                const cid = v === "none" ? "" : v;
-                setLocCustomerId(cid);
-                if (cid) {
-                  const c = customers.find((x) => x.id === cid) as any;
-                  if (c) {
-                    if (!locName) setLocName(c.name);
-                    if (!locPhone && c.phone) setLocPhone(c.phone);
-                    if (!locContact) setLocContact(c.name);
-                    if (!locAddress && c.address) {
-                      const a = c.address as any;
-                      const parts = [a.street, a.number, a.complement, a.neighborhood, a.city, a.state].filter(Boolean);
-                      if (parts.length) setLocAddress(parts.join(", "));
-                    }
-                  }
-                }
-              }}>
+              <Select value={locCustomerId || "none"} onValueChange={(v) => setLocCustomerId(v === "none" ? "" : v)}>
                 <SelectTrigger><SelectValue placeholder="Selecione o cliente" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">Selecione…</SelectItem>
@@ -597,13 +584,10 @@ export default function Consignado() {
                 </SelectContent>
               </Select>
             </div>
-            <div><Label>Nome do Ponto</Label><Input value={locName} onChange={(e) => setLocName(e.target.value)} placeholder="Preenchido automaticamente" /></div>
-            <div className="grid grid-cols-2 gap-3">
-              <div><Label>Contato</Label><Input value={locContact} onChange={(e) => setLocContact(e.target.value)} /></div>
-              <div><Label>Telefone</Label><Input value={locPhone} onChange={(e) => setLocPhone(e.target.value)} /></div>
+            <div>
+              <Label>Nome do Ponto *</Label>
+              <Input value={locName} onChange={(e) => setLocName(e.target.value)} placeholder="Ex: Loja Centro, Vitrine Shopping…" />
             </div>
-            <div><Label>Endereço</Label><Input value={locAddress} onChange={(e) => setLocAddress(e.target.value)} /></div>
-            <div><Label>Observações</Label><Textarea value={locNotes} onChange={(e) => setLocNotes(e.target.value)} rows={2} /></div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateLocOpen(false)}>Cancelar</Button>
