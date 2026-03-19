@@ -748,6 +748,178 @@ export type Database = {
           },
         ]
       }
+      consignment_items: {
+        Row: {
+          created_at: string
+          current_qty: number
+          id: string
+          location_id: string
+          product_id: string
+          tenant_id: string
+          total_placed: number
+          total_returned: number
+          total_sold: number
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          current_qty?: number
+          id?: string
+          location_id: string
+          product_id: string
+          tenant_id: string
+          total_placed?: number
+          total_returned?: number
+          total_sold?: number
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          current_qty?: number
+          id?: string
+          location_id?: string
+          product_id?: string
+          tenant_id?: string
+          total_placed?: number
+          total_returned?: number
+          total_sold?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "consignment_items_location_id_fkey"
+            columns: ["location_id"]
+            isOneToOne: false
+            referencedRelation: "consignment_locations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "consignment_items_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "consignment_items_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      consignment_locations: {
+        Row: {
+          address: string | null
+          contact_name: string | null
+          created_at: string
+          id: string
+          is_active: boolean
+          name: string
+          notes: string | null
+          phone: string | null
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          address?: string | null
+          contact_name?: string | null
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          name: string
+          notes?: string | null
+          phone?: string | null
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          address?: string | null
+          contact_name?: string | null
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          name?: string
+          notes?: string | null
+          phone?: string | null
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "consignment_locations_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      consignment_movements: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          id: string
+          location_id: string
+          movement_type: Database["public"]["Enums"]["consignment_movement_type"]
+          notes: string | null
+          product_id: string
+          quantity: number
+          tenant_id: string
+          total: number | null
+          unit_price: number | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          location_id: string
+          movement_type: Database["public"]["Enums"]["consignment_movement_type"]
+          notes?: string | null
+          product_id: string
+          quantity: number
+          tenant_id: string
+          total?: number | null
+          unit_price?: number | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          id?: string
+          location_id?: string
+          movement_type?: Database["public"]["Enums"]["consignment_movement_type"]
+          notes?: string | null
+          product_id?: string
+          quantity?: number
+          tenant_id?: string
+          total?: number | null
+          unit_price?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "consignment_movements_location_id_fkey"
+            columns: ["location_id"]
+            isOneToOne: false
+            referencedRelation: "consignment_locations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "consignment_movements_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "consignment_movements_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       cost_centers: {
         Row: {
           code: string
@@ -1960,6 +2132,11 @@ export type Database = {
     Enums: {
       account_type: "asset" | "liability" | "equity" | "revenue" | "expense"
       app_role: "owner" | "admin" | "manager" | "operator" | "viewer"
+      consignment_movement_type:
+        | "placement"
+        | "sale"
+        | "replenishment"
+        | "return"
       job_status:
         | "draft"
         | "queued"
@@ -2122,6 +2299,12 @@ export const Constants = {
     Enums: {
       account_type: ["asset", "liability", "equity", "revenue", "expense"],
       app_role: ["owner", "admin", "manager", "operator", "viewer"],
+      consignment_movement_type: [
+        "placement",
+        "sale",
+        "replenishment",
+        "return",
+      ],
       job_status: [
         "draft",
         "queued",
