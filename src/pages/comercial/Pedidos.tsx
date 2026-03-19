@@ -8,6 +8,7 @@ import {
   ShoppingCart, MapPin, X, Package, Printer, DollarSign,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
