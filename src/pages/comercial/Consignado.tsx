@@ -786,13 +786,25 @@ export default function Consignado() {
           <div className="grid gap-4">
             <div>
               <Label>Produto *</Label>
-              <Select value={movProductId || "none"} onValueChange={(v) => setMovProductId(v === "none" ? "" : v)}>
+              <Select value={movProductId || "none"} onValueChange={(v) => {
+                const pid = v === "none" ? "" : v;
+                setMovProductId(pid);
+                if (movementType === "sale" && pid) {
+                  const p = products.find((x) => x.id === pid);
+                  if (p) setMovPrice(String(getConsignmentPrice(p.sale_price ?? null, p.cost_estimate ?? null)));
+                }
+              }}>
                 <SelectTrigger><SelectValue placeholder="Selecione um produto" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">Selecione…</SelectItem>
-                  {products.map((p) => (
-                    <SelectItem key={p.id} value={p.id}>{p.name}{p.sale_price ? ` (${fmtCurrency(p.sale_price)})` : ""}</SelectItem>
-                  ))}
+                  {products.map((p) => {
+                    const csg = getConsignmentPrice(p.sale_price ?? null, p.cost_estimate ?? null);
+                    return (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name} — {fmtCurrency(csg)}{movementType === "sale" && p.sale_price ? ` (era ${fmtCurrency(p.sale_price)})` : ""}
+                      </SelectItem>
+                    );
+                  })}
                 </SelectContent>
               </Select>
             </div>
