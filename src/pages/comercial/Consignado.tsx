@@ -189,6 +189,7 @@ export default function Consignado() {
             phone: newCustPhone || null,
             email: newCustEmail || null,
             document: newCustDocument || null,
+            birthday: newCustBirthday || null,
             is_active: true,
           })
           .select("id")
