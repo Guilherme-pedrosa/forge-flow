@@ -812,49 +812,38 @@ export default function Pedidos() {
 
           {viewOrder && (
             <div className="space-y-4" ref={printRef}>
-              {/* ── Status Pipeline Bar ── */}
+              {/* ── Status editável ── */}
               {(() => {
-                const pipeline = ["draft", "approved", "in_production", "ready", "shipped", "delivered"];
-                const currentIdx = pipeline.indexOf(viewOrder.status);
-                const isCancelled = viewOrder.status === "cancelled";
-
-                if (isCancelled) {
-                  return (
-                    <div className="flex items-center gap-2 rounded-lg border bg-destructive/5 px-4 py-2.5">
-                      <span className="text-sm font-medium text-destructive">Pedido Cancelado</span>
-                    </div>
-                  );
-                }
+                const cfg = statusConfig[viewOrder.status] || statusConfig.draft;
 
                 return (
-                  <div className="flex items-center gap-1 rounded-lg border bg-muted/30 p-1.5">
-                    {pipeline.map((step, idx) => {
-                      const cfg = statusConfig[step] || statusConfig.draft;
-                      const isActive = step === viewOrder.status;
-                      const isPast = idx < currentIdx;
-                      const isNext = idx === currentIdx + 1;
-                      const canClick = isNext; // Only allow advancing to next step
+                  <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
+                    <p className="text-xs text-muted-foreground">Status do Pedido</p>
+                    <div className="flex items-center gap-2">
+                      <Select
+                        value={viewOrder.status}
+                        onValueChange={(nextStatus) => {
+                          if (nextStatus !== viewOrder.status) {
+                            updateStatusMut.mutate({ id: viewOrder.id, status: nextStatus });
+                          }
+                        }}
+                      >
+                        <SelectTrigger className="w-[220px]" disabled={updateStatusMut.isPending}>
+                          <SelectValue placeholder="Selecione o status" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {Object.entries(statusConfig).map(([k, v]) => (
+                            <SelectItem key={k} value={k}>{v.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
 
-                      return (
-                        <button
-                          key={step}
-                          disabled={!canClick}
-                          onClick={() => {
-                            if (canClick) updateStatusMut.mutate({ id: viewOrder.id, status: step });
-                          }}
-                          className={cn(
-                            "flex-1 text-center py-2 px-1 rounded-md text-[11px] font-semibold transition-all",
-                            isActive && "bg-primary text-primary-foreground shadow-sm",
-                            isPast && "bg-primary/15 text-primary",
-                            !isActive && !isPast && !isNext && "text-muted-foreground/50",
-                            isNext && "text-muted-foreground hover:bg-primary/10 hover:text-primary cursor-pointer border border-dashed border-primary/30",
-                            !canClick && !isActive && !isPast && "cursor-default",
-                          )}
-                        >
-                          {cfg.label}
-                        </button>
-                      );
-                    })}
+                      <span className={cn("inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-semibold", cfg.color)}>
+                        {cfg.label}
+                      </span>
+
+                      {updateStatusMut.isPending && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+                    </div>
                   </div>
                 );
               })()}
