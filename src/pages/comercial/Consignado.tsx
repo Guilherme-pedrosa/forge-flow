@@ -556,6 +556,9 @@ export default function Consignado() {
                     {returnAllMut.isPending ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Package className="h-3.5 w-3.5 mr-1" />} Recolher Tudo
                   </Button>
                 )}
+                <Button size="sm" variant="outline" onClick={() => printConsignment()}>
+                  <Printer className="h-3.5 w-3.5 mr-1" /> Imprimir
+                </Button>
               </div>
 
               <Tabs defaultValue="stock" className="w-full">
