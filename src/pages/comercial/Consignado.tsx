@@ -605,34 +605,57 @@ export default function Consignado() {
       )}
 
       {/* ── Create Location Dialog ── */}
-      <Dialog open={createLocOpen} onOpenChange={setCreateLocOpen}>
-        <DialogContent className="max-w-sm">
+      <Dialog open={createLocOpen} onOpenChange={(o) => { if (!o) { setCreateLocOpen(false); resetLocForm(); } else setCreateLocOpen(true); }}>
+        <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Novo Ponto de Consignação</DialogTitle></DialogHeader>
           <div className="grid gap-4">
-            <div>
-              <Label>Nome do Cliente *</Label>
-              <Input
-                value={locCustomerName}
-                onChange={(e) => setLocCustomerName(e.target.value)}
-                placeholder="Ex: AnaLu Unhas"
-              />
+            {/* Toggle mode */}
+            <div className="flex gap-2">
+              <Button type="button" size="sm" variant={locMode === "existing" ? "default" : "outline"} onClick={() => setLocMode("existing")} className="flex-1">
+                Cliente existente
+              </Button>
+              <Button type="button" size="sm" variant={locMode === "new" ? "default" : "outline"} onClick={() => setLocMode("new")} className="flex-1">
+                Novo cliente
+              </Button>
             </div>
+
+            {locMode === "existing" ? (
+              <div>
+                <Label>Cliente *</Label>
+                <Select value={locCustomerId || "none"} onValueChange={(v) => setLocCustomerId(v === "none" ? "" : v)}>
+                  <SelectTrigger><SelectValue placeholder="Selecione o cliente" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Selecione…</SelectItem>
+                    {customers.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : (
+              <>
+                <div><Label>Nome do Cliente *</Label><Input value={newCustName} onChange={(e) => setNewCustName(e.target.value)} placeholder="Ex: AnaLu Unhas" /></div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div><Label>Telefone</Label><Input value={newCustPhone} onChange={(e) => setNewCustPhone(e.target.value)} placeholder="(62) 99999-9999" /></div>
+                  <div><Label>CPF/CNPJ</Label><Input value={newCustDocument} onChange={(e) => setNewCustDocument(e.target.value)} placeholder="000.000.000-00" /></div>
+                </div>
+                <div><Label>E-mail</Label><Input value={newCustEmail} onChange={(e) => setNewCustEmail(e.target.value)} placeholder="cliente@email.com" /></div>
+              </>
+            )}
+
             <div>
               <Label>Nome do Ponto *</Label>
-              <Input
-                value={locName}
-                onChange={(e) => setLocName(e.target.value)}
-                placeholder="Ex: Vitrine Loja Centro"
-              />
-            </div>
-            <div>
-              <Label>Observações</Label>
-              <Textarea value={locNotes} onChange={(e) => setLocNotes(e.target.value)} rows={2} />
+              <Input value={locName} onChange={(e) => setLocName(e.target.value)} placeholder="Ex: Vitrine Loja Centro" />
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateLocOpen(false)}>Cancelar</Button>
-            <Button onClick={() => createLocMut.mutate()} disabled={!locCustomerName.trim() || !locName.trim() || createLocMut.isPending}>
+            <Button variant="outline" onClick={() => { setCreateLocOpen(false); resetLocForm(); }}>Cancelar</Button>
+            <Button
+              onClick={() => createLocMut.mutate()}
+              disabled={
+                !locName.trim() ||
+                (locMode === "existing" ? !locCustomerId : !newCustName.trim()) ||
+                createLocMut.isPending
+              }
+            >
               {createLocMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Criar
             </Button>
           </DialogFooter>
