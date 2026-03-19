@@ -771,16 +771,58 @@ export default function Pedidos() {
             <DialogTitle className="flex items-center gap-2">
               <FileText className="h-5 w-5 text-primary" />
               {viewOrder?.code || "Pedido"}
-              {viewOrder && (
-                <span className={cn("inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold ml-2", (statusConfig[viewOrder.status] || statusConfig.draft).color)}>
-                  {(statusConfig[viewOrder.status] || statusConfig.draft).label}
-                </span>
-              )}
             </DialogTitle>
           </DialogHeader>
 
           {viewOrder && (
             <div className="space-y-4" ref={printRef}>
+              {/* ── Status Pipeline Bar ── */}
+              {(() => {
+                const pipeline = ["draft", "approved", "in_production", "ready", "shipped", "delivered"];
+                const currentIdx = pipeline.indexOf(viewOrder.status);
+                const isCancelled = viewOrder.status === "cancelled";
+
+                if (isCancelled) {
+                  return (
+                    <div className="flex items-center gap-2 rounded-lg border bg-destructive/5 px-4 py-2.5">
+                      <span className="text-sm font-medium text-destructive">Pedido Cancelado</span>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="flex items-center gap-1 rounded-lg border bg-muted/30 p-1.5">
+                    {pipeline.map((step, idx) => {
+                      const cfg = statusConfig[step] || statusConfig.draft;
+                      const isActive = step === viewOrder.status;
+                      const isPast = idx < currentIdx;
+                      const isNext = idx === currentIdx + 1;
+                      const canClick = isNext; // Only allow advancing to next step
+
+                      return (
+                        <button
+                          key={step}
+                          disabled={!canClick}
+                          onClick={() => {
+                            if (canClick) updateStatusMut.mutate({ id: viewOrder.id, status: step });
+                          }}
+                          className={cn(
+                            "flex-1 text-center py-2 px-1 rounded-md text-[11px] font-semibold transition-all",
+                            isActive && "bg-primary text-primary-foreground shadow-sm",
+                            isPast && "bg-primary/15 text-primary",
+                            !isActive && !isPast && !isNext && "text-muted-foreground/50",
+                            isNext && "text-muted-foreground hover:bg-primary/10 hover:text-primary cursor-pointer border border-dashed border-primary/30",
+                            !canClick && !isActive && !isPast && "cursor-default",
+                          )}
+                        >
+                          {cfg.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+
               <div className="grid grid-cols-3 gap-4 text-sm">
                 <div>
                   <p className="text-xs text-muted-foreground">Cliente</p>
