@@ -640,6 +640,7 @@ export default function Consignado() {
                   <div><Label>CPF/CNPJ</Label><Input value={newCustDocument} onChange={(e) => setNewCustDocument(e.target.value)} placeholder="000.000.000-00" /></div>
                 </div>
                 <div><Label>E-mail</Label><Input value={newCustEmail} onChange={(e) => setNewCustEmail(e.target.value)} placeholder="cliente@email.com" /></div>
+                <div><Label>Data de Nascimento</Label><Input type="date" value={newCustBirthday} onChange={(e) => setNewCustBirthday(e.target.value)} /></div>
               </>
             )}
 
