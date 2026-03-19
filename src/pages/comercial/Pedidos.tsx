@@ -412,118 +412,154 @@ export default function Pedidos() {
 
   const updateStatusMut = useMutation({
     mutationFn: async ({ id, status }: { id: string; status: string }) => {
+      if (!profile) throw new Error("Sem perfil");
+
+      const arStatuses = ["approved", "in_production", "ready", "shipped", "delivered"];
+      const jobsStatuses = ["in_production", "ready", "shipped", "delivered"];
+
+      const { data: orderData, error: orderErr } = await supabase
+        .from("orders")
+        .select("id, code, total, due_date, payment_due_date, customer_id")
+        .eq("id", id)
+        .maybeSingle();
+      if (orderErr) throw orderErr;
+      if (!orderData) throw new Error("Pedido não encontrado");
+
       const updates: any = { status };
-      if (status === "approved") updates.approved_at = new Date().toISOString();
+      if (arStatuses.includes(status)) updates.approved_at = new Date().toISOString();
+
       const { error } = await supabase.from("orders").update(updates).eq("id", id);
       if (error) throw error;
 
-      // ── Gerar Contas a Receber ao aprovar ──
-      if (status === "approved" && profile) {
-        const { data: orderData } = await supabase.from("orders").select("*").eq("id", id).single();
-        if (orderData) {
-          // Check if AR already exists for this order
-          const { data: existingAR } = await supabase.from("accounts_receivable")
-            .select("id")
-            .eq("origin_id", id)
-            .eq("origin_type", "order");
-          
-          if (!existingAR || existingAR.length === 0) {
-            const { error: arErr } = await supabase.from("accounts_receivable").insert({
-              tenant_id: profile.tenant_id,
+      // ── Garantir Contas a Receber a partir de "Aprovado" ──
+      if (arStatuses.includes(status)) {
+        const dueDate = (orderData as any).payment_due_date || orderData.due_date || new Date().toISOString().slice(0, 10);
+
+        const { data: existingAR, error: arSelectErr } = await supabase
+          .from("accounts_receivable")
+          .select("id")
+          .eq("origin_id", id)
+          .eq("origin_type", "order")
+          .maybeSingle();
+
+        if (arSelectErr) throw arSelectErr;
+
+        if (existingAR) {
+          const { error: arUpdateErr } = await supabase
+            .from("accounts_receivable")
+            .update({
               description: `Pedido ${orderData.code}`,
               amount: orderData.total || 0,
-              due_date: (orderData as any).payment_due_date || orderData.due_date || new Date().toISOString().slice(0, 10),
-              competence_date: new Date().toISOString().slice(0, 10),
+              due_date: dueDate,
               customer_id: orderData.customer_id || null,
-              origin_id: id,
-              origin_type: "order",
-              created_by: profile.user_id,
               status: "open",
-            });
-            if (arErr) throw new Error(`Erro ao criar conta a receber: ${arErr.message}`);
-          }
+            })
+            .eq("id", existingAR.id);
+
+          if (arUpdateErr) throw new Error(`Erro ao atualizar conta a receber: ${arUpdateErr.message}`);
+        } else {
+          const { error: arInsertErr } = await supabase.from("accounts_receivable").insert({
+            tenant_id: profile.tenant_id,
+            description: `Pedido ${orderData.code}`,
+            amount: orderData.total || 0,
+            due_date: dueDate,
+            competence_date: new Date().toISOString().slice(0, 10),
+            customer_id: orderData.customer_id || null,
+            origin_id: id,
+            origin_type: "order",
+            created_by: profile.user_id,
+            status: "open",
+          });
+
+          if (arInsertErr) throw new Error(`Erro ao criar conta a receber: ${arInsertErr.message}`);
         }
       }
 
-      // ── Explosão: ao mover para "Em Produção", criar Jobs automáticos ──
-      if (status === "in_production" && profile) {
-        const { data: items, error: itemsErr } = await supabase
-          .from("order_items")
-          .select("*, products(id, name, description, material_id, est_time_minutes, est_grams, num_colors, cost_estimate, sale_price, post_process_minutes)")
-          .eq("order_id", id);
-        if (itemsErr) throw itemsErr;
-
-        // Fetch printers and materials for cost calc
-        const { data: allPrinters } = await supabase.from("printers").select("*").eq("is_active", true);
-        const { data: allMaterials } = await supabase.from("inventory_items").select("*").eq("is_active", true);
-        const pList = allPrinters || [];
-        const mList = allMaterials || [];
-
-        const { count: jobCount } = await supabase
+      // ── Garantir criação de Jobs para status de produção ──
+      if (jobsStatuses.includes(status)) {
+        const { count: existingJobsCount, error: jobsCountErr } = await supabase
           .from("jobs")
-          .select("*", { count: "exact", head: true })
-          .eq("tenant_id", profile.tenant_id);
-        let seq = (jobCount ?? 0) + 1;
-        const datePart = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+          .select("id", { count: "exact", head: true })
+          .eq("order_id", id);
+        if (jobsCountErr) throw jobsCountErr;
 
-        // Fetch order data once
-        const { data: orderData } = await supabase.from("orders").select("code, due_date").eq("id", id).single();
-        const orderCode = orderData?.code || id;
-        const orderDueDate = orderData?.due_date || null;
+        if ((existingJobsCount ?? 0) === 0) {
+          const { data: items, error: itemsErr } = await supabase
+            .from("order_items")
+            .select("*, products(id, name, description, material_id, est_time_minutes, est_grams, num_colors, cost_estimate, sale_price, post_process_minutes)")
+            .eq("order_id", id);
+          if (itemsErr) throw itemsErr;
 
-        const jobInserts: any[] = [];
-        for (const item of (items || [])) {
-          const prod = item.products as any;
-          for (let q = 0; q < (item.quantity || 1); q++) {
-            const code = `OI-${datePart}-${String(seq++).padStart(3, "0")}`;
-            const grams = prod?.est_grams || null;
-            const minutes = prod?.est_time_minutes || null;
-            const materialId = prod?.material_id || null;
+          const { data: allPrinters } = await supabase.from("printers").select("*").eq("is_active", true);
+          const { data: allMaterials } = await supabase.from("inventory_items").select("*").eq("is_active", true);
+          const pList = allPrinters || [];
+          const mList = allMaterials || [];
 
-            let estMaterialCost = 0;
-            if (grams && materialId) {
-              const mat = mList.find((m: any) => m.id === materialId);
-              if (mat && mat.avg_cost > 0) {
-                const costPerGram = mat.unit === "kg" ? mat.avg_cost / 1000 : mat.avg_cost;
-                estMaterialCost = grams * (1 + (mat.loss_coefficient || 0.05)) * costPerGram;
+          const { count: jobCount } = await supabase
+            .from("jobs")
+            .select("*", { count: "exact", head: true })
+            .eq("tenant_id", profile.tenant_id);
+
+          let seq = (jobCount ?? 0) + 1;
+          const datePart = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+          const orderCode = orderData.code || id;
+          const orderDueDate = orderData.due_date || null;
+
+          const jobInserts: any[] = [];
+          for (const item of (items || [])) {
+            const prod = item.products as any;
+            for (let q = 0; q < (item.quantity || 1); q++) {
+              const code = `OI-${datePart}-${String(seq++).padStart(3, "0")}`;
+              const grams = prod?.est_grams || null;
+              const minutes = prod?.est_time_minutes || null;
+              const materialId = prod?.material_id || null;
+
+              let estMaterialCost = 0;
+              if (grams && materialId) {
+                const mat = mList.find((m: any) => m.id === materialId);
+                if (mat && mat.avg_cost > 0) {
+                  const costPerGram = mat.unit === "kg" ? mat.avg_cost / 1000 : mat.avg_cost;
+                  estMaterialCost = grams * (1 + (mat.loss_coefficient || 0.05)) * costPerGram;
+                }
               }
-            }
-            let estMachineCost = 0;
-            let estEnergyCost = 0;
-            const defaultPrinter = pList[0];
-            if (minutes && defaultPrinter) {
-              const hours = minutes / 60;
-              estMachineCost = hours * (defaultPrinter.depreciation_per_hour ?? 0) + hours * (defaultPrinter.maintenance_cost_per_hour ?? 0);
-              estEnergyCost = ((defaultPrinter.power_watts ?? 150) / 1000) * hours * 0.85;
-            }
 
-            jobInserts.push({
-              tenant_id: profile.tenant_id,
-              code,
-              name: prod?.name || item.description,
-              description: `Pedido ${orderCode} — ${item.description}`,
-              product_id: prod?.id || null,
-              material_id: materialId,
-              order_id: id,
-              due_date: orderDueDate,
-              priority: 5,
-              est_time_minutes: minutes,
-              est_grams: grams,
-              num_colors: prod?.num_colors || 1,
-              est_material_cost: estMaterialCost,
-              est_machine_cost: estMachineCost,
-              est_energy_cost: estEnergyCost,
-              est_total_cost: estMaterialCost + estMachineCost + estEnergyCost,
-              sale_price: item.unit_price || prod?.sale_price || null,
-              created_by: profile.user_id,
-              status: "queued" as const,
-            });
+              let estMachineCost = 0;
+              let estEnergyCost = 0;
+              const defaultPrinter = pList[0];
+              if (minutes && defaultPrinter) {
+                const hours = minutes / 60;
+                estMachineCost = hours * (defaultPrinter.depreciation_per_hour ?? 0) + hours * (defaultPrinter.maintenance_cost_per_hour ?? 0);
+                estEnergyCost = ((defaultPrinter.power_watts ?? 150) / 1000) * hours * 0.85;
+              }
+
+              jobInserts.push({
+                tenant_id: profile.tenant_id,
+                code,
+                name: prod?.name || item.description,
+                description: `Pedido ${orderCode} — ${item.description}`,
+                product_id: prod?.id || null,
+                material_id: materialId,
+                order_id: id,
+                due_date: orderDueDate,
+                priority: 5,
+                est_time_minutes: minutes,
+                est_grams: grams,
+                num_colors: prod?.num_colors || 1,
+                est_material_cost: estMaterialCost,
+                est_machine_cost: estMachineCost,
+                est_energy_cost: estEnergyCost,
+                est_total_cost: estMaterialCost + estMachineCost + estEnergyCost,
+                sale_price: item.unit_price || prod?.sale_price || null,
+                created_by: profile.user_id,
+                status: "queued" as const,
+              });
+            }
           }
-        }
 
-        if (jobInserts.length > 0) {
-          const { error: jobErr } = await supabase.from("jobs").insert(jobInserts);
-          if (jobErr) throw jobErr;
+          if (jobInserts.length > 0) {
+            const { error: jobErr } = await supabase.from("jobs").insert(jobInserts);
+            if (jobErr) throw jobErr;
+          }
         }
       }
     },
