@@ -5,7 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { PageHeader } from "@/components/shared/PageHeader";
 import {
   Plus, Search, MoreHorizontal, Loader2, MapPin, Package, Trash2, ArrowRightLeft,
-  ArrowUpFromLine, ArrowDownToLine, RotateCcw, ShoppingCart, Eye, X,
+  ArrowUpFromLine, ArrowDownToLine, RotateCcw, ShoppingCart, Eye, X, Printer,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -365,6 +365,79 @@ export default function Consignado() {
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 
+  const printConsignment = () => {
+    if (!viewLoc) return;
+    const today = new Date().toLocaleDateString("pt-BR");
+    const itemsWithStock = viewLocItems.filter((i: any) => i.current_qty > 0);
+    const totalValue = itemsWithStock.reduce((sum: number, i: any) => sum + i.current_qty * (i.products?.sale_price || 0), 0);
+    const customerName = (viewLoc as any).customers?.name || viewLoc.contact_name || "—";
+
+    const rows = itemsWithStock.map((item: any, idx: number) => `
+      <tr>
+        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:center">${idx + 1}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #ddd">${item.products?.name || "—"}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:center">${item.current_qty}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right">${fmtCurrency(item.products?.sale_price || 0)}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right">${fmtCurrency(item.current_qty * (item.products?.sale_price || 0))}</td>
+      </tr>
+    `).join("");
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Consignado - ${viewLoc.name}</title>
+      <style>
+        @media print { @page { margin: 15mm; } }
+        body { font-family: 'Segoe UI', Arial, sans-serif; color: #222; font-size: 13px; }
+        h2 { margin: 0 0 4px; font-size: 18px; }
+        .sub { color: #666; font-size: 12px; margin-bottom: 16px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+        th { background: #f5f5f5; padding: 8px; text-align: left; border-bottom: 2px solid #ccc; font-size: 12px; }
+        .total-row td { font-weight: bold; border-top: 2px solid #333; }
+        .sig { margin-top: 60px; display: flex; justify-content: space-between; gap: 40px; }
+        .sig-box { flex: 1; text-align: center; border-top: 1px solid #333; padding-top: 6px; font-size: 12px; }
+        .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 24px; font-size: 12px; margin-bottom: 8px; }
+        .info-grid span { color: #888; }
+      </style></head><body>
+      <h2>Termo de Consignação</h2>
+      <p class="sub">Emitido em ${today}</p>
+      <div class="info-grid">
+        <div><span>Ponto:</span> <strong>${viewLoc.name}</strong></div>
+        <div><span>Cliente:</span> <strong>${customerName}</strong></div>
+        <div><span>Contato:</span> ${viewLoc.contact_name || "—"}</div>
+        <div><span>Telefone:</span> ${viewLoc.phone || "—"}</div>
+        <div><span>Endereço:</span> ${viewLoc.address || "—"}</div>
+      </div>
+      <table>
+        <thead><tr>
+          <th style="text-align:center;width:40px">#</th>
+          <th>Produto</th>
+          <th style="text-align:center">Qtd</th>
+          <th style="text-align:right">Preço Unit.</th>
+          <th style="text-align:right">Total</th>
+        </tr></thead>
+        <tbody>
+          ${rows}
+          <tr class="total-row">
+            <td colspan="4" style="padding:8px;text-align:right">TOTAL</td>
+            <td style="padding:8px;text-align:right">${fmtCurrency(totalValue)}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p style="font-size:11px;color:#666;margin-top:16px">
+        Declaro ter recebido os produtos acima em regime de consignação, comprometendo-me a devolver os itens não vendidos ou efetuar o pagamento dos itens vendidos conforme acordado.
+      </p>
+      <div class="sig">
+        <div class="sig-box">Responsável pela Empresa</div>
+        <div class="sig-box">${customerName}<br/><span style="font-size:10px;color:#888">Consignatário(a)</span></div>
+      </div>
+    </body></html>`;
+
+    const w = window.open("", "_blank");
+    if (w) {
+      w.document.write(html);
+      w.document.close();
+      w.onload = () => { w.print(); };
+    }
+  };
+
   const openMovement = (type: string) => {
     setMovementType(type);
     setMovProductId("");
@@ -556,6 +629,9 @@ export default function Consignado() {
                     {returnAllMut.isPending ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Package className="h-3.5 w-3.5 mr-1" />} Recolher Tudo
                   </Button>
                 )}
+                <Button size="sm" variant="outline" onClick={() => printConsignment()}>
+                  <Printer className="h-3.5 w-3.5 mr-1" /> Imprimir
+                </Button>
               </div>
 
               <Tabs defaultValue="stock" className="w-full">
