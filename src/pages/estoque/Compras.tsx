@@ -6,7 +6,7 @@ import { PageHeader } from "@/components/shared/PageHeader";
 import {
   Plus, Search, MoreHorizontal, Loader2, Upload, FileText,
   Trash2, Eye, CheckCircle2, Package, ShoppingCart, Camera,
-  Image as ImageIcon, Sparkles,
+  Image as ImageIcon, Sparkles, AlertTriangle, ArrowRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -30,6 +30,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
+import { Switch } from "@/components/ui/switch";
 
 const fmtCurrency = (v: number | null) =>
   v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
@@ -52,6 +53,7 @@ interface NfeItem {
   total: number;
   cfop: string;
   ncm: string;
+  inventoryItemId: string;
 }
 
 interface NfeData {
@@ -104,6 +106,7 @@ function parseNfeXml(xmlText: string): NfeData | null {
         total: parseFloat(getTag(prod, "vProd") || "0"),
         cfop: getTag(prod, "CFOP"),
         ncm: getTag(prod, "NCM"),
+        inventoryItemId: "",
       });
     }
 
@@ -140,6 +143,7 @@ export default function Compras() {
   const marketplaceFileRef = useRef<HTMLInputElement>(null);
   const [nfeData, setNfeData] = useState<NfeData | null>(null);
   const [xmlRaw, setXmlRaw] = useState("");
+  const [nfeMarkReceived, setNfeMarkReceived] = useState(false);
 
   // Manual create form
   const [vendorId, setVendorId] = useState("");
@@ -156,6 +160,11 @@ export default function Compras() {
   // NFe form
   const [nfeInstallments, setNfeInstallments] = useState("1");
   const [nfeDueDate, setNfeDueDate] = useState("");
+
+  // Receive confirmation dialog
+  const [receiveConfirmOpen, setReceiveConfirmOpen] = useState(false);
+  const [receiveOrderId, setReceiveOrderId] = useState<string | null>(null);
+  const [receiveItems, setReceiveItems] = useState<any[]>([]);
 
   // Helper: parse "3x de R$ 41,20" → 3
   const parseInstallmentCount = (str: string | null | undefined): number => {
@@ -232,7 +241,7 @@ export default function Compras() {
   const { data: inventoryItems = [] } = useQuery({
     queryKey: ["inventory_items"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("inventory_items").select("id, name, sku").eq("is_active", true).order("name");
+      const { data, error } = await supabase.from("inventory_items").select("id, name, sku, unit").eq("is_active", true).order("name");
       if (error) throw error;
       return data;
     },
@@ -249,7 +258,7 @@ export default function Compras() {
     enabled: !!profile,
   });
 
-  const { data: orderItems = [] } = useQuery({
+  const { data: orderItems = [], refetch: refetchOrderItems } = useQuery({
     queryKey: ["purchase_order_items", detailOrder?.id],
     queryFn: async () => {
       if (!detailOrder) return [];
@@ -293,6 +302,7 @@ export default function Compras() {
         expected_date: expectedDate || null,
         subtotal, total: subtotal,
         notes: notes || null,
+        status: "pending",
         created_by: profile.user_id,
       }).select().single();
       if (error) throw error;
@@ -337,7 +347,7 @@ export default function Compras() {
       qc.invalidateQueries({ queryKey: ["accounts_payable"] });
       setCreateOpen(false);
       resetForm();
-      toast({ title: "Pedido de compra criado e conta a pagar gerada" });
+      toast({ title: "Pedido de compra criado", description: "Vincule os itens ao estoque e clique em 'Receber' quando o pedido chegar." });
     },
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
@@ -367,6 +377,8 @@ export default function Compras() {
       }
 
       const code = `PC-${String(orders.length + 1).padStart(4, "0")}`;
+      const shouldReceive = nfeMarkReceived;
+      
       const { data: po, error } = await supabase.from("purchase_orders").insert({
         tenant_id: profile.tenant_id,
         code,
@@ -379,8 +391,8 @@ export default function Compras() {
         nfe_number: nfeData.nfeNumber,
         nfe_key: nfeData.nfeKey,
         nfe_xml: xmlRaw,
-        status: "received",
-        received_date: nfeData.issueDate || new Date().toISOString().slice(0, 10),
+        status: shouldReceive ? "received" : "pending",
+        received_date: shouldReceive ? (nfeData.issueDate || new Date().toISOString().slice(0, 10)) : null,
         created_by: profile.user_id,
       }).select().single();
       if (error) throw error;
@@ -395,9 +407,30 @@ export default function Compras() {
           total: i.total,
           cfop: i.cfop || null,
           ncm: i.ncm || null,
+          inventory_item_id: i.inventoryItemId || null,
         }));
         const { error: ie } = await supabase.from("purchase_order_items").insert(rows);
         if (ie) throw ie;
+
+        // If marking as received, create inventory movements for linked items
+        if (shouldReceive) {
+          for (const item of nfeData.items) {
+            if (item.inventoryItemId) {
+              await supabase.from("inventory_movements").insert({
+                tenant_id: profile.tenant_id,
+                item_id: item.inventoryItemId,
+                movement_type: "purchase_in" as const,
+                quantity: item.quantity,
+                unit_cost: item.unitPrice,
+                total_cost: item.total,
+                reference_type: "purchase_order",
+                reference_id: po.id,
+                notes: `Entrada via NFe ${nfeData.nfeNumber}`,
+                created_by: profile.user_id,
+              });
+            }
+          }
+        }
       }
 
       // Create accounts_payable for NFe (with installments)
@@ -420,15 +453,26 @@ export default function Compras() {
         const { error: apErr } = await supabase.from("accounts_payable").insert(entries);
         if (apErr) throw apErr;
       }
+
+      const linkedCount = nfeData.items.filter(i => i.inventoryItemId).length;
+      return { shouldReceive, linkedCount, totalItems: nfeData.items.length };
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
       qc.invalidateQueries({ queryKey: ["vendors"] });
       qc.invalidateQueries({ queryKey: ["accounts_payable"] });
+      if (result?.shouldReceive) {
+        qc.invalidateQueries({ queryKey: ["inventory_items"] });
+        qc.invalidateQueries({ queryKey: ["inventory_movements"] });
+      }
       setXmlImportOpen(false);
       setNfeData(null);
       setXmlRaw("");
-      toast({ title: "NFe importada e conta a pagar gerada!" });
+      setNfeMarkReceived(false);
+      const msg = result?.shouldReceive
+        ? `NFe importada! ${result.linkedCount} de ${result.totalItems} itens deram entrada no estoque.`
+        : "NFe importada como pendente. Vincule os itens ao estoque e clique em 'Receber' quando o pedido chegar.";
+      toast({ title: "NFe importada!", description: msg });
     },
     onError: (e: any) => toast({ title: "Erro ao importar", description: e.message, variant: "destructive" }),
   });
@@ -440,12 +484,13 @@ export default function Compras() {
         .from("purchase_order_items")
         .select("*")
         .eq("purchase_order_id", orderId);
-      if (!items || !profile) return;
+      if (!items || !profile) return { linked: 0, total: 0 };
 
+      let linkedCount = 0;
       // Create inventory movements for items matched to inventory
       for (const item of items) {
         if (item.inventory_item_id) {
-          await supabase.from("inventory_movements").insert({
+          const { error } = await supabase.from("inventory_movements").insert({
             tenant_id: profile.tenant_id,
             item_id: item.inventory_item_id,
             movement_type: "purchase_in" as const,
@@ -454,8 +499,10 @@ export default function Compras() {
             total_cost: item.total,
             reference_type: "purchase_order",
             reference_id: orderId,
-            notes: `Entrada via PC ${orderId}`,
+            notes: `Entrada via pedido de compra`,
+            created_by: profile.user_id,
           });
+          if (!error) linkedCount++;
         }
       }
 
@@ -464,12 +511,21 @@ export default function Compras() {
         received_date: new Date().toISOString().slice(0, 10),
       }).eq("id", orderId);
       if (error) throw error;
+
+      return { linked: linkedCount, total: items.length };
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
       qc.invalidateQueries({ queryKey: ["inventory_items"] });
       qc.invalidateQueries({ queryKey: ["inventory_movements"] });
-      toast({ title: "Pedido recebido e estoque atualizado" });
+      setReceiveConfirmOpen(false);
+      setReceiveOrderId(null);
+      setReceiveItems([]);
+      setDetailOrder(null);
+      const msg = result && result.linked > 0
+        ? `${result.linked} de ${result.total} itens deram entrada no estoque.`
+        : "Pedido marcado como recebido. Nenhum item estava vinculado ao estoque.";
+      toast({ title: "Pedido recebido!", description: msg });
     },
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
@@ -523,12 +579,29 @@ export default function Compras() {
     setManualItems(updated);
   };
 
+  const updateNfeItem = (idx: number, inventoryItemId: string) => {
+    if (!nfeData) return;
+    const updatedItems = [...nfeData.items];
+    updatedItems[idx] = { ...updatedItems[idx], inventoryItemId };
+    setNfeData({ ...nfeData, items: updatedItems });
+  };
+
+  // Open receive confirmation with current items
+  const openReceiveConfirm = async (orderId: string) => {
+    const { data: items } = await supabase
+      .from("purchase_order_items")
+      .select("*")
+      .eq("purchase_order_id", orderId);
+    setReceiveOrderId(orderId);
+    setReceiveItems(items || []);
+    setReceiveConfirmOpen(true);
+  };
+
   // ── Marketplace Screenshot Import ──
   const handleMarketplaceUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
     
-    // Convert files to base64 previews
     const previews: string[] = [];
     for (const file of files) {
       const url = URL.createObjectURL(file);
@@ -551,7 +624,6 @@ export default function Compras() {
       }
       setMarketplaceParsed(allPurchases);
       setMarketplaceSelectedIdx(0);
-      // Auto-detect installments from AI
       if (allPurchases.length > 0) {
         const firstPurchase = allPurchases[0];
         const detectedInst = parseInstallmentCount(firstPurchase.payment_installments);
@@ -573,7 +645,7 @@ export default function Compras() {
       const reader = new FileReader();
       reader.onload = () => {
         const result = reader.result as string;
-        resolve(result.split(",")[1]); // Remove data:xxx;base64, prefix
+        resolve(result.split(",")[1]);
       };
       reader.onerror = reject;
       reader.readAsDataURL(file);
@@ -593,7 +665,6 @@ export default function Compras() {
     mutationFn: async (purchase: any) => {
       if (!profile) throw new Error("Sem perfil");
 
-      // Find or create vendor
       let vid: string | null = null;
       if (purchase.vendor_name) {
         const { data: existingVendor } = await supabase
@@ -612,7 +683,6 @@ export default function Compras() {
         }
       }
 
-      // Auto-detect payment method from AI response
       let pmId = marketplacePaymentMethodId || null;
       if (!pmId && purchase.payment_method && paymentMethods.length > 0) {
         const pmMap: Record<string, string> = {
@@ -640,8 +710,7 @@ export default function Compras() {
         discount: purchase.discount || 0,
         shipping: purchase.shipping || 0,
         total: totalAmount,
-        status: purchase.status === "concluido" ? "received" : "pending",
-        received_date: purchase.status === "concluido" ? (purchase.order_date || new Date().toISOString().slice(0, 10)) : null,
+        status: "pending",
         notes: `Importado de ${marketplace}${purchase.payment_installments ? ` | Pgto: ${purchase.payment_installments}` : ""}${purchase.notes ? ` | ${purchase.notes}` : ""}`,
         created_by: profile.user_id,
       }).select().single();
@@ -665,7 +734,6 @@ export default function Compras() {
         const purchaseDate = purchase.order_date || new Date().toISOString().slice(0, 10);
         const baseDue = marketplaceDueDate || purchaseDate;
         const numInst = parseInt(marketplaceInstallments || "1", 10) || parseInstallmentCount(purchase.payment_installments);
-        const isPaid = purchase.status === "concluido";
         const entries = generateInstallmentAP({
           tenantId: profile.tenant_id,
           description: `${marketplace} - ${purchase.vendor_name || code}`,
@@ -674,8 +742,8 @@ export default function Compras() {
           numInstallments: numInst,
           vendorId: vid,
           paymentMethodId: pmId,
-          isPaid,
-          paymentDate: isPaid ? purchaseDate : null,
+          isPaid: false,
+          paymentDate: null,
           notes: `Ref. pedido ${code}${purchase.payment_installments ? ` | ${purchase.payment_installments}` : ""}`,
           createdBy: profile.user_id,
         });
@@ -687,10 +755,9 @@ export default function Compras() {
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
       qc.invalidateQueries({ queryKey: ["vendors"] });
       qc.invalidateQueries({ queryKey: ["accounts_payable"] });
-      // Remove imported purchase from list
       setMarketplaceParsed(prev => prev.filter((_, i) => i !== marketplaceSelectedIdx));
       setMarketplaceSelectedIdx(0);
-      toast({ title: "Compra importada e conta a pagar gerada!" });
+      toast({ title: "Compra importada!", description: "Vincule os itens ao estoque e clique em 'Receber' quando chegar." });
       if (marketplaceParsed.length <= 1) {
         setMarketplaceImportOpen(false);
         setMarketplaceImages([]);
@@ -718,7 +785,7 @@ export default function Compras() {
             <Button variant="outline" size="sm" onClick={() => { setMarketplaceImages([]); setMarketplaceParsed([]); setMarketplaceImportOpen(true); }}>
               <Camera className="h-4 w-4 mr-1" /> Screenshot Compra
             </Button>
-            <Button variant="outline" size="sm" onClick={() => { setNfeData(null); setXmlRaw(""); setXmlImportOpen(true); }}>
+            <Button variant="outline" size="sm" onClick={() => { setNfeData(null); setXmlRaw(""); setNfeMarkReceived(false); setXmlImportOpen(true); }}>
               <Upload className="h-4 w-4 mr-1" /> Importar XML
             </Button>
             <Button size="sm" onClick={() => { resetForm(); setCreateOpen(true); }}>
@@ -805,7 +872,7 @@ export default function Compras() {
                             <Eye className="h-3.5 w-3.5 mr-2" /> Ver Detalhes
                           </DropdownMenuItem>
                           {(o.status === "draft" || o.status === "pending") && (
-                            <DropdownMenuItem onClick={(e) => { e.stopPropagation(); receiveOrderMut.mutate(o.id); }}>
+                            <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openReceiveConfirm(o.id); }}>
                               <CheckCircle2 className="h-3.5 w-3.5 mr-2" /> Receber
                             </DropdownMenuItem>
                           )}
@@ -965,58 +1032,102 @@ export default function Compras() {
               </div>
 
               <div>
-                <Label className="mb-2 block">Itens ({nfeData.items.length})</Label>
+                <Label className="mb-2 block">Itens ({nfeData.items.length}) — Vincule ao estoque para dar entrada automática</Label>
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Descrição</TableHead>
+                      <TableHead>Vincular ao Estoque</TableHead>
                       <TableHead className="text-right">Qtd</TableHead>
                       <TableHead className="text-right">Valor Unit.</TableHead>
                       <TableHead className="text-right">Total</TableHead>
-                      <TableHead>CFOP</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {nfeData.items.map((item, idx) => (
                       <TableRow key={idx}>
-                        <TableCell className="text-sm max-w-[200px] truncate">{item.description}</TableCell>
+                        <TableCell className="text-sm max-w-[160px] truncate">{item.description}</TableCell>
+                        <TableCell>
+                          <Select
+                            value={item.inventoryItemId || "none"}
+                            onValueChange={(val) => updateNfeItem(idx, val === "none" ? "" : val)}
+                          >
+                            <SelectTrigger className="h-8 text-xs w-[180px]">
+                              <SelectValue placeholder="Vincular..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="none">— Não vincular —</SelectItem>
+                              {inventoryItems.map((inv: any) => (
+                                <SelectItem key={inv.id} value={inv.id}>{inv.name}{inv.sku ? ` (${inv.sku})` : ""}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </TableCell>
                         <TableCell className="text-right text-sm">{item.quantity}</TableCell>
                         <TableCell className="text-right text-sm">{fmtCurrency(item.unitPrice)}</TableCell>
                         <TableCell className="text-right text-sm font-mono">{fmtCurrency(item.total)}</TableCell>
-                        <TableCell className="text-sm font-mono">{item.cfop}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
+                {nfeData.items.some(i => i.inventoryItemId) && (
+                  <p className="text-xs text-emerald-600 mt-2 flex items-center gap-1">
+                    <Package className="h-3 w-3" />
+                    {nfeData.items.filter(i => i.inventoryItemId).length} de {nfeData.items.length} itens vinculados ao estoque
+                  </p>
+                )}
               </div>
+
+              {/* Mark as received toggle */}
+              <div className="rounded-lg border bg-muted/30 p-4 flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium text-foreground">Já recebi este pedido</p>
+                  <p className="text-xs text-muted-foreground">
+                    {nfeMarkReceived 
+                      ? "Os itens vinculados darão entrada no estoque automaticamente."
+                      : "O pedido será salvo como pendente. Você poderá receber depois."}
+                  </p>
+                </div>
+                <Switch checked={nfeMarkReceived} onCheckedChange={setNfeMarkReceived} />
+              </div>
+
+              {nfeMarkReceived && !nfeData.items.some(i => i.inventoryItemId) && (
+                <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 flex items-start gap-2">
+                  <AlertTriangle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+                  <p className="text-xs text-amber-700">
+                    Nenhum item está vinculado ao estoque. O pedido será marcado como recebido mas <strong>nenhuma movimentação de estoque</strong> será criada. Vincule os itens acima para dar entrada automática.
+                  </p>
+                </div>
+              )}
             </div>
           )}
 
-            {nfeData && (
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <Label className="mb-2 block">Parcelas</Label>
-                  <Select value={nfeInstallments} onValueChange={setNfeInstallments}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {[1,2,3,4,5,6,7,8,9,10,11,12].map(n => <SelectItem key={n} value={String(n)}>{n}x</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label className="mb-2 block">Vencimento 1ª parcela</Label>
-                  <Input type="date" value={nfeDueDate} onChange={(e) => setNfeDueDate(e.target.value)} />
-                </div>
-                <p className="text-xs text-muted-foreground col-span-2">Demais parcelas: +30 dias cada</p>
+          {nfeData && (
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label className="mb-2 block">Parcelas</Label>
+                <Select value={nfeInstallments} onValueChange={setNfeInstallments}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {[1,2,3,4,5,6,7,8,9,10,11,12].map(n => <SelectItem key={n} value={String(n)}>{n}x</SelectItem>)}
+                  </SelectContent>
+                </Select>
               </div>
-            )}
+              <div>
+                <Label className="mb-2 block">Vencimento 1ª parcela</Label>
+                <Input type="date" value={nfeDueDate} onChange={(e) => setNfeDueDate(e.target.value)} />
+              </div>
+              <p className="text-xs text-muted-foreground col-span-2">Demais parcelas: +30 dias cada</p>
+            </div>
+          )}
 
           <DialogFooter>
             {nfeData && (
               <>
                 <Button variant="outline" onClick={() => { setNfeData(null); setXmlRaw(""); }}>Trocar Arquivo</Button>
                 <Button onClick={() => importXmlMut.mutate()} disabled={importXmlMut.isPending}>
-                  {importXmlMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Importar NFe
+                  {importXmlMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
+                  {nfeMarkReceived ? "Importar e Receber" : "Importar NFe"}
                 </Button>
               </>
             )}
@@ -1046,7 +1157,14 @@ export default function Compras() {
               </div>
 
               <div>
-                <Label className="mb-2 block">Itens</Label>
+                <Label className="mb-2 block">
+                  Itens
+                  {detailOrder.status !== "received" && (
+                    <span className="text-xs text-muted-foreground font-normal ml-2">
+                      Vincule ao estoque antes de receber
+                    </span>
+                  )}
+                </Label>
                 {orderItems.length === 0 ? (
                   <p className="text-sm text-muted-foreground">Nenhum item.</p>
                 ) : (
@@ -1078,15 +1196,15 @@ export default function Compras() {
                                 <SelectContent>
                                   <SelectItem value="none">— Não vincular —</SelectItem>
                                   {inventoryItems.map((inv: any) => (
-                                    <SelectItem key={inv.id} value={inv.id}>{inv.name}</SelectItem>
+                                    <SelectItem key={inv.id} value={inv.id}>{inv.name}{inv.sku ? ` (${inv.sku})` : ""}</SelectItem>
                                   ))}
                                 </SelectContent>
                               </Select>
                             ) : (
                               <span className="text-xs text-muted-foreground">
                                 {item.inventory_item_id
-                                  ? inventoryItems.find((inv: any) => inv.id === item.inventory_item_id)?.name || "Vinculado"
-                                  : "—"}
+                                  ? <span className="text-emerald-600 flex items-center gap-1"><CheckCircle2 className="h-3 w-3" />{inventoryItems.find((inv: any) => inv.id === item.inventory_item_id)?.name || "Vinculado"}</span>
+                                  : "— Não vinculado"}
                               </span>
                             )}
                           </TableCell>
@@ -1098,23 +1216,123 @@ export default function Compras() {
                     </TableBody>
                   </Table>
                 )}
+
+                {detailOrder?.status !== "received" && orderItems.length > 0 && (
+                  <div className="mt-2">
+                    {orderItems.some((i: any) => i.inventory_item_id) ? (
+                      <p className="text-xs text-emerald-600 flex items-center gap-1">
+                        <Package className="h-3 w-3" />
+                        {orderItems.filter((i: any) => i.inventory_item_id).length} de {orderItems.length} itens vinculados — darão entrada no estoque ao receber
+                      </p>
+                    ) : (
+                      <p className="text-xs text-amber-600 flex items-center gap-1">
+                        <AlertTriangle className="h-3 w-3" />
+                        Nenhum item vinculado ao estoque. Vincule acima para dar entrada automática ao receber.
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Receive button */}
               {detailOrder?.status !== "received" && detailOrder?.status !== "cancelled" && (
-                <div className="flex justify-end pt-2 border-t">
+                <div className="flex justify-end pt-3 border-t gap-2">
                   <Button
-                    onClick={() => { receiveOrderMut.mutate(detailOrder.id); setDetailOrder(null); }}
+                    variant="default"
+                    size="lg"
+                    onClick={() => openReceiveConfirm(detailOrder.id)}
                     disabled={receiveOrderMut.isPending}
                     className="gap-2"
                   >
-                    {receiveOrderMut.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
-                    <CheckCircle2 className="h-4 w-4" /> Receber e Dar Entrada no Estoque
+                    <CheckCircle2 className="h-4 w-4" /> Receber Pedido
+                    <ArrowRight className="h-4 w-4" />
                   </Button>
+                </div>
+              )}
+
+              {detailOrder?.status === "received" && (
+                <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3 flex items-center gap-2">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0" />
+                  <p className="text-sm text-emerald-700">
+                    Pedido recebido em {fmtDate(detailOrder.received_date)}
+                  </p>
                 </div>
               )}
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Receive Confirmation Dialog */}
+      <Dialog open={receiveConfirmOpen} onOpenChange={setReceiveConfirmOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Package className="h-5 w-5 text-primary" />
+              Confirmar Recebimento
+            </DialogTitle>
+            <DialogDescription>
+              Revise os itens que darão entrada no estoque
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            {receiveItems.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Nenhum item neste pedido.</p>
+            ) : (
+              <>
+                {receiveItems.filter((i: any) => i.inventory_item_id).length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-emerald-600 mb-2 flex items-center gap-1">
+                      <CheckCircle2 className="h-3 w-3" /> Itens que darão entrada no estoque:
+                    </p>
+                    <div className="space-y-1">
+                      {receiveItems.filter((i: any) => i.inventory_item_id).map((item: any) => {
+                        const inv = inventoryItems.find((inv: any) => inv.id === item.inventory_item_id);
+                        return (
+                          <div key={item.id} className="flex items-center justify-between rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-sm">
+                            <div>
+                              <span className="font-medium">{item.description}</span>
+                              <span className="text-xs text-muted-foreground ml-2">→ {inv?.name || "Estoque"}</span>
+                            </div>
+                            <span className="font-mono text-emerald-600 font-semibold">+{item.quantity}{inv?.unit || ""}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {receiveItems.filter((i: any) => !i.inventory_item_id).length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-amber-600 mb-2 flex items-center gap-1">
+                      <AlertTriangle className="h-3 w-3" /> Itens SEM vínculo (não movimentam estoque):
+                    </p>
+                    <div className="space-y-1">
+                      {receiveItems.filter((i: any) => !i.inventory_item_id).map((item: any) => (
+                        <div key={item.id} className="flex items-center justify-between rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-sm">
+                          <span className="text-muted-foreground">{item.description}</span>
+                          <span className="text-xs text-amber-600">Sem vínculo</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setReceiveConfirmOpen(false)}>Cancelar</Button>
+            <Button
+              onClick={() => receiveOrderId && receiveOrderMut.mutate(receiveOrderId)}
+              disabled={receiveOrderMut.isPending}
+              className="gap-2"
+            >
+              {receiveOrderMut.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              <CheckCircle2 className="h-4 w-4" /> Confirmar Recebimento
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -1166,7 +1384,6 @@ export default function Compras() {
                 </>
               )}
 
-              {/* Preview uploaded images */}
               {marketplaceImages.length > 0 && (
                 <div className="flex gap-2 flex-wrap justify-center">
                   {marketplaceImages.map((src, i) => (
@@ -1177,7 +1394,6 @@ export default function Compras() {
             </div>
           ) : (
             <div className="space-y-4">
-              {/* Purchase tabs if multiple */}
               {marketplaceParsed.length > 1 && (
                 <div className="flex gap-1 overflow-x-auto pb-1">
                   {marketplaceParsed.map((p, i) => (
