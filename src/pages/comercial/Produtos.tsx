@@ -961,7 +961,12 @@ export default function Produtos() {
                   <TableCell>
                     <div><p className="font-medium text-sm">{p.name}</p>{p.sku && <p className="text-xs text-muted-foreground">{p.sku}</p>}</div>
                   </TableCell>
-                  <TableCell className="text-sm">{categoryLabels[p.category] || p.category}</TableCell>
+                  <TableCell className="text-sm">
+                    {categoryLabels[p.category] || p.category}
+                    {Array.isArray((p as any).extras) && (p as any).extras.length > 0 && (
+                      <span className="ml-1.5 text-[10px] text-muted-foreground">+{(p as any).extras.length} extras</span>
+                    )}
+                  </TableCell>
                   <TableCell className="text-sm">{p.inventory_items?.name || "—"}</TableCell>
                   <TableCell className="text-right font-mono text-sm">{fmtCurrency(p.cost_estimate)}</TableCell>
                   <TableCell className="text-right font-mono text-sm">{fmtCurrency(p.sale_price)}</TableCell>
