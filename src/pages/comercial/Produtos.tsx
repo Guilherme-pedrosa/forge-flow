@@ -35,10 +35,14 @@ const fmtDuration = (s: number | null) => {
 
 const categoryLabels: Record<string, string> = {
   printed_part: "Peça Impressa",
+  kit: "Kit / Combo",
   service: "Serviço",
-  kit: "Kit",
   accessory: "Acessório",
+  resale: "Revenda",
+  seasonal: "Sazonal / Brinde",
 };
+
+type ExtraItem = { name: string; cost: number };
 
 export default function Produtos() {
   const { profile } = useAuth();
@@ -75,6 +79,7 @@ export default function Produtos() {
   const [notes, setNotes] = useState("");
   const [printerId, setPrinterId] = useState("");
   const [numColors, setNumColors] = useState("1");
+  const [extras, setExtras] = useState<ExtraItem[]>([]);
   const [printsPerPlate, setPrintsPerPlate] = useState("1");
 
   // Marketplace fee config
@@ -199,8 +204,12 @@ export default function Produtos() {
 
     // Divide by prints per plate
     const ppp = Math.max(1, parseInt(printsPerPlate) || 1);
-    const total = totalPlate / ppp;
+    const totalPerPiece = totalPlate / ppp;
     const overhead = overheadPlate / ppp;
+
+    // Extras cost (not divided by prints per plate - each unit gets the extras)
+    const extrasCost = extras.reduce((sum, e) => sum + (e.cost || 0), 0);
+    const total = totalPerPiece + extrasCost;
 
     // Suggested sale price
     const margin = tenantSettings.target_margin || 40;
@@ -212,14 +221,16 @@ export default function Produtos() {
       machineCost: machineCost / ppp,
       laborCost: laborCost / ppp,
       overhead,
+      totalPerPiece,
       total,
+      extrasCost,
       totalPlate,
       printsPerPlate: ppp,
       suggestedPrice,
       selectedPrinterName: selectedPrinter?.name || null,
       hasMachineRate: (depreciationPerHour + maintenancePerHour) > 0,
     };
-  }, [estGrams, estTime, postMinutes, materialId, printerId, printsPerPlate, materials, printers, tenantSettings]);
+  }, [estGrams, estTime, postMinutes, materialId, printerId, printsPerPlate, materials, printers, tenantSettings, extras]);
 
   const applyCalculatedCost = () => {
     setCostEstimate(costBreakdown.total.toFixed(2));
@@ -272,7 +283,7 @@ export default function Produtos() {
 
   const resetForm = () => {
     setName(""); setDescription(""); setSku(""); setCategory("printed_part"); setMaterialId("");
-    setEstGrams(""); setEstTime(""); setPostMinutes(""); setCostEstimate(""); setSalePrice(""); setPhotoUrl(""); setExtraPhotos([]); setNotes(""); setPrinterId(""); setNumColors("1"); setPrintsPerPlate("1");
+    setEstGrams(""); setEstTime(""); setPostMinutes(""); setCostEstimate(""); setSalePrice(""); setPhotoUrl(""); setExtraPhotos([]); setNotes(""); setPrinterId(""); setNumColors("1"); setPrintsPerPlate("1"); setExtras([]);
   };
 
   const openEdit = (p: any) => {
@@ -281,6 +292,7 @@ export default function Produtos() {
     setEstTime(p.est_time_minutes ? (p.est_time_minutes / 60).toFixed(2) : ""); setPostMinutes(p.post_process_minutes?.toString() || "");
     setCostEstimate(p.cost_estimate?.toString() || ""); setSalePrice(p.sale_price?.toString() || "");
     setPhotoUrl(p.photo_url || ""); setNotes(p.notes || ""); setPrinterId(""); setNumColors(String((p as any).num_colors || 1)); setPrintsPerPlate(String((p as any).prints_per_plate || 1));
+    setExtras(Array.isArray((p as any).extras) ? (p as any).extras : []);
     // Load extra photos
     if (p.id) {
       supabase.from("product_photos").select("url").eq("product_id", p.id).order("sort_order").then(({ data }) => {
@@ -524,6 +536,7 @@ export default function Produtos() {
         cost_estimate: cost, sale_price: price, margin_percent: margin, notes: notes || null,
         photo_url: photoUrl || null, num_colors: parseInt(numColors) || 1,
         prints_per_plate: parseInt(printsPerPlate) || 1,
+        extras: extras.filter(e => e.name.trim()),
       } as any).select("id").single();
       if (error) throw error;
       if (inserted) await saveExtraPhotos(inserted.id);
@@ -545,6 +558,7 @@ export default function Produtos() {
         cost_estimate: cost, sale_price: price, margin_percent: margin, notes: notes || null,
         photo_url: photoUrl || null, num_colors: parseInt(numColors) || 1,
         prints_per_plate: parseInt(printsPerPlate) || 1,
+        extras: extras.filter(e => e.name.trim()),
       } as any).eq("id", editItem.id);
       if (error) throw error;
       await saveExtraPhotos(editItem.id);
@@ -664,19 +678,70 @@ export default function Produtos() {
         </div>
       </div>
 
+      {/* Extras / Itens Adicionais */}
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">🎁 Itens Extras / Acompanhamentos</p>
+          <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setExtras([...extras, { name: "", cost: 0 }])}>
+            <Plus className="h-3 w-3 mr-1" /> Adicionar Item
+          </Button>
+        </div>
+        {extras.length === 0 && (
+          <p className="text-xs text-muted-foreground italic">Nenhum item extra. Adicione chocolates, embalagens, laços, chaveiros, etc.</p>
+        )}
+        {extras.map((extra, idx) => (
+          <div key={idx} className="grid grid-cols-[1fr_100px_auto] gap-2 items-center">
+            <Input
+              placeholder="Ex: Chocolate, Embalagem, Laço..."
+              value={extra.name}
+              onChange={(e) => {
+                const updated = [...extras];
+                updated[idx] = { ...updated[idx], name: e.target.value };
+                setExtras(updated);
+              }}
+              className="h-8 text-sm"
+            />
+            <div className="relative">
+              <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">R$</span>
+              <Input
+                type="number"
+                step="0.01"
+                min="0"
+                placeholder="0.00"
+                value={extra.cost || ""}
+                onChange={(e) => {
+                  const updated = [...extras];
+                  updated[idx] = { ...updated[idx], cost: parseFloat(e.target.value) || 0 };
+                  setExtras(updated);
+                }}
+                className="h-8 text-sm pl-7 text-right"
+              />
+            </div>
+            <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive hover:text-destructive" onClick={() => setExtras(extras.filter((_, i) => i !== idx))}>
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        ))}
+        {extras.length > 0 && (
+          <div className="flex justify-end text-xs font-medium text-muted-foreground">
+            Total Extras: <span className="ml-1 font-mono text-foreground">{fmtCurrency(extras.reduce((s, e) => s + (e.cost || 0), 0))}</span>
+          </div>
+        )}
+      </div>
+
       {/* Cost breakdown */}
-      {(parseFloat(estGrams) > 0 || parseFloat(estTime) > 0) && (
+      {(parseFloat(estGrams) > 0 || parseFloat(estTime) > 0 || extras.length > 0) && (
         <div className="rounded-lg border border-dashed bg-muted/30 p-3 space-y-2">
           <div className="flex items-center justify-between">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-              <Calculator className="h-3.5 w-3.5" /> Composição de Custo
+              <Calculator className="h-3.5 w-3.5" /> Composição de Custo Total
             </p>
             <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={applyCalculatedCost}>
               Aplicar Custo Calculado
             </Button>
           </div>
           {costBreakdown.printsPerPlate > 1 && (
-            <p className="text-[11px] text-primary font-medium">📐 Custo por peça (÷ {costBreakdown.printsPerPlate} peças/prato) — Prato total: {fmtCurrency(costBreakdown.totalPlate)}</p>
+            <p className="text-[11px] text-primary font-medium">📐 Custo impressão por peça (÷ {costBreakdown.printsPerPlate} peças/prato) — Prato total: {fmtCurrency(costBreakdown.totalPlate)}</p>
           )}
           <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
             <span className="text-muted-foreground">Material{costBreakdown.printsPerPlate > 1 ? " /peça" : ""}</span>
@@ -689,7 +754,15 @@ export default function Produtos() {
             <span className="text-right font-mono">{fmtCurrency(costBreakdown.laborCost)}</span>
             <span className="text-muted-foreground">Overhead ({tenantSettings.overhead_percent}%)</span>
             <span className="text-right font-mono">{fmtCurrency(costBreakdown.overhead)}</span>
-            <span className="font-semibold text-foreground border-t pt-1 mt-1">Custo por Peça</span>
+            {costBreakdown.extrasCost > 0 && (
+              <>
+                <span className="text-muted-foreground border-t pt-1 mt-1">Subtotal Impressão</span>
+                <span className="text-right font-mono border-t pt-1 mt-1">{fmtCurrency(costBreakdown.totalPerPiece)}</span>
+                <span className="text-muted-foreground">Extras / Acompanhamentos</span>
+                <span className="text-right font-mono">{fmtCurrency(costBreakdown.extrasCost)}</span>
+              </>
+            )}
+            <span className="font-semibold text-foreground border-t pt-1 mt-1">Custo Total por Unidade</span>
             <span className="text-right font-mono font-semibold text-foreground border-t pt-1 mt-1">{fmtCurrency(costBreakdown.total)}</span>
             <span className="text-muted-foreground">Preço Sugerido ({tenantSettings.target_margin}% margem)</span>
             <span className="text-right font-mono text-primary">{fmtCurrency(costBreakdown.suggestedPrice)}</span>
@@ -888,7 +961,12 @@ export default function Produtos() {
                   <TableCell>
                     <div><p className="font-medium text-sm">{p.name}</p>{p.sku && <p className="text-xs text-muted-foreground">{p.sku}</p>}</div>
                   </TableCell>
-                  <TableCell className="text-sm">{categoryLabels[p.category] || p.category}</TableCell>
+                  <TableCell className="text-sm">
+                    {categoryLabels[p.category] || p.category}
+                    {Array.isArray((p as any).extras) && (p as any).extras.length > 0 && (
+                      <span className="ml-1.5 text-[10px] text-muted-foreground">+{(p as any).extras.length} extras</span>
+                    )}
+                  </TableCell>
                   <TableCell className="text-sm">{p.inventory_items?.name || "—"}</TableCell>
                   <TableCell className="text-right font-mono text-sm">{fmtCurrency(p.cost_estimate)}</TableCell>
                   <TableCell className="text-right font-mono text-sm">{fmtCurrency(p.sale_price)}</TableCell>

@@ -1,0 +1,1 @@
+ALTER TABLE public.products ADD COLUMN extras jsonb NOT NULL DEFAULT '[]'::jsonb;
