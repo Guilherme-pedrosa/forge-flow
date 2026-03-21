@@ -1,4 +1,5 @@
 import { useState, useMemo } from "react";
+import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -318,6 +319,7 @@ export default function Jobs() {
       <PageHeader
         title="Ordens de Impressão"
         description="Gerencie a produção: crie, acompanhe e apure custos reais de cada OI."
+        breadcrumbs={[{ label: "Produção" }, { label: "Jobs" }]}
       />
 
       {/* KPI Filter Strip */}
@@ -872,7 +874,17 @@ function JobDetailDialog({
               <InfoRow icon={Timer} label="Tempo estimado" value={fmtMinutes(job.est_time_minutes)} />
               <InfoRow icon={Weight} label="Gramas est." value={fmtGrams(job.est_grams)} />
               {job.order_id && (
-                <InfoRow icon={FileText} label="Pedido" value={(job as any).orders?.code || "Vinculado"} />
+                <div className="flex items-center gap-2 col-span-2">
+                  <FileText className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                  <span className="text-muted-foreground">Pedido:</span>
+                  <Link
+                    to="/comercial/pedidos"
+                    className="ml-auto text-primary font-medium text-sm hover:underline flex items-center gap-1"
+                    onClick={onClose}
+                  >
+                    {(job as any).orders?.code || "Vinculado"} <ArrowRight className="h-3 w-3" />
+                  </Link>
+                </div>
               )}
             </div>
 
