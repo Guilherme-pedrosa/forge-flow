@@ -79,6 +79,7 @@ export default function Produtos() {
   const [notes, setNotes] = useState("");
   const [printerId, setPrinterId] = useState("");
   const [numColors, setNumColors] = useState("1");
+  const [extras, setExtras] = useState<ExtraItem[]>([]);
   const [printsPerPlate, setPrintsPerPlate] = useState("1");
 
   // Marketplace fee config
