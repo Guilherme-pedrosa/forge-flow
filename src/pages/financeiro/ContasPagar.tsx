@@ -230,11 +230,16 @@ export default function ContasPagar() {
       <PageHeader
         title="Contas a Pagar"
         description="Gerencie lançamentos, vencimentos e pagamentos"
-        breadcrumbs={[{ label: "Financeiro" }, { label: "Contas a Pagar" }]}
+        breadcrumbs={[{ label: "Financeiro", href: "/financeiro/dre" }, { label: "Contas a Pagar" }]}
         actions={
-          <Button size="sm" className="gap-2 text-xs" onClick={() => setCreateOpen(true)}>
-            <Plus className="h-3.5 w-3.5" /> Nova Conta
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" className="gap-2 text-xs" asChild>
+              <a href="/financeiro/dre"><BookOpen className="h-3.5 w-3.5" /> Ver DRE</a>
+            </Button>
+            <Button size="sm" className="gap-2 text-xs" onClick={() => setCreateOpen(true)}>
+              <Plus className="h-3.5 w-3.5" /> Nova Conta
+            </Button>
+          </div>
         }
       />
 
