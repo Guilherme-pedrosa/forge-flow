@@ -109,7 +109,7 @@ export default function CaixaBancos() {
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       <PageHeader title="Caixa e Bancos" description="Contas bancárias e fluxo de caixa"
-        breadcrumbs={[{ label: "Financeiro" }, { label: "Caixa e Bancos" }]}
+        breadcrumbs={[{ label: "Financeiro", href: "/financeiro/dre" }, { label: "Caixa e Bancos" }]}
         actions={
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={() => setCreateAccountOpen(true)}><Plus className="h-4 w-4 mr-1" /> Nova Conta</Button>

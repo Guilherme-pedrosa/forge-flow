@@ -275,8 +275,13 @@ export default function Clientes() {
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       <PageHeader title="Clientes" description="Cadastro e gestão de clientes"
-        breadcrumbs={[{ label: "Comercial" }, { label: "Clientes" }]}
-        actions={<Button size="sm" onClick={() => { resetForm(); setCreateOpen(true); }}><Plus className="h-4 w-4 mr-1" /> Novo Cliente</Button>}
+        breadcrumbs={[{ label: "Comercial", href: "/comercial/pedidos" }, { label: "Clientes" }]}
+        actions={
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" asChild><a href="/comercial/pedidos">Ver Pedidos</a></Button>
+            <Button size="sm" onClick={() => { resetForm(); setCreateOpen(true); }}><Plus className="h-4 w-4 mr-1" /> Novo Cliente</Button>
+          </div>
+        }
       />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">

@@ -54,9 +54,14 @@ export default function Alertas() {
         description="Itens abaixo do estoque mínimo"
         breadcrumbs={[{ label: "Estoque", href: "/estoque/itens" }, { label: "Alertas" }]}
         actions={
-          <Button variant="outline" size="sm" asChild>
-            <Link to="/estoque/movimentacoes">Registrar Entrada</Link>
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" asChild>
+              <Link to="/estoque/movimentacoes">Registrar Entrada</Link>
+            </Button>
+            <Button size="sm" asChild>
+              <Link to="/estoque/compras">Nova Compra</Link>
+            </Button>
+          </div>
         }
       />
 

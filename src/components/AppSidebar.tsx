@@ -11,6 +11,8 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useQuery } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
 
 interface AppSidebarProps {
   collapsed: boolean;
@@ -103,9 +105,41 @@ export function AppSidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: A
   const { profile, signOut } = useAuth();
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
 
+  // Dynamic alert badge from real inventory data
+  const { data: alertCount = 0 } = useQuery({
+    queryKey: ["sidebar_alert_count"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("inventory_items")
+        .select("id", { count: "exact", head: true })
+        .eq("is_active", true)
+        .not("min_stock", "is", null)
+        .gt("min_stock", 0);
+      // We need a second query to filter current_stock < min_stock
+      const { data: items } = await supabase
+        .from("inventory_items")
+        .select("current_stock, min_stock")
+        .eq("is_active", true)
+        .not("min_stock", "is", null)
+        .gt("min_stock", 0);
+      return (items || []).filter(i => i.current_stock < (i.min_stock || 0)).length;
+    },
+    enabled: !!profile,
+    refetchInterval: 60000,
+    staleTime: 30000,
+  });
+
+  // Dynamically set badge on Alertas item
+  const dynamicMenuGroups = menuGroups.map(group => ({
+    ...group,
+    items: group.items.map(item =>
+      item.href === "/estoque/alertas" ? { ...item, badge: alertCount } : item
+    ),
+  }));
+
   useEffect(() => {
     const newOpenGroups: Record<string, boolean> = {};
-    menuGroups.forEach((group) => {
+    dynamicMenuGroups.forEach((group) => {
       if (group.defaultOpen) newOpenGroups[group.label] = true;
       if (group.items.some(item => location.pathname === item.href)) newOpenGroups[group.label] = true;
     });
@@ -148,7 +182,7 @@ export function AppSidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: A
       {/* Navigation */}
       <ScrollArea className="flex-1 py-3">
         <nav className="space-y-0.5 px-3">
-          {menuGroups.map((group, groupIndex) => {
+          {dynamicMenuGroups.map((group, groupIndex) => {
             const isOpen = openGroups[group.label] ?? false;
             return (
               <div key={groupIndex} className={cn(group.label && "mt-4")}>

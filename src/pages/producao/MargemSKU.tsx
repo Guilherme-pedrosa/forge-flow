@@ -175,12 +175,17 @@ export default function MargemSKU() {
             </TableHeader>
             <TableBody>
               {metrics.map((m) => (
-                <TableRow key={m.productId}>
-                  <TableCell>
-                    <div>
-                      <span className="font-medium text-foreground">{m.productName}</span>
-                      {m.sku && <span className="ml-2 text-xs text-muted-foreground font-mono">{m.sku}</span>}
-                    </div>
+                 <TableRow key={m.productId} className="cursor-pointer hover:bg-muted/50" onClick={() => {
+                   if (m.productId !== "__no_product__") {
+                     window.location.href = "/comercial/produtos";
+                   }
+                 }}>
+                   <TableCell>
+                     <div>
+                       <span className="font-medium text-foreground">{m.productName}</span>
+                       {m.sku && <span className="ml-2 text-xs text-muted-foreground font-mono">{m.sku}</span>}
+                       <span className="block text-[11px] text-primary hover:underline">Ver produto →</span>
+                     </div>
                   </TableCell>
                   <TableCell className="text-center font-mono">{m.jobCount}</TableCell>
                   <TableCell className="text-right font-mono">{fmtCurrency(m.totalRevenue)}</TableCell>

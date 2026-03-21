@@ -7,6 +7,7 @@ import { Loader2, CalendarDays } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
 
 const fmtCurrency = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
@@ -133,6 +134,12 @@ export default function DRE() {
     <div className="space-y-6 animate-in fade-in duration-300">
       <PageHeader title="DRE" description="Demonstrativo de Resultado do Exercício"
         breadcrumbs={[{ label: "Financeiro" }, { label: "DRE" }]}
+        actions={
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" asChild><a href="/financeiro/pagar">Contas a Pagar</a></Button>
+            <Button variant="outline" size="sm" asChild><a href="/financeiro/receber">Contas a Receber</a></Button>
+          </div>
+        }
       />
 
       {/* Period Filter */}
