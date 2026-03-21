@@ -913,7 +913,12 @@ export default function Pedidos() {
               {/* Linked Jobs */}
               {linkedJobs.length > 0 && (
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2">Ordens de Impressão ({linkedJobs.length})</p>
+                  <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mb-2 flex items-center justify-between">
+                    <span>Ordens de Impressão ({linkedJobs.length})</span>
+                    <Link to="/producao/jobs" className="text-primary text-[11px] hover:underline flex items-center gap-1 normal-case font-medium" onClick={() => setViewOrderId(null)}>
+                      Ver na Produção <ArrowRight className="w-3 h-3" />
+                    </Link>
+                  </p>
                   <div className="rounded-lg border overflow-hidden">
                     <Table>
                       <TableHeader>
