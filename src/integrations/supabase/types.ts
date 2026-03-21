@@ -1734,6 +1734,7 @@ export type Database = {
           description: string | null
           est_grams: number | null
           est_time_minutes: number | null
+          extras: Json
           id: string
           is_active: boolean
           margin_percent: number | null
@@ -1756,6 +1757,7 @@ export type Database = {
           description?: string | null
           est_grams?: number | null
           est_time_minutes?: number | null
+          extras?: Json
           id?: string
           is_active?: boolean
           margin_percent?: number | null
@@ -1778,6 +1780,7 @@ export type Database = {
           description?: string | null
           est_grams?: number | null
           est_time_minutes?: number | null
+          extras?: Json
           id?: string
           is_active?: boolean
           margin_percent?: number | null
