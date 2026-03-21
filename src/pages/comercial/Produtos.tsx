@@ -35,10 +35,14 @@ const fmtDuration = (s: number | null) => {
 
 const categoryLabels: Record<string, string> = {
   printed_part: "Peça Impressa",
+  kit: "Kit / Combo",
   service: "Serviço",
-  kit: "Kit",
   accessory: "Acessório",
+  resale: "Revenda",
+  seasonal: "Sazonal / Brinde",
 };
+
+type ExtraItem = { name: string; cost: number };
 
 export default function Produtos() {
   const { profile } = useAuth();
