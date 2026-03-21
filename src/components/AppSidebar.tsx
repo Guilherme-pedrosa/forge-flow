@@ -180,7 +180,7 @@ export function AppSidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: A
       {/* Navigation */}
       <ScrollArea className="flex-1 py-3">
         <nav className="space-y-0.5 px-3">
-          {menuGroups.map((group, groupIndex) => {
+          {dynamicMenuGroups.map((group, groupIndex) => {
             const isOpen = openGroups[group.label] ?? false;
             return (
               <div key={groupIndex} className={cn(group.label && "mt-4")}>
