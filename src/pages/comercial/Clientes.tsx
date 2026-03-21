@@ -283,7 +283,6 @@ export default function Clientes() {
           </div>
         }
       />
-      />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="rounded-xl border bg-card p-4"><p className="text-xs text-muted-foreground">Total de Clientes</p><p className="text-2xl font-bold text-foreground">{customers.length}</p></div>
