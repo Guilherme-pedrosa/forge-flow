@@ -204,8 +204,12 @@ export default function Produtos() {
 
     // Divide by prints per plate
     const ppp = Math.max(1, parseInt(printsPerPlate) || 1);
-    const total = totalPlate / ppp;
+    const totalPerPiece = totalPlate / ppp;
     const overhead = overheadPlate / ppp;
+
+    // Extras cost (not divided by prints per plate - each unit gets the extras)
+    const extrasCost = extras.reduce((sum, e) => sum + (e.cost || 0), 0);
+    const total = totalPerPiece + extrasCost;
 
     // Suggested sale price
     const margin = tenantSettings.target_margin || 40;
@@ -217,14 +221,16 @@ export default function Produtos() {
       machineCost: machineCost / ppp,
       laborCost: laborCost / ppp,
       overhead,
+      totalPerPiece,
       total,
+      extrasCost,
       totalPlate,
       printsPerPlate: ppp,
       suggestedPrice,
       selectedPrinterName: selectedPrinter?.name || null,
       hasMachineRate: (depreciationPerHour + maintenancePerHour) > 0,
     };
-  }, [estGrams, estTime, postMinutes, materialId, printerId, printsPerPlate, materials, printers, tenantSettings]);
+  }, [estGrams, estTime, postMinutes, materialId, printerId, printsPerPlate, materials, printers, tenantSettings, extras]);
 
   const applyCalculatedCost = () => {
     setCostEstimate(costBreakdown.total.toFixed(2));
