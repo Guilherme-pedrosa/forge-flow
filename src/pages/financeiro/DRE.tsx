@@ -133,6 +133,12 @@ export default function DRE() {
     <div className="space-y-6 animate-in fade-in duration-300">
       <PageHeader title="DRE" description="Demonstrativo de Resultado do Exercício"
         breadcrumbs={[{ label: "Financeiro" }, { label: "DRE" }]}
+        actions={
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" asChild><a href="/financeiro/pagar">Contas a Pagar</a></Button>
+            <Button variant="outline" size="sm" asChild><a href="/financeiro/receber">Contas a Receber</a></Button>
+          </div>
+        }
       />
 
       {/* Period Filter */}

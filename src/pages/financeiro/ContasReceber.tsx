@@ -169,8 +169,17 @@ export default function ContasReceber() {
             <TableBody>{filtered.map((r: any) => {
               const cfg = statusConfig[r.status as ARStatus] || statusConfig.open;
               return (
-                <TableRow key={r.id}>
-                  <TableCell className="text-sm font-medium">{r.description}</TableCell>
+                 <TableRow key={r.id}>
+                   <TableCell>
+                     <div>
+                       <span className="text-sm font-medium">{r.description}</span>
+                       {r.origin_type === "order" && r.origin_id && (
+                         <a href={`/comercial/pedidos`} className="block text-[11px] text-primary hover:underline">
+                           📦 Ver pedido
+                         </a>
+                       )}
+                     </div>
+                   </TableCell>
                   <TableCell className="text-sm">{r.customers?.name || "—"}</TableCell>
                   <TableCell className="text-sm">{new Date(r.due_date + "T00:00:00").toLocaleDateString("pt-BR")}</TableCell>
                   <TableCell><span className={cn("inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-semibold", cfg.color)}>{cfg.label}</span></TableCell>

@@ -5,7 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { PageHeader } from "@/components/shared/PageHeader";
 import {
   Plus, Search, MoreHorizontal, Loader2, DollarSign, AlertTriangle,
-  CheckCircle2, Clock, Trash2, Edit, Receipt, Calendar, Download,
+  CheckCircle2, Clock, Trash2, Edit, Receipt, Calendar, Download, BookOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";

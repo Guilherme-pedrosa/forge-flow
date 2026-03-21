@@ -42,6 +42,8 @@ const categoryLabels: Record<string, string> = {
   seasonal: "Sazonal / Brinde",
 };
 
+const categoryFilter: string[] = ["all", ...Object.keys(categoryLabels)];
+
 type ExtraItem = { name: string; cost: number };
 
 export default function Produtos() {

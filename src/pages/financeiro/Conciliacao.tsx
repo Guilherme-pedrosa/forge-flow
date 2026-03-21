@@ -43,7 +43,7 @@ export default function Conciliacao() {
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       <PageHeader title="Conciliação" description="Conciliação de lançamentos bancários"
-        breadcrumbs={[{ label: "Financeiro" }, { label: "Conciliação" }]}
+        breadcrumbs={[{ label: "Financeiro", href: "/financeiro/dre" }, { label: "Conciliação" }]}
       />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
