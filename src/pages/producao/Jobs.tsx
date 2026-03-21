@@ -319,6 +319,7 @@ export default function Jobs() {
       <PageHeader
         title="Ordens de Impressão"
         description="Gerencie a produção: crie, acompanhe e apure custos reais de cada OI."
+        breadcrumbs={[{ label: "Produção" }, { label: "Jobs" }]}
       />
 
       {/* KPI Filter Strip */}
