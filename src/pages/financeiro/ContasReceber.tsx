@@ -132,8 +132,15 @@ export default function ContasReceber() {
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       <PageHeader title="Contas a Receber" description="Gestão de recebíveis"
-        breadcrumbs={[{ label: "Financeiro" }, { label: "Contas a Receber" }]}
-        actions={<Button size="sm" onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4 mr-1" /> Novo Título</Button>}
+        breadcrumbs={[{ label: "Financeiro", href: "/financeiro/dre" }, { label: "Contas a Receber" }]}
+        actions={
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" asChild>
+              <a href="/financeiro/dre">Ver DRE</a>
+            </Button>
+            <Button size="sm" onClick={() => setCreateOpen(true)}><Plus className="h-4 w-4 mr-1" /> Novo Título</Button>
+          </div>
+        }
       />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
