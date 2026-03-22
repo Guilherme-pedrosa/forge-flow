@@ -815,6 +815,7 @@ export type Database = {
           contact_name: string | null
           created_at: string
           customer_id: string | null
+          discount_percent: number
           id: string
           is_active: boolean
           name: string
@@ -828,6 +829,7 @@ export type Database = {
           contact_name?: string | null
           created_at?: string
           customer_id?: string | null
+          discount_percent?: number
           id?: string
           is_active?: boolean
           name: string
@@ -841,6 +843,7 @@ export type Database = {
           contact_name?: string | null
           created_at?: string
           customer_id?: string | null
+          discount_percent?: number
           id?: string
           is_active?: boolean
           name?: string
