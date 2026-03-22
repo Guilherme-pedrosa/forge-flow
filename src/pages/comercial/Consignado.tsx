@@ -30,11 +30,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 const fmtCurrency = (v: number | null) =>
   v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
 
-/** Preço consignado = 80% do sale_price, mas nunca abaixo do custo */
-const getConsignmentPrice = (salePrice: number | null, costEstimate: number | null) => {
+/** Preço consignado = desconto sobre o sale_price, mas nunca abaixo do custo */
+const getConsignmentPrice = (salePrice: number | null, costEstimate: number | null, discountPercent: number = 29) => {
   const sp = salePrice || 0;
   const cost = costEstimate || 0;
-  const discounted = Math.round(sp * 0.8 * 100) / 100;
+  const discounted = Math.round(sp * (1 - discountPercent / 100) * 100) / 100;
   return Math.max(discounted, cost);
 };
 
