@@ -706,15 +706,25 @@ export default function Produtos() {
             <div className="relative">
               <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">R$</span>
               <Input
-                type="number"
-                step="0.01"
-                min="0"
-                placeholder="0.00"
-                value={extra.cost || ""}
+                type="text"
+                inputMode="decimal"
+                placeholder="0,00"
+                value={extra.cost ? extra.cost.toFixed(2).replace('.', ',') : ""}
                 onChange={(e) => {
+                  const raw = e.target.value.replace(/[^0-9.,]/g, '').replace(',', '.');
+                  const parsed = parseFloat(raw);
                   const updated = [...extras];
-                  updated[idx] = { ...updated[idx], cost: parseFloat(e.target.value) || 0 };
+                  updated[idx] = { ...updated[idx], cost: isNaN(parsed) ? 0 : parsed };
                   setExtras(updated);
+                }}
+                onBlur={(e) => {
+                  const raw = e.target.value.replace(/[^0-9.,]/g, '').replace(',', '.');
+                  const parsed = parseFloat(raw);
+                  if (!isNaN(parsed)) {
+                    const updated = [...extras];
+                    updated[idx] = { ...updated[idx], cost: Math.round(parsed * 100) / 100 };
+                    setExtras(updated);
+                  }
                 }}
                 className="h-8 text-sm pl-7 text-right"
               />
