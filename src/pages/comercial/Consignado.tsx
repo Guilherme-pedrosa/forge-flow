@@ -651,6 +651,31 @@ export default function Consignado() {
               <Label>Nome do Ponto *</Label>
               <Input value={locName} onChange={(e) => setLocName(e.target.value)} placeholder="Ex: Vitrine Loja Centro" />
             </div>
+            <div>
+              <Label>Desconto sobre preço de venda (%)</Label>
+              <Input
+                type="text"
+                inputMode="decimal"
+                value={locDiscountInput}
+                onChange={(e) => {
+                  const raw = e.target.value.replace(/[^0-9.,]/g, "");
+                  setLocDiscountInput(raw);
+                  const normalized = raw.replace(",", ".");
+                  const parsed = parseFloat(normalized);
+                  if (!isNaN(parsed)) setLocDiscountPercent(String(parsed));
+                }}
+                onBlur={() => {
+                  const val = parseFloat(locDiscountPercent) || 29;
+                  const clamped = Math.min(Math.max(val, 0), 100);
+                  setLocDiscountPercent(String(clamped));
+                  setLocDiscountInput(String(clamped).replace(".", ","));
+                }}
+                placeholder="29"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Padrão: 29%. O preço nunca ficará abaixo do custo estimado.
+              </p>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setCreateLocOpen(false); resetLocForm(); }}>Cancelar</Button>
