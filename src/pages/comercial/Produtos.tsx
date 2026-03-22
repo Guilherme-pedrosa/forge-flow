@@ -294,7 +294,18 @@ export default function Produtos() {
     setEstTime(p.est_time_minutes ? (p.est_time_minutes / 60).toFixed(2) : ""); setPostMinutes(p.post_process_minutes?.toString() || "");
     setCostEstimate(p.cost_estimate?.toString() || ""); setSalePrice(p.sale_price?.toString() || "");
     setPhotoUrl(p.photo_url || ""); setNotes(p.notes || ""); setPrinterId(""); setNumColors(String((p as any).num_colors || 1)); setPrintsPerPlate(String((p as any).prints_per_plate || 1));
-    setExtras(Array.isArray((p as any).extras) ? (p as any).extras : []);
+    setExtras(
+      Array.isArray((p as any).extras)
+        ? (p as any).extras.map((e: any) => ({
+            name: e?.name ?? "",
+            cost: typeof e?.cost === "number" ? e.cost : parseFloat(String(e?.cost || 0)) || 0,
+            costInput:
+              typeof e?.cost === "number"
+                ? e.cost.toFixed(2).replace(".", ",")
+                : String(e?.cost || "").replace(".", ","),
+          }))
+        : [],
+    );
     // Load extra photos
     if (p.id) {
       supabase.from("product_photos").select("url").eq("product_id", p.id).order("sort_order").then(({ data }) => {
