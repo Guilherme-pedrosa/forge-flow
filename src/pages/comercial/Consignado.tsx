@@ -797,7 +797,7 @@ export default function Consignado() {
                         </TableHeader>
                         <TableBody>
                           {viewLocItems.map((item: any) => {
-                            const csgPrice = getConsignmentPrice(item.products?.sale_price ?? null, item.products?.cost_estimate ?? null);
+                            const csgPrice = getConsignmentPrice(item.products?.sale_price ?? null, item.products?.cost_estimate ?? null, (viewLoc as any)?.discount_percent ?? 29);
                             return (
                             <TableRow key={item.id}>
                               <TableCell className="text-sm font-medium">
