@@ -724,22 +724,26 @@ export default function Produtos() {
                 type="text"
                 inputMode="decimal"
                 placeholder="0,00"
-                value={extra.cost ? extra.cost.toFixed(2).replace('.', ',') : ""}
+                value={extra.costInput ?? (extra.cost ? extra.cost.toFixed(2).replace(".", ",") : "")}
                 onChange={(e) => {
-                  const raw = e.target.value.replace(/[^0-9.,]/g, '').replace(',', '.');
-                  const parsed = parseFloat(raw);
+                  const costInput = e.target.value.replace(/[^0-9,\.]/g, "");
+                  const normalized = costInput.replace(",", ".");
+                  const parsed = parseFloat(normalized);
                   const updated = [...extras];
-                  updated[idx] = { ...updated[idx], cost: isNaN(parsed) ? 0 : parsed };
+                  updated[idx] = { ...updated[idx], costInput, cost: isNaN(parsed) ? 0 : parsed };
                   setExtras(updated);
                 }}
-                onBlur={(e) => {
-                  const raw = e.target.value.replace(/[^0-9.,]/g, '').replace(',', '.');
-                  const parsed = parseFloat(raw);
-                  if (!isNaN(parsed)) {
-                    const updated = [...extras];
-                    updated[idx] = { ...updated[idx], cost: Math.round(parsed * 100) / 100 };
-                    setExtras(updated);
+                onBlur={() => {
+                  const normalized = (extra.costInput || "").replace(",", ".");
+                  const parsed = parseFloat(normalized);
+                  const updated = [...extras];
+                  if (isNaN(parsed)) {
+                    updated[idx] = { ...updated[idx], cost: 0, costInput: "" };
+                  } else {
+                    const rounded = Math.round(parsed * 100) / 100;
+                    updated[idx] = { ...updated[idx], cost: rounded, costInput: rounded.toFixed(2).replace(".", ",") };
                   }
+                  setExtras(updated);
                 }}
                 className="h-8 text-sm pl-7 text-right"
               />
