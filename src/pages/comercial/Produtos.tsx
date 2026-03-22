@@ -699,7 +699,7 @@ export default function Produtos() {
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">🎁 Itens Extras / Acompanhamentos</p>
-          <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setExtras([...extras, { name: "", cost: 0 }])}>
+          <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setExtras([...extras, { name: "", cost: 0, costInput: "" }])}>
             <Plus className="h-3 w-3 mr-1" /> Adicionar Item
           </Button>
         </div>
