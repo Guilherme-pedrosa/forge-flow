@@ -168,6 +168,7 @@ export default function Consignado() {
   const resetLocForm = () => {
     setLocMode("existing"); setLocCustomerId(""); setLocName("");
     setNewCustName(""); setNewCustPhone(""); setNewCustEmail(""); setNewCustDocument(""); setNewCustBirthday("");
+    setLocDiscountPercent("29"); setLocDiscountInput("29");
   };
 
   const createLocMut = useMutation({
