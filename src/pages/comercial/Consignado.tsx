@@ -213,6 +213,7 @@ export default function Consignado() {
         contact_name: c?.name || newCustName.trim(),
         phone: c?.phone || newCustPhone || null,
         address: addrStr || null,
+        discount_percent: parseFloat(locDiscountPercent) || 29,
       } as any);
       if (error) throw error;
     },
