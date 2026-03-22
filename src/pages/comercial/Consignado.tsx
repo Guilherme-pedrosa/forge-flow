@@ -899,7 +899,7 @@ export default function Consignado() {
                 <SelectContent>
                   <SelectItem value="none">Selecione…</SelectItem>
                   {products.map((p) => {
-                    const csg = getConsignmentPrice(p.sale_price ?? null, p.cost_estimate ?? null);
+                    const csg = getConsignmentPrice(p.sale_price ?? null, p.cost_estimate ?? null, (viewLoc as any)?.discount_percent ?? 29);
                     return (
                       <SelectItem key={p.id} value={p.id}>
                         {p.name} — {fmtCurrency(csg)}{movementType === "sale" && p.sale_price ? ` (era ${fmtCurrency(p.sale_price)})` : ""}
