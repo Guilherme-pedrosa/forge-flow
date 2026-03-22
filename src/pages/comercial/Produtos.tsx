@@ -44,7 +44,7 @@ const categoryLabels: Record<string, string> = {
 
 const categoryFilter: string[] = ["all", ...Object.keys(categoryLabels)];
 
-type ExtraItem = { name: string; cost: number };
+type ExtraItem = { name: string; cost: number; costInput?: string };
 
 export default function Produtos() {
   const { profile } = useAuth();
@@ -294,7 +294,18 @@ export default function Produtos() {
     setEstTime(p.est_time_minutes ? (p.est_time_minutes / 60).toFixed(2) : ""); setPostMinutes(p.post_process_minutes?.toString() || "");
     setCostEstimate(p.cost_estimate?.toString() || ""); setSalePrice(p.sale_price?.toString() || "");
     setPhotoUrl(p.photo_url || ""); setNotes(p.notes || ""); setPrinterId(""); setNumColors(String((p as any).num_colors || 1)); setPrintsPerPlate(String((p as any).prints_per_plate || 1));
-    setExtras(Array.isArray((p as any).extras) ? (p as any).extras : []);
+    setExtras(
+      Array.isArray((p as any).extras)
+        ? (p as any).extras.map((e: any) => ({
+            name: e?.name ?? "",
+            cost: typeof e?.cost === "number" ? e.cost : parseFloat(String(e?.cost || 0)) || 0,
+            costInput:
+              typeof e?.cost === "number"
+                ? e.cost.toFixed(2).replace(".", ",")
+                : String(e?.cost || "").replace(".", ","),
+          }))
+        : [],
+    );
     // Load extra photos
     if (p.id) {
       supabase.from("product_photos").select("url").eq("product_id", p.id).order("sort_order").then(({ data }) => {
@@ -538,7 +549,9 @@ export default function Produtos() {
         cost_estimate: cost, sale_price: price, margin_percent: margin, notes: notes || null,
         photo_url: photoUrl || null, num_colors: parseInt(numColors) || 1,
         prints_per_plate: parseInt(printsPerPlate) || 1,
-        extras: extras.filter(e => e.name.trim()),
+        extras: extras
+          .filter((e) => e.name.trim())
+          .map(({ name: extraName, cost: extraCost }) => ({ name: extraName, cost: Math.round((extraCost || 0) * 100) / 100 })),
       } as any).select("id").single();
       if (error) throw error;
       if (inserted) await saveExtraPhotos(inserted.id);
@@ -560,7 +573,9 @@ export default function Produtos() {
         cost_estimate: cost, sale_price: price, margin_percent: margin, notes: notes || null,
         photo_url: photoUrl || null, num_colors: parseInt(numColors) || 1,
         prints_per_plate: parseInt(printsPerPlate) || 1,
-        extras: extras.filter(e => e.name.trim()),
+        extras: extras
+          .filter((e) => e.name.trim())
+          .map(({ name: extraName, cost: extraCost }) => ({ name: extraName, cost: Math.round((extraCost || 0) * 100) / 100 })),
       } as any).eq("id", editItem.id);
       if (error) throw error;
       await saveExtraPhotos(editItem.id);
@@ -684,7 +699,7 @@ export default function Produtos() {
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">🎁 Itens Extras / Acompanhamentos</p>
-          <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setExtras([...extras, { name: "", cost: 0 }])}>
+          <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setExtras([...extras, { name: "", cost: 0, costInput: "" }])}>
             <Plus className="h-3 w-3 mr-1" /> Adicionar Item
           </Button>
         </div>
@@ -709,22 +724,26 @@ export default function Produtos() {
                 type="text"
                 inputMode="decimal"
                 placeholder="0,00"
-                value={extra.cost ? extra.cost.toFixed(2).replace('.', ',') : ""}
+                value={extra.costInput ?? (extra.cost ? extra.cost.toFixed(2).replace(".", ",") : "")}
                 onChange={(e) => {
-                  const raw = e.target.value.replace(/[^0-9.,]/g, '').replace(',', '.');
-                  const parsed = parseFloat(raw);
+                  const costInput = e.target.value.replace(/[^0-9,\.]/g, "");
+                  const normalized = costInput.replace(",", ".");
+                  const parsed = parseFloat(normalized);
                   const updated = [...extras];
-                  updated[idx] = { ...updated[idx], cost: isNaN(parsed) ? 0 : parsed };
+                  updated[idx] = { ...updated[idx], costInput, cost: isNaN(parsed) ? 0 : parsed };
                   setExtras(updated);
                 }}
-                onBlur={(e) => {
-                  const raw = e.target.value.replace(/[^0-9.,]/g, '').replace(',', '.');
-                  const parsed = parseFloat(raw);
-                  if (!isNaN(parsed)) {
-                    const updated = [...extras];
-                    updated[idx] = { ...updated[idx], cost: Math.round(parsed * 100) / 100 };
-                    setExtras(updated);
+                onBlur={() => {
+                  const normalized = (extra.costInput || "").replace(",", ".");
+                  const parsed = parseFloat(normalized);
+                  const updated = [...extras];
+                  if (isNaN(parsed)) {
+                    updated[idx] = { ...updated[idx], cost: 0, costInput: "" };
+                  } else {
+                    const rounded = Math.round(parsed * 100) / 100;
+                    updated[idx] = { ...updated[idx], cost: rounded, costInput: rounded.toFixed(2).replace(".", ",") };
                   }
+                  setExtras(updated);
                 }}
                 className="h-8 text-sm pl-7 text-right"
               />
