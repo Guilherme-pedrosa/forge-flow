@@ -30,11 +30,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 const fmtCurrency = (v: number | null) =>
   v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
 
-/** Preço consignado = 80% do sale_price, mas nunca abaixo do custo */
-const getConsignmentPrice = (salePrice: number | null, costEstimate: number | null) => {
+/** Preço consignado = desconto sobre o sale_price, mas nunca abaixo do custo */
+const getConsignmentPrice = (salePrice: number | null, costEstimate: number | null, discountPercent: number = 29) => {
   const sp = salePrice || 0;
   const cost = costEstimate || 0;
-  const discounted = Math.round(sp * 0.8 * 100) / 100;
+  const discounted = Math.round(sp * (1 - discountPercent / 100) * 100) / 100;
   return Math.max(discounted, cost);
 };
 
@@ -66,7 +66,8 @@ export default function Consignado() {
   const [newCustEmail, setNewCustEmail] = useState("");
   const [newCustDocument, setNewCustDocument] = useState("");
   const [newCustBirthday, setNewCustBirthday] = useState("");
-
+  const [locDiscountPercent, setLocDiscountPercent] = useState("29");
+  const [locDiscountInput, setLocDiscountInput] = useState("29");
   // Movement form
   const [movProductId, setMovProductId] = useState("");
   const [movQty, setMovQty] = useState("");
@@ -167,6 +168,7 @@ export default function Consignado() {
   const resetLocForm = () => {
     setLocMode("existing"); setLocCustomerId(""); setLocName("");
     setNewCustName(""); setNewCustPhone(""); setNewCustEmail(""); setNewCustDocument(""); setNewCustBirthday("");
+    setLocDiscountPercent("29"); setLocDiscountInput("29");
   };
 
   const createLocMut = useMutation({
@@ -211,6 +213,7 @@ export default function Consignado() {
         contact_name: c?.name || newCustName.trim(),
         phone: c?.phone || newCustPhone || null,
         address: addrStr || null,
+        discount_percent: parseFloat(locDiscountPercent) || 29,
       } as any);
       if (error) throw error;
     },
@@ -299,7 +302,8 @@ export default function Consignado() {
           throw new Error("Este ponto não tem um cliente vinculado. Edite o ponto e associe um cliente antes de registrar vendas.");
         }
         const product = products.find((p: any) => p.id === movProductId);
-        const unitPrice = price || getConsignmentPrice(product?.sale_price ?? null, product?.cost_estimate ?? null);
+        const locDiscount = (loc as any)?.discount_percent ?? 29;
+        const unitPrice = price || getConsignmentPrice(product?.sale_price ?? null, product?.cost_estimate ?? null, locDiscount);
         const saleTotal = unitPrice * qty;
 
         // Count existing orders for code generation
@@ -421,13 +425,13 @@ export default function Consignado() {
     const today = new Date().toLocaleDateString("pt-BR");
     const itemsWithStock = viewLocItems.filter((i: any) => i.current_qty > 0);
     const totalValue = itemsWithStock.reduce((sum: number, i: any) => {
-      const csg = getConsignmentPrice(i.products?.sale_price ?? null, i.products?.cost_estimate ?? null);
+      const csg = getConsignmentPrice(i.products?.sale_price ?? null, i.products?.cost_estimate ?? null, (viewLoc as any)?.discount_percent ?? 29);
       return sum + i.current_qty * csg;
     }, 0);
     const customerName = (viewLoc as any).customers?.name || viewLoc.contact_name || "—";
 
     const rows = itemsWithStock.map((item: any, idx: number) => {
-      const csg = getConsignmentPrice(item.products?.sale_price ?? null, item.products?.cost_estimate ?? null);
+      const csg = getConsignmentPrice(item.products?.sale_price ?? null, item.products?.cost_estimate ?? null, (viewLoc as any)?.discount_percent ?? 29);
       return `
       <tr>
         <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:center">${idx + 1}</td>
@@ -648,6 +652,31 @@ export default function Consignado() {
               <Label>Nome do Ponto *</Label>
               <Input value={locName} onChange={(e) => setLocName(e.target.value)} placeholder="Ex: Vitrine Loja Centro" />
             </div>
+            <div>
+              <Label>Desconto sobre preço de venda (%)</Label>
+              <Input
+                type="text"
+                inputMode="decimal"
+                value={locDiscountInput}
+                onChange={(e) => {
+                  const raw = e.target.value.replace(/[^0-9.,]/g, "");
+                  setLocDiscountInput(raw);
+                  const normalized = raw.replace(",", ".");
+                  const parsed = parseFloat(normalized);
+                  if (!isNaN(parsed)) setLocDiscountPercent(String(parsed));
+                }}
+                onBlur={() => {
+                  const val = parseFloat(locDiscountPercent) || 29;
+                  const clamped = Math.min(Math.max(val, 0), 100);
+                  setLocDiscountPercent(String(clamped));
+                  setLocDiscountInput(String(clamped).replace(".", ","));
+                }}
+                placeholder="29"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Padrão: 29%. O preço nunca ficará abaixo do custo estimado.
+              </p>
+            </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => { setCreateLocOpen(false); resetLocForm(); }}>Cancelar</Button>
@@ -761,14 +790,14 @@ export default function Consignado() {
                             <TableHead>Produto</TableHead>
                             <TableHead className="text-center">Atual</TableHead>
                             <TableHead className="text-right">Preço Venda</TableHead>
-                            <TableHead className="text-right">Preço Consig. (−20%)</TableHead>
+                            <TableHead className="text-right">Preço Consig. (−{(viewLoc as any)?.discount_percent ?? 29}%)</TableHead>
                             <TableHead className="text-center">Vendidos</TableHead>
                             <TableHead className="text-right">Valor (estoque)</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
                           {viewLocItems.map((item: any) => {
-                            const csgPrice = getConsignmentPrice(item.products?.sale_price ?? null, item.products?.cost_estimate ?? null);
+                            const csgPrice = getConsignmentPrice(item.products?.sale_price ?? null, item.products?.cost_estimate ?? null, (viewLoc as any)?.discount_percent ?? 29);
                             return (
                             <TableRow key={item.id}>
                               <TableCell className="text-sm font-medium">
@@ -863,14 +892,14 @@ export default function Consignado() {
                 setMovProductId(pid);
                 if (movementType === "sale" && pid) {
                   const p = products.find((x) => x.id === pid);
-                  if (p) setMovPrice(String(getConsignmentPrice(p.sale_price ?? null, p.cost_estimate ?? null)));
+                  if (p) setMovPrice(String(getConsignmentPrice(p.sale_price ?? null, p.cost_estimate ?? null, (viewLoc as any)?.discount_percent ?? 29)));
                 }
               }}>
                 <SelectTrigger><SelectValue placeholder="Selecione um produto" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">Selecione…</SelectItem>
                   {products.map((p) => {
-                    const csg = getConsignmentPrice(p.sale_price ?? null, p.cost_estimate ?? null);
+                    const csg = getConsignmentPrice(p.sale_price ?? null, p.cost_estimate ?? null, (viewLoc as any)?.discount_percent ?? 29);
                     return (
                       <SelectItem key={p.id} value={p.id}>
                         {p.name} — {fmtCurrency(csg)}{movementType === "sale" && p.sale_price ? ` (era ${fmtCurrency(p.sale_price)})` : ""}

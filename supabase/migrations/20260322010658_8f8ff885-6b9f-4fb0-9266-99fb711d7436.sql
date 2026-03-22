@@ -1,0 +1,1 @@
+ALTER TABLE public.consignment_locations ADD COLUMN discount_percent numeric NOT NULL DEFAULT 29;
