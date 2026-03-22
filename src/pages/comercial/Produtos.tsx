@@ -44,7 +44,7 @@ const categoryLabels: Record<string, string> = {
 
 const categoryFilter: string[] = ["all", ...Object.keys(categoryLabels)];
 
-type ExtraItem = { name: string; cost: number };
+type ExtraItem = { name: string; cost: number; costInput?: string };
 
 export default function Produtos() {
   const { profile } = useAuth();
