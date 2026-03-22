@@ -425,7 +425,7 @@ export default function Consignado() {
     const today = new Date().toLocaleDateString("pt-BR");
     const itemsWithStock = viewLocItems.filter((i: any) => i.current_qty > 0);
     const totalValue = itemsWithStock.reduce((sum: number, i: any) => {
-      const csg = getConsignmentPrice(i.products?.sale_price ?? null, i.products?.cost_estimate ?? null);
+      const csg = getConsignmentPrice(i.products?.sale_price ?? null, i.products?.cost_estimate ?? null, (viewLoc as any)?.discount_percent ?? 29);
       return sum + i.current_qty * csg;
     }, 0);
     const customerName = (viewLoc as any).customers?.name || viewLoc.contact_name || "—";
