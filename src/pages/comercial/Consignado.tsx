@@ -892,7 +892,7 @@ export default function Consignado() {
                 setMovProductId(pid);
                 if (movementType === "sale" && pid) {
                   const p = products.find((x) => x.id === pid);
-                  if (p) setMovPrice(String(getConsignmentPrice(p.sale_price ?? null, p.cost_estimate ?? null)));
+                  if (p) setMovPrice(String(getConsignmentPrice(p.sale_price ?? null, p.cost_estimate ?? null, (viewLoc as any)?.discount_percent ?? 29)));
                 }
               }}>
                 <SelectTrigger><SelectValue placeholder="Selecione um produto" /></SelectTrigger>
