@@ -431,7 +431,7 @@ export default function Consignado() {
     const customerName = (viewLoc as any).customers?.name || viewLoc.contact_name || "—";
 
     const rows = itemsWithStock.map((item: any, idx: number) => {
-      const csg = getConsignmentPrice(item.products?.sale_price ?? null, item.products?.cost_estimate ?? null);
+      const csg = getConsignmentPrice(item.products?.sale_price ?? null, item.products?.cost_estimate ?? null, (viewLoc as any)?.discount_percent ?? 29);
       return `
       <tr>
         <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:center">${idx + 1}</td>
