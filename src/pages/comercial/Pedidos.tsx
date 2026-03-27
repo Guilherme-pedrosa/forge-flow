@@ -613,13 +613,13 @@ export default function Pedidos() {
         <div className="rounded-xl border bg-card p-4"><p className="text-xs text-muted-foreground">Valor Total</p><p className="text-2xl font-bold text-foreground">{fmtCurrency(totalValue)}</p></div>
       </div>
 
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1 max-w-sm">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+        <div className="relative w-full sm:flex-1 sm:max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input className="pl-9" placeholder="Buscar por código ou cliente…" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-[180px]"><SelectValue placeholder="Status" /></SelectTrigger>
+          <SelectTrigger className="w-full sm:w-[180px]"><SelectValue placeholder="Status" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Todos</SelectItem>
             {Object.entries(statusConfig).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
@@ -635,7 +635,7 @@ export default function Pedidos() {
             <FileText className="h-10 w-10 mb-3 opacity-40" /><p className="font-medium">Nenhum pedido encontrado</p>
           </div>
         ) : (
-          <Table>
+          <div className="overflow-x-auto">
             <TableHeader><TableRow>
               <TableHead>Código</TableHead><TableHead>Cliente</TableHead><TableHead>Status</TableHead>
               <TableHead>Entrega</TableHead><TableHead className="text-right">Valor</TableHead><TableHead className="w-10" />
@@ -674,12 +674,12 @@ export default function Pedidos() {
               })}
             </TableBody>
           </Table>
+          </div>
         )}
-      </div>
 
       {/* CREATE ORDER DIALOG */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-hidden flex flex-col">
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-hidden flex flex-col w-[95vw] sm:w-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2"><ShoppingCart className="h-5 w-5 text-primary" /> Novo Orçamento</DialogTitle>
             <DialogDescription>Preencha os dados do orçamento e adicione os itens</DialogDescription>
@@ -809,7 +809,7 @@ export default function Pedidos() {
 
       {/* VIEW ORDER DIALOG */}
       <Dialog open={!!viewOrderId} onOpenChange={(o) => { if (!o) setViewOrderId(null); }}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl w-[95vw] sm:w-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <FileText className="h-5 w-5 text-primary" />
@@ -855,7 +855,7 @@ export default function Pedidos() {
                 );
               })()}
 
-              <div className="grid grid-cols-3 gap-4 text-sm">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
                 <div>
                   <p className="text-xs text-muted-foreground">Cliente</p>
                   <p className="font-medium">{(viewOrder as any).customers?.name || "—"}</p>
