@@ -622,6 +622,7 @@ export default function Itens() {
           </Table>
           </div>
         )}
+      </div>
 
       {/* Create Dialog */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
