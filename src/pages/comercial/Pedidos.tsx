@@ -636,6 +636,7 @@ export default function Pedidos() {
           </div>
         ) : (
           <div className="overflow-x-auto">
+          <Table>
             <TableHeader><TableRow>
               <TableHead>Código</TableHead><TableHead>Cliente</TableHead><TableHead>Status</TableHead>
               <TableHead>Entrega</TableHead><TableHead className="text-right">Valor</TableHead><TableHead className="w-10" />
