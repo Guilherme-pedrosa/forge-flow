@@ -277,7 +277,7 @@ export default function Dashboard() {
   ];
 
   return (
-    <div className="space-y-6 animate-fade-in">
+    <div className="space-y-4 md:space-y-6 animate-fade-in">
       <PageHeader
         title="Dashboard"
         description="Visão geral da sua operação"
@@ -295,7 +295,7 @@ export default function Dashboard() {
       )}
 
       {/* Quick Actions */}
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap gap-2 -mx-1 overflow-x-auto px-1">
         {quickActions.map((a) => (
           <Link key={a.href} to={a.href}>
             <Button variant="outline" size="sm" className="bg-card gap-2">
@@ -307,7 +307,7 @@ export default function Dashboard() {
       </div>
 
       {/* KPI Cards */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
         {[
           { title: "Saldo em Caixa", value: fmtCurrency(data.cashBalance), icon: Wallet, trend: null },
           { title: "Receita Total", value: fmtCurrency(data.totalRevenue), icon: TrendingUp, trend: null },
@@ -315,13 +315,13 @@ export default function Dashboard() {
           { title: "Taxa de Perda", value: `${data.lossRate.toFixed(1)}%`, icon: AlertTriangle, trend: data.lossRate > 10 ? "bad" : "good" },
           { title: "Margem Real", value: `${data.avgMargin.toFixed(1)}%`, icon: BarChart3, trend: data.avgMargin > 30 ? "good" : data.avgMargin > 0 ? "neutral" : "bad" },
         ].map((kpi) => (
-          <div key={kpi.title} className="kpi-card p-5">
+          <div key={kpi.title} className="kpi-card p-3 md:p-5">
             <div className="kpi-card-title">
               <kpi.icon className="h-4 w-4" />
               <span className="uppercase tracking-wide">{kpi.title}</span>
             </div>
             <div className={cn(
-              "text-2xl font-bold tabular-nums",
+              "text-lg md:text-2xl font-bold tabular-nums",
               kpi.trend === "good" && "text-emerald-600",
               kpi.trend === "bad" && "text-destructive",
             )}>
@@ -332,7 +332,7 @@ export default function Dashboard() {
       </div>
 
       {/* Charts Row */}
-      <div className="grid lg:grid-cols-3 gap-6">
+      <div className="grid lg:grid-cols-3 gap-4 md:gap-6">
         {/* Revenue Chart */}
         <div className="lg:col-span-2 card-enterprise !p-0 overflow-hidden">
           <div className="px-6 py-4 border-b border-border flex items-center justify-between">
@@ -408,7 +408,7 @@ export default function Dashboard() {
       </div>
 
       {/* Farm View + Order Pipeline */}
-      <div className="grid lg:grid-cols-2 gap-6">
+      <div className="grid lg:grid-cols-2 gap-4 md:gap-6">
         {/* 🖨️ Farm View — Impressoras */}
         <div className="card-enterprise !p-0 overflow-hidden">
           <div className="px-5 py-3.5 border-b border-border flex items-center justify-between">
@@ -499,7 +499,7 @@ export default function Dashboard() {
       </div>
 
       {/* Main Grid: Jobs + Right Column */}
-      <div className="grid lg:grid-cols-3 gap-6">
+      <div className="grid lg:grid-cols-3 gap-4 md:gap-6">
         {/* Jobs Table */}
         <div className="lg:col-span-2 card-enterprise !p-0 overflow-hidden">
           <div className="px-6 py-4 border-b border-border flex items-center justify-between">
