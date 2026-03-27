@@ -16,12 +16,12 @@ interface PageHeaderProps {
 
 export function PageHeader({ title, description, breadcrumbs = [], actions }: PageHeaderProps) {
   return (
-    <div className="mb-6">
+    <div className="mb-4 md:mb-6">
       {breadcrumbs.length > 0 && (
-        <nav className="flex items-center gap-1.5 text-xs text-muted-foreground mb-3">
-          <Link to="/" className="hover:text-foreground transition-colors">Início</Link>
+        <nav className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2 md:mb-3 overflow-x-auto">
+          <Link to="/" className="hover:text-foreground transition-colors shrink-0">Início</Link>
           {breadcrumbs.map((item, index) => (
-            <div key={index} className="flex items-center gap-1.5">
+            <div key={index} className="flex items-center gap-1.5 shrink-0">
               <ChevronRight className="h-3 w-3" />
               {item.href ? (
                 <Link to={item.href} className="hover:text-foreground transition-colors">{item.label}</Link>
@@ -32,12 +32,12 @@ export function PageHeader({ title, description, breadcrumbs = [], actions }: Pa
           ))}
         </nav>
       )}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-foreground">{title}</h1>
-          {description && <p className="text-sm text-muted-foreground mt-0.5">{description}</p>}
+          <h1 className="text-lg md:text-xl font-semibold text-foreground">{title}</h1>
+          {description && <p className="text-xs md:text-sm text-muted-foreground mt-0.5">{description}</p>}
         </div>
-        {actions && <div className="flex items-center gap-2">{actions}</div>}
+        {actions && <div className="flex items-center gap-2 flex-wrap">{actions}</div>}
       </div>
     </div>
   );
