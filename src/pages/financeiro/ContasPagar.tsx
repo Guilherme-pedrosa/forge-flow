@@ -260,7 +260,7 @@ export default function ContasPagar() {
       </div>
 
       {/* Search */}
-      <div className="relative max-w-md">
+      <div className="relative w-full sm:max-w-md">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input placeholder="Buscar por descrição ou fornecedor..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-9" />
       </div>
@@ -288,6 +288,7 @@ export default function ContasPagar() {
             <Receipt className="h-10 w-10 mb-3 opacity-40" /><p className="font-medium">Nenhuma conta encontrada</p>
           </div>
         ) : (
+          <div className="overflow-x-auto">
           <Table>
             <TableHeader><TableRow>
               <TableHead className="w-10"><Checkbox /></TableHead>
@@ -336,6 +337,7 @@ export default function ContasPagar() {
               })}
             </TableBody>
           </Table>
+          </div>
         )}
         <div className="px-6 py-3 border-t flex justify-between text-sm text-muted-foreground">
           <span>{filteredPayables.length} registros</span>
@@ -345,10 +347,10 @@ export default function ContasPagar() {
 
       {/* Create Dialog */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="sm:max-w-[550px]">
+        <DialogContent className="sm:max-w-[550px] w-[95vw]">
           <DialogHeader><DialogTitle className="flex items-center gap-2"><Receipt className="h-5 w-5 text-primary" /> Nova Conta a Pagar</DialogTitle></DialogHeader>
           <div className="grid gap-4">
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div><Label className="text-xs">Descrição *</Label><Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Filamento PLA" /></div>
               <div><Label className="text-xs">Fornecedor</Label>
                 <Select value={vendorId || "none"} onValueChange={(v) => setVendorId(v === "none" ? "" : v)}>
@@ -357,12 +359,12 @@ export default function ContasPagar() {
                 </Select>
               </div>
             </div>
-            <div className="grid grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div><Label className="text-xs">Valor *</Label><Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} /></div>
               <div><Label className="text-xs">Vencimento *</Label><Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} /></div>
               <div><Label className="text-xs">Competência</Label><Input type="date" value={competenceDate} onChange={(e) => setCompetenceDate(e.target.value)} /></div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div><Label className="text-xs">Plano de Contas</Label>
                 <Select value={accountId || "none"} onValueChange={(v) => setAccountId(v === "none" ? "" : v)}>
                   <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>

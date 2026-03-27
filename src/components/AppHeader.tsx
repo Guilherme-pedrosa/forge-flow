@@ -57,7 +57,7 @@ export function AppHeader({ onMenuClick, showMenuButton }: AppHeaderProps) {
       )}
 
       {/* Search */}
-      <div className="relative flex-1 max-w-md">
+      <div className="relative flex-1 max-w-md hidden sm:block">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input
           placeholder="Buscar jobs, materiais, fornecedores..."

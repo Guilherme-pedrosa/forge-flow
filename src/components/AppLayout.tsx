@@ -35,7 +35,7 @@ export function AppLayout({ children }: AppLayoutProps) {
         )}
       >
         <AppHeader onMenuClick={() => setMobileOpen(true)} showMenuButton />
-        <main className="flex-1 overflow-y-auto p-6">{children}</main>
+        <main className="flex-1 overflow-y-auto p-3 md:p-6">{children}</main>
         <TelemetryStrip />
       </div>
     </div>

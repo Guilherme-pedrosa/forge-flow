@@ -310,7 +310,6 @@ export default function Itens() {
           <Select value={parentId} onValueChange={setParentId}>
             <SelectTrigger><SelectValue placeholder="Selecione o material..." /></SelectTrigger>
             <SelectContent>
-              {/* Show parent items and orphan items as potential parents */}
               {[...parentItems, ...orphanItems]
                 .filter((p) => p.category === "filament" || p.category === "resin")
                 .map((p) => (
@@ -321,9 +320,9 @@ export default function Itens() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {formMode === "group" ? (
-          <div className="col-span-2">
+          <div className="col-span-full">
             <Label>Nome do Material *</Label>
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="PLA eSUN" />
           </div>
@@ -502,13 +501,13 @@ export default function Itens() {
       </div>
 
       {/* Filters */}
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1 max-w-sm">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+        <div className="relative w-full sm:flex-1 sm:max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input className="pl-9" placeholder="Buscar por nome, SKU, material, cor…" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         <Select value={categoryFilter} onValueChange={(v) => setCategoryFilter(v)}>
-          <SelectTrigger className="w-[180px]"><SelectValue placeholder="Categoria" /></SelectTrigger>
+          <SelectTrigger className="w-full sm:w-[180px]"><SelectValue placeholder="Categoria" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Todas</SelectItem>
             {Object.entries(categoryLabels).map(([k, v]) => (
@@ -529,6 +528,7 @@ export default function Itens() {
             <p className="text-xs mt-1">Cadastre materiais para começar a controlar estoque.</p>
           </div>
         ) : (
+          <div className="overflow-x-auto">
           <Table>
             <TableHeader>
               <TableRow>
@@ -620,6 +620,7 @@ export default function Itens() {
               {filteredGroups.orphans.map((item) => renderItemRow(item, false))}
             </TableBody>
           </Table>
+          </div>
         )}
       </div>
 

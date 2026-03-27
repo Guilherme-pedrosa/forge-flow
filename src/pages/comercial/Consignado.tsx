@@ -537,8 +537,8 @@ export default function Consignado() {
       </div>
 
       {/* Search */}
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1 max-w-sm">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+        <div className="relative w-full sm:flex-1 sm:max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input className="pl-9" placeholder="Buscar ponto…" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
@@ -696,7 +696,7 @@ export default function Consignado() {
 
       {/* ── View Location Dialog ── */}
       <Dialog open={!!viewLocId} onOpenChange={(o) => { if (!o) setViewLocId(null); }}>
-        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto w-[95vw] sm:w-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <MapPin className="h-5 w-5 text-primary" />
@@ -707,7 +707,7 @@ export default function Consignado() {
           {viewLoc && (
             <div className="space-y-4">
               {/* Location info */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
                 <div>
                   <p className="text-xs text-muted-foreground">Cliente</p>
                   <p className="font-medium">{(viewLoc as any).customers?.name || <span className="text-destructive">Nenhum vinculado</span>}</p>
