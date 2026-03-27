@@ -188,7 +188,7 @@ export default function Clientes() {
   const formFields = (
     <div className="grid gap-4 max-h-[65vh] overflow-y-auto pr-1">
       <div><Label>Nome *</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nome do cliente ou razão social" /></div>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div><Label>E-mail</Label><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email@example.com" /></div>
         <div><Label>Telefone</Label><Input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="(11) 99999-9999" /></div>
       </div>
@@ -222,7 +222,7 @@ export default function Clientes() {
       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5 mt-1">
         <MapPin className="h-3.5 w-3.5" /> Endereço
       </p>
-      <div className="grid grid-cols-[1fr_1fr] gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-[1fr_1fr] gap-3">
         <div>
           <Label>CEP</Label>
           <Input
@@ -241,7 +241,7 @@ export default function Clientes() {
         <Label>Logradouro</Label>
         <Input value={street} onChange={(e) => setStreet(e.target.value)} placeholder="Rua, Avenida..." />
       </div>
-      <div className="grid grid-cols-[100px_1fr] gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-[100px_1fr] gap-3">
         <div>
           <Label>Número</Label>
           <Input value={addrNumber} onChange={(e) => setAddrNumber(e.target.value)} placeholder="123" />
@@ -251,7 +251,7 @@ export default function Clientes() {
           <Input value={complement} onChange={(e) => setComplement(e.target.value)} placeholder="Apt, Bloco..." />
         </div>
       </div>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <Label>Bairro</Label>
           <Input value={neighborhood} onChange={(e) => setNeighborhood(e.target.value)} placeholder="Bairro" />
@@ -299,8 +299,8 @@ export default function Clientes() {
         </div>
       </div>
 
-      <div className="flex items-center gap-3">
-        <div className="relative flex-1 max-w-sm">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+        <div className="relative w-full sm:flex-1 sm:max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input className="pl-9" placeholder="Buscar por nome, e-mail, CPF/CNPJ…" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
@@ -314,6 +314,7 @@ export default function Clientes() {
             <Users className="h-10 w-10 mb-3 opacity-40" /><p className="font-medium">Nenhum cliente encontrado</p>
           </div>
         ) : (
+          <div className="overflow-x-auto">
           <Table>
             <TableHeader><TableRow>
               <TableHead>Nome</TableHead><TableHead>E-mail</TableHead><TableHead>Telefone</TableHead><TableHead>CPF/CNPJ</TableHead><TableHead>Cidade</TableHead><TableHead className="w-10" />
@@ -343,8 +344,8 @@ export default function Clientes() {
               })}
             </TableBody>
           </Table>
+          </div>
         )}
-      </div>
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="max-w-lg"><DialogHeader><DialogTitle>Novo Cliente</DialogTitle><DialogDescription>Cadastrar novo cliente</DialogDescription></DialogHeader>

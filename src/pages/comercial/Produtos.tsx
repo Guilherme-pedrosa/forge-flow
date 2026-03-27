@@ -644,7 +644,7 @@ export default function Produtos() {
           </div>
         )}
       </div>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className="col-span-2"><Label>Nome *</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Vaso Geométrico P" /></div>
         <div><Label>Categoria</Label>
           <Select value={category} onValueChange={setCategory}><SelectTrigger><SelectValue /></SelectTrigger>
@@ -655,7 +655,7 @@ export default function Produtos() {
         <div className="col-span-2"><Label>Descrição</Label><Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} /></div>
       </div>
       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Receita de Produção</p>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div><Label>Material</Label>
           <Select value={materialId || "none"} onValueChange={(v) => setMaterialId(v === "none" ? "" : v)}>
             <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>

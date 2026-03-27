@@ -358,6 +358,7 @@ export default function Jobs() {
 
       {/* Table */}
       <div className="rounded-lg border bg-card overflow-hidden">
+        <div className="overflow-x-auto">
         <Table>
           <TableHeader>
             <TableRow>
@@ -449,6 +450,7 @@ export default function Jobs() {
             )}
           </TableBody>
         </Table>
+        </div>
       </div>
 
       {/* Dialogs */}
