@@ -676,6 +676,7 @@ export default function Pedidos() {
           </Table>
           </div>
         )}
+      </div>
 
       {/* CREATE ORDER DIALOG */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
