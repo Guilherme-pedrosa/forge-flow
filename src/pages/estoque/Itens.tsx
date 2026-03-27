@@ -322,38 +322,7 @@ export default function Itens() {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         {formMode === "group" ? (
-          <Label>Tipo de Cadastro</Label>
-          <Select value={formMode} onValueChange={(v: "group" | "color") => { setFormMode(v); if (v === "group") setParentId(""); }}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="group">📦 Novo Material (grupo)</SelectItem>
-              <SelectItem value="color">🎨 Nova Cor (de um material existente)</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      )}
-
-      {/* Parent selector for color mode */}
-      {formMode === "color" && !editItem && (
-        <div>
-          <Label>Material Pai *</Label>
-          <Select value={parentId} onValueChange={setParentId}>
-            <SelectTrigger><SelectValue placeholder="Selecione o material..." /></SelectTrigger>
-            <SelectContent>
-              {/* Show parent items and orphan items as potential parents */}
-              {[...parentItems, ...orphanItems]
-                .filter((p) => p.category === "filament" || p.category === "resin")
-                .map((p) => (
-                  <SelectItem key={p.id} value={p.id}>{p.name} ({p.material_type || p.category})</SelectItem>
-                ))}
-            </SelectContent>
-          </Select>
-        </div>
-      )}
-
-      <div className="grid grid-cols-2 gap-3">
-        {formMode === "group" ? (
-          <div className="col-span-2">
+          <div className="col-span-full">
             <Label>Nome do Material *</Label>
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="PLA eSUN" />
           </div>

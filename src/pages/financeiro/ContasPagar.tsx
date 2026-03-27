@@ -338,6 +338,7 @@ export default function ContasPagar() {
             </TableBody>
           </Table>
           </div>
+        )}
         <div className="px-6 py-3 border-t flex justify-between text-sm text-muted-foreground">
           <span>{filteredPayables.length} registros</span>
           <span className="font-medium tabular-nums">Total: {fmtCurrency(filteredPayables.reduce((s: number, p: any) => s + p.amount, 0))}</span>
