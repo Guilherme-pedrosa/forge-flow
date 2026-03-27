@@ -321,8 +321,7 @@ export default function Itens() {
       )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-      {!editItem && (
-        <div>
+        {formMode === "group" ? (
           <Label>Tipo de Cadastro</Label>
           <Select value={formMode} onValueChange={(v: "group" | "color") => { setFormMode(v); if (v === "group") setParentId(""); }}>
             <SelectTrigger><SelectValue /></SelectTrigger>

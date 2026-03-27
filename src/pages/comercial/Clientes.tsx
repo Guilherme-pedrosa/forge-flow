@@ -346,6 +346,7 @@ export default function Clientes() {
           </Table>
           </div>
         )}
+      </div>
 
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent className="max-w-lg"><DialogHeader><DialogTitle>Novo Cliente</DialogTitle><DialogDescription>Cadastrar novo cliente</DialogDescription></DialogHeader>
