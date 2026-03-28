@@ -843,7 +843,7 @@ export default function Consignado() {
                           {viewLocItems.map((item: any) => {
                             const csgPrice = getConsignmentPrice(item.products?.sale_price ?? null, item.products?.cost_estimate ?? null, (viewLoc as any)?.discount_percent ?? 29);
                             return (
-                            <TableRow key={item.id}>
+                            <TableRow key={item.id} className="group">
                               <TableCell className="text-sm font-medium">
                                 <div className="flex items-center gap-2">
                                   {item.products?.photo_url && (
