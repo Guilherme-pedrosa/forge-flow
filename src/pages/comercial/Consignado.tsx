@@ -72,11 +72,17 @@ export default function Consignado() {
   const [newCustBirthday, setNewCustBirthday] = useState("");
   const [locDiscountPercent, setLocDiscountPercent] = useState("29");
   const [locDiscountInput, setLocDiscountInput] = useState("29");
-  // Movement form
+  // Movement form (non-sale)
   const [movProductId, setMovProductId] = useState("");
   const [movQty, setMovQty] = useState("");
   const [movPrice, setMovPrice] = useState("");
   const [movNotes, setMovNotes] = useState("");
+  // Sale items (multi-item sale)
+  type SaleItem = { productId: string; qty: number; unitPrice: number };
+  const [saleItems, setSaleItems] = useState<SaleItem[]>([]);
+  const [saleAddProductId, setSaleAddProductId] = useState("");
+  const [saleAddQty, setSaleAddQty] = useState("1");
+  const [saleAddPopoverOpen, setSaleAddPopoverOpen] = useState(false);
   // Inline qty edit
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [editQtyValue, setEditQtyValue] = useState("");
