@@ -33,14 +33,6 @@ import { ChevronsUpDown } from "lucide-react";
 const fmtCurrency = (v: number | null) =>
   v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
 
-/** Preço consignado = desconto sobre o sale_price, mas nunca abaixo do custo */
-const getConsignmentPrice = (salePrice: number | null, costEstimate: number | null, discountPercent: number = 29) => {
-  const sp = salePrice || 0;
-  const cost = costEstimate || 0;
-  const discounted = Math.round(sp * (1 - discountPercent / 100) * 100) / 100;
-  return Math.max(discounted, cost);
-};
-
 /** Preço de venda efetivo do item consignado (custom ou do produto) */
 const getItemSalePrice = (item: any) => {
   return (item as any).sale_price ?? item.products?.sale_price ?? 0;
