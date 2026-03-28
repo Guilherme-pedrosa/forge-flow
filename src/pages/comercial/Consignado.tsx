@@ -1066,98 +1066,222 @@ export default function Consignado() {
 
       {/* ── Movement Dialog ── */}
       <Dialog open={movementOpen} onOpenChange={setMovementOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className={cn("max-w-md", movementType === "sale" && "max-w-lg")}>
           <DialogHeader>
             <DialogTitle>
               {movementLabels[movementType]?.label || "Movimento"} — {viewLoc?.name}
             </DialogTitle>
           </DialogHeader>
-          <div className="grid gap-4">
-            <div>
-              <Label>Produto *</Label>
-              <Popover open={productPopoverOpen} onOpenChange={setProductPopoverOpen}>
-                <PopoverTrigger asChild>
-                  <Button variant="outline" role="combobox" className="w-full justify-between font-normal h-10">
-                    {movProductId
-                      ? (() => {
-                          const p = products.find((x) => x.id === movProductId);
-                          if (!p) return "Selecione…";
-                          // Check if there's a custom price on the consignment item
-                          const ci = viewLocItems.find((i: any) => i.product_id === movProductId);
-                          const price = ci?.sale_price ?? p.sale_price ?? 0;
-                          return `${p.name} — ${fmtCurrency(price)}`;
-                        })()
-                      : "Selecione um produto…"}
-                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
-                  <Command>
-                    <CommandInput placeholder="Buscar produto..." />
-                    <CommandList>
-                      <CommandEmpty>Nenhum produto encontrado.</CommandEmpty>
-                      <CommandGroup>
-                        {products.map((p) => {
-                          const ci = viewLocItems.find((i: any) => i.product_id === p.id);
-                          const price = ci?.sale_price ?? p.sale_price ?? 0;
-                          return (
-                            <CommandItem
-                              key={p.id}
-                              value={p.name}
-                              onSelect={() => {
-                                setMovProductId(p.id);
-                                if (movementType === "sale") {
-                                  setMovPrice(String(price));
-                                }
-                                setProductPopoverOpen(false);
-                              }}
-                            >
-                              <div className="flex flex-col">
-                                <span>{p.name}</span>
-                                <span className="text-xs text-muted-foreground">
-                                  {fmtCurrency(price)}
-                                </span>
-                              </div>
-                            </CommandItem>
-                          );
-                        })}
-                      </CommandGroup>
-                    </CommandList>
-                  </Command>
-                </PopoverContent>
-              </Popover>
+
+          {movementType === "sale" ? (
+            /* ── SALE: Multi-item ── */
+            <div className="grid gap-4">
+              {/* Add item row */}
+              <div className="flex gap-2 items-end">
+                <div className="flex-1">
+                  <Label className="text-xs">Produto</Label>
+                  <Popover open={saleAddPopoverOpen} onOpenChange={setSaleAddPopoverOpen}>
+                    <PopoverTrigger asChild>
+                      <Button variant="outline" role="combobox" className="w-full justify-between font-normal h-9 text-sm">
+                        {saleAddProductId
+                          ? products.find((x) => x.id === saleAddProductId)?.name || "…"
+                          : "Selecione…"}
+                        <ChevronsUpDown className="ml-1 h-3 w-3 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                      <Command>
+                        <CommandInput placeholder="Buscar produto..." />
+                        <CommandList>
+                          <CommandEmpty>Nenhum produto encontrado.</CommandEmpty>
+                          <CommandGroup>
+                            {/* Show only items in stock at this location */}
+                            {viewLocItems.filter((i: any) => i.current_qty > 0).map((ci: any) => {
+                              const p = products.find((x) => x.id === ci.product_id);
+                              if (!p) return null;
+                              const price = getItemSalePrice(ci);
+                              return (
+                                <CommandItem
+                                  key={p.id}
+                                  value={p.name}
+                                  onSelect={() => {
+                                    setSaleAddProductId(p.id);
+                                    setSaleAddPopoverOpen(false);
+                                  }}
+                                >
+                                  <div className="flex justify-between w-full">
+                                    <span>{p.name}</span>
+                                    <span className="text-xs text-muted-foreground ml-2">
+                                      {ci.current_qty}un · {fmtCurrency(price)}
+                                    </span>
+                                  </div>
+                                </CommandItem>
+                              );
+                            })}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                </div>
+                <div className="w-16">
+                  <Label className="text-xs">Qtd</Label>
+                  <Input type="number" min={1} className="h-9 text-sm" value={saleAddQty} onChange={(e) => setSaleAddQty(e.target.value)} />
+                </div>
+                <Button size="sm" className="h-9" onClick={addSaleItem} disabled={!saleAddProductId}>
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
+
+              {/* Items list */}
+              {saleItems.length > 0 && (
+                <div className="rounded-lg border overflow-hidden">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="text-xs">Produto</TableHead>
+                        <TableHead className="text-xs text-center w-14">Qtd</TableHead>
+                        <TableHead className="text-xs text-right">Preço</TableHead>
+                        <TableHead className="text-xs text-right">Subtotal</TableHead>
+                        <TableHead className="w-8" />
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {saleItems.map((si) => {
+                        const p = products.find((x) => x.id === si.productId);
+                        return (
+                          <TableRow key={si.productId}>
+                            <TableCell className="text-sm py-2">{p?.name || "—"}</TableCell>
+                            <TableCell className="text-center py-2">
+                              <Input
+                                type="number" min={1}
+                                className="w-14 h-7 text-center text-sm p-1"
+                                value={si.qty}
+                                onChange={(e) => {
+                                  const v = parseInt(e.target.value) || 1;
+                                  setSaleItems(saleItems.map((x) => x.productId === si.productId ? { ...x, qty: v } : x));
+                                }}
+                              />
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-sm py-2">
+                              <Input
+                                type="number" step="0.01" min={0}
+                                className="w-20 h-7 text-right text-sm p-1 ml-auto"
+                                value={si.unitPrice}
+                                onChange={(e) => {
+                                  const v = parseFloat(e.target.value) || 0;
+                                  setSaleItems(saleItems.map((x) => x.productId === si.productId ? { ...x, unitPrice: v } : x));
+                                }}
+                              />
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-sm py-2">{fmtCurrency(si.unitPrice * si.qty)}</TableCell>
+                            <TableCell className="py-2">
+                              <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => removeSaleItem(si.productId)}>
+                                <X className="h-3 w-3" />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+
+              {/* Financial summary */}
+              {saleItems.length > 0 && (
+                <div className="rounded-lg border bg-muted/30 p-3 space-y-1.5 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Valor Vendido</span>
+                    <span className="font-semibold font-mono">{fmtCurrency(saleTotalValue)}</span>
+                  </div>
+                  <div className="flex justify-between text-destructive/80">
+                    <span>Comissão do PDV ({COMMISSION_PERCENT}%)</span>
+                    <span className="font-mono">− {fmtCurrency(saleTotalCommission)}</span>
+                  </div>
+                  <div className="border-t pt-1.5 flex justify-between font-bold">
+                    <span>Valor a Receber (repasse)</span>
+                    <span className="font-mono text-emerald-600">{fmtCurrency(saleNetReceivable)}</span>
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <Label>Observações</Label>
+                <Textarea value={movNotes} onChange={(e) => setMovNotes(e.target.value)} rows={2} />
+              </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+          ) : (
+            /* ── NON-SALE: single product ── */
+            <div className="grid gap-4">
+              <div>
+                <Label>Produto *</Label>
+                <Popover open={productPopoverOpen} onOpenChange={setProductPopoverOpen}>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" role="combobox" className="w-full justify-between font-normal h-10">
+                      {movProductId
+                        ? (() => {
+                            const p = products.find((x) => x.id === movProductId);
+                            if (!p) return "Selecione…";
+                            const ci = viewLocItems.find((i: any) => i.product_id === movProductId);
+                            const price = ci?.sale_price ?? p.sale_price ?? 0;
+                            return `${p.name} — ${fmtCurrency(price)}`;
+                          })()
+                        : "Selecione um produto…"}
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                    <Command>
+                      <CommandInput placeholder="Buscar produto..." />
+                      <CommandList>
+                        <CommandEmpty>Nenhum produto encontrado.</CommandEmpty>
+                        <CommandGroup>
+                          {products.map((p) => {
+                            const ci = viewLocItems.find((i: any) => i.product_id === p.id);
+                            const price = ci?.sale_price ?? p.sale_price ?? 0;
+                            return (
+                              <CommandItem
+                                key={p.id}
+                                value={p.name}
+                                onSelect={() => {
+                                  setMovProductId(p.id);
+                                  setProductPopoverOpen(false);
+                                }}
+                              >
+                                <div className="flex flex-col">
+                                  <span>{p.name}</span>
+                                  <span className="text-xs text-muted-foreground">{fmtCurrency(price)}</span>
+                                </div>
+                              </CommandItem>
+                            );
+                          })}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
+              </div>
               <div>
                 <Label>Quantidade *</Label>
                 <Input type="number" min={1} value={movQty} onChange={(e) => setMovQty(e.target.value)} placeholder="10" />
               </div>
-              {(movementType === "sale") && (
-                <div>
-                  <Label>Preço Unitário</Label>
-                  <Input type="number" step="0.01" value={movPrice} onChange={(e) => setMovPrice(e.target.value)} placeholder="25.00" />
-                  {(() => {
-                    const p = products.find((x) => x.id === movProductId);
-                    const typedPrice = parseFloat(movPrice);
-                    const cost = p?.cost_estimate ?? 0;
-                    if (p && !isNaN(typedPrice) && typedPrice > 0) {
-                      if (typedPrice < (cost || 0)) {
-                        return <p className="text-xs text-destructive mt-1">⚠ Abaixo do custo ({fmtCurrency(cost)})</p>;
-                      }
-                    }
-                    return null;
-                  })()}
-                </div>
-              )}
+              <div>
+                <Label>Observações</Label>
+                <Textarea value={movNotes} onChange={(e) => setMovNotes(e.target.value)} rows={2} />
+              </div>
             </div>
-            <div>
-              <Label>Observações</Label>
-              <Textarea value={movNotes} onChange={(e) => setMovNotes(e.target.value)} rows={2} />
-            </div>
-          </div>
+          )}
+
           <DialogFooter>
             <Button variant="outline" onClick={() => setMovementOpen(false)}>Cancelar</Button>
-            <Button onClick={() => movementMut.mutate()} disabled={!movProductId || !movQty || movementMut.isPending}>
+            <Button
+              onClick={() => movementMut.mutate()}
+              disabled={
+                movementMut.isPending ||
+                (movementType === "sale" ? saleItems.length === 0 : (!movProductId || !movQty))
+              }
+            >
               {movementMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Confirmar
             </Button>
           </DialogFooter>
