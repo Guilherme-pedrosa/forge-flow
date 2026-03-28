@@ -600,10 +600,38 @@ export default function Consignado() {
     setMovementType(type);
     setMovProductId("");
     setMovQty("");
-    setMovPrice(type === "sale" ? "" : "");
+    setMovPrice("");
     setMovNotes("");
+    setSaleItems([]);
+    setSaleAddProductId("");
+    setSaleAddQty("1");
     setMovementOpen(true);
   };
+
+  // Sale helpers
+  const addSaleItem = () => {
+    if (!saleAddProductId) return;
+    const qty = parseInt(saleAddQty) || 1;
+    const ci = viewLocItems.find((i: any) => i.product_id === saleAddProductId);
+    const product = products.find((p: any) => p.id === saleAddProductId);
+    const unitPrice = (ci as any)?.sale_price ?? product?.sale_price ?? 0;
+    const existing = saleItems.find((si) => si.productId === saleAddProductId);
+    if (existing) {
+      setSaleItems(saleItems.map((si) => si.productId === saleAddProductId ? { ...si, qty: si.qty + qty } : si));
+    } else {
+      setSaleItems([...saleItems, { productId: saleAddProductId, qty, unitPrice }]);
+    }
+    setSaleAddProductId("");
+    setSaleAddQty("1");
+  };
+
+  const removeSaleItem = (productId: string) => {
+    setSaleItems(saleItems.filter((si) => si.productId !== productId));
+  };
+
+  const saleTotalValue = saleItems.reduce((s, si) => s + si.unitPrice * si.qty, 0);
+  const saleTotalCommission = saleItems.reduce((s, si) => s + getCommission(si.unitPrice) * si.qty, 0);
+  const saleNetReceivable = saleTotalValue - saleTotalCommission;
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
