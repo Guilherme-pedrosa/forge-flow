@@ -852,7 +852,38 @@ export default function Consignado() {
                                   {item.products?.name || "—"}
                                 </div>
                               </TableCell>
-                              <TableCell className="text-center font-bold">{item.current_qty}</TableCell>
+                              <TableCell className="text-center font-bold">
+                                {editingItemId === item.id ? (
+                                  <div className="flex items-center gap-1 justify-center">
+                                    <Input
+                                      type="number"
+                                      min={0}
+                                      className="w-16 h-7 text-center text-sm p-1"
+                                      value={editQtyValue}
+                                      onChange={(e) => setEditQtyValue(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === "Enter") adjustQtyMut.mutate({ itemId: item.id, newQty: parseInt(editQtyValue) || 0 });
+                                        if (e.key === "Escape") setEditingItemId(null);
+                                      }}
+                                      autoFocus
+                                    />
+                                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => adjustQtyMut.mutate({ itemId: item.id, newQty: parseInt(editQtyValue) || 0 })} disabled={adjustQtyMut.isPending}>
+                                      {adjustQtyMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                                    </Button>
+                                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setEditingItemId(null)}>
+                                      <X className="h-3 w-3" />
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    className="inline-flex items-center gap-1 hover:text-primary transition-colors cursor-pointer"
+                                    onClick={() => { setEditingItemId(item.id); setEditQtyValue(String(item.current_qty)); }}
+                                  >
+                                    {item.current_qty}
+                                    <Pencil className="h-3 w-3 opacity-0 group-hover:opacity-50" />
+                                  </button>
+                                )}
+                              </TableCell>
                               <TableCell className="text-right font-mono text-sm text-muted-foreground line-through">
                                 {fmtCurrency(item.products?.sale_price || 0)}
                               </TableCell>
