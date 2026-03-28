@@ -871,7 +871,8 @@ export default function Consignado() {
                         </TableHeader>
                         <TableBody>
                           {viewLocItems.map((item: any) => {
-                            const csgPrice = getConsignmentPrice(item.products?.sale_price ?? null, item.products?.cost_estimate ?? null, (viewLoc as any)?.discount_percent ?? 29);
+                            const effectivePrice = getItemSalePrice(item);
+                            const commission = getCommission(effectivePrice);
                             return (
                             <TableRow key={item.id} className="group">
                               <TableCell className="text-sm font-medium">
@@ -914,15 +915,45 @@ export default function Consignado() {
                                   </button>
                                 )}
                               </TableCell>
-                              <TableCell className="text-right font-mono text-sm text-muted-foreground line-through">
-                                {fmtCurrency(item.products?.sale_price || 0)}
+                              <TableCell className="text-right font-mono text-sm font-semibold">
+                                {editingPriceItemId === item.id ? (
+                                  <div className="flex items-center gap-1 justify-end">
+                                    <Input
+                                      type="number"
+                                      step="0.01"
+                                      min={0}
+                                      className="w-20 h-7 text-right text-sm p-1"
+                                      value={editPriceValue}
+                                      onChange={(e) => setEditPriceValue(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === "Enter") updatePriceMut.mutate({ itemId: item.id, newPrice: parseFloat(editPriceValue) || 0 });
+                                        if (e.key === "Escape") setEditingPriceItemId(null);
+                                      }}
+                                      autoFocus
+                                    />
+                                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => updatePriceMut.mutate({ itemId: item.id, newPrice: parseFloat(editPriceValue) || 0 })} disabled={updatePriceMut.isPending}>
+                                      {updatePriceMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                                    </Button>
+                                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setEditingPriceItemId(null)}>
+                                      <X className="h-3 w-3" />
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    className="inline-flex items-center gap-1 hover:text-primary transition-colors cursor-pointer"
+                                    onClick={() => { setEditingPriceItemId(item.id); setEditPriceValue(String(effectivePrice)); }}
+                                  >
+                                    {fmtCurrency(effectivePrice)}
+                                    <Pencil className="h-3 w-3 opacity-0 group-hover:opacity-50" />
+                                  </button>
+                                )}
                               </TableCell>
-                              <TableCell className="text-right font-mono text-sm font-semibold text-primary">
-                                {fmtCurrency(csgPrice)}
+                              <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                                {fmtCurrency(commission)}
                               </TableCell>
                               <TableCell className="text-center text-emerald-600 font-medium">{item.total_sold}</TableCell>
                               <TableCell className="text-right font-mono text-sm">
-                                {fmtCurrency(item.current_qty * csgPrice)}
+                                {fmtCurrency(item.current_qty * effectivePrice)}
                               </TableCell>
                             </TableRow>
                             );
