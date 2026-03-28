@@ -1046,7 +1046,8 @@ export default function Consignado() {
                       <CommandEmpty>Nenhum produto encontrado.</CommandEmpty>
                       <CommandGroup>
                         {products.map((p) => {
-                          const csg = getConsignmentPrice(p.sale_price ?? null, p.cost_estimate ?? null, (viewLoc as any)?.discount_percent ?? 29);
+                          const ci = viewLocItems.find((i: any) => i.product_id === p.id);
+                          const price = ci?.sale_price ?? p.sale_price ?? 0;
                           return (
                             <CommandItem
                               key={p.id}
@@ -1054,7 +1055,7 @@ export default function Consignado() {
                               onSelect={() => {
                                 setMovProductId(p.id);
                                 if (movementType === "sale") {
-                                  setMovPrice(String(csg));
+                                  setMovPrice(String(price));
                                 }
                                 setProductPopoverOpen(false);
                               }}
@@ -1062,7 +1063,7 @@ export default function Consignado() {
                               <div className="flex flex-col">
                                 <span>{p.name}</span>
                                 <span className="text-xs text-muted-foreground">
-                                  {fmtCurrency(csg)}{movementType === "sale" && p.sale_price ? ` (era ${fmtCurrency(p.sale_price)})` : ""}
+                                  {fmtCurrency(price)}
                                 </span>
                               </div>
                             </CommandItem>
