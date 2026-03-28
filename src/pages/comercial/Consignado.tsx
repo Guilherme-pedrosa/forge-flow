@@ -1030,8 +1030,10 @@ export default function Consignado() {
                       ? (() => {
                           const p = products.find((x) => x.id === movProductId);
                           if (!p) return "Selecione…";
-                          const csg = getConsignmentPrice(p.sale_price ?? null, p.cost_estimate ?? null, (viewLoc as any)?.discount_percent ?? 29);
-                          return `${p.name} — ${fmtCurrency(csg)}`;
+                          // Check if there's a custom price on the consignment item
+                          const ci = viewLocItems.find((i: any) => i.product_id === movProductId);
+                          const price = ci?.sale_price ?? p.sale_price ?? 0;
+                          return `${p.name} — ${fmtCurrency(price)}`;
                         })()
                       : "Selecione um produto…"}
                     <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
