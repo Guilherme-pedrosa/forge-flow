@@ -41,6 +41,15 @@ const getConsignmentPrice = (salePrice: number | null, costEstimate: number | nu
   return Math.max(discounted, cost);
 };
 
+/** Preço de venda efetivo do item consignado (custom ou do produto) */
+const getItemSalePrice = (item: any) => {
+  return (item as any).sale_price ?? item.products?.sale_price ?? 0;
+};
+
+/** Comissão do PDV = 20% do preço de venda */
+const COMMISSION_PERCENT = 20;
+const getCommission = (salePrice: number) => Math.round(salePrice * COMMISSION_PERCENT / 100 * 100) / 100;
+
 const movementLabels: Record<string, { label: string; color: string; icon: typeof Plus }> = {
   placement: { label: "Colocação", color: "bg-primary/10 text-primary", icon: ArrowUpFromLine },
   sale: { label: "Venda", color: "bg-emerald-100 text-emerald-700", icon: ShoppingCart },
