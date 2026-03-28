@@ -261,74 +261,22 @@ export default function Consignado() {
   const movementMut = useMutation({
     mutationFn: async () => {
       if (!profile || !viewLocId) throw new Error("Sem contexto");
-      const qty = parseInt(movQty);
-      if (!qty || qty <= 0) throw new Error("Quantidade inválida");
-      if (!movProductId) throw new Error("Selecione um produto");
 
-      const price = parseFloat(movPrice) || null;
-      const total = price ? price * qty : null;
-
-      // Insert movement
-      const { error: movErr } = await supabase.from("consignment_movements").insert({
-        tenant_id: profile.tenant_id,
-        location_id: viewLocId,
-        product_id: movProductId,
-        movement_type: movementType as any,
-        quantity: qty,
-        unit_price: price,
-        total,
-        notes: movNotes || null,
-        created_by: profile.user_id,
-      });
-      if (movErr) throw movErr;
-
-      // Upsert consignment_items
-      const { data: existing } = await supabase
-        .from("consignment_items")
-        .select("*")
-        .eq("location_id", viewLocId)
-        .eq("product_id", movProductId)
-        .maybeSingle();
-
-      const cur = existing || { current_qty: 0, total_placed: 0, total_sold: 0, total_returned: 0 };
-      let newQty = cur.current_qty;
-      let newPlaced = cur.total_placed;
-      let newSold = cur.total_sold;
-      let newReturned = cur.total_returned;
-
-      switch (movementType) {
-        case "placement":
-        case "replenishment":
-          newQty += qty;
-          newPlaced += qty;
-          break;
-        case "sale":
-          newQty -= qty;
-          newSold += qty;
-          break;
-        case "return":
-          newQty -= qty;
-          newReturned += qty;
-          break;
-      }
-
-      // ── Auto-criar Pedido + Conta a Receber na venda ──
+      // ── SALE: multi-item flow ──
       if (movementType === "sale") {
+        if (saleItems.length === 0) throw new Error("Adicione pelo menos um item");
         const loc = locations.find((l: any) => l.id === viewLocId);
         if (!(loc as any)?.customer_id) {
           throw new Error("Este ponto não tem um cliente vinculado. Edite o ponto e associe um cliente antes de registrar vendas.");
         }
-        const product = products.find((p: any) => p.id === movProductId);
-        const ci = viewLocItems.find((i: any) => i.product_id === movProductId);
-        const unitPrice = price || (ci as any)?.sale_price || product?.sale_price || 0;
-        const saleTotal = unitPrice * qty;
 
-        // Count existing orders for code generation
+        const saleTotal = saleItems.reduce((s, si) => s + si.unitPrice * si.qty, 0);
+
+        // Order code
         const { count: orderCount } = await supabase
           .from("orders")
           .select("*", { count: "exact", head: true })
           .eq("tenant_id", profile.tenant_id);
-
         const code = `CSG-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${String((orderCount ?? 0) + 1).padStart(3, "0")}`;
 
         const { data: order, error: orderErr } = await supabase.from("orders").insert({
@@ -343,23 +291,57 @@ export default function Consignado() {
         } as any).select("id").single();
         if (orderErr) throw orderErr;
 
-        // Create order item
-        const { error: itemErr } = await supabase.from("order_items").insert({
-          tenant_id: profile.tenant_id,
-          order_id: order.id,
-          product_id: movProductId,
-          description: product?.name || "Produto consignado",
-          quantity: qty,
-          unit_price: unitPrice,
-          total: saleTotal,
-        });
-        if (itemErr) throw itemErr;
+        for (const si of saleItems) {
+          const product = products.find((p: any) => p.id === si.productId);
 
-        // Create AR
+          // Movement record
+          const { error: movErr } = await supabase.from("consignment_movements").insert({
+            tenant_id: profile.tenant_id,
+            location_id: viewLocId,
+            product_id: si.productId,
+            movement_type: "sale" as any,
+            quantity: si.qty,
+            unit_price: si.unitPrice,
+            total: si.unitPrice * si.qty,
+            notes: movNotes || null,
+            created_by: profile.user_id,
+          });
+          if (movErr) throw movErr;
+
+          // Order item
+          await supabase.from("order_items").insert({
+            tenant_id: profile.tenant_id,
+            order_id: order.id,
+            product_id: si.productId,
+            description: product?.name || "Produto consignado",
+            quantity: si.qty,
+            unit_price: si.unitPrice,
+            total: si.unitPrice * si.qty,
+          });
+
+          // Update consignment_items
+          const { data: existing } = await supabase
+            .from("consignment_items")
+            .select("*")
+            .eq("location_id", viewLocId)
+            .eq("product_id", si.productId)
+            .maybeSingle();
+
+          if (existing) {
+            await supabase.from("consignment_items").update({
+              current_qty: existing.current_qty - si.qty,
+              total_sold: existing.total_sold + si.qty,
+            }).eq("id", existing.id);
+          }
+        }
+
+        // AR = total - comissão (consignatário repassa o líquido)
+        const commissionTotal = saleItems.reduce((s, si) => s + getCommission(si.unitPrice) * si.qty, 0);
+        const netReceivable = saleTotal - commissionTotal;
         const { error: arErr } = await supabase.from("accounts_receivable").insert({
           tenant_id: profile.tenant_id,
           description: `Consignado ${loc?.name} — ${code}`,
-          amount: saleTotal,
+          amount: netReceivable,
           due_date: new Date().toISOString().slice(0, 10),
           competence_date: new Date().toISOString().slice(0, 10),
           customer_id: (loc as any)?.customer_id || null,
@@ -369,27 +351,70 @@ export default function Consignado() {
           status: "open",
         });
         if (arErr) throw new Error(`Erro ao criar conta a receber: ${arErr.message}`);
+        return;
+      }
+
+      // ── NON-SALE: single product flow ──
+      const qty = parseInt(movQty);
+      if (!qty || qty <= 0) throw new Error("Quantidade inválida");
+      if (!movProductId) throw new Error("Selecione um produto");
+
+      const price = parseFloat(movPrice) || null;
+      const total = price ? price * qty : null;
+
+      const { error: movErr } = await supabase.from("consignment_movements").insert({
+        tenant_id: profile.tenant_id,
+        location_id: viewLocId,
+        product_id: movProductId,
+        movement_type: movementType as any,
+        quantity: qty,
+        unit_price: price,
+        total,
+        notes: movNotes || null,
+        created_by: profile.user_id,
+      });
+      if (movErr) throw movErr;
+
+      const { data: existing } = await supabase
+        .from("consignment_items")
+        .select("*")
+        .eq("location_id", viewLocId)
+        .eq("product_id", movProductId)
+        .maybeSingle();
+
+      const cur = existing || { current_qty: 0, total_placed: 0, total_sold: 0, total_returned: 0 };
+      let newQty = cur.current_qty;
+      let newPlaced = cur.total_placed;
+      let newReturned = cur.total_returned;
+
+      switch (movementType) {
+        case "placement":
+        case "replenishment":
+          newQty += qty;
+          newPlaced += qty;
+          break;
+        case "return":
+          newQty -= qty;
+          newReturned += qty;
+          break;
       }
 
       if (existing) {
-        const { error } = await supabase.from("consignment_items").update({
+        await supabase.from("consignment_items").update({
           current_qty: newQty,
           total_placed: newPlaced,
-          total_sold: newSold,
           total_returned: newReturned,
         }).eq("id", existing.id);
-        if (error) throw error;
       } else {
-        const { error } = await supabase.from("consignment_items").insert({
+        await supabase.from("consignment_items").insert({
           tenant_id: profile.tenant_id,
           location_id: viewLocId,
           product_id: movProductId,
           current_qty: newQty,
           total_placed: newPlaced,
-          total_sold: newSold,
+          total_sold: 0,
           total_returned: newReturned,
         });
-        if (error) throw error;
       }
     },
     onSuccess: () => {
@@ -399,6 +424,7 @@ export default function Consignado() {
       qc.invalidateQueries({ queryKey: ["accounts_receivable"] });
       setMovementOpen(false);
       setMovProductId(""); setMovQty(""); setMovPrice(""); setMovNotes("");
+      setSaleItems([]);
       toast({ title: "Movimento registrado" });
     },
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
