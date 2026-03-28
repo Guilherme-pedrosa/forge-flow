@@ -80,6 +80,9 @@ export default function Consignado() {
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [editQtyValue, setEditQtyValue] = useState("");
   const [productPopoverOpen, setProductPopoverOpen] = useState(false);
+  // Inline price edit
+  const [editingPriceItemId, setEditingPriceItemId] = useState<string | null>(null);
+  const [editPriceValue, setEditPriceValue] = useState("");
 
   // ── Queries ──
   const { data: locations = [], isLoading } = useQuery({
