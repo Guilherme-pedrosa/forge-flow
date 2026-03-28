@@ -471,7 +471,20 @@ export default function Consignado() {
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 
-  const printConsignment = () => {
+  const updatePriceMut = useMutation({
+    mutationFn: async ({ itemId, newPrice }: { itemId: string; newPrice: number }) => {
+      if (newPrice < 0) throw new Error("Preço não pode ser negativo");
+      const { error } = await supabase.from("consignment_items").update({ sale_price: newPrice } as any).eq("id", itemId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["consignment_items"] });
+      setEditingPriceItemId(null);
+      toast({ title: "Preço atualizado" });
+    },
+    onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
+  });
+
     if (!viewLoc) return;
     const today = new Date().toLocaleDateString("pt-BR");
     const itemsWithStock = viewLocItems.filter((i: any) => i.current_qty > 0);
