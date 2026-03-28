@@ -1088,13 +1088,9 @@ export default function Consignado() {
                     const p = products.find((x) => x.id === movProductId);
                     const typedPrice = parseFloat(movPrice);
                     const cost = p?.cost_estimate ?? 0;
-                    const suggestedPrice = p ? getConsignmentPrice(p.sale_price ?? null, p.cost_estimate ?? null, (viewLoc as any)?.discount_percent ?? 29) : 0;
                     if (p && !isNaN(typedPrice) && typedPrice > 0) {
                       if (typedPrice < (cost || 0)) {
                         return <p className="text-xs text-destructive mt-1">⚠ Abaixo do custo ({fmtCurrency(cost)})</p>;
-                      }
-                      if (typedPrice < suggestedPrice) {
-                        return <p className="text-xs text-amber-600 mt-1">Abaixo do sugerido ({fmtCurrency(suggestedPrice)})</p>;
                       }
                     }
                     return null;
