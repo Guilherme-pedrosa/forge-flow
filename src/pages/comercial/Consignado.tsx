@@ -423,7 +423,47 @@ export default function Consignado() {
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 
-  const printConsignment = () => {
+  const adjustQtyMut = useMutation({
+    mutationFn: async ({ itemId, newQty }: { itemId: string; newQty: number }) => {
+      if (!profile || !viewLocId) throw new Error("Sem contexto");
+      const item = viewLocItems.find((i: any) => i.id === itemId);
+      if (!item) throw new Error("Item não encontrado");
+      if (newQty < 0) throw new Error("Quantidade não pode ser negativa");
+
+      const diff = newQty - item.current_qty;
+      const movType = diff >= 0 ? "placement" : "return";
+      const absQty = Math.abs(diff);
+
+      if (absQty > 0) {
+        // Register adjustment movement
+        const { error: movErr } = await supabase.from("consignment_movements").insert({
+          tenant_id: profile.tenant_id,
+          location_id: viewLocId,
+          product_id: item.product_id,
+          movement_type: movType as any,
+          quantity: absQty,
+          notes: `Ajuste manual: ${item.current_qty} → ${newQty}`,
+          created_by: profile.user_id,
+        });
+        if (movErr) throw movErr;
+
+        const updates: any = { current_qty: newQty };
+        if (diff > 0) updates.total_placed = item.total_placed + absQty;
+        if (diff < 0) updates.total_returned = item.total_returned + absQty;
+
+        const { error } = await supabase.from("consignment_items").update(updates).eq("id", itemId);
+        if (error) throw error;
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["consignment_items"] });
+      qc.invalidateQueries({ queryKey: ["consignment_movements"] });
+      setEditingItemId(null);
+      toast({ title: "Quantidade ajustada" });
+    },
+    onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
+  });
+
     if (!viewLoc) return;
     const today = new Date().toLocaleDateString("pt-BR");
     const itemsWithStock = viewLocItems.filter((i: any) => i.current_qty > 0);
