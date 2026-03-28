@@ -485,6 +485,7 @@ export default function Consignado() {
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 
+  const printConsignment = () => {
     if (!viewLoc) return;
     const today = new Date().toLocaleDateString("pt-BR");
     const itemsWithStock = viewLocItems.filter((i: any) => i.current_qty > 0);
