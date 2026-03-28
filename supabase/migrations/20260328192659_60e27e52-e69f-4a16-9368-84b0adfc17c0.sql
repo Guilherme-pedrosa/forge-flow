@@ -1,0 +1,1 @@
+ALTER TABLE public.consignment_items ADD COLUMN sale_price numeric DEFAULT NULL;

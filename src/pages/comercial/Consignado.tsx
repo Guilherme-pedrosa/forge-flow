@@ -33,13 +33,14 @@ import { ChevronsUpDown } from "lucide-react";
 const fmtCurrency = (v: number | null) =>
   v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
 
-/** Preço consignado = desconto sobre o sale_price, mas nunca abaixo do custo */
-const getConsignmentPrice = (salePrice: number | null, costEstimate: number | null, discountPercent: number = 29) => {
-  const sp = salePrice || 0;
-  const cost = costEstimate || 0;
-  const discounted = Math.round(sp * (1 - discountPercent / 100) * 100) / 100;
-  return Math.max(discounted, cost);
+/** Preço de venda efetivo do item consignado (custom ou do produto) */
+const getItemSalePrice = (item: any) => {
+  return (item as any).sale_price ?? item.products?.sale_price ?? 0;
 };
+
+/** Comissão do PDV = 20% do preço de venda */
+const COMMISSION_PERCENT = 20;
+const getCommission = (salePrice: number) => Math.round(salePrice * COMMISSION_PERCENT / 100 * 100) / 100;
 
 const movementLabels: Record<string, { label: string; color: string; icon: typeof Plus }> = {
   placement: { label: "Colocação", color: "bg-primary/10 text-primary", icon: ArrowUpFromLine },
@@ -80,6 +81,9 @@ export default function Consignado() {
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [editQtyValue, setEditQtyValue] = useState("");
   const [productPopoverOpen, setProductPopoverOpen] = useState(false);
+  // Inline price edit
+  const [editingPriceItemId, setEditingPriceItemId] = useState<string | null>(null);
+  const [editPriceValue, setEditPriceValue] = useState("");
 
   // ── Queries ──
   const { data: locations = [], isLoading } = useQuery({
@@ -309,8 +313,8 @@ export default function Consignado() {
           throw new Error("Este ponto não tem um cliente vinculado. Edite o ponto e associe um cliente antes de registrar vendas.");
         }
         const product = products.find((p: any) => p.id === movProductId);
-        const locDiscount = (loc as any)?.discount_percent ?? 29;
-        const unitPrice = price || getConsignmentPrice(product?.sale_price ?? null, product?.cost_estimate ?? null, locDiscount);
+        const ci = viewLocItems.find((i: any) => i.product_id === movProductId);
+        const unitPrice = price || (ci as any)?.sale_price || product?.sale_price || 0;
         const saleTotal = unitPrice * qty;
 
         // Count existing orders for code generation
@@ -468,25 +472,39 @@ export default function Consignado() {
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 
+  const updatePriceMut = useMutation({
+    mutationFn: async ({ itemId, newPrice }: { itemId: string; newPrice: number }) => {
+      if (newPrice < 0) throw new Error("Preço não pode ser negativo");
+      const { error } = await supabase.from("consignment_items").update({ sale_price: newPrice } as any).eq("id", itemId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["consignment_items"] });
+      setEditingPriceItemId(null);
+      toast({ title: "Preço atualizado" });
+    },
+    onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
+  });
+
   const printConsignment = () => {
     if (!viewLoc) return;
     const today = new Date().toLocaleDateString("pt-BR");
     const itemsWithStock = viewLocItems.filter((i: any) => i.current_qty > 0);
     const totalValue = itemsWithStock.reduce((sum: number, i: any) => {
-      const csg = getConsignmentPrice(i.products?.sale_price ?? null, i.products?.cost_estimate ?? null, (viewLoc as any)?.discount_percent ?? 29);
-      return sum + i.current_qty * csg;
+      const price = getItemSalePrice(i);
+      return sum + i.current_qty * price;
     }, 0);
     const customerName = (viewLoc as any).customers?.name || viewLoc.contact_name || "—";
 
     const rows = itemsWithStock.map((item: any, idx: number) => {
-      const csg = getConsignmentPrice(item.products?.sale_price ?? null, item.products?.cost_estimate ?? null, (viewLoc as any)?.discount_percent ?? 29);
+      const price = getItemSalePrice(item);
       return `
       <tr>
         <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:center">${idx + 1}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #ddd">${item.products?.name || "—"}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:center">${item.current_qty}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right">${fmtCurrency(csg)}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right">${fmtCurrency(item.current_qty * csg)}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right">${fmtCurrency(price)}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right">${fmtCurrency(item.current_qty * price)}</td>
       </tr>
     `;}).join("");
 
@@ -838,14 +856,15 @@ export default function Consignado() {
                             <TableHead>Produto</TableHead>
                             <TableHead className="text-center">Atual</TableHead>
                             <TableHead className="text-right">Preço Venda</TableHead>
-                            <TableHead className="text-right">Preço Consig. (−{(viewLoc as any)?.discount_percent ?? 29}%)</TableHead>
+                            <TableHead className="text-right">Comissão ({COMMISSION_PERCENT}%)</TableHead>
                             <TableHead className="text-center">Vendidos</TableHead>
                             <TableHead className="text-right">Valor (estoque)</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
                           {viewLocItems.map((item: any) => {
-                            const csgPrice = getConsignmentPrice(item.products?.sale_price ?? null, item.products?.cost_estimate ?? null, (viewLoc as any)?.discount_percent ?? 29);
+                            const effectivePrice = getItemSalePrice(item);
+                            const commission = getCommission(effectivePrice);
                             return (
                             <TableRow key={item.id} className="group">
                               <TableCell className="text-sm font-medium">
@@ -888,15 +907,45 @@ export default function Consignado() {
                                   </button>
                                 )}
                               </TableCell>
-                              <TableCell className="text-right font-mono text-sm text-muted-foreground line-through">
-                                {fmtCurrency(item.products?.sale_price || 0)}
+                              <TableCell className="text-right font-mono text-sm font-semibold">
+                                {editingPriceItemId === item.id ? (
+                                  <div className="flex items-center gap-1 justify-end">
+                                    <Input
+                                      type="number"
+                                      step="0.01"
+                                      min={0}
+                                      className="w-20 h-7 text-right text-sm p-1"
+                                      value={editPriceValue}
+                                      onChange={(e) => setEditPriceValue(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === "Enter") updatePriceMut.mutate({ itemId: item.id, newPrice: parseFloat(editPriceValue) || 0 });
+                                        if (e.key === "Escape") setEditingPriceItemId(null);
+                                      }}
+                                      autoFocus
+                                    />
+                                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => updatePriceMut.mutate({ itemId: item.id, newPrice: parseFloat(editPriceValue) || 0 })} disabled={updatePriceMut.isPending}>
+                                      {updatePriceMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                                    </Button>
+                                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setEditingPriceItemId(null)}>
+                                      <X className="h-3 w-3" />
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    className="inline-flex items-center gap-1 hover:text-primary transition-colors cursor-pointer"
+                                    onClick={() => { setEditingPriceItemId(item.id); setEditPriceValue(String(effectivePrice)); }}
+                                  >
+                                    {fmtCurrency(effectivePrice)}
+                                    <Pencil className="h-3 w-3 opacity-0 group-hover:opacity-50" />
+                                  </button>
+                                )}
                               </TableCell>
-                              <TableCell className="text-right font-mono text-sm font-semibold text-primary">
-                                {fmtCurrency(csgPrice)}
+                              <TableCell className="text-right font-mono text-sm text-muted-foreground">
+                                {fmtCurrency(commission)}
                               </TableCell>
                               <TableCell className="text-center text-emerald-600 font-medium">{item.total_sold}</TableCell>
                               <TableCell className="text-right font-mono text-sm">
-                                {fmtCurrency(item.current_qty * csgPrice)}
+                                {fmtCurrency(item.current_qty * effectivePrice)}
                               </TableCell>
                             </TableRow>
                             );
@@ -973,8 +1022,10 @@ export default function Consignado() {
                       ? (() => {
                           const p = products.find((x) => x.id === movProductId);
                           if (!p) return "Selecione…";
-                          const csg = getConsignmentPrice(p.sale_price ?? null, p.cost_estimate ?? null, (viewLoc as any)?.discount_percent ?? 29);
-                          return `${p.name} — ${fmtCurrency(csg)}`;
+                          // Check if there's a custom price on the consignment item
+                          const ci = viewLocItems.find((i: any) => i.product_id === movProductId);
+                          const price = ci?.sale_price ?? p.sale_price ?? 0;
+                          return `${p.name} — ${fmtCurrency(price)}`;
                         })()
                       : "Selecione um produto…"}
                     <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
@@ -987,7 +1038,8 @@ export default function Consignado() {
                       <CommandEmpty>Nenhum produto encontrado.</CommandEmpty>
                       <CommandGroup>
                         {products.map((p) => {
-                          const csg = getConsignmentPrice(p.sale_price ?? null, p.cost_estimate ?? null, (viewLoc as any)?.discount_percent ?? 29);
+                          const ci = viewLocItems.find((i: any) => i.product_id === p.id);
+                          const price = ci?.sale_price ?? p.sale_price ?? 0;
                           return (
                             <CommandItem
                               key={p.id}
@@ -995,7 +1047,7 @@ export default function Consignado() {
                               onSelect={() => {
                                 setMovProductId(p.id);
                                 if (movementType === "sale") {
-                                  setMovPrice(String(csg));
+                                  setMovPrice(String(price));
                                 }
                                 setProductPopoverOpen(false);
                               }}
@@ -1003,7 +1055,7 @@ export default function Consignado() {
                               <div className="flex flex-col">
                                 <span>{p.name}</span>
                                 <span className="text-xs text-muted-foreground">
-                                  {fmtCurrency(csg)}{movementType === "sale" && p.sale_price ? ` (era ${fmtCurrency(p.sale_price)})` : ""}
+                                  {fmtCurrency(price)}
                                 </span>
                               </div>
                             </CommandItem>
@@ -1028,13 +1080,9 @@ export default function Consignado() {
                     const p = products.find((x) => x.id === movProductId);
                     const typedPrice = parseFloat(movPrice);
                     const cost = p?.cost_estimate ?? 0;
-                    const suggestedPrice = p ? getConsignmentPrice(p.sale_price ?? null, p.cost_estimate ?? null, (viewLoc as any)?.discount_percent ?? 29) : 0;
                     if (p && !isNaN(typedPrice) && typedPrice > 0) {
                       if (typedPrice < (cost || 0)) {
                         return <p className="text-xs text-destructive mt-1">⚠ Abaixo do custo ({fmtCurrency(cost)})</p>;
-                      }
-                      if (typedPrice < suggestedPrice) {
-                        return <p className="text-xs text-amber-600 mt-1">Abaixo do sugerido ({fmtCurrency(suggestedPrice)})</p>;
                       }
                     }
                     return null;
