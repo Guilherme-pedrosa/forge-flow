@@ -72,11 +72,17 @@ export default function Consignado() {
   const [newCustBirthday, setNewCustBirthday] = useState("");
   const [locDiscountPercent, setLocDiscountPercent] = useState("29");
   const [locDiscountInput, setLocDiscountInput] = useState("29");
-  // Movement form
+  // Movement form (non-sale)
   const [movProductId, setMovProductId] = useState("");
   const [movQty, setMovQty] = useState("");
   const [movPrice, setMovPrice] = useState("");
   const [movNotes, setMovNotes] = useState("");
+  // Sale items (multi-item sale)
+  type SaleItem = { productId: string; qty: number; unitPrice: number };
+  const [saleItems, setSaleItems] = useState<SaleItem[]>([]);
+  const [saleAddProductId, setSaleAddProductId] = useState("");
+  const [saleAddQty, setSaleAddQty] = useState("1");
+  const [saleAddPopoverOpen, setSaleAddPopoverOpen] = useState(false);
   // Inline qty edit
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [editQtyValue, setEditQtyValue] = useState("");
@@ -255,74 +261,22 @@ export default function Consignado() {
   const movementMut = useMutation({
     mutationFn: async () => {
       if (!profile || !viewLocId) throw new Error("Sem contexto");
-      const qty = parseInt(movQty);
-      if (!qty || qty <= 0) throw new Error("Quantidade inválida");
-      if (!movProductId) throw new Error("Selecione um produto");
 
-      const price = parseFloat(movPrice) || null;
-      const total = price ? price * qty : null;
-
-      // Insert movement
-      const { error: movErr } = await supabase.from("consignment_movements").insert({
-        tenant_id: profile.tenant_id,
-        location_id: viewLocId,
-        product_id: movProductId,
-        movement_type: movementType as any,
-        quantity: qty,
-        unit_price: price,
-        total,
-        notes: movNotes || null,
-        created_by: profile.user_id,
-      });
-      if (movErr) throw movErr;
-
-      // Upsert consignment_items
-      const { data: existing } = await supabase
-        .from("consignment_items")
-        .select("*")
-        .eq("location_id", viewLocId)
-        .eq("product_id", movProductId)
-        .maybeSingle();
-
-      const cur = existing || { current_qty: 0, total_placed: 0, total_sold: 0, total_returned: 0 };
-      let newQty = cur.current_qty;
-      let newPlaced = cur.total_placed;
-      let newSold = cur.total_sold;
-      let newReturned = cur.total_returned;
-
-      switch (movementType) {
-        case "placement":
-        case "replenishment":
-          newQty += qty;
-          newPlaced += qty;
-          break;
-        case "sale":
-          newQty -= qty;
-          newSold += qty;
-          break;
-        case "return":
-          newQty -= qty;
-          newReturned += qty;
-          break;
-      }
-
-      // ── Auto-criar Pedido + Conta a Receber na venda ──
+      // ── SALE: multi-item flow ──
       if (movementType === "sale") {
+        if (saleItems.length === 0) throw new Error("Adicione pelo menos um item");
         const loc = locations.find((l: any) => l.id === viewLocId);
         if (!(loc as any)?.customer_id) {
           throw new Error("Este ponto não tem um cliente vinculado. Edite o ponto e associe um cliente antes de registrar vendas.");
         }
-        const product = products.find((p: any) => p.id === movProductId);
-        const ci = viewLocItems.find((i: any) => i.product_id === movProductId);
-        const unitPrice = price || (ci as any)?.sale_price || product?.sale_price || 0;
-        const saleTotal = unitPrice * qty;
 
-        // Count existing orders for code generation
+        const saleTotal = saleItems.reduce((s, si) => s + si.unitPrice * si.qty, 0);
+
+        // Order code
         const { count: orderCount } = await supabase
           .from("orders")
           .select("*", { count: "exact", head: true })
           .eq("tenant_id", profile.tenant_id);
-
         const code = `CSG-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${String((orderCount ?? 0) + 1).padStart(3, "0")}`;
 
         const { data: order, error: orderErr } = await supabase.from("orders").insert({
@@ -337,23 +291,57 @@ export default function Consignado() {
         } as any).select("id").single();
         if (orderErr) throw orderErr;
 
-        // Create order item
-        const { error: itemErr } = await supabase.from("order_items").insert({
-          tenant_id: profile.tenant_id,
-          order_id: order.id,
-          product_id: movProductId,
-          description: product?.name || "Produto consignado",
-          quantity: qty,
-          unit_price: unitPrice,
-          total: saleTotal,
-        });
-        if (itemErr) throw itemErr;
+        for (const si of saleItems) {
+          const product = products.find((p: any) => p.id === si.productId);
 
-        // Create AR
+          // Movement record
+          const { error: movErr } = await supabase.from("consignment_movements").insert({
+            tenant_id: profile.tenant_id,
+            location_id: viewLocId,
+            product_id: si.productId,
+            movement_type: "sale" as any,
+            quantity: si.qty,
+            unit_price: si.unitPrice,
+            total: si.unitPrice * si.qty,
+            notes: movNotes || null,
+            created_by: profile.user_id,
+          });
+          if (movErr) throw movErr;
+
+          // Order item
+          await supabase.from("order_items").insert({
+            tenant_id: profile.tenant_id,
+            order_id: order.id,
+            product_id: si.productId,
+            description: product?.name || "Produto consignado",
+            quantity: si.qty,
+            unit_price: si.unitPrice,
+            total: si.unitPrice * si.qty,
+          });
+
+          // Update consignment_items
+          const { data: existing } = await supabase
+            .from("consignment_items")
+            .select("*")
+            .eq("location_id", viewLocId)
+            .eq("product_id", si.productId)
+            .maybeSingle();
+
+          if (existing) {
+            await supabase.from("consignment_items").update({
+              current_qty: existing.current_qty - si.qty,
+              total_sold: existing.total_sold + si.qty,
+            }).eq("id", existing.id);
+          }
+        }
+
+        // AR = total - comissão (consignatário repassa o líquido)
+        const commissionTotal = saleItems.reduce((s, si) => s + getCommission(si.unitPrice) * si.qty, 0);
+        const netReceivable = saleTotal - commissionTotal;
         const { error: arErr } = await supabase.from("accounts_receivable").insert({
           tenant_id: profile.tenant_id,
           description: `Consignado ${loc?.name} — ${code}`,
-          amount: saleTotal,
+          amount: netReceivable,
           due_date: new Date().toISOString().slice(0, 10),
           competence_date: new Date().toISOString().slice(0, 10),
           customer_id: (loc as any)?.customer_id || null,
@@ -363,27 +351,70 @@ export default function Consignado() {
           status: "open",
         });
         if (arErr) throw new Error(`Erro ao criar conta a receber: ${arErr.message}`);
+        return;
+      }
+
+      // ── NON-SALE: single product flow ──
+      const qty = parseInt(movQty);
+      if (!qty || qty <= 0) throw new Error("Quantidade inválida");
+      if (!movProductId) throw new Error("Selecione um produto");
+
+      const price = parseFloat(movPrice) || null;
+      const total = price ? price * qty : null;
+
+      const { error: movErr } = await supabase.from("consignment_movements").insert({
+        tenant_id: profile.tenant_id,
+        location_id: viewLocId,
+        product_id: movProductId,
+        movement_type: movementType as any,
+        quantity: qty,
+        unit_price: price,
+        total,
+        notes: movNotes || null,
+        created_by: profile.user_id,
+      });
+      if (movErr) throw movErr;
+
+      const { data: existing } = await supabase
+        .from("consignment_items")
+        .select("*")
+        .eq("location_id", viewLocId)
+        .eq("product_id", movProductId)
+        .maybeSingle();
+
+      const cur = existing || { current_qty: 0, total_placed: 0, total_sold: 0, total_returned: 0 };
+      let newQty = cur.current_qty;
+      let newPlaced = cur.total_placed;
+      let newReturned = cur.total_returned;
+
+      switch (movementType) {
+        case "placement":
+        case "replenishment":
+          newQty += qty;
+          newPlaced += qty;
+          break;
+        case "return":
+          newQty -= qty;
+          newReturned += qty;
+          break;
       }
 
       if (existing) {
-        const { error } = await supabase.from("consignment_items").update({
+        await supabase.from("consignment_items").update({
           current_qty: newQty,
           total_placed: newPlaced,
-          total_sold: newSold,
           total_returned: newReturned,
         }).eq("id", existing.id);
-        if (error) throw error;
       } else {
-        const { error } = await supabase.from("consignment_items").insert({
+        await supabase.from("consignment_items").insert({
           tenant_id: profile.tenant_id,
           location_id: viewLocId,
           product_id: movProductId,
           current_qty: newQty,
           total_placed: newPlaced,
-          total_sold: newSold,
+          total_sold: 0,
           total_returned: newReturned,
         });
-        if (error) throw error;
       }
     },
     onSuccess: () => {
@@ -393,6 +424,7 @@ export default function Consignado() {
       qc.invalidateQueries({ queryKey: ["accounts_receivable"] });
       setMovementOpen(false);
       setMovProductId(""); setMovQty(""); setMovPrice(""); setMovNotes("");
+      setSaleItems([]);
       toast({ title: "Movimento registrado" });
     },
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
@@ -568,10 +600,38 @@ export default function Consignado() {
     setMovementType(type);
     setMovProductId("");
     setMovQty("");
-    setMovPrice(type === "sale" ? "" : "");
+    setMovPrice("");
     setMovNotes("");
+    setSaleItems([]);
+    setSaleAddProductId("");
+    setSaleAddQty("1");
     setMovementOpen(true);
   };
+
+  // Sale helpers
+  const addSaleItem = () => {
+    if (!saleAddProductId) return;
+    const qty = parseInt(saleAddQty) || 1;
+    const ci = viewLocItems.find((i: any) => i.product_id === saleAddProductId);
+    const product = products.find((p: any) => p.id === saleAddProductId);
+    const unitPrice = (ci as any)?.sale_price ?? product?.sale_price ?? 0;
+    const existing = saleItems.find((si) => si.productId === saleAddProductId);
+    if (existing) {
+      setSaleItems(saleItems.map((si) => si.productId === saleAddProductId ? { ...si, qty: si.qty + qty } : si));
+    } else {
+      setSaleItems([...saleItems, { productId: saleAddProductId, qty, unitPrice }]);
+    }
+    setSaleAddProductId("");
+    setSaleAddQty("1");
+  };
+
+  const removeSaleItem = (productId: string) => {
+    setSaleItems(saleItems.filter((si) => si.productId !== productId));
+  };
+
+  const saleTotalValue = saleItems.reduce((s, si) => s + si.unitPrice * si.qty, 0);
+  const saleTotalCommission = saleItems.reduce((s, si) => s + getCommission(si.unitPrice) * si.qty, 0);
+  const saleNetReceivable = saleTotalValue - saleTotalCommission;
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
@@ -1006,98 +1066,222 @@ export default function Consignado() {
 
       {/* ── Movement Dialog ── */}
       <Dialog open={movementOpen} onOpenChange={setMovementOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className={cn("max-w-md", movementType === "sale" && "max-w-lg")}>
           <DialogHeader>
             <DialogTitle>
               {movementLabels[movementType]?.label || "Movimento"} — {viewLoc?.name}
             </DialogTitle>
           </DialogHeader>
-          <div className="grid gap-4">
-            <div>
-              <Label>Produto *</Label>
-              <Popover open={productPopoverOpen} onOpenChange={setProductPopoverOpen}>
-                <PopoverTrigger asChild>
-                  <Button variant="outline" role="combobox" className="w-full justify-between font-normal h-10">
-                    {movProductId
-                      ? (() => {
-                          const p = products.find((x) => x.id === movProductId);
-                          if (!p) return "Selecione…";
-                          // Check if there's a custom price on the consignment item
-                          const ci = viewLocItems.find((i: any) => i.product_id === movProductId);
-                          const price = ci?.sale_price ?? p.sale_price ?? 0;
-                          return `${p.name} — ${fmtCurrency(price)}`;
-                        })()
-                      : "Selecione um produto…"}
-                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
-                  <Command>
-                    <CommandInput placeholder="Buscar produto..." />
-                    <CommandList>
-                      <CommandEmpty>Nenhum produto encontrado.</CommandEmpty>
-                      <CommandGroup>
-                        {products.map((p) => {
-                          const ci = viewLocItems.find((i: any) => i.product_id === p.id);
-                          const price = ci?.sale_price ?? p.sale_price ?? 0;
-                          return (
-                            <CommandItem
-                              key={p.id}
-                              value={p.name}
-                              onSelect={() => {
-                                setMovProductId(p.id);
-                                if (movementType === "sale") {
-                                  setMovPrice(String(price));
-                                }
-                                setProductPopoverOpen(false);
-                              }}
-                            >
-                              <div className="flex flex-col">
-                                <span>{p.name}</span>
-                                <span className="text-xs text-muted-foreground">
-                                  {fmtCurrency(price)}
-                                </span>
-                              </div>
-                            </CommandItem>
-                          );
-                        })}
-                      </CommandGroup>
-                    </CommandList>
-                  </Command>
-                </PopoverContent>
-              </Popover>
+
+          {movementType === "sale" ? (
+            /* ── SALE: Multi-item ── */
+            <div className="grid gap-4">
+              {/* Add item row */}
+              <div className="flex gap-2 items-end">
+                <div className="flex-1">
+                  <Label className="text-xs">Produto</Label>
+                  <Popover open={saleAddPopoverOpen} onOpenChange={setSaleAddPopoverOpen}>
+                    <PopoverTrigger asChild>
+                      <Button variant="outline" role="combobox" className="w-full justify-between font-normal h-9 text-sm">
+                        {saleAddProductId
+                          ? products.find((x) => x.id === saleAddProductId)?.name || "…"
+                          : "Selecione…"}
+                        <ChevronsUpDown className="ml-1 h-3 w-3 shrink-0 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                      <Command>
+                        <CommandInput placeholder="Buscar produto..." />
+                        <CommandList>
+                          <CommandEmpty>Nenhum produto encontrado.</CommandEmpty>
+                          <CommandGroup>
+                            {/* Show only items in stock at this location */}
+                            {viewLocItems.filter((i: any) => i.current_qty > 0).map((ci: any) => {
+                              const p = products.find((x) => x.id === ci.product_id);
+                              if (!p) return null;
+                              const price = getItemSalePrice(ci);
+                              return (
+                                <CommandItem
+                                  key={p.id}
+                                  value={p.name}
+                                  onSelect={() => {
+                                    setSaleAddProductId(p.id);
+                                    setSaleAddPopoverOpen(false);
+                                  }}
+                                >
+                                  <div className="flex justify-between w-full">
+                                    <span>{p.name}</span>
+                                    <span className="text-xs text-muted-foreground ml-2">
+                                      {ci.current_qty}un · {fmtCurrency(price)}
+                                    </span>
+                                  </div>
+                                </CommandItem>
+                              );
+                            })}
+                          </CommandGroup>
+                        </CommandList>
+                      </Command>
+                    </PopoverContent>
+                  </Popover>
+                </div>
+                <div className="w-16">
+                  <Label className="text-xs">Qtd</Label>
+                  <Input type="number" min={1} className="h-9 text-sm" value={saleAddQty} onChange={(e) => setSaleAddQty(e.target.value)} />
+                </div>
+                <Button size="sm" className="h-9" onClick={addSaleItem} disabled={!saleAddProductId}>
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
+
+              {/* Items list */}
+              {saleItems.length > 0 && (
+                <div className="rounded-lg border overflow-hidden">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="text-xs">Produto</TableHead>
+                        <TableHead className="text-xs text-center w-14">Qtd</TableHead>
+                        <TableHead className="text-xs text-right">Preço</TableHead>
+                        <TableHead className="text-xs text-right">Subtotal</TableHead>
+                        <TableHead className="w-8" />
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {saleItems.map((si) => {
+                        const p = products.find((x) => x.id === si.productId);
+                        return (
+                          <TableRow key={si.productId}>
+                            <TableCell className="text-sm py-2">{p?.name || "—"}</TableCell>
+                            <TableCell className="text-center py-2">
+                              <Input
+                                type="number" min={1}
+                                className="w-14 h-7 text-center text-sm p-1"
+                                value={si.qty}
+                                onChange={(e) => {
+                                  const v = parseInt(e.target.value) || 1;
+                                  setSaleItems(saleItems.map((x) => x.productId === si.productId ? { ...x, qty: v } : x));
+                                }}
+                              />
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-sm py-2">
+                              <Input
+                                type="number" step="0.01" min={0}
+                                className="w-20 h-7 text-right text-sm p-1 ml-auto"
+                                value={si.unitPrice}
+                                onChange={(e) => {
+                                  const v = parseFloat(e.target.value) || 0;
+                                  setSaleItems(saleItems.map((x) => x.productId === si.productId ? { ...x, unitPrice: v } : x));
+                                }}
+                              />
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-sm py-2">{fmtCurrency(si.unitPrice * si.qty)}</TableCell>
+                            <TableCell className="py-2">
+                              <Button size="icon" variant="ghost" className="h-6 w-6" onClick={() => removeSaleItem(si.productId)}>
+                                <X className="h-3 w-3" />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
+              )}
+
+              {/* Financial summary */}
+              {saleItems.length > 0 && (
+                <div className="rounded-lg border bg-muted/30 p-3 space-y-1.5 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Valor Vendido</span>
+                    <span className="font-semibold font-mono">{fmtCurrency(saleTotalValue)}</span>
+                  </div>
+                  <div className="flex justify-between text-destructive/80">
+                    <span>Comissão do PDV ({COMMISSION_PERCENT}%)</span>
+                    <span className="font-mono">− {fmtCurrency(saleTotalCommission)}</span>
+                  </div>
+                  <div className="border-t pt-1.5 flex justify-between font-bold">
+                    <span>Valor a Receber (repasse)</span>
+                    <span className="font-mono text-emerald-600">{fmtCurrency(saleNetReceivable)}</span>
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <Label>Observações</Label>
+                <Textarea value={movNotes} onChange={(e) => setMovNotes(e.target.value)} rows={2} />
+              </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+          ) : (
+            /* ── NON-SALE: single product ── */
+            <div className="grid gap-4">
+              <div>
+                <Label>Produto *</Label>
+                <Popover open={productPopoverOpen} onOpenChange={setProductPopoverOpen}>
+                  <PopoverTrigger asChild>
+                    <Button variant="outline" role="combobox" className="w-full justify-between font-normal h-10">
+                      {movProductId
+                        ? (() => {
+                            const p = products.find((x) => x.id === movProductId);
+                            if (!p) return "Selecione…";
+                            const ci = viewLocItems.find((i: any) => i.product_id === movProductId);
+                            const price = ci?.sale_price ?? p.sale_price ?? 0;
+                            return `${p.name} — ${fmtCurrency(price)}`;
+                          })()
+                        : "Selecione um produto…"}
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                    <Command>
+                      <CommandInput placeholder="Buscar produto..." />
+                      <CommandList>
+                        <CommandEmpty>Nenhum produto encontrado.</CommandEmpty>
+                        <CommandGroup>
+                          {products.map((p) => {
+                            const ci = viewLocItems.find((i: any) => i.product_id === p.id);
+                            const price = ci?.sale_price ?? p.sale_price ?? 0;
+                            return (
+                              <CommandItem
+                                key={p.id}
+                                value={p.name}
+                                onSelect={() => {
+                                  setMovProductId(p.id);
+                                  setProductPopoverOpen(false);
+                                }}
+                              >
+                                <div className="flex flex-col">
+                                  <span>{p.name}</span>
+                                  <span className="text-xs text-muted-foreground">{fmtCurrency(price)}</span>
+                                </div>
+                              </CommandItem>
+                            );
+                          })}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
+              </div>
               <div>
                 <Label>Quantidade *</Label>
                 <Input type="number" min={1} value={movQty} onChange={(e) => setMovQty(e.target.value)} placeholder="10" />
               </div>
-              {(movementType === "sale") && (
-                <div>
-                  <Label>Preço Unitário</Label>
-                  <Input type="number" step="0.01" value={movPrice} onChange={(e) => setMovPrice(e.target.value)} placeholder="25.00" />
-                  {(() => {
-                    const p = products.find((x) => x.id === movProductId);
-                    const typedPrice = parseFloat(movPrice);
-                    const cost = p?.cost_estimate ?? 0;
-                    if (p && !isNaN(typedPrice) && typedPrice > 0) {
-                      if (typedPrice < (cost || 0)) {
-                        return <p className="text-xs text-destructive mt-1">⚠ Abaixo do custo ({fmtCurrency(cost)})</p>;
-                      }
-                    }
-                    return null;
-                  })()}
-                </div>
-              )}
+              <div>
+                <Label>Observações</Label>
+                <Textarea value={movNotes} onChange={(e) => setMovNotes(e.target.value)} rows={2} />
+              </div>
             </div>
-            <div>
-              <Label>Observações</Label>
-              <Textarea value={movNotes} onChange={(e) => setMovNotes(e.target.value)} rows={2} />
-            </div>
-          </div>
+          )}
+
           <DialogFooter>
             <Button variant="outline" onClick={() => setMovementOpen(false)}>Cancelar</Button>
-            <Button onClick={() => movementMut.mutate()} disabled={!movProductId || !movQty || movementMut.isPending}>
+            <Button
+              onClick={() => movementMut.mutate()}
+              disabled={
+                movementMut.isPending ||
+                (movementType === "sale" ? saleItems.length === 0 : (!movProductId || !movQty))
+              }
+            >
               {movementMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Confirmar
             </Button>
           </DialogFooter>
