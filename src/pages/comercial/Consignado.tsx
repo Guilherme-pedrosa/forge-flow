@@ -5,7 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { PageHeader } from "@/components/shared/PageHeader";
 import {
   Plus, Search, MoreHorizontal, Loader2, MapPin, Package, Trash2, ArrowRightLeft,
-  ArrowUpFromLine, ArrowDownToLine, RotateCcw, ShoppingCart, Eye, X, Printer,
+  ArrowUpFromLine, ArrowDownToLine, RotateCcw, ShoppingCart, Eye, X, Printer, Pencil, Check,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -73,6 +73,9 @@ export default function Consignado() {
   const [movQty, setMovQty] = useState("");
   const [movPrice, setMovPrice] = useState("");
   const [movNotes, setMovNotes] = useState("");
+  // Inline qty edit
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [editQtyValue, setEditQtyValue] = useState("");
 
   // ── Queries ──
   const { data: locations = [], isLoading } = useQuery({
@@ -416,6 +419,47 @@ export default function Consignado() {
       qc.invalidateQueries({ queryKey: ["consignment_items"] });
       qc.invalidateQueries({ queryKey: ["consignment_movements"] });
       toast({ title: "Todos os itens foram recolhidos" });
+    },
+    onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
+  });
+
+  const adjustQtyMut = useMutation({
+    mutationFn: async ({ itemId, newQty }: { itemId: string; newQty: number }) => {
+      if (!profile || !viewLocId) throw new Error("Sem contexto");
+      const item = viewLocItems.find((i: any) => i.id === itemId);
+      if (!item) throw new Error("Item não encontrado");
+      if (newQty < 0) throw new Error("Quantidade não pode ser negativa");
+
+      const diff = newQty - item.current_qty;
+      const movType = diff >= 0 ? "placement" : "return";
+      const absQty = Math.abs(diff);
+
+      if (absQty > 0) {
+        // Register adjustment movement
+        const { error: movErr } = await supabase.from("consignment_movements").insert({
+          tenant_id: profile.tenant_id,
+          location_id: viewLocId,
+          product_id: item.product_id,
+          movement_type: movType as any,
+          quantity: absQty,
+          notes: `Ajuste manual: ${item.current_qty} → ${newQty}`,
+          created_by: profile.user_id,
+        });
+        if (movErr) throw movErr;
+
+        const updates: any = { current_qty: newQty };
+        if (diff > 0) updates.total_placed = item.total_placed + absQty;
+        if (diff < 0) updates.total_returned = item.total_returned + absQty;
+
+        const { error } = await supabase.from("consignment_items").update(updates).eq("id", itemId);
+        if (error) throw error;
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["consignment_items"] });
+      qc.invalidateQueries({ queryKey: ["consignment_movements"] });
+      setEditingItemId(null);
+      toast({ title: "Quantidade ajustada" });
     },
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
@@ -799,7 +843,7 @@ export default function Consignado() {
                           {viewLocItems.map((item: any) => {
                             const csgPrice = getConsignmentPrice(item.products?.sale_price ?? null, item.products?.cost_estimate ?? null, (viewLoc as any)?.discount_percent ?? 29);
                             return (
-                            <TableRow key={item.id}>
+                            <TableRow key={item.id} className="group">
                               <TableCell className="text-sm font-medium">
                                 <div className="flex items-center gap-2">
                                   {item.products?.photo_url && (
@@ -808,7 +852,38 @@ export default function Consignado() {
                                   {item.products?.name || "—"}
                                 </div>
                               </TableCell>
-                              <TableCell className="text-center font-bold">{item.current_qty}</TableCell>
+                              <TableCell className="text-center font-bold">
+                                {editingItemId === item.id ? (
+                                  <div className="flex items-center gap-1 justify-center">
+                                    <Input
+                                      type="number"
+                                      min={0}
+                                      className="w-16 h-7 text-center text-sm p-1"
+                                      value={editQtyValue}
+                                      onChange={(e) => setEditQtyValue(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === "Enter") adjustQtyMut.mutate({ itemId: item.id, newQty: parseInt(editQtyValue) || 0 });
+                                        if (e.key === "Escape") setEditingItemId(null);
+                                      }}
+                                      autoFocus
+                                    />
+                                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => adjustQtyMut.mutate({ itemId: item.id, newQty: parseInt(editQtyValue) || 0 })} disabled={adjustQtyMut.isPending}>
+                                      {adjustQtyMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                                    </Button>
+                                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setEditingItemId(null)}>
+                                      <X className="h-3 w-3" />
+                                    </Button>
+                                  </div>
+                                ) : (
+                                  <button
+                                    className="inline-flex items-center gap-1 hover:text-primary transition-colors cursor-pointer"
+                                    onClick={() => { setEditingItemId(item.id); setEditQtyValue(String(item.current_qty)); }}
+                                  >
+                                    {item.current_qty}
+                                    <Pencil className="h-3 w-3 opacity-0 group-hover:opacity-50" />
+                                  </button>
+                                )}
+                              </TableCell>
                               <TableCell className="text-right font-mono text-sm text-muted-foreground line-through">
                                 {fmtCurrency(item.products?.sale_price || 0)}
                               </TableCell>
