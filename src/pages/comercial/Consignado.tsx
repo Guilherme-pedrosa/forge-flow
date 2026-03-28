@@ -321,8 +321,8 @@ export default function Consignado() {
           throw new Error("Este ponto não tem um cliente vinculado. Edite o ponto e associe um cliente antes de registrar vendas.");
         }
         const product = products.find((p: any) => p.id === movProductId);
-        const locDiscount = (loc as any)?.discount_percent ?? 29;
-        const unitPrice = price || getConsignmentPrice(product?.sale_price ?? null, product?.cost_estimate ?? null, locDiscount);
+        const ci = viewLocItems.find((i: any) => i.product_id === movProductId);
+        const unitPrice = price || (ci as any)?.sale_price || product?.sale_price || 0;
         const saleTotal = unitPrice * qty;
 
         // Count existing orders for code generation
