@@ -26,6 +26,9 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import { ChevronsUpDown } from "lucide-react";
 
 const fmtCurrency = (v: number | null) =>
   v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
@@ -76,6 +79,7 @@ export default function Consignado() {
   // Inline qty edit
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [editQtyValue, setEditQtyValue] = useState("");
+  const [productPopoverOpen, setProductPopoverOpen] = useState(false);
 
   // ── Queries ──
   const { data: locations = [], isLoading } = useQuery({
@@ -962,27 +966,54 @@ export default function Consignado() {
           <div className="grid gap-4">
             <div>
               <Label>Produto *</Label>
-              <Select value={movProductId || "none"} onValueChange={(v) => {
-                const pid = v === "none" ? "" : v;
-                setMovProductId(pid);
-                if (movementType === "sale" && pid) {
-                  const p = products.find((x) => x.id === pid);
-                  if (p) setMovPrice(String(getConsignmentPrice(p.sale_price ?? null, p.cost_estimate ?? null, (viewLoc as any)?.discount_percent ?? 29)));
-                }
-              }}>
-                <SelectTrigger><SelectValue placeholder="Selecione um produto" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="none">Selecione…</SelectItem>
-                  {products.map((p) => {
-                    const csg = getConsignmentPrice(p.sale_price ?? null, p.cost_estimate ?? null, (viewLoc as any)?.discount_percent ?? 29);
-                    return (
-                      <SelectItem key={p.id} value={p.id}>
-                        {p.name} — {fmtCurrency(csg)}{movementType === "sale" && p.sale_price ? ` (era ${fmtCurrency(p.sale_price)})` : ""}
-                      </SelectItem>
-                    );
-                  })}
-                </SelectContent>
-              </Select>
+              <Popover open={productPopoverOpen} onOpenChange={setProductPopoverOpen}>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" role="combobox" className="w-full justify-between font-normal h-10">
+                    {movProductId
+                      ? (() => {
+                          const p = products.find((x) => x.id === movProductId);
+                          if (!p) return "Selecione…";
+                          const csg = getConsignmentPrice(p.sale_price ?? null, p.cost_estimate ?? null, (viewLoc as any)?.discount_percent ?? 29);
+                          return `${p.name} — ${fmtCurrency(csg)}`;
+                        })()
+                      : "Selecione um produto…"}
+                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
+                  <Command>
+                    <CommandInput placeholder="Buscar produto..." />
+                    <CommandList>
+                      <CommandEmpty>Nenhum produto encontrado.</CommandEmpty>
+                      <CommandGroup>
+                        {products.map((p) => {
+                          const csg = getConsignmentPrice(p.sale_price ?? null, p.cost_estimate ?? null, (viewLoc as any)?.discount_percent ?? 29);
+                          return (
+                            <CommandItem
+                              key={p.id}
+                              value={p.name}
+                              onSelect={() => {
+                                setMovProductId(p.id);
+                                if (movementType === "sale") {
+                                  setMovPrice(String(csg));
+                                }
+                                setProductPopoverOpen(false);
+                              }}
+                            >
+                              <div className="flex flex-col">
+                                <span>{p.name}</span>
+                                <span className="text-xs text-muted-foreground">
+                                  {fmtCurrency(csg)}{movementType === "sale" && p.sale_price ? ` (era ${fmtCurrency(p.sale_price)})` : ""}
+                                </span>
+                              </div>
+                            </CommandItem>
+                          );
+                        })}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
