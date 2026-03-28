@@ -518,32 +518,38 @@ export default function Consignado() {
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 
-  const printConsignment = () => {
-    if (!viewLoc) return;
+  const buildConsignmentHtml = () => {
+    if (!viewLoc) return "";
     const today = new Date().toLocaleDateString("pt-BR");
     const itemsWithStock = viewLocItems.filter((i: any) => i.current_qty > 0);
     const totalValue = itemsWithStock.reduce((sum: number, i: any) => {
       const price = getItemSalePrice(i);
       return sum + i.current_qty * price;
     }, 0);
+    const totalCommission = itemsWithStock.reduce((sum: number, i: any) => {
+      const price = getItemSalePrice(i);
+      return sum + i.current_qty * getCommission(price);
+    }, 0);
     const customerName = (viewLoc as any).customers?.name || viewLoc.contact_name || "—";
 
     const rows = itemsWithStock.map((item: any, idx: number) => {
       const price = getItemSalePrice(item);
+      const commission = getCommission(price);
       return `
       <tr>
         <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:center">${idx + 1}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #ddd">${item.products?.name || "—"}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:center">${item.current_qty}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right">${fmtCurrency(price)}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right">${fmtCurrency(commission)}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right">${fmtCurrency(item.current_qty * price)}</td>
       </tr>
     `;}).join("");
 
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Consignado - ${viewLoc.name}</title>
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Consignado - ${viewLoc.name}</title>
       <style>
-        @media print { @page { margin: 15mm; } }
-        body { font-family: 'Segoe UI', Arial, sans-serif; color: #222; font-size: 13px; }
+        @media print { @page { margin: 15mm; } body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+        body { font-family: 'Segoe UI', Arial, sans-serif; color: #222; font-size: 13px; max-width: 800px; margin: 0 auto; padding: 20px; }
         h2 { margin: 0 0 4px; font-size: 18px; }
         .sub { color: #666; font-size: 12px; margin-bottom: 16px; }
         table { width: 100%; border-collapse: collapse; margin-top: 12px; }
@@ -553,6 +559,12 @@ export default function Consignado() {
         .sig-box { flex: 1; text-align: center; border-top: 1px solid #333; padding-top: 6px; font-size: 12px; }
         .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 24px; font-size: 12px; margin-bottom: 8px; }
         .info-grid span { color: #888; }
+        .summary-box { margin-top: 16px; border: 1px solid #ccc; border-radius: 6px; padding: 12px; font-size: 12px; }
+        .summary-row { display: flex; justify-content: space-between; margin-bottom: 4px; }
+        .summary-row.total { border-top: 1px solid #333; padding-top: 6px; margin-top: 6px; font-weight: bold; }
+        .print-btn { position: fixed; bottom: 20px; right: 20px; background: #333; color: #fff; border: none; padding: 12px 24px; border-radius: 8px; font-size: 14px; cursor: pointer; z-index: 100; display: flex; align-items: center; gap: 8px; box-shadow: 0 4px 12px rgba(0,0,0,.3); }
+        .print-btn:hover { background: #555; }
+        @media print { .print-btn { display: none !important; } }
       </style></head><body>
       <h2>Termo de Consignação</h2>
       <p class="sub">Emitido em ${today}</p>
@@ -569,16 +581,22 @@ export default function Consignado() {
           <th>Produto</th>
           <th style="text-align:center">Qtd</th>
           <th style="text-align:right">Preço Unit.</th>
+          <th style="text-align:right">Comissão (${COMMISSION_PERCENT}%)</th>
           <th style="text-align:right">Total</th>
         </tr></thead>
         <tbody>
           ${rows}
           <tr class="total-row">
-            <td colspan="4" style="padding:8px;text-align:right">TOTAL</td>
+            <td colspan="5" style="padding:8px;text-align:right">TOTAL</td>
             <td style="padding:8px;text-align:right">${fmtCurrency(totalValue)}</td>
           </tr>
         </tbody>
       </table>
+      <div class="summary-box">
+        <div class="summary-row"><span>Valor Total em Produtos</span><span>${fmtCurrency(totalValue)}</span></div>
+        <div class="summary-row" style="color:#b91c1c"><span>Comissão do PDV (${COMMISSION_PERCENT}%)</span><span>− ${fmtCurrency(totalCommission)}</span></div>
+        <div class="summary-row total"><span>Valor a Repassar</span><span>${fmtCurrency(totalValue - totalCommission)}</span></div>
+      </div>
       <p style="font-size:11px;color:#666;margin-top:16px">
         Declaro ter recebido os produtos acima em regime de consignação, comprometendo-me a devolver os itens não vendidos ou efetuar o pagamento dos itens vendidos conforme acordado.
       </p>
@@ -586,14 +604,26 @@ export default function Consignado() {
         <div class="sig-box">Responsável pela Empresa</div>
         <div class="sig-box">${customerName}<br/><span style="font-size:10px;color:#888">Consignatário(a)</span></div>
       </div>
+      <button class="print-btn" onclick="window.print()">🖨 Imprimir / Salvar PDF</button>
     </body></html>`;
+  };
 
-    const w = window.open("", "_blank");
-    if (w) {
-      w.document.write(html);
-      w.document.close();
-      w.onload = () => { w.print(); };
+  const downloadConsignment = () => {
+    const html = buildConsignmentHtml();
+    if (!html) return;
+    const blob = new Blob([html], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const w = window.open(url, "_blank");
+    // Fallback for mobile browsers that block window.open
+    if (!w) {
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `consignado-${viewLoc?.name?.replace(/\s+/g, "-").toLowerCase() || "termo"}.html`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
     }
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
   };
 
   const openMovement = (type: string) => {
