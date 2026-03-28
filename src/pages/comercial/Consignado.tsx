@@ -511,8 +511,8 @@ export default function Consignado() {
         <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:center">${idx + 1}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #ddd">${item.products?.name || "—"}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:center">${item.current_qty}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right">${fmtCurrency(csg)}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right">${fmtCurrency(item.current_qty * csg)}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right">${fmtCurrency(price)}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right">${fmtCurrency(item.current_qty * price)}</td>
       </tr>
     `;}).join("");
 
