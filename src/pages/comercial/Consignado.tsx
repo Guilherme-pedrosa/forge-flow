@@ -864,7 +864,7 @@ export default function Consignado() {
                             <TableHead>Produto</TableHead>
                             <TableHead className="text-center">Atual</TableHead>
                             <TableHead className="text-right">Preço Venda</TableHead>
-                            <TableHead className="text-right">Preço Consig. (−{(viewLoc as any)?.discount_percent ?? 29}%)</TableHead>
+                            <TableHead className="text-right">Comissão ({COMMISSION_PERCENT}%)</TableHead>
                             <TableHead className="text-center">Vendidos</TableHead>
                             <TableHead className="text-right">Valor (estoque)</TableHead>
                           </TableRow>
