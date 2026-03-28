@@ -73,6 +73,9 @@ export default function Consignado() {
   const [movQty, setMovQty] = useState("");
   const [movPrice, setMovPrice] = useState("");
   const [movNotes, setMovNotes] = useState("");
+  // Inline qty edit
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [editQtyValue, setEditQtyValue] = useState("");
 
   // ── Queries ──
   const { data: locations = [], isLoading } = useQuery({
