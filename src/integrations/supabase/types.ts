@@ -755,6 +755,7 @@ export type Database = {
           id: string
           location_id: string
           product_id: string
+          sale_price: number | null
           tenant_id: string
           total_placed: number
           total_returned: number
@@ -767,6 +768,7 @@ export type Database = {
           id?: string
           location_id: string
           product_id: string
+          sale_price?: number | null
           tenant_id: string
           total_placed?: number
           total_returned?: number
@@ -779,6 +781,7 @@ export type Database = {
           id?: string
           location_id?: string
           product_id?: string
+          sale_price?: number | null
           tenant_id?: string
           total_placed?: number
           total_returned?: number
