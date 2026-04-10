@@ -2,6 +2,7 @@ import { useState, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import type { Database } from "@/integrations/supabase/types";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageHeader } from "@/components/shared/PageHeader";
 import {
@@ -175,7 +176,7 @@ export default function Jobs() {
       const { data: job, error: fetchErr } = await supabase.from("jobs").select("*").eq("id", id).single();
       if (fetchErr || !job) throw fetchErr || new Error("Job não encontrado");
 
-      const updates: Record<string, unknown> = { status };
+      const updates: Database["public"]["Tables"]["jobs"]["Update"] = { status };
       if (status === "printing" || status === "reprint") {
         updates.started_at = new Date().toISOString();
       }
