@@ -542,7 +542,33 @@ export default function Produtos() {
     await supabase.from("product_photos").insert(rows);
   };
 
-  const createMut = useMutation({
+  // Build combined extras array (regular extras + kit components stored as special entries)
+  const buildExtrasPayload = () => {
+    const regularExtras = extras
+      .filter((e) => e.name.trim())
+      .map(({ name: extraName, cost: extraCost }) => ({ name: extraName, cost: Math.round((extraCost || 0) * 100) / 100 }));
+    const kitEntries = kitComponents
+      .filter((kc) => kc.productId)
+      .map((kc) => {
+        const prod = products.find((p: any) => p.id === kc.productId);
+        return {
+          name: `🧩 ${prod?.name || "Produto"}${kc.qty > 1 ? ` ×${kc.qty}` : ""}`,
+          cost: Math.round(((prod as any)?.cost_estimate || 0) * kc.qty * 100) / 100,
+          _kit_product_id: kc.productId,
+          _kit_qty: kc.qty,
+        };
+      });
+    return [...regularExtras, ...kitEntries];
+  };
+
+  // Kit cost calculation
+  const kitTotalCost = useMemo(() => {
+    return kitComponents.reduce((sum, kc) => {
+      const prod = products.find((p: any) => p.id === kc.productId);
+      return sum + ((prod as any)?.cost_estimate || 0) * kc.qty;
+    }, 0);
+  }, [kitComponents, products]);
+
     mutationFn: async () => {
       if (!profile) throw new Error("Sem perfil");
       const cost = costEstimate ? parseFloat(costEstimate) : 0;
