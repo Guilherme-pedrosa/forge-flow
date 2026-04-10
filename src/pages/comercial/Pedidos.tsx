@@ -5,7 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { PageHeader } from "@/components/shared/PageHeader";
 import {
   Plus, Search, MoreHorizontal, FileText, Loader2, Trash2, CheckCircle2, Clock, Truck,
-  ShoppingCart, MapPin, X, Package, Printer, DollarSign, ArrowRight,
+  ShoppingCart, MapPin, X, Package, Printer, DollarSign, ArrowRight, Pencil,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useNavigate, Link } from "react-router-dom";
@@ -71,6 +71,7 @@ export default function Pedidos() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [viewOrderId, setViewOrderId] = useState<string | null>(null);
+  const [editMode, setEditMode] = useState(false);
 
   // Form state
   const [customerId, setCustomerId] = useState("");
@@ -85,6 +86,41 @@ export default function Pedidos() {
   const resetForm = () => {
     setCustomerId(""); setDueDate(""); setPaymentDueDate(""); setNotes(""); setShipping(""); setDiscountVal("");
     setDeliveryAddress(""); setLines([newLine()]);
+  };
+
+  // Populate form from existing order for editing
+  const startEdit = () => {
+    if (!viewOrder) return;
+    setCustomerId(viewOrder.customer_id || "");
+    setDueDate(viewOrder.due_date || "");
+    setPaymentDueDate((viewOrder as any).payment_due_date || "");
+    setDiscountVal(viewOrder.discount ? String(viewOrder.discount) : "");
+    // Extract delivery address and notes from notes field
+    const rawNotes = viewOrder.notes || "";
+    const addressMatch = rawNotes.match(/^📍 Entrega: (.+?)(\n|$)/);
+    if (addressMatch) {
+      setDeliveryAddress(addressMatch[1]);
+      setNotes(rawNotes.replace(/^📍 Entrega: .+?\n?/, ""));
+    } else {
+      setDeliveryAddress("");
+      setNotes(rawNotes);
+    }
+    setShipping("");
+    // Load existing items into lines
+    if (viewItems.length > 0) {
+      setLines(viewItems.map((item: any) => ({
+        id: item.id,
+        product_id: item.product_id || "",
+        description: item.description,
+        quantity: item.quantity,
+        unit_price: item.unit_price,
+        total: item.total,
+        notes: item.notes || "",
+      })));
+    } else {
+      setLines([newLine()]);
+    }
+    setEditMode(true);
   };
 
   // Queries
@@ -574,6 +610,54 @@ export default function Pedidos() {
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 
+  // UPDATE ORDER
+  const updateOrderMut = useMutation({
+    mutationFn: async () => {
+      if (!profile || !viewOrderId) throw new Error("Sem perfil");
+      if (lines.every((l) => !l.description)) throw new Error("Adicione pelo menos um item");
+
+      const composedNotes = [deliveryAddress ? `📍 Entrega: ${deliveryAddress}` : "", notes].filter(Boolean).join("\n") || null;
+
+      const { error } = await supabase.from("orders").update({
+        customer_id: customerId || null,
+        due_date: dueDate || null,
+        payment_due_date: paymentDueDate || null,
+        total: grandTotal,
+        discount: discountNum,
+        notes: composedNotes,
+      } as any).eq("id", viewOrderId);
+      if (error) throw error;
+
+      // Delete old items and re-insert
+      await supabase.from("order_items").delete().eq("order_id", viewOrderId);
+
+      const validLines = lines.filter((l) => l.description);
+      if (validLines.length > 0) {
+        const { error: itemsErr } = await supabase.from("order_items").insert(
+          validLines.map((l) => ({
+            tenant_id: profile.tenant_id,
+            order_id: viewOrderId,
+            product_id: l.product_id || null,
+            description: l.description,
+            quantity: l.quantity,
+            unit_price: l.unit_price,
+            total: l.total,
+            notes: l.notes || null,
+          }))
+        );
+        if (itemsErr) throw itemsErr;
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["orders"] });
+      qc.invalidateQueries({ queryKey: ["order_items", viewOrderId] });
+      qc.invalidateQueries({ queryKey: ["accounts_receivable"] });
+      setEditMode(false);
+      toast({ title: "Orçamento atualizado com sucesso" });
+    },
+    onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
+  });
+
   const deleteMut = useMutation({
     mutationFn: async (id: string) => {
       // Delete linked jobs first
@@ -809,22 +893,22 @@ export default function Pedidos() {
         </DialogContent>
       </Dialog>
 
-      {/* VIEW ORDER DIALOG */}
-      <Dialog open={!!viewOrderId} onOpenChange={(o) => { if (!o) setViewOrderId(null); }}>
-        <DialogContent className="max-w-2xl w-[95vw] sm:w-auto">
+      {/* VIEW / EDIT ORDER DIALOG */}
+      <Dialog open={!!viewOrderId} onOpenChange={(o) => { if (!o) { setViewOrderId(null); setEditMode(false); } }}>
+        <DialogContent className={cn("w-[95vw] sm:w-auto", editMode ? "max-w-3xl max-h-[90vh] overflow-hidden flex flex-col" : "max-w-2xl")}>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <FileText className="h-5 w-5 text-primary" />
               {viewOrder?.code || "Pedido"}
+              {editMode && <span className="text-xs font-normal text-muted-foreground ml-1">— Editando</span>}
             </DialogTitle>
           </DialogHeader>
 
-          {viewOrder && (
+          {viewOrder && !editMode && (
             <div className="space-y-4" ref={printRef}>
               {/* ── Status editável ── */}
               {(() => {
                 const cfg = statusConfig[viewOrder.status] || statusConfig.draft;
-
                 return (
                   <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
                     <p className="text-xs text-muted-foreground">Status do Pedido</p>
@@ -846,11 +930,9 @@ export default function Pedidos() {
                           ))}
                         </SelectContent>
                       </Select>
-
                       <span className={cn("inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-semibold", cfg.color)}>
                         {cfg.label}
                       </span>
-
                       {updateStatusMut.isPending && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
                     </div>
                   </div>
@@ -955,9 +1037,14 @@ export default function Pedidos() {
               )}
 
               <div className="flex justify-between items-end">
-                <Button variant="outline" size="sm" onClick={handlePrint}>
-                  <Printer className="h-4 w-4 mr-1" /> Imprimir / PDF
-                </Button>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={handlePrint}>
+                    <Printer className="h-4 w-4 mr-1" /> Imprimir / PDF
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={startEdit}>
+                    <Pencil className="h-4 w-4 mr-1" /> Editar
+                  </Button>
+                </div>
                 <div className="w-64 space-y-1 text-sm">
                   {viewOrder.discount > 0 && (
                     <div className="flex justify-between text-muted-foreground">
@@ -969,6 +1056,124 @@ export default function Pedidos() {
                   </div>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* EDIT MODE */}
+          {viewOrder && editMode && (
+            <div className="flex-1 overflow-y-auto space-y-5 pr-1">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <Label>Cliente</Label>
+                  <Select value={customerId || "none"} onValueChange={(v) => setCustomerId(v === "none" ? "" : v)}>
+                    <SelectTrigger><SelectValue placeholder="Selecione o cliente" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Sem cliente</SelectItem>
+                      {customers.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
+                  <Label>Data de Entrega</Label>
+                  <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+                </div>
+                <div>
+                  <Label>Vencimento Financeiro</Label>
+                  <Input type="date" value={paymentDueDate} onChange={(e) => setPaymentDueDate(e.target.value)} />
+                </div>
+              </div>
+
+              <div>
+                <Label className="flex items-center gap-1.5"><MapPin className="h-3.5 w-3.5" /> Endereço de Entrega</Label>
+                <Input value={deliveryAddress} onChange={(e) => setDeliveryAddress(e.target.value)} placeholder="Rua, número, bairro, cidade - UF, CEP" />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Itens do Orçamento</Label>
+                  <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setLines((prev) => [...prev, newLine()])}>
+                    <Plus className="h-3.5 w-3.5 mr-1" /> Item
+                  </Button>
+                </div>
+                <div className="rounded-lg border overflow-hidden">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="bg-muted/50">
+                        <TableHead className="w-[40%]">Produto / Descrição</TableHead>
+                        <TableHead className="w-[80px] text-center">Qtd</TableHead>
+                        <TableHead className="w-[120px] text-right">Unitário</TableHead>
+                        <TableHead className="w-[120px] text-right">Total</TableHead>
+                        <TableHead className="w-10" />
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {lines.map((line) => (
+                        <TableRow key={line.id}>
+                          <TableCell className="p-1.5">
+                            <Select value={line.product_id || "custom"} onValueChange={(v) => updateLine(line.id, "product_id", v === "custom" ? "" : v)}>
+                              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Selecione" /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="custom">Personalizado</SelectItem>
+                                {products.map((p) => <SelectItem key={p.id} value={p.id}>{p.name} {p.sale_price ? `(${fmtCurrency(p.sale_price)})` : ""}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                            {!line.product_id && (
+                              <Input className="mt-1 h-7 text-xs" value={line.description} onChange={(e) => updateLine(line.id, "description", e.target.value)} placeholder="Descrição do item" />
+                            )}
+                          </TableCell>
+                          <TableCell className="p-1.5"><Input type="number" min={1} className="h-8 text-xs text-center" value={line.quantity} onChange={(e) => updateLine(line.id, "quantity", e.target.value)} /></TableCell>
+                          <TableCell className="p-1.5"><Input type="number" step="0.01" className="h-8 text-xs text-right" value={line.unit_price} onChange={(e) => updateLine(line.id, "unit_price", e.target.value)} /></TableCell>
+                          <TableCell className="p-1.5 text-right font-mono text-xs font-medium">{fmtCurrency(line.total)}</TableCell>
+                          <TableCell className="p-1.5">
+                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => removeLine(line.id)}>
+                              <X className="h-3.5 w-3.5 text-muted-foreground" />
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <Label>Observações</Label>
+                  <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} placeholder="Condições de pagamento, prazo, etc." />
+                </div>
+                <div className="space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div><Label className="text-xs">Frete (R$)</Label><Input type="number" step="0.01" value={shipping} onChange={(e) => setShipping(e.target.value)} placeholder="0,00" /></div>
+                    <div><Label className="text-xs">Desconto (R$)</Label><Input type="number" step="0.01" value={discountVal} onChange={(e) => setDiscountVal(e.target.value)} placeholder="0,00" /></div>
+                  </div>
+                  <div className="rounded-lg border bg-muted/30 p-3 space-y-1.5">
+                    <div className="flex justify-between text-xs text-muted-foreground">
+                      <span>Subtotal ({lines.filter((l) => l.description || l.product_id).length} itens)</span>
+                      <span className="font-mono">{fmtCurrency(subtotal)}</span>
+                    </div>
+                    {shippingVal > 0 && (
+                      <div className="flex justify-between text-xs text-muted-foreground">
+                        <span>Frete</span><span className="font-mono">+ {fmtCurrency(shippingVal)}</span>
+                      </div>
+                    )}
+                    {discountNum > 0 && (
+                      <div className="flex justify-between text-xs text-muted-foreground">
+                        <span>Desconto</span><span className="font-mono text-destructive">- {fmtCurrency(discountNum)}</span>
+                      </div>
+                    )}
+                    <div className="flex justify-between text-sm font-semibold text-foreground border-t pt-1.5">
+                      <span>Total</span><span className="font-mono">{fmtCurrency(grandTotal)}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setEditMode(false)}>Cancelar</Button>
+                <Button onClick={() => updateOrderMut.mutate()} disabled={updateOrderMut.isPending}>
+                  {updateOrderMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Salvar Alterações
+                </Button>
+              </DialogFooter>
             </div>
           )}
         </DialogContent>
