@@ -175,7 +175,7 @@ export default function Jobs() {
       const { data: job, error: fetchErr } = await supabase.from("jobs").select("*").eq("id", id).single();
       if (fetchErr || !job) throw fetchErr || new Error("Job não encontrado");
 
-      const updates: Record<string, any> = { status };
+      const updates: Database["public"]["Tables"]["jobs"]["Update"] = { status };
       if (status === "printing" || status === "reprint") {
         updates.started_at = new Date().toISOString();
       }
