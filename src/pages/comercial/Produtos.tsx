@@ -295,18 +295,23 @@ export default function Produtos() {
     setEstTime(p.est_time_minutes ? (p.est_time_minutes / 60).toFixed(2) : ""); setPostMinutes(p.post_process_minutes?.toString() || "");
     setCostEstimate(p.cost_estimate?.toString() || ""); setSalePrice(p.sale_price?.toString() || "");
     setPhotoUrl(p.photo_url || ""); setNotes(p.notes || ""); setPrinterId(""); setNumColors(String((p as any).num_colors || 1)); setPrintsPerPlate(String((p as any).prints_per_plate || 1));
-    setExtras(
-      Array.isArray((p as any).extras)
-        ? (p as any).extras.map((e: any) => ({
-            name: e?.name ?? "",
-            cost: typeof e?.cost === "number" ? e.cost : parseFloat(String(e?.cost || 0)) || 0,
-            costInput:
-              typeof e?.cost === "number"
-                ? e.cost.toFixed(2).replace(".", ",")
-                : String(e?.cost || "").replace(".", ","),
-          }))
-        : [],
-    );
+    const rawExtras = Array.isArray((p as any).extras) ? (p as any).extras : [];
+    // Separate kit components from regular extras
+    const kitItems: { productId: string; qty: number }[] = [];
+    const regularExtras: ExtraItem[] = [];
+    for (const e of rawExtras) {
+      if (e?._kit_product_id) {
+        kitItems.push({ productId: e._kit_product_id, qty: e._kit_qty || 1 });
+      } else {
+        regularExtras.push({
+          name: e?.name ?? "",
+          cost: typeof e?.cost === "number" ? e.cost : parseFloat(String(e?.cost || 0)) || 0,
+          costInput: typeof e?.cost === "number" ? e.cost.toFixed(2).replace(".", ",") : String(e?.cost || "").replace(".", ","),
+        });
+      }
+    }
+    setExtras(regularExtras);
+    setKitComponents(kitItems);
     // Load extra photos
     if (p.id) {
       supabase.from("product_photos").select("url").eq("product_id", p.id).order("sort_order").then(({ data }) => {
