@@ -5,7 +5,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { PageHeader } from "@/components/shared/PageHeader";
 import {
   Plus, Search, MoreHorizontal, FileText, Loader2, Trash2, CheckCircle2, Clock, Truck,
-  ShoppingCart, MapPin, X, Package, Printer, DollarSign, ArrowRight,
+  ShoppingCart, MapPin, X, Package, Printer, DollarSign, ArrowRight, Pencil,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useNavigate, Link } from "react-router-dom";
