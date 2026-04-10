@@ -724,7 +724,77 @@ export default function Produtos() {
         </div>
       </div>
 
-      {/* Extras / Itens Adicionais */}
+      {/* Kit Components */}
+      {category === "kit" && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">🧩 Produtos do Kit</p>
+            <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setKitComponents([...kitComponents, { productId: "", qty: 1 }])}>
+              <Plus className="h-3 w-3 mr-1" /> Adicionar Produto
+            </Button>
+          </div>
+          {kitComponents.length === 0 && (
+            <p className="text-xs text-muted-foreground italic">Selecione os produtos que compõem este kit.</p>
+          )}
+          {kitComponents.map((kc, idx) => {
+            const prod = products.find((p: any) => p.id === kc.productId);
+            const unitCost = (prod as any)?.cost_estimate || 0;
+            return (
+              <div key={idx} className="grid grid-cols-[1fr_70px_90px_auto] gap-2 items-center">
+                <Select value={kc.productId || "none"} onValueChange={(v) => {
+                  const updated = [...kitComponents];
+                  updated[idx] = { ...updated[idx], productId: v === "none" ? "" : v };
+                  setKitComponents(updated);
+                }}>
+                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Selecione" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Selecione...</SelectItem>
+                    {products.filter((p: any) => p.is_active && p.category !== "kit").map((p: any) => (
+                      <SelectItem key={p.id} value={p.id}>{p.name} ({fmtCurrency(p.cost_estimate)})</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Input
+                  type="number" min={1} className="h-8 text-xs text-center"
+                  value={kc.qty}
+                  onChange={(e) => {
+                    const updated = [...kitComponents];
+                    updated[idx] = { ...updated[idx], qty: Math.max(1, parseInt(e.target.value) || 1) };
+                    setKitComponents(updated);
+                  }}
+                />
+                <span className="text-xs font-mono text-muted-foreground text-right">{fmtCurrency(unitCost * kc.qty)}</span>
+                <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive hover:text-destructive" onClick={() => setKitComponents(kitComponents.filter((_, i) => i !== idx))}>
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            );
+          })}
+          {kitComponents.length > 0 && (
+            <div className="flex justify-between items-center text-xs border-t pt-2 mt-1">
+              <span className="font-medium text-muted-foreground">Custo Total do Kit (componentes)</span>
+              <span className="font-mono font-semibold text-foreground">{fmtCurrency(kitTotalCost)}</span>
+            </div>
+          )}
+          {kitComponents.length > 0 && (
+            <Button type="button" variant="outline" size="sm" className="h-7 text-xs w-full" onClick={() => {
+              const totalExtras = extras.reduce((s, e) => s + (e.cost || 0), 0);
+              setCostEstimate((kitTotalCost + totalExtras).toFixed(2));
+              if (!salePrice || parseFloat(salePrice) === 0) {
+                const margin = tenantSettings.target_margin || 40;
+                const total = kitTotalCost + totalExtras;
+                const suggested = margin < 100 ? total / (1 - margin / 100) : total * 2;
+                setSalePrice(suggested.toFixed(2));
+              }
+              toast({ title: "Custo do kit aplicado" });
+            }}>
+              <Calculator className="h-3 w-3 mr-1" /> Aplicar Custo do Kit
+            </Button>
+          )}
+        </div>
+      )}
+
+
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">🎁 Itens Extras / Acompanhamentos</p>
