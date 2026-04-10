@@ -83,6 +83,7 @@ export default function Produtos() {
   const [numColors, setNumColors] = useState("1");
   const [extras, setExtras] = useState<ExtraItem[]>([]);
   const [printsPerPlate, setPrintsPerPlate] = useState("1");
+  const [kitComponents, setKitComponents] = useState<{ productId: string; qty: number }[]>([]);
 
   // Marketplace fee config
   const [channelConfig, setChannelConfig] = useState([
@@ -285,7 +286,7 @@ export default function Produtos() {
 
   const resetForm = () => {
     setName(""); setDescription(""); setSku(""); setCategory("printed_part"); setMaterialId("");
-    setEstGrams(""); setEstTime(""); setPostMinutes(""); setCostEstimate(""); setSalePrice(""); setPhotoUrl(""); setExtraPhotos([]); setNotes(""); setPrinterId(""); setNumColors("1"); setPrintsPerPlate("1"); setExtras([]);
+    setEstGrams(""); setEstTime(""); setPostMinutes(""); setCostEstimate(""); setSalePrice(""); setPhotoUrl(""); setExtraPhotos([]); setNotes(""); setPrinterId(""); setNumColors("1"); setPrintsPerPlate("1"); setExtras([]); setKitComponents([]);
   };
 
   const openEdit = (p: any) => {
@@ -294,18 +295,23 @@ export default function Produtos() {
     setEstTime(p.est_time_minutes ? (p.est_time_minutes / 60).toFixed(2) : ""); setPostMinutes(p.post_process_minutes?.toString() || "");
     setCostEstimate(p.cost_estimate?.toString() || ""); setSalePrice(p.sale_price?.toString() || "");
     setPhotoUrl(p.photo_url || ""); setNotes(p.notes || ""); setPrinterId(""); setNumColors(String((p as any).num_colors || 1)); setPrintsPerPlate(String((p as any).prints_per_plate || 1));
-    setExtras(
-      Array.isArray((p as any).extras)
-        ? (p as any).extras.map((e: any) => ({
-            name: e?.name ?? "",
-            cost: typeof e?.cost === "number" ? e.cost : parseFloat(String(e?.cost || 0)) || 0,
-            costInput:
-              typeof e?.cost === "number"
-                ? e.cost.toFixed(2).replace(".", ",")
-                : String(e?.cost || "").replace(".", ","),
-          }))
-        : [],
-    );
+    const rawExtras = Array.isArray((p as any).extras) ? (p as any).extras : [];
+    // Separate kit components from regular extras
+    const kitItems: { productId: string; qty: number }[] = [];
+    const regularExtras: ExtraItem[] = [];
+    for (const e of rawExtras) {
+      if (e?._kit_product_id) {
+        kitItems.push({ productId: e._kit_product_id, qty: e._kit_qty || 1 });
+      } else {
+        regularExtras.push({
+          name: e?.name ?? "",
+          cost: typeof e?.cost === "number" ? e.cost : parseFloat(String(e?.cost || 0)) || 0,
+          costInput: typeof e?.cost === "number" ? e.cost.toFixed(2).replace(".", ",") : String(e?.cost || "").replace(".", ","),
+        });
+      }
+    }
+    setExtras(regularExtras);
+    setKitComponents(kitItems);
     // Load extra photos
     if (p.id) {
       supabase.from("product_photos").select("url").eq("product_id", p.id).order("sort_order").then(({ data }) => {
@@ -536,6 +542,33 @@ export default function Produtos() {
     await supabase.from("product_photos").insert(rows);
   };
 
+  // Build combined extras array (regular extras + kit components stored as special entries)
+  const buildExtrasPayload = () => {
+    const regularExtras = extras
+      .filter((e) => e.name.trim())
+      .map(({ name: extraName, cost: extraCost }) => ({ name: extraName, cost: Math.round((extraCost || 0) * 100) / 100 }));
+    const kitEntries = kitComponents
+      .filter((kc) => kc.productId)
+      .map((kc) => {
+        const prod = products.find((p: any) => p.id === kc.productId);
+        return {
+          name: `🧩 ${prod?.name || "Produto"}${kc.qty > 1 ? ` ×${kc.qty}` : ""}`,
+          cost: Math.round(((prod as any)?.cost_estimate || 0) * kc.qty * 100) / 100,
+          _kit_product_id: kc.productId,
+          _kit_qty: kc.qty,
+        };
+      });
+    return [...regularExtras, ...kitEntries];
+  };
+
+  // Kit cost calculation
+  const kitTotalCost = useMemo(() => {
+    return kitComponents.reduce((sum, kc) => {
+      const prod = products.find((p: any) => p.id === kc.productId);
+      return sum + ((prod as any)?.cost_estimate || 0) * kc.qty;
+    }, 0);
+  }, [kitComponents, products]);
+
   const createMut = useMutation({
     mutationFn: async () => {
       if (!profile) throw new Error("Sem perfil");
@@ -549,9 +582,7 @@ export default function Produtos() {
         cost_estimate: cost, sale_price: price, margin_percent: margin, notes: notes || null,
         photo_url: photoUrl || null, num_colors: parseInt(numColors) || 1,
         prints_per_plate: parseInt(printsPerPlate) || 1,
-        extras: extras
-          .filter((e) => e.name.trim())
-          .map(({ name: extraName, cost: extraCost }) => ({ name: extraName, cost: Math.round((extraCost || 0) * 100) / 100 })),
+        extras: buildExtrasPayload(),
       } as any).select("id").single();
       if (error) throw error;
       if (inserted) await saveExtraPhotos(inserted.id);
@@ -573,9 +604,7 @@ export default function Produtos() {
         cost_estimate: cost, sale_price: price, margin_percent: margin, notes: notes || null,
         photo_url: photoUrl || null, num_colors: parseInt(numColors) || 1,
         prints_per_plate: parseInt(printsPerPlate) || 1,
-        extras: extras
-          .filter((e) => e.name.trim())
-          .map(({ name: extraName, cost: extraCost }) => ({ name: extraName, cost: Math.round((extraCost || 0) * 100) / 100 })),
+        extras: buildExtrasPayload(),
       } as any).eq("id", editItem.id);
       if (error) throw error;
       await saveExtraPhotos(editItem.id);
@@ -695,7 +724,77 @@ export default function Produtos() {
         </div>
       </div>
 
-      {/* Extras / Itens Adicionais */}
+      {/* Kit Components */}
+      {category === "kit" && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">🧩 Produtos do Kit</p>
+            <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setKitComponents([...kitComponents, { productId: "", qty: 1 }])}>
+              <Plus className="h-3 w-3 mr-1" /> Adicionar Produto
+            </Button>
+          </div>
+          {kitComponents.length === 0 && (
+            <p className="text-xs text-muted-foreground italic">Selecione os produtos que compõem este kit.</p>
+          )}
+          {kitComponents.map((kc, idx) => {
+            const prod = products.find((p: any) => p.id === kc.productId);
+            const unitCost = (prod as any)?.cost_estimate || 0;
+            return (
+              <div key={idx} className="grid grid-cols-[1fr_70px_90px_auto] gap-2 items-center">
+                <Select value={kc.productId || "none"} onValueChange={(v) => {
+                  const updated = [...kitComponents];
+                  updated[idx] = { ...updated[idx], productId: v === "none" ? "" : v };
+                  setKitComponents(updated);
+                }}>
+                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Selecione" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Selecione...</SelectItem>
+                    {products.filter((p: any) => p.is_active && p.category !== "kit").map((p: any) => (
+                      <SelectItem key={p.id} value={p.id}>{p.name} ({fmtCurrency(p.cost_estimate)})</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Input
+                  type="number" min={1} className="h-8 text-xs text-center"
+                  value={kc.qty}
+                  onChange={(e) => {
+                    const updated = [...kitComponents];
+                    updated[idx] = { ...updated[idx], qty: Math.max(1, parseInt(e.target.value) || 1) };
+                    setKitComponents(updated);
+                  }}
+                />
+                <span className="text-xs font-mono text-muted-foreground text-right">{fmtCurrency(unitCost * kc.qty)}</span>
+                <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive hover:text-destructive" onClick={() => setKitComponents(kitComponents.filter((_, i) => i !== idx))}>
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            );
+          })}
+          {kitComponents.length > 0 && (
+            <div className="flex justify-between items-center text-xs border-t pt-2 mt-1">
+              <span className="font-medium text-muted-foreground">Custo Total do Kit (componentes)</span>
+              <span className="font-mono font-semibold text-foreground">{fmtCurrency(kitTotalCost)}</span>
+            </div>
+          )}
+          {kitComponents.length > 0 && (
+            <Button type="button" variant="outline" size="sm" className="h-7 text-xs w-full" onClick={() => {
+              const totalExtras = extras.reduce((s, e) => s + (e.cost || 0), 0);
+              setCostEstimate((kitTotalCost + totalExtras).toFixed(2));
+              if (!salePrice || parseFloat(salePrice) === 0) {
+                const margin = tenantSettings.target_margin || 40;
+                const total = kitTotalCost + totalExtras;
+                const suggested = margin < 100 ? total / (1 - margin / 100) : total * 2;
+                setSalePrice(suggested.toFixed(2));
+              }
+              toast({ title: "Custo do kit aplicado" });
+            }}>
+              <Calculator className="h-3 w-3 mr-1" /> Aplicar Custo do Kit
+            </Button>
+          )}
+        </div>
+      )}
+
+
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">🎁 Itens Extras / Acompanhamentos</p>
