@@ -71,6 +71,7 @@ export default function Pedidos() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [viewOrderId, setViewOrderId] = useState<string | null>(null);
+  const [editMode, setEditMode] = useState(false);
 
   // Form state
   const [customerId, setCustomerId] = useState("");
@@ -85,6 +86,41 @@ export default function Pedidos() {
   const resetForm = () => {
     setCustomerId(""); setDueDate(""); setPaymentDueDate(""); setNotes(""); setShipping(""); setDiscountVal("");
     setDeliveryAddress(""); setLines([newLine()]);
+  };
+
+  // Populate form from existing order for editing
+  const startEdit = () => {
+    if (!viewOrder) return;
+    setCustomerId(viewOrder.customer_id || "");
+    setDueDate(viewOrder.due_date || "");
+    setPaymentDueDate((viewOrder as any).payment_due_date || "");
+    setDiscountVal(viewOrder.discount ? String(viewOrder.discount) : "");
+    // Extract delivery address and notes from notes field
+    const rawNotes = viewOrder.notes || "";
+    const addressMatch = rawNotes.match(/^📍 Entrega: (.+?)(\n|$)/);
+    if (addressMatch) {
+      setDeliveryAddress(addressMatch[1]);
+      setNotes(rawNotes.replace(/^📍 Entrega: .+?\n?/, ""));
+    } else {
+      setDeliveryAddress("");
+      setNotes(rawNotes);
+    }
+    setShipping("");
+    // Load existing items into lines
+    if (viewItems.length > 0) {
+      setLines(viewItems.map((item: any) => ({
+        id: item.id,
+        product_id: item.product_id || "",
+        description: item.description,
+        quantity: item.quantity,
+        unit_price: item.unit_price,
+        total: item.total,
+        notes: item.notes || "",
+      })));
+    } else {
+      setLines([newLine()]);
+    }
+    setEditMode(true);
   };
 
   // Queries
