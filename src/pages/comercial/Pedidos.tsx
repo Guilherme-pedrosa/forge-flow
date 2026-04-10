@@ -610,6 +610,54 @@ export default function Pedidos() {
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 
+  // UPDATE ORDER
+  const updateOrderMut = useMutation({
+    mutationFn: async () => {
+      if (!profile || !viewOrderId) throw new Error("Sem perfil");
+      if (lines.every((l) => !l.description)) throw new Error("Adicione pelo menos um item");
+
+      const composedNotes = [deliveryAddress ? `📍 Entrega: ${deliveryAddress}` : "", notes].filter(Boolean).join("\n") || null;
+
+      const { error } = await supabase.from("orders").update({
+        customer_id: customerId || null,
+        due_date: dueDate || null,
+        payment_due_date: paymentDueDate || null,
+        total: grandTotal,
+        discount: discountNum,
+        notes: composedNotes,
+      } as any).eq("id", viewOrderId);
+      if (error) throw error;
+
+      // Delete old items and re-insert
+      await supabase.from("order_items").delete().eq("order_id", viewOrderId);
+
+      const validLines = lines.filter((l) => l.description);
+      if (validLines.length > 0) {
+        const { error: itemsErr } = await supabase.from("order_items").insert(
+          validLines.map((l) => ({
+            tenant_id: profile.tenant_id,
+            order_id: viewOrderId,
+            product_id: l.product_id || null,
+            description: l.description,
+            quantity: l.quantity,
+            unit_price: l.unit_price,
+            total: l.total,
+            notes: l.notes || null,
+          }))
+        );
+        if (itemsErr) throw itemsErr;
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["orders"] });
+      qc.invalidateQueries({ queryKey: ["order_items", viewOrderId] });
+      qc.invalidateQueries({ queryKey: ["accounts_receivable"] });
+      setEditMode(false);
+      toast({ title: "Orçamento atualizado com sucesso" });
+    },
+    onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
+  });
+
   const deleteMut = useMutation({
     mutationFn: async (id: string) => {
       // Delete linked jobs first
