@@ -83,6 +83,7 @@ export default function Produtos() {
   const [numColors, setNumColors] = useState("1");
   const [extras, setExtras] = useState<ExtraItem[]>([]);
   const [printsPerPlate, setPrintsPerPlate] = useState("1");
+  const [kitComponents, setKitComponents] = useState<{ productId: string; qty: number }[]>([]);
 
   // Marketplace fee config
   const [channelConfig, setChannelConfig] = useState([
