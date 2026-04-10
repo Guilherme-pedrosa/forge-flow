@@ -569,6 +569,7 @@ export default function Produtos() {
     }, 0);
   }, [kitComponents, products]);
 
+  const createMut = useMutation({
     mutationFn: async () => {
       if (!profile) throw new Error("Sem perfil");
       const cost = costEstimate ? parseFloat(costEstimate) : 0;
@@ -581,9 +582,7 @@ export default function Produtos() {
         cost_estimate: cost, sale_price: price, margin_percent: margin, notes: notes || null,
         photo_url: photoUrl || null, num_colors: parseInt(numColors) || 1,
         prints_per_plate: parseInt(printsPerPlate) || 1,
-        extras: extras
-          .filter((e) => e.name.trim())
-          .map(({ name: extraName, cost: extraCost }) => ({ name: extraName, cost: Math.round((extraCost || 0) * 100) / 100 })),
+        extras: buildExtrasPayload(),
       } as any).select("id").single();
       if (error) throw error;
       if (inserted) await saveExtraPhotos(inserted.id);
