@@ -2,6 +2,7 @@ import { useState } from "react";
 import { AppSidebar } from "@/components/AppSidebar";
 import { AppHeader } from "@/components/AppHeader";
 import { TelemetryStrip } from "@/components/TelemetryStrip";
+import { usePrinterIdleAlerts } from "@/hooks/usePrinterIdleAlerts";
 import { cn } from "@/lib/utils";
 
 interface AppLayoutProps {
@@ -11,6 +12,7 @@ interface AppLayoutProps {
 export function AppLayout({ children }: AppLayoutProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  usePrinterIdleAlerts();
 
   return (
     <div className="flex h-screen w-full overflow-hidden bg-background">
