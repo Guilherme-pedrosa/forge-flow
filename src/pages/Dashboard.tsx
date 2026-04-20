@@ -158,9 +158,16 @@ export default function Dashboard() {
         (item) => item.min_stock != null && item.current_stock < item.min_stock
       );
 
-      const finishedJobs = allJobs.filter((j) => ["completed", "failed"].includes(j.status));
-      const failedJobs = allJobs.filter((j) => j.status === "failed");
-      const lossRate = finishedJobs.length > 0 ? (failedJobs.length / finishedJobs.length) * 100 : 0;
+      // Combina jobs locais (completed/failed) com tarefas reais do Bambu
+      // Status Bambu: "2" = sucesso, "4" = falha/cancelado
+      const localFinished = allJobs.filter((j) => ["completed", "failed"].includes(j.status)).length;
+      const localFailed = allJobs.filter((j) => j.status === "failed").length;
+      const bambuTasks = bambuTasksRes.data || [];
+      const bambuSuccess = bambuTasks.filter((t) => String(t.status) === "2").length;
+      const bambuFailed = bambuTasks.filter((t) => String(t.status) === "4").length;
+      const totalFinished = localFinished + bambuSuccess + bambuFailed;
+      const totalFailed = localFailed + bambuFailed;
+      const lossRate = totalFinished > 0 ? (totalFailed / totalFinished) * 100 : 0;
 
       const ordersList = ordersRes.data || [];
       const orderPipeline = {
