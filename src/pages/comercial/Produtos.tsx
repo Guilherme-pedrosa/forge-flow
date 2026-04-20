@@ -1109,6 +1109,9 @@ export default function Produtos() {
             <Button size="sm" variant="outline" onClick={() => setBambuImportOpen(true)}>
               <CloudDownload className="h-4 w-4 mr-1" /> Importar da Bambu
             </Button>
+            <Button size="sm" variant="outline" onClick={() => { resetKitBuilder(); setKitBuilderOpen(true); }}>
+              <Package2 className="h-4 w-4 mr-1" /> Novo Kit
+            </Button>
             <Button size="sm" onClick={() => { resetForm(); setCreateOpen(true); }}>
               <Plus className="h-4 w-4 mr-1" /> Novo Produto
             </Button>
