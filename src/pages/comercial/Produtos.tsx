@@ -1204,7 +1204,103 @@ export default function Produtos() {
         </DialogContent>
       </Dialog>
 
-      {/* Bambu Import dialog */}
+      {/* Kit Builder dialog */}
+      <Dialog open={kitBuilderOpen} onOpenChange={(o) => { setKitBuilderOpen(o); if (!o) resetKitBuilder(); }}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Package2 className="h-5 w-5 text-primary" /> Novo Kit</DialogTitle>
+            <DialogDescription>Combine produtos já cadastrados em um kit. Custos e preços de venda são somados automaticamente.</DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-4 max-h-[65vh] overflow-y-auto pr-1">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="sm:col-span-2"><Label>Nome do Kit *</Label><Input value={kitName} onChange={(e) => setKitName(e.target.value)} placeholder="Ex: Kit Páscoa Premium" /></div>
+              <div><Label>SKU</Label><Input value={kitSku} onChange={(e) => setKitSku(e.target.value)} placeholder="KIT-PASCOA-01" /></div>
+              <div className="sm:col-span-3"><Label>Descrição</Label><Textarea value={kitDescription} onChange={(e) => setKitDescription(e.target.value)} rows={2} placeholder="O que vem no kit, observações..." /></div>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">🧩 Produtos do Kit</p>
+                <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setKitItems([...kitItems, { productId: "", qty: 1 }])}>
+                  <Plus className="h-3 w-3 mr-1" /> Adicionar Produto
+                </Button>
+              </div>
+              <div className="rounded-lg border bg-muted/30 p-2 space-y-2">
+                <div className="grid grid-cols-[1fr_70px_110px_110px_auto] gap-2 px-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                  <span>Produto</span>
+                  <span className="text-center">Qtd</span>
+                  <span className="text-right">Custo</span>
+                  <span className="text-right">Preço</span>
+                  <span></span>
+                </div>
+                {kitItems.map((ki, idx) => {
+                  const prod = products.find((p: any) => p.id === ki.productId);
+                  const unitCost = (prod as any)?.cost_estimate || 0;
+                  const unitPrice = (prod as any)?.sale_price || 0;
+                  return (
+                    <div key={idx} className="grid grid-cols-[1fr_70px_110px_110px_auto] gap-2 items-center">
+                      <Select value={ki.productId || "none"} onValueChange={(v) => {
+                        const updated = [...kitItems];
+                        updated[idx] = { ...updated[idx], productId: v === "none" ? "" : v };
+                        setKitItems(updated);
+                      }}>
+                        <SelectTrigger className="h-8 text-xs bg-background"><SelectValue placeholder="Selecione um produto" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="none">Selecione...</SelectItem>
+                          {products.filter((p: any) => p.is_active && p.category !== "kit").map((p: any) => (
+                            <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Input
+                        type="number" min={1} className="h-8 text-xs text-center bg-background"
+                        value={ki.qty}
+                        onChange={(e) => {
+                          const updated = [...kitItems];
+                          updated[idx] = { ...updated[idx], qty: Math.max(1, parseInt(e.target.value) || 1) };
+                          setKitItems(updated);
+                        }}
+                      />
+                      <span className="text-xs font-mono text-muted-foreground text-right">{fmtCurrency(unitCost * ki.qty)}</span>
+                      <span className="text-xs font-mono text-foreground text-right">{fmtCurrency(unitPrice * ki.qty)}</span>
+                      <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive hover:text-destructive" onClick={() => setKitItems(kitItems.filter((_, i) => i !== idx))}>
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  );
+                })}
+                {kitItems.length === 0 && (
+                  <p className="text-xs text-muted-foreground italic px-2 py-3 text-center">Nenhum produto adicionado.</p>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <Label>Ajuste de Preço (%)</Label>
+              <Input type="number" step="0.1" value={kitMarginAdjust} onChange={(e) => setKitMarginAdjust(e.target.value)} placeholder="0" />
+              <p className="text-[11px] text-muted-foreground mt-1">Use valores negativos para desconto no kit (ex: -10) ou positivos para acréscimo.</p>
+            </div>
+
+            <div className="rounded-lg border-2 border-primary/30 bg-primary/5 p-3 space-y-1.5">
+              <div className="flex justify-between text-xs"><span className="text-muted-foreground">Custo Total (componentes)</span><span className="font-mono font-medium">{fmtCurrency(kitBuilderTotals.totalCost)}</span></div>
+              <div className="flex justify-between text-xs"><span className="text-muted-foreground">Soma dos Preços de Venda</span><span className="font-mono">{fmtCurrency(kitBuilderTotals.totalPrice)}</span></div>
+              {parseFloat(kitMarginAdjust) !== 0 && (
+                <div className="flex justify-between text-xs"><span className="text-muted-foreground">Preço Final do Kit ({kitMarginAdjust}%)</span><span className="font-mono font-semibold text-primary">{fmtCurrency(kitBuilderTotals.adjustedPrice)}</span></div>
+              )}
+              <div className="flex justify-between text-sm border-t border-primary/20 pt-1.5 mt-1.5"><span className="font-medium">Margem do Kit</span><span className="font-mono font-bold text-primary">{kitBuilderTotals.margin.toFixed(1)}%</span></div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => { setKitBuilderOpen(false); resetKitBuilder(); }}>Cancelar</Button>
+            <Button onClick={() => createKitMut.mutate()} disabled={!kitName || kitItems.filter(k => k.productId).length === 0 || createKitMut.isPending}>
+              {createKitMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Criar Kit
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={bambuImportOpen} onOpenChange={setBambuImportOpen}>
         <DialogContent className="max-w-2xl max-h-[80vh]">
           <DialogHeader>
