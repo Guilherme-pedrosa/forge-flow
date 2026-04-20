@@ -71,7 +71,7 @@ const menuGroups: MenuGroup[] = [
   },
   {
     label: "Planejamento",
-    items: [{ title: "Fila / Gantt", icon: BarChart3, href: "/planejamento/gantt" }],
+    items: [{ title: "Fila de Impressão", icon: BarChart3, href: "/planejamento/fila" }],
   },
   {
     label: "Comercial",
