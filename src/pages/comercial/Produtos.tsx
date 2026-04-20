@@ -85,6 +85,14 @@ export default function Produtos() {
   const [printsPerPlate, setPrintsPerPlate] = useState("1");
   const [kitComponents, setKitComponents] = useState<{ productId: string; qty: number }[]>([]);
 
+  // Standalone Kit Builder dialog
+  const [kitBuilderOpen, setKitBuilderOpen] = useState(false);
+  const [kitName, setKitName] = useState("");
+  const [kitSku, setKitSku] = useState("");
+  const [kitDescription, setKitDescription] = useState("");
+  const [kitMarginAdjust, setKitMarginAdjust] = useState("0"); // % de desconto/acréscimo sobre soma dos preços
+  const [kitItems, setKitItems] = useState<{ productId: string; qty: number }[]>([{ productId: "", qty: 1 }]);
+
   // Marketplace fee config
   const [channelConfig, setChannelConfig] = useState([
     { key: "shopee", name: "Shopee", fee: 20, freeShipping: false, freeShippingExtra: 6, freeShippingType: "percent" as "percent" | "fixed", enabled: true },
