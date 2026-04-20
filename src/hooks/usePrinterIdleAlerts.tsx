@@ -18,12 +18,21 @@ type DeviceRow = {
   dev_id: string;
   print_status: string | null;
   online: boolean | null;
+  last_seen_at: string | null;
 };
 
 type JobRow = {
   id: string;
   printer_id: string | null;
   status: string;
+  completed_at: string | null;
+  updated_at: string | null;
+};
+
+type BambuTaskRow = {
+  bambu_device_id: string | null;
+  end_time: string | null;
+  start_time: string | null;
 };
 
 const ALERT_COOLDOWN_MS = 5 * 60 * 1000; // 5 min entre avisos da mesma impressora
@@ -37,6 +46,18 @@ const resolveLiveStatus = (localStatus: string, device: DeviceRow | null | undef
   if (bs === "IDLE" || bs === "FINISH" || bs === "SUCCESS") return "idle";
   if (device.online === false) return "offline";
   return localStatus;
+};
+
+const fmtDuration = (ms: number) => {
+  if (ms < 0 || !Number.isFinite(ms)) return null;
+  const totalMin = Math.floor(ms / 60000);
+  if (totalMin < 1) return "menos de 1min";
+  const days = Math.floor(totalMin / (60 * 24));
+  const hours = Math.floor((totalMin % (60 * 24)) / 60);
+  const mins = totalMin % 60;
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${mins}m`;
+  return `${mins}m`;
 };
 
 /**
@@ -68,7 +89,7 @@ export function usePrinterIdleAlerts() {
     queryFn: async () => {
       const { data } = await supabase
         .from("bambu_devices")
-        .select("dev_id, print_status, online");
+        .select("dev_id, print_status, online, last_seen_at");
       return (data ?? []) as DeviceRow[];
     },
     refetchInterval: 30000,
@@ -80,11 +101,40 @@ export function usePrinterIdleAlerts() {
     queryFn: async () => {
       const { data } = await supabase
         .from("jobs")
-        .select("id, printer_id, status")
+        .select("id, printer_id, status, completed_at, updated_at")
         .in("status", ["queued", "draft"]);
       return (data ?? []) as JobRow[];
     },
     refetchInterval: 30000,
+    enabled: isAuthenticated,
+  });
+
+  const { data: lastJobs } = useQuery({
+    queryKey: ["idle-alerts-last-jobs"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("jobs")
+        .select("id, printer_id, status, completed_at, updated_at")
+        .in("status", ["completed", "failed"])
+        .order("updated_at", { ascending: false })
+        .limit(500);
+      return (data ?? []) as JobRow[];
+    },
+    refetchInterval: 60000,
+    enabled: isAuthenticated,
+  });
+
+  const { data: lastBambuTasks } = useQuery({
+    queryKey: ["idle-alerts-bambu-tasks"],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from("bambu_tasks")
+        .select("bambu_device_id, end_time, start_time")
+        .order("end_time", { ascending: false })
+        .limit(500);
+      return (data ?? []) as BambuTaskRow[];
+    },
+    refetchInterval: 60000,
     enabled: isAuthenticated,
   });
 
@@ -100,6 +150,26 @@ export function usePrinterIdleAlerts() {
         return;
       }
       queueByPrinter.set(j.printer_id, (queueByPrinter.get(j.printer_id) ?? 0) + 1);
+    });
+
+    // Última atividade conhecida por printer.id (jobs locais)
+    const lastJobActivityByPrinter = new Map<string, number>();
+    (lastJobs ?? []).forEach((j) => {
+      if (!j.printer_id) return;
+      const t = new Date(j.completed_at ?? j.updated_at ?? 0).getTime();
+      if (!t) return;
+      const prev = lastJobActivityByPrinter.get(j.printer_id) ?? 0;
+      if (t > prev) lastJobActivityByPrinter.set(j.printer_id, t);
+    });
+
+    // Última atividade por bambu_device.id (UUID interno) via tarefas Bambu
+    const lastBambuActivityByDeviceUuid = new Map<string, number>();
+    (lastBambuTasks ?? []).forEach((t) => {
+      if (!t.bambu_device_id) return;
+      const ts = new Date(t.end_time ?? t.start_time ?? 0).getTime();
+      if (!ts) return;
+      const prev = lastBambuActivityByDeviceUuid.get(t.bambu_device_id) ?? 0;
+      if (ts > prev) lastBambuActivityByDeviceUuid.set(t.bambu_device_id, ts);
     });
 
     const now = Date.now();
@@ -119,7 +189,6 @@ export function usePrinterIdleAlerts() {
 
       if (!isStopped) return;
 
-      // Conta jobs sem impressora também (qualquer impressora parada pode pegá-los)
       const effectiveQueue = assignedQueue + unassignedQueueCount;
       if (effectiveQueue === 0) return;
 
@@ -128,10 +197,28 @@ export function usePrinterIdleAlerts() {
 
       lastAlertRef.current.set(p.id, now);
 
-      const desc =
+      // Calcular há quanto tempo está parada (maior timestamp entre todas as fontes)
+      const candidates: number[] = [];
+      const lastSeen = device?.last_seen_at ? new Date(device.last_seen_at).getTime() : 0;
+      if (lastSeen) candidates.push(lastSeen);
+      const lastJob = lastJobActivityByPrinter.get(p.id);
+      if (lastJob) candidates.push(lastJob);
+      // bambu_devices.id (uuid) é diferente de dev_id; precisamos achar pelo dev_id
+      // Como temos só dev_id no PrinterRow, buscamos diretamente:
+      // (já temos device acima — mas o map de bambu_tasks usa o uuid interno; sem ele aqui não conseguimos cruzar)
+      // Por isso, a melhor aproximação cliente é usar last_seen_at + last job local.
+      const lastActivity = candidates.length ? Math.max(...candidates) : 0;
+      const idleMs = lastActivity ? now - lastActivity : 0;
+      const idleLabel = lastActivity ? fmtDuration(idleMs) : null;
+
+      const queueDesc =
         assignedQueue > 0
           ? `${assignedQueue} job(s) atribuído(s) aguardando.`
           : `${unassignedQueueCount} job(s) na fila sem impressora atribuída.`;
+
+      const desc = idleLabel
+        ? `Parada há ${idleLabel}. ${queueDesc}`
+        : queueDesc;
 
       toast.warning(`Impressora ${p.name} está ${statusLabel[liveStatus] ?? "parada"}`, {
         id: `printer-idle-${p.id}`,
@@ -144,5 +231,5 @@ export function usePrinterIdleAlerts() {
         },
       });
     });
-  }, [printers, devices, queuedJobs, navigate]);
+  }, [printers, devices, queuedJobs, lastJobs, lastBambuTasks, navigate]);
 }
