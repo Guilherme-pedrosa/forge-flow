@@ -108,7 +108,7 @@ export default function Dashboard() {
     try {
       const [
         jobsRes, completedJobsRes, payablesRes, inventoryRes, bankRes,
-        ordersRes, customersRes, printersRes, movementsRes,
+        ordersRes, customersRes, printersRes, movementsRes, bambuTasksRes,
       ] = await Promise.all([
         supabase.from("jobs")
           .select("id, code, name, status, est_grams, est_time_minutes, printer_id, started_at, completed_at, sale_price, actual_total_cost, est_total_cost, printers(name), inventory_items!jobs_material_id_fkey(name)")
@@ -139,6 +139,8 @@ export default function Dashboard() {
           .select("item_id, quantity, movement_type, created_at, inventory_items(name)")
           .eq("movement_type", "job_consumption")
           .order("created_at", { ascending: false }).limit(100),
+        supabase.from("bambu_tasks")
+          .select("status"),
       ]);
 
       const cashBalance = (bankRes.data || []).reduce((sum, b) => sum + Number(b.current_balance || 0), 0);
