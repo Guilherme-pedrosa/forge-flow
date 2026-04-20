@@ -93,37 +93,49 @@ export function usePrinterIdleAlerts() {
 
     const deviceMap = new Map(devices?.map((d) => [d.dev_id, d]) ?? []);
     const queueByPrinter = new Map<string, number>();
+    let unassignedQueueCount = 0;
     queuedJobs.forEach((j) => {
-      if (!j.printer_id) return;
+      if (!j.printer_id) {
+        unassignedQueueCount += 1;
+        return;
+      }
       queueByPrinter.set(j.printer_id, (queueByPrinter.get(j.printer_id) ?? 0) + 1);
     });
 
     const now = Date.now();
 
+    const statusLabel: Record<string, string> = {
+      idle: "ociosa",
+      offline: "offline",
+      paused: "pausada",
+      error: "com erro",
+    };
+
     printers.forEach((p) => {
       const device = p.bambu_device_id ? deviceMap.get(p.bambu_device_id) : null;
       const liveStatus = resolveLiveStatus(p.status, device);
-      const queueSize = queueByPrinter.get(p.id) ?? 0;
-
+      const assignedQueue = queueByPrinter.get(p.id) ?? 0;
       const isStopped = ["idle", "offline", "paused", "error"].includes(liveStatus);
 
-      if (!isStopped || queueSize === 0) return;
+      if (!isStopped) return;
+
+      // Conta jobs sem impressora também (qualquer impressora parada pode pegá-los)
+      const effectiveQueue = assignedQueue + unassignedQueueCount;
+      if (effectiveQueue === 0) return;
 
       const lastShown = lastAlertRef.current.get(p.id) ?? 0;
       if (now - lastShown < ALERT_COOLDOWN_MS) return;
 
       lastAlertRef.current.set(p.id, now);
 
-      const statusLabel: Record<string, string> = {
-        idle: "ociosa",
-        offline: "offline",
-        paused: "pausada",
-        error: "com erro",
-      };
+      const desc =
+        assignedQueue > 0
+          ? `${assignedQueue} job(s) atribuído(s) aguardando.`
+          : `${unassignedQueueCount} job(s) na fila sem impressora atribuída.`;
 
       toast.warning(`Impressora ${p.name} está ${statusLabel[liveStatus] ?? "parada"}`, {
         id: `printer-idle-${p.id}`,
-        description: `${queueSize} job(s) aguardando na fila.`,
+        description: desc,
         duration: 12000,
         icon: <AlertTriangle className="h-4 w-4" />,
         action: {
