@@ -437,13 +437,13 @@ export default function Itens() {
           )}
         </TableCell>
         <TableCell className={cn("text-right font-mono text-sm", belowMin && "text-destructive font-semibold")}>
-          {item.current_stock.toLocaleString("pt-BR")}{item.unit}
+          {(item.current_stock ?? 0).toLocaleString("pt-BR")}{item.unit}
         </TableCell>
         <TableCell className="text-right font-mono text-sm text-muted-foreground">
           {item.min_stock != null ? `${item.min_stock.toLocaleString("pt-BR")}${item.unit}` : "—"}
         </TableCell>
-        <TableCell className="text-right font-mono text-sm">{fmtCurrency(item.avg_cost)}</TableCell>
-        <TableCell className="text-right font-mono text-sm">{fmtCurrency(item.current_stock * item.avg_cost)}</TableCell>
+        <TableCell className="text-right font-mono text-sm">{fmtCurrency(item.avg_cost ?? 0)}</TableCell>
+        <TableCell className="text-right font-mono text-sm">{fmtCurrency((item.current_stock ?? 0) * (item.avg_cost ?? 0))}</TableCell>
         <TableCell>
           <DropdownMenu>
             <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
