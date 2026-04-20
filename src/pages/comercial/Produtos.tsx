@@ -577,6 +577,65 @@ export default function Produtos() {
     }, 0);
   }, [kitComponents, products]);
 
+  // Standalone Kit Builder totals (sum of components × qty)
+  const kitBuilderTotals = useMemo(() => {
+    let totalCost = 0;
+    let totalPrice = 0;
+    for (const ki of kitItems) {
+      const prod = products.find((p: any) => p.id === ki.productId);
+      if (!prod) continue;
+      totalCost += ((prod as any).cost_estimate || 0) * ki.qty;
+      totalPrice += ((prod as any).sale_price || 0) * ki.qty;
+    }
+    const adjust = parseFloat(kitMarginAdjust) || 0;
+    const adjustedPrice = totalPrice * (1 + adjust / 100);
+    const margin = adjustedPrice > 0 ? ((adjustedPrice - totalCost) / adjustedPrice) * 100 : 0;
+    return { totalCost, totalPrice, adjustedPrice, margin };
+  }, [kitItems, products, kitMarginAdjust]);
+
+  const resetKitBuilder = () => {
+    setKitName(""); setKitSku(""); setKitDescription(""); setKitMarginAdjust("0");
+    setKitItems([{ productId: "", qty: 1 }]);
+  };
+
+  const createKitMut = useMutation({
+    mutationFn: async () => {
+      if (!profile) throw new Error("Sem perfil");
+      const validItems = kitItems.filter(ki => ki.productId);
+      if (validItems.length === 0) throw new Error("Adicione pelo menos um produto ao kit");
+      const { totalCost, adjustedPrice, margin } = kitBuilderTotals;
+      const extrasPayload = validItems.map(ki => {
+        const prod = products.find((p: any) => p.id === ki.productId);
+        return {
+          name: `🧩 ${prod?.name || "Produto"}${ki.qty > 1 ? ` ×${ki.qty}` : ""}`,
+          cost: Math.round(((prod as any)?.cost_estimate || 0) * ki.qty * 100) / 100,
+          _kit_product_id: ki.productId,
+          _kit_qty: ki.qty,
+        };
+      });
+      const { error } = await supabase.from("products").insert({
+        tenant_id: profile.tenant_id,
+        name: kitName,
+        description: kitDescription || null,
+        sku: kitSku || null,
+        category: "kit",
+        cost_estimate: Math.round(totalCost * 100) / 100,
+        sale_price: Math.round(adjustedPrice * 100) / 100,
+        margin_percent: margin,
+        extras: extrasPayload,
+      } as any);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["products"] });
+      setKitBuilderOpen(false);
+      resetKitBuilder();
+      toast({ title: "Kit criado", description: "O kit foi cadastrado como um novo produto." });
+    },
+    onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
+  });
+
+
   const createMut = useMutation({
     mutationFn: async () => {
       if (!profile) throw new Error("Sem perfil");
