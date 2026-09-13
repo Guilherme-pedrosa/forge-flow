@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageHeader } from "@/components/shared/PageHeader";
-import { Loader2, Users, Shield, Plus, Eye, EyeOff } from "lucide-react";
+import { Loader2, Users, Shield, Plus, Eye, EyeOff, KeyRound } from "lucide-react";
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
@@ -33,6 +33,24 @@ export default function UsuariosPage() {
   const [open, setOpen] = useState(false);
   const [showPw, setShowPw] = useState(false);
   const [form, setForm] = useState({ display_name: "", email: "", password: "", role: "operator" });
+  const [pwTarget, setPwTarget] = useState<{ user_id: string; display_name: string } | null>(null);
+  const [newPassword, setNewPassword] = useState("");
+  const [showNewPw, setShowNewPw] = useState(false);
+
+  const resetPassword = useMutation({
+    mutationFn: async ({ user_id, password }: { user_id: string; password: string }) => {
+      const res = await supabase.functions.invoke("set-user-password", { body: { user_id, password } });
+      if (res.error) throw new Error(res.error.message || "Erro ao alterar senha");
+      if (res.data?.error) throw new Error(res.data.error);
+      return res.data;
+    },
+    onSuccess: () => {
+      toast({ title: "Senha alterada com sucesso" });
+      setPwTarget(null);
+      setNewPassword("");
+    },
+    onError: (err: any) => toast({ title: "Erro", description: err.message, variant: "destructive" }),
+  });
 
   const { data: profiles = [], isLoading } = useQuery({
     queryKey: ["profiles_with_roles"],
@@ -100,7 +118,7 @@ export default function UsuariosPage() {
         ) : profiles.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-muted-foreground"><Users className="h-10 w-10 mb-3 opacity-40" /><p className="font-medium">Nenhum usuário</p></div>
         ) : (
-          <Table><TableHeader><TableRow><TableHead>Nome</TableHead><TableHead>E-mail</TableHead><TableHead>Perfis</TableHead><TableHead>Desde</TableHead></TableRow></TableHeader>
+          <Table><TableHeader><TableRow><TableHead>Nome</TableHead><TableHead>E-mail</TableHead><TableHead>Perfis</TableHead><TableHead>Desde</TableHead><TableHead className="text-right">Ações</TableHead></TableRow></TableHeader>
             <TableBody>{profiles.map((p: any) => (
               <TableRow key={p.id}>
                 <TableCell className="font-medium text-sm">{p.display_name}</TableCell>
@@ -113,6 +131,11 @@ export default function UsuariosPage() {
                   ))}</div>
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground">{new Date(p.created_at).toLocaleDateString("pt-BR")}</TableCell>
+                <TableCell className="text-right">
+                  <Button variant="outline" size="sm" onClick={() => { setPwTarget({ user_id: p.user_id, display_name: p.display_name }); setNewPassword(""); }}>
+                    <KeyRound className="h-3.5 w-3.5 sm:mr-1.5" /><span className="hidden sm:inline">Nova senha</span>
+                  </Button>
+                </TableCell>
               </TableRow>
             ))}</TableBody>
           </Table>
@@ -165,6 +188,39 @@ export default function UsuariosPage() {
             <Button disabled={!canCreate || createUser.isPending} onClick={() => createUser.mutate(form)}>
               {createUser.isPending && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
               Criar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Dialog Nova Senha */}
+      <Dialog open={!!pwTarget} onOpenChange={(v) => { if (!v) setPwTarget(null); }}>
+        <DialogContent className="w-[95vw] sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Definir nova senha</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-muted-foreground">
+              A nova senha vale imediatamente para <span className="font-medium text-foreground">{pwTarget?.display_name}</span>.
+            </p>
+            <div className="space-y-1.5">
+              <Label htmlFor="new-password">Nova senha</Label>
+              <div className="relative">
+                <Input id="new-password" type={showNewPw ? "text" : "password"} placeholder="Mínimo 8 caracteres"
+                  autoComplete="new-password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
+                <button type="button" className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  onClick={() => setShowNewPw(!showNewPw)}>
+                  {showNewPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPwTarget(null)}>Cancelar</Button>
+            <Button disabled={newPassword.length < 8 || resetPassword.isPending}
+              onClick={() => pwTarget && resetPassword.mutate({ user_id: pwTarget.user_id, password: newPassword })}>
+              {resetPassword.isPending && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
+              Salvar senha
             </Button>
           </DialogFooter>
         </DialogContent>
