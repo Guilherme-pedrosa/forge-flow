@@ -16,6 +16,8 @@ export type Database = {
     Tables: {
       accounts_payable: {
         Row: {
+          origin_id: string | null
+          origin_type: string | null
           account_id: string | null
           amount: number
           amount_paid: number
@@ -39,6 +41,8 @@ export type Database = {
           vendor_id: string | null
         }
         Insert: {
+          origin_id?: string | null
+          origin_type?: string | null
           account_id?: string | null
           amount: number
           amount_paid?: number
@@ -62,6 +66,8 @@ export type Database = {
           vendor_id?: string | null
         }
         Update: {
+          origin_id?: string | null
+          origin_type?: string | null
           account_id?: string | null
           amount?: number
           amount_paid?: number
@@ -814,6 +820,7 @@ export type Database = {
       }
       consignment_locations: {
         Row: {
+          commission_percent: number
           address: string | null
           contact_name: string | null
           created_at: string
@@ -828,6 +835,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          commission_percent?: number
           address?: string | null
           contact_name?: string | null
           created_at?: string
@@ -842,6 +850,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          commission_percent?: number
           address?: string | null
           contact_name?: string | null
           created_at?: string
@@ -1244,6 +1253,13 @@ export type Database = {
       }
       jobs: {
         Row: {
+          inventory_posted_at: string | null
+          secondary_actual_grams: number | null
+          order_item_id: string | null
+          order_unit_index: number | null
+          est_extras_cost: number | null
+          actual_extras_cost: number | null
+          creation_request_id: string | null
           actual_energy_cost: number | null
           actual_grams: number | null
           actual_labor_cost: number | null
@@ -1292,6 +1308,13 @@ export type Database = {
           waste_grams: number | null
         }
         Insert: {
+          inventory_posted_at?: string | null
+          secondary_actual_grams?: number | null
+          order_item_id?: string | null
+          order_unit_index?: number | null
+          est_extras_cost?: number | null
+          actual_extras_cost?: number | null
+          creation_request_id?: string | null
           actual_energy_cost?: number | null
           actual_grams?: number | null
           actual_labor_cost?: number | null
@@ -1340,6 +1363,13 @@ export type Database = {
           waste_grams?: number | null
         }
         Update: {
+          inventory_posted_at?: string | null
+          secondary_actual_grams?: number | null
+          order_item_id?: string | null
+          order_unit_index?: number | null
+          est_extras_cost?: number | null
+          actual_extras_cost?: number | null
+          creation_request_id?: string | null
           actual_energy_cost?: number | null
           actual_grams?: number | null
           actual_labor_cost?: number | null
@@ -1502,6 +1532,7 @@ export type Database = {
       }
       orders: {
         Row: {
+          shipping: number
           approved_at: string | null
           code: string
           created_at: string
@@ -1518,6 +1549,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          shipping?: number
           approved_at?: string | null
           code: string
           created_at?: string
@@ -1534,6 +1566,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          shipping?: number
           approved_at?: string | null
           code?: string
           created_at?: string
@@ -1862,6 +1895,7 @@ export type Database = {
       }
       purchase_order_items: {
         Row: {
+          stock_quantity: number | null
           cfop: string | null
           created_at: string
           description: string
@@ -1876,6 +1910,7 @@ export type Database = {
           unit_price: number
         }
         Insert: {
+          stock_quantity?: number | null
           cfop?: string | null
           created_at?: string
           description: string
@@ -1890,6 +1925,7 @@ export type Database = {
           unit_price?: number
         }
         Update: {
+          stock_quantity?: number | null
           cfop?: string | null
           created_at?: string
           description?: string
@@ -1929,6 +1965,7 @@ export type Database = {
       }
       purchase_orders: {
         Row: {
+          additional_costs: number
           code: string
           created_at: string
           created_by: string | null
@@ -1950,6 +1987,7 @@ export type Database = {
           vendor_id: string | null
         }
         Insert: {
+          additional_costs?: number
           code: string
           created_at?: string
           created_by?: string | null
@@ -1971,6 +2009,7 @@ export type Database = {
           vendor_id?: string | null
         }
         Update: {
+          additional_costs?: number
           code?: string
           created_at?: string
           created_by?: string | null
@@ -2131,6 +2170,21 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      register_bank_transaction: { Args: { p_bank_account_id: string; p_type: string; p_amount: number; p_date: string; p_description: string; p_request_id: string }; Returns: string }
+      settle_financial_title: { Args: { p_kind: string; p_title_id: string; p_amount: number; p_date: string; p_bank_account_id: string; p_request_id: string }; Returns: string }
+      create_purchase_order: { Args: { p_order: Json; p_items: Json; p_installments: Json; p_request_id: string }; Returns: string }
+      receive_purchase_order: { Args: { p_order_id: string; p_received_date: string }; Returns: string }
+      cancel_purchase_order: { Args: { p_order_id: string }; Returns: string }
+      save_sales_order: { Args: { p_order_id: string | null; p_order: Json; p_items: Json; p_request_id: string }; Returns: string }
+      transition_sales_order: { Args: { p_order_id: string; p_status: string }; Returns: string }
+      save_product_with_photos: { Args: { p_product_id: string | null; p_product: Json; p_photos: Json; p_request_id: string }; Returns: string }
+      post_inventory_movement: { Args: { p_movement: Json; p_request_id: string }; Returns: string }
+      create_consignment_location: { Args: { p_location: Json; p_customer: Json | null; p_request_id: string }; Returns: string }
+      post_consignment_movement: { Args: { p_location_id: string; p_type: string; p_items: Json; p_notes: string | null; p_request_id: string }; Returns: string }
+      adjust_consignment_stock: { Args: { p_item_id: string; p_new_quantity: number; p_expected_quantity: number; p_reason: string; p_request_id: string }; Returns: string }
+      disconnect_bambu_connection: { Args: { p_connection_id: string }; Returns: undefined }
+      transition_job: { Args: { p_job_id: string; p_status: string; p_actual_grams?: number | null; p_actual_time_minutes?: number | null; p_waste_grams?: number | null; p_failure_reason?: string | null; p_printer_id?: string | null; p_secondary_actual_grams?: number | null; p_actual_labor_cost?: number | null; p_actual_overhead?: number | null; p_actual_extras_cost?: number | null }; Returns: string }
+      create_jobs: { Args: { p_jobs: Json; p_request_id: string }; Returns: string[] }
       bootstrap_tenant: {
         Args: {
           _display_name: string

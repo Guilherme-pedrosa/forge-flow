@@ -15,7 +15,8 @@ export function AppLayout({ children }: AppLayoutProps) {
   usePrinterIdleAlerts();
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-background">
+    <div className="flex h-dvh w-full overflow-hidden bg-background">
+      <a href="#main-content" className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] focus:rounded-lg focus:bg-card focus:p-3">Ir para o conteúdo</a>
       <AppSidebar
         collapsed={collapsed}
         onToggle={() => setCollapsed((prev) => !prev)}
@@ -23,21 +24,14 @@ export function AppLayout({ children }: AppLayoutProps) {
         onMobileClose={() => setMobileOpen(false)}
       />
 
-      {mobileOpen && (
-        <div
-          className="fixed inset-0 z-40 bg-black/40 md:hidden"
-          onClick={() => setMobileOpen(false)}
-        />
-      )}
-
       <div
         className={cn(
-          "flex min-w-0 flex-1 flex-col overflow-hidden transition-[margin] duration-200 md:ml-60",
-          collapsed && "md:ml-16",
+          "flex min-w-0 flex-1 flex-col overflow-hidden transition-[margin] duration-200 md:ml-64",
+          collapsed && "md:ml-20",
         )}
       >
         <AppHeader onMenuClick={() => setMobileOpen(true)} showMenuButton />
-        <main className="flex-1 overflow-y-auto p-3 md:p-6">{children}</main>
+        <main id="main-content" tabIndex={-1} className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain p-4 outline-none md:p-7"><div className="mx-auto w-full max-w-[1600px]">{children}</div></main>
         <TelemetryStrip />
       </div>
     </div>

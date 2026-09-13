@@ -3,12 +3,14 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
+  if (req.method !== "POST") return new Response(JSON.stringify({ error: "Método não permitido" }), { status: 405, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
   try {
     // Verify caller is authenticated
@@ -37,24 +39,30 @@ Deno.serve(async (req) => {
 
     // Check caller is owner or admin
     const adminClient = createClient(supabaseUrl, serviceRoleKey);
-    const { data: callerRoles } = await adminClient
+    const { data: callerRoles, error: permissionError } = await adminClient
       .from("user_roles")
       .select("role")
       .eq("user_id", caller.id)
       .eq("tenant_id", callerProfile.tenant_id);
+    if (permissionError) throw new Error("Não foi possível validar suas permissões.");
 
     const allowedRoles = ["owner", "admin"];
     const hasPermission = callerRoles?.some((r: any) => allowedRoles.includes(r.role));
     if (!hasPermission) throw new Error("Insufficient permissions");
 
     // Parse body
-    const { email, password, display_name, role } = await req.json();
-    if (!email || !password || !display_name) {
-      throw new Error("email, password, and display_name are required");
-    }
+    const body = await req.json();
+    const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+    const display_name = typeof body.display_name === "string" ? body.display_name.trim() : "";
+    const password = body.password;
+    const role = body.role ?? "viewer";
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) throw new Error("Informe um e-mail válido.");
+    if (!display_name || display_name.length > 120) throw new Error("Informe um nome de até 120 caracteres.");
+    if (typeof password !== "string" || password.length < 8 || password.length > 128) throw new Error("A senha deve ter entre 8 e 128 caracteres.");
 
     const validRoles = ["admin", "manager", "operator", "viewer"];
-    const userRole = validRoles.includes(role) ? role : "viewer";
+    if (!validRoles.includes(role)) throw new Error("Perfil de acesso inválido.");
+    const userRole = role;
 
     // Create auth user with service role (auto-confirms email)
     const { data: newUser, error: createError } = await adminClient.auth.admin.createUser({
@@ -64,22 +72,32 @@ Deno.serve(async (req) => {
     });
     if (createError) throw createError;
 
-    // Create profile
-    const { error: profileError } = await adminClient.from("profiles").insert({
-      user_id: newUser.user.id,
-      tenant_id: callerProfile.tenant_id,
-      display_name,
-      email,
-    });
-    if (profileError) throw profileError;
+    if (!newUser.user) throw new Error("Não foi possível criar o usuário.");
+    // If either database write fails, remove the new auth identity. Foreign keys
+    // cascade the profile/role so a failed creation cannot leave a usable orphan.
+    try {
+      const { error: profileError } = await adminClient.from("profiles").insert({
+        user_id: newUser.user.id,
+        tenant_id: callerProfile.tenant_id,
+        display_name,
+        email,
+      });
+      if (profileError) throw profileError;
 
-    // Create role
-    const { error: roleError } = await adminClient.from("user_roles").insert({
-      user_id: newUser.user.id,
-      tenant_id: callerProfile.tenant_id,
-      role: userRole,
-    });
-    if (roleError) throw roleError;
+      const { error: roleError } = await adminClient.from("user_roles").insert({
+        user_id: newUser.user.id,
+        tenant_id: callerProfile.tenant_id,
+        role: userRole,
+      });
+      if (roleError) throw roleError;
+    } catch (provisionError) {
+      const { error: rollbackError } = await adminClient.auth.admin.deleteUser(newUser.user.id);
+      if (rollbackError) {
+        console.error("User provisioning rollback failed", { user_id: newUser.user.id });
+        throw new Error("O cadastro não foi concluído e requer revisão do administrador antes de tentar novamente.");
+      }
+      throw provisionError;
+    }
 
     return new Response(
       JSON.stringify({ success: true, user_id: newUser.user.id }),

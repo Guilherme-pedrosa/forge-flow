@@ -1,304 +1,43 @@
-import { NavLink, useLocation } from "react-router-dom";
-import {
-  LayoutDashboard, ArrowUpFromLine, ArrowDownToLine, Wallet, PiggyBank,
-  BookOpen, Package, ArrowRightLeft, AlertTriangle, Printer, Hammer,
-  BarChart3, ShoppingCart, FileText, Store, Link2, Building, UserCog,
-  FileText as LogsIcon, ChevronLeft, ChevronRight, ChevronDown,
-  LogOut, Factory, X, Users, Handshake,
-} from "lucide-react";
+import { useEffect, useState } from "react";
+import { Link, NavLink, useLocation } from "react-router-dom";
+import { Box, ChevronDown, ChevronLeft, ChevronRight, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { useEffect, useState } from "react";
+import { Sheet, SheetContent, SheetDescription, SheetTitle } from "@/components/ui/sheet";
 import { useAuth } from "@/contexts/AuthContext";
-import { useQuery } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { navigationGroups } from "@/components/shared/navigation";
 
-interface AppSidebarProps {
-  collapsed: boolean;
-  onToggle: () => void;
-  mobileOpen?: boolean;
-  onMobileClose?: () => void;
-}
-
-interface MenuItem {
-  title: string;
-  icon: React.ComponentType<{ className?: string }>;
-  href: string;
-  badge?: number;
-}
-
-interface MenuGroup {
-  label: string;
-  items: MenuItem[];
-  defaultOpen?: boolean;
-}
-
-const menuGroups: MenuGroup[] = [
-  {
-    label: "",
-    items: [{ title: "Dashboard", icon: LayoutDashboard, href: "/" }],
-    defaultOpen: true,
-  },
-  {
-    label: "Financeiro",
-    items: [
-      { title: "Contas a Pagar", icon: ArrowUpFromLine, href: "/financeiro/pagar" },
-      { title: "Contas a Receber", icon: ArrowDownToLine, href: "/financeiro/receber" },
-      { title: "Caixa e Bancos", icon: Wallet, href: "/financeiro/caixa" },
-      { title: "Conciliação", icon: PiggyBank, href: "/financeiro/conciliacao" },
-      { title: "DRE", icon: BookOpen, href: "/financeiro/dre" },
-    ],
-    defaultOpen: true,
-  },
-  {
-    label: "Estoque",
-    items: [
-      { title: "Itens / Materiais", icon: Package, href: "/estoque/itens" },
-      { title: "Movimentações", icon: ArrowRightLeft, href: "/estoque/movimentacoes" },
-      { title: "Compras", icon: ShoppingCart, href: "/estoque/compras" },
-      { title: "Alertas", icon: AlertTriangle, href: "/estoque/alertas", badge: 2 },
-    ],
-  },
-  {
-    label: "Produção",
-    items: [
-      { title: "Jobs", icon: Hammer, href: "/producao/jobs" },
-      { title: "Margem por SKU", icon: BarChart3, href: "/producao/margem" },
-      { title: "Impressoras", icon: Printer, href: "/producao/impressoras" },
-      { title: "Perdas / QC", icon: AlertTriangle, href: "/producao/perdas" },
-    ],
-  },
-  {
-    label: "Planejamento",
-    items: [{ title: "Fila de Impressão", icon: BarChart3, href: "/planejamento/fila" }],
-  },
-  {
-    label: "Comercial",
-    items: [
-      { title: "Clientes", icon: Users, href: "/comercial/clientes" },
-      { title: "Produtos", icon: ShoppingCart, href: "/comercial/produtos" },
-      { title: "Pedidos", icon: FileText, href: "/comercial/pedidos" },
-      { title: "Consignado", icon: Handshake, href: "/comercial/consignado" },
-      { title: "Marketplaces", icon: Store, href: "/comercial/marketplaces" },
-    ],
-  },
-  {
-    label: "Integrações",
-    items: [
-      { title: "Bambu Lab", icon: Link2, href: "/integracoes/bambu" },
-      { title: "Mercado Livre", icon: Store, href: "/integracoes/ml" },
-    ],
-  },
-  {
-    label: "Configurações",
-    items: [
-      { title: "Empresa", icon: Building, href: "/configuracoes" },
-      { title: "Usuários", icon: UserCog, href: "/configuracoes/usuarios" },
-      { title: "Logs", icon: LogsIcon, href: "/configuracoes/logs" },
-    ],
-  },
-];
+interface AppSidebarProps { collapsed: boolean; onToggle: () => void; mobileOpen?: boolean; onMobileClose?: () => void }
 
 export function AppSidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: AppSidebarProps) {
   const location = useLocation();
   const { profile, signOut } = useAuth();
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({});
-
-  // Dynamic alert badge from real inventory data
-  const { data: alertCount = 0 } = useQuery({
-    queryKey: ["sidebar_alert_count"],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from("inventory_items")
-        .select("id", { count: "exact", head: true })
-        .eq("is_active", true)
-        .not("min_stock", "is", null)
-        .gt("min_stock", 0);
-      // We need a second query to filter current_stock < min_stock
-      const { data: items } = await supabase
-        .from("inventory_items")
-        .select("current_stock, min_stock")
-        .eq("is_active", true)
-        .not("min_stock", "is", null)
-        .gt("min_stock", 0);
-      return (items || []).filter(i => i.current_stock < (i.min_stock || 0)).length;
-    },
-    enabled: !!profile,
-    refetchInterval: 60000,
-    staleTime: 30000,
-  });
-
-  // Dynamically set badge on Alertas item
-  const dynamicMenuGroups = menuGroups.map(group => ({
-    ...group,
-    items: group.items.map(item =>
-      item.href === "/estoque/alertas" ? { ...item, badge: alertCount } : item
-    ),
-  }));
-
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({ "Operação": true, "Financeiro": true });
   useEffect(() => {
-    const newOpenGroups: Record<string, boolean> = {};
-    dynamicMenuGroups.forEach((group) => {
-      if (group.defaultOpen) newOpenGroups[group.label] = true;
-      if (group.items.some(item => location.pathname === item.href)) newOpenGroups[group.label] = true;
-    });
-    setOpenGroups(newOpenGroups);
-  }, [location.pathname]);
-
-  useEffect(() => {
+    const active = navigationGroups.find(group => group.items.some(item => item.href === location.pathname));
+    if (active) setOpenGroups(previous => ({ ...previous, [active.label]: true }));
     onMobileClose?.();
+    // Close the mobile sheet only when navigating, not on callback identity changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname]);
 
-  const toggleGroup = (label: string) => {
-    setOpenGroups(prev => ({ ...prev, [label]: !prev[label] }));
-  };
-
-  const initials = profile?.display_name
-    ? profile.display_name.split(" ").map(w => w[0]).join("").slice(0, 2).toUpperCase()
-    : "??";
-
-  const sidebarContent = (
-    <div className="flex h-full flex-col">
-      {/* Logo */}
-      <div className="flex h-14 items-center gap-3 border-b border-sidebar-border px-4">
-        {(!collapsed || mobileOpen) ? (
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center flex-shrink-0">
-              <Factory className="w-4.5 h-4.5 text-white" />
-            </div>
-            <div className="flex flex-col">
-              <span className="text-sm font-bold text-white tracking-tight">ForgeOS</span>
-              <span className="text-[10px] text-sidebar-foreground/50 leading-none">3D Print ERP</span>
-            </div>
-          </div>
-        ) : (
-          <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center mx-auto">
-            <Factory className="w-4 h-4 text-white" />
-          </div>
-        )}
-      </div>
-
-      {/* Navigation */}
-      <ScrollArea className="flex-1 py-3">
-        <nav className="space-y-0.5 px-3">
-          {dynamicMenuGroups.map((group, groupIndex) => {
-            const isOpen = openGroups[group.label] ?? false;
-            return (
-              <div key={groupIndex} className={cn(group.label && "mt-4")}>
-                {group.label && (!collapsed || mobileOpen) && (
-                  <button
-                    onClick={() => toggleGroup(group.label)}
-                    className="flex w-full items-center justify-between px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-sidebar-foreground/40 hover:text-sidebar-foreground/60 transition-colors"
-                  >
-                    <span>{group.label}</span>
-                    <ChevronDown className={cn("h-3 w-3 transition-transform duration-200", isOpen && "rotate-180")} />
-                  </button>
-                )}
-                <ul className={cn(
-                  "space-y-0.5 overflow-hidden transition-all duration-200",
-                  group.label && (!collapsed || mobileOpen) && !isOpen && "max-h-0 opacity-0",
-                  group.label && (!collapsed || mobileOpen) && isOpen && "max-h-[500px] opacity-100",
-                  !group.label && "space-y-0.5",
-                )}>
-                  {group.items.map((item) => {
-                    const isActive = location.pathname === item.href;
-                    return (
-                      <li key={item.href}>
-                        <NavLink
-                          to={item.href}
-                          className={cn(
-                            "sidebar-item",
-                            collapsed && !mobileOpen && "justify-center px-2",
-                            isActive && "sidebar-item-active"
-                          )}
-                          title={collapsed && !mobileOpen ? item.title : undefined}
-                        >
-                          <item.icon className="h-4 w-4 flex-shrink-0" />
-                          {(!collapsed || mobileOpen) && (
-                            <>
-                              <span className="flex-1 truncate">{item.title}</span>
-                              {item.badge && item.badge > 0 && (
-                                <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-primary text-[10px] font-semibold text-white">
-                                  {item.badge}
-                                </span>
-                              )}
-                            </>
-                          )}
-                        </NavLink>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-            );
-          })}
-        </nav>
-      </ScrollArea>
-
-      {/* Footer - Real user data */}
-      <div className="border-t border-sidebar-border p-3">
-        <div className={cn("flex items-center gap-3", collapsed && !mobileOpen && "justify-center")}>
-          <div className="h-9 w-9 rounded-full bg-sidebar-accent flex items-center justify-center text-sm font-medium text-sidebar-foreground flex-shrink-0">
-            {initials}
-          </div>
-          {(!collapsed || mobileOpen) && (
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-sidebar-foreground truncate">{profile?.display_name || "Carregando..."}</p>
-              <p className="text-[11px] text-sidebar-foreground/50 truncate">{profile?.email || ""}</p>
-            </div>
-          )}
-          {(!collapsed || mobileOpen) && (
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={signOut}
-              className="h-8 w-8 text-sidebar-foreground/50 hover:text-sidebar-foreground hover:bg-sidebar-accent flex-shrink-0"
-              title="Sair"
-            >
-              <LogOut className="h-4 w-4" />
-            </Button>
-          )}
-        </div>
-      </div>
-
-      {/* Collapse toggle */}
-      <div className="border-t border-sidebar-border p-2">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={mobileOpen ? onMobileClose : onToggle}
-          className={cn(
-            "w-full text-sidebar-foreground/50 hover:text-sidebar-foreground hover:bg-sidebar-accent",
-            collapsed && !mobileOpen && "px-2"
-          )}
-        >
-          {mobileOpen ? (
-            <><X className="h-4 w-4 mr-2" /><span>Fechar</span></>
-          ) : collapsed ? (
-            <ChevronRight className="h-4 w-4" />
-          ) : (
-            <><ChevronLeft className="h-4 w-4 mr-2" /><span className="text-xs">Recolher menu</span></>
-          )}
-        </Button>
-      </div>
+  const content = (compact: boolean) => <div className="flex h-full min-h-0 flex-col">
+    <Link to="/" className={cn("flex h-20 shrink-0 items-center gap-3 border-b border-sidebar-border px-5", compact && "justify-center px-2")} aria-label="Forge & Flow, início"><span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-white/15 bg-white/5 text-white"><Box className="h-5 w-5" /></span>{!compact && <span><strong className="block whitespace-nowrap text-base tracking-tight text-white">Forge <span className="text-white/40">&</span> Flow</strong><span className="mt-1 block text-[10px] font-medium uppercase tracking-[0.16em] text-sidebar-foreground/50">Gestão de impressão 3D</span></span>}</Link>
+    <nav aria-label="Navegação principal" className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-3 py-5">
+      {navigationGroups.map(group => {
+        const open = openGroups[group.label] ?? false;
+        return <div key={group.label}>{!compact && <button type="button" aria-expanded={open} onClick={() => setOpenGroups(previous => ({ ...previous, [group.label]: !open }))} className="mb-1 flex min-h-9 w-full items-center justify-between rounded px-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-sidebar-foreground/50 hover:text-sidebar-foreground focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary"><span>{group.label}</span><ChevronDown className={cn("h-3 w-3 transition-transform", open && "rotate-180")} /></button>}{(compact || open) && <ul className="space-y-0.5">{group.items.map(item => <li key={item.href}><NavLink end to={item.href} title={compact ? item.title : undefined} aria-label={compact ? item.title : undefined} className={({ isActive }) => cn("sidebar-item", compact && "justify-center px-2", isActive && "sidebar-item-active")}><item.icon className="h-4 w-4 shrink-0" />{!compact && <span className="min-w-0 flex-1 truncate">{item.title}</span>}</NavLink></li>)}</ul>}</div>;
+      })}
+    </nav>
+    <div className={cn("flex shrink-0 items-center gap-2 border-t border-sidebar-border px-4 py-4", compact && "justify-center px-1")}>
+      {!compact && <div className="min-w-0 flex-1"><p className="truncate text-xs font-medium text-sidebar-foreground">{profile?.display_name || "Minha conta"}</p><p className="mt-1 truncate text-[11px] text-sidebar-foreground/45">{profile?.email}</p></div>}
+      <Button variant="ghost" size="icon" className="h-10 w-10 shrink-0 text-sidebar-foreground/60 hover:bg-white/5 hover:text-white" aria-label="Sair da conta" onClick={() => void signOut()}><LogOut className="h-4 w-4" /></Button>
     </div>
-  );
-
-  return (
-    <>
-      <aside className={cn(
-        "fixed left-0 top-0 z-40 hidden md:flex h-screen flex-col bg-sidebar transition-all duration-200",
-        collapsed ? "w-16" : "w-60"
-      )}>
-        {sidebarContent}
-      </aside>
-      <aside className={cn(
-        "fixed left-0 top-0 z-50 flex md:hidden h-screen w-72 flex-col bg-sidebar transition-transform duration-300 shadow-2xl",
-        mobileOpen ? "translate-x-0" : "-translate-x-full"
-      )}>
-        {sidebarContent}
-      </aside>
-    </>
-  );
+  </div>;
+  return <>
+    <aside className={cn("fixed inset-y-0 left-0 z-40 hidden flex-col border-r border-sidebar-border bg-sidebar transition-[width] duration-200 md:flex", collapsed ? "w-20" : "w-64")}>
+      {content(collapsed)}<Button variant="ghost" className="h-10 shrink-0 rounded-none border-t border-sidebar-border text-xs text-sidebar-foreground/50 hover:bg-white/5 hover:text-white" onClick={onToggle} aria-label={collapsed ? "Expandir menu" : "Recolher menu"}>{collapsed ? <ChevronRight className="h-4 w-4" /> : <><ChevronLeft className="mr-2 h-3.5 w-3.5" />Recolher menu</>}</Button>
+    </aside>
+    <Sheet open={!!mobileOpen} onOpenChange={open => { if (!open) onMobileClose?.(); }}><SheetContent side="left" className="flex h-dvh w-[min(320px,90vw)] flex-col gap-0 border-sidebar-border bg-sidebar p-0 text-sidebar-foreground [&>button]:text-white"><SheetTitle className="sr-only">Menu Forge & Flow</SheetTitle><SheetDescription className="sr-only">Acesse os módulos de gestão da empresa.</SheetDescription>{content(false)}</SheetContent></Sheet>
+  </>;
 }

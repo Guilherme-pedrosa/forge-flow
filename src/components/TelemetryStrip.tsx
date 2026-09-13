@@ -1,4 +1,5 @@
-import { Thermometer, Clock, Box } from "lucide-react";
+import { Thermometer, Clock, Box, AlertTriangle, Printer } from "lucide-react";
+import { Link } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -51,11 +52,12 @@ const deriveProgressFromJob = (job: JobRow | null): number | null => {
 };
 
 export function TelemetryStrip() {
-  const { session } = useAuth();
-  const isAuthenticated = !!session?.access_token;
+  const { session, profile } = useAuth();
+  const tenantId = profile?.tenant_id;
+  const isAuthenticated = !!session?.access_token && !!tenantId;
 
   useQuery({
-    queryKey: ["telemetry-sync"],
+    queryKey: ["telemetry-sync", tenantId],
     queryFn: async () => {
       const { error } = await supabase.functions.invoke("bambu-cloud-sync", {
         body: { action: "telemetry" },
@@ -69,61 +71,78 @@ export function TelemetryStrip() {
     enabled: isAuthenticated,
   });
 
-  const { data: printers } = useQuery({
-    queryKey: ["telemetry-printers"],
+  const { data: printers, error: printersError } = useQuery({
+    queryKey: ["telemetry-printers", tenantId],
     queryFn: async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("printers")
         .select("id, name, status, bambu_device_id")
+        .eq("tenant_id", tenantId!)
         .eq("is_active", true)
         .order("name");
+      if (error) throw error;
       return (data ?? []) as PrinterRow[];
     },
     refetchInterval: 15000,
+    enabled: isAuthenticated,
   });
 
-  const { data: devices } = useQuery({
-    queryKey: ["telemetry-devices"],
+  const { data: devices, error: devicesError } = useQuery({
+    queryKey: ["telemetry-devices", tenantId],
     queryFn: async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("bambu_devices")
-        .select("dev_id, nozzle_temp, progress, print_status, current_task, online, remaining_time, ams_data");
+        .select("dev_id, nozzle_temp, progress, print_status, current_task, online, remaining_time, ams_data, last_seen_at, updated_at")
+        .eq("tenant_id", tenantId!);
+      if (error) throw error;
       return (data ?? []) as BambuDevice[];
     },
     refetchInterval: 15000,
+    enabled: isAuthenticated,
   });
 
   const { data: activeJobs } = useQuery({
-    queryKey: ["telemetry-active-jobs"],
+    queryKey: ["telemetry-active-jobs", tenantId],
     queryFn: async () => {
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("jobs")
         .select("id, name, code, status, printer_id, started_at, est_time_minutes, est_grams")
+        .eq("tenant_id", tenantId!)
         .in("status", ["printing", "queued", "paused"])
         .order("updated_at", { ascending: false });
+      if (error) throw error;
       return (data ?? []) as JobRow[];
     },
     refetchInterval: 15000,
+    enabled: isAuthenticated,
   });
 
   const deviceMap = new Map(devices?.map((d) => [d.dev_id, d]) ?? []);
-  const jobMap = new Map((activeJobs ?? []).map((j) => [j.printer_id, j]));
+  const jobMap = new Map<string | null, JobRow>();
+  for (const job of activeJobs ?? []) {
+    const previous = jobMap.get(job.printer_id);
+    if (!previous || (job.status === "printing" && previous.status !== "printing")) jobMap.set(job.printer_id, job);
+  }
 
+  if (printersError || devicesError) return <div role="status" className="hidden shrink-0 items-center gap-2 border-t bg-card px-6 py-2 text-xs text-muted-foreground md:flex"><AlertTriangle className="h-3.5 w-3.5" />Telemetria indisponível.<Link className="text-primary hover:underline" to="/integracoes/bambu">Ver integração</Link></div>;
   if (!printers?.length) return null;
 
   const resolveStatus = (localStatus: string, device: BambuDevice | null | undefined): string => {
     if (!device) return localStatus;
+    if (device.online === false) return "offline";
+    const lastSeen = device.last_seen_at || device.updated_at;
+    if (!lastSeen || Date.now() - new Date(lastSeen).getTime() > 5 * 60_000) return "stale";
     const bs = device.print_status?.toUpperCase();
     if (bs === "RUNNING" || bs === "PRINTING") return "printing";
     if (bs === "PAUSE" || bs === "PAUSED") return "paused";
     if (bs === "FAILED" || bs === "ERROR") return "error";
     if (bs === "IDLE" || bs === "FINISH" || bs === "SUCCESS") return "idle";
-    if (device.online === false) return "offline";
     return localStatus;
   };
 
   return (
-    <div className="h-10 bg-surface-sunken border-t border-sidebar-border flex items-center px-4 gap-6 overflow-x-auto flex-shrink-0">
+    <div aria-label="Resumo das impressoras" className="hidden h-11 shrink-0 items-center gap-6 overflow-x-auto border-t bg-card px-6 md:flex">
+      <Link className="flex items-center gap-2 whitespace-nowrap text-xs font-medium text-muted-foreground" to="/integracoes/bambu"><Printer className="h-3.5 w-3.5" />Impressoras</Link>
       {printers.map((p) => {
         const device = p.bambu_device_id ? deviceMap.get(p.bambu_device_id) : null;
         const liveStatus = resolveStatus(p.status, device);
@@ -131,7 +150,7 @@ export function TelemetryStrip() {
 
         const progressFromDevice = device?.progress ?? null;
         const progressFromJob = deriveProgressFromJob(linkedJob);
-        const progress = progressFromDevice ?? progressFromJob;
+        const progress = progressFromDevice != null ? Math.max(0, Math.min(100, Number(progressFromDevice))) : progressFromJob;
 
         const remaining = fmtRemaining(device?.remaining_time);
 
@@ -157,7 +176,7 @@ export function TelemetryStrip() {
           <div key={p.id} className="flex items-center gap-2 text-xs whitespace-nowrap">
             <div className={cn("w-1.5 h-1.5 rounded-full flex-shrink-0", statusColors[liveStatus] ?? "bg-muted-foreground/30")} />
             <span className="text-muted-foreground font-medium">{p.name}</span>
-            <span className="text-muted-foreground/60">{statusLabels[liveStatus] ?? liveStatus}</span>
+            <span className="text-muted-foreground/70">{liveStatus === "stale" ? "Sem atualização recente" : statusLabels[liveStatus] ?? liveStatus}</span>
 
             {isPrinting && (
               <>
@@ -166,7 +185,7 @@ export function TelemetryStrip() {
                     <div className="w-16 h-1 bg-secondary rounded-full overflow-hidden">
                       <div className="h-full bg-primary rounded-full transition-all" style={{ width: `${progress}%` }} />
                     </div>
-                    <span className="font-mono text-primary">{progress}%</span>
+                    <span className="font-mono text-primary">{progressFromDevice == null ? "~" : ""}{progress}%</span>
                   </>
                 ) : (
                   <span className="text-muted-foreground/70 font-mono">% --</span>
@@ -186,7 +205,7 @@ export function TelemetryStrip() {
               </span>
             )}
 
-            {nozzle != null && liveStatus !== "offline" && (
+            {nozzle != null && !["offline", "stale"].includes(liveStatus) && (
               <span className="text-muted-foreground font-mono flex items-center gap-0.5">
                 <Thermometer className="w-3 h-3" />{Math.round(nozzle)}°
               </span>

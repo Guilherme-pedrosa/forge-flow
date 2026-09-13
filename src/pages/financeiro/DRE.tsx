@@ -1,4 +1,6 @@
 import { useState, useMemo } from "react";
+import { allRows, localDate, validDate } from "@/lib/finance";
+import { calculateFinancialResult } from "@/lib/financial-result";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -13,8 +15,8 @@ const fmtCurrency = (v: number) => v.toLocaleString("pt-BR", { style: "currency"
 
 function getDefaultPeriod() {
   const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10);
-  const end = now.toISOString().slice(0, 10);
+  const start = localDate(new Date(now.getFullYear(), now.getMonth(), 1));
+  const end = localDate(now);
   return { start, end };
 }
 
@@ -24,118 +26,72 @@ export default function DRE() {
   const [startDate, setStartDate] = useState(defaultPeriod.start);
   const [endDate, setEndDate] = useState(defaultPeriod.end);
 
-  const { data: receivables = [], isLoading: loadingAR } = useQuery({
-    queryKey: ["dre_ar", startDate, endDate],
+  const periodValid = validDate(startDate) && validDate(endDate) && startDate <= endDate;
+
+  const { data: receivables = [], isLoading: loadingAR, error: errorAR } = useQuery({
+    queryKey: ["dre_ar", profile?.tenant_id, startDate, endDate],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("accounts_receivable")
-        .select("amount, amount_received, status, receipt_date, competence_date, created_at")
-        .gte("competence_date", startDate)
-        .lte("competence_date", endDate);
-      if (error) throw error;
-      return data;
+      const data = await allRows<any>((from, to) => supabase.from("accounts_receivable").select("*").order("id").range(from, to));
+      return data.filter(r => { const date = r.competence_date || r.created_at.slice(0, 10); return date >= startDate && date <= endDate; });
     },
-    enabled: !!profile,
+    enabled: !!profile && periodValid,
   });
 
-  const { data: payables = [], isLoading: loadingAP } = useQuery({
-    queryKey: ["dre_ap", startDate, endDate],
+  const { data: payables = [], isLoading: loadingAP, error: errorAP } = useQuery({
+    queryKey: ["dre_ap", profile?.tenant_id, startDate, endDate],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("accounts_payable")
-        .select("amount, amount_paid, status, payment_date, competence_date, created_at, description")
-        .gte("competence_date", startDate)
-        .lte("competence_date", endDate);
-      if (error) throw error;
-      return data;
+      const data = await allRows<any>((from, to) => supabase.from("accounts_payable").select("*,chart_of_accounts(account_type)").order("id").range(from, to));
+      return data.filter(r => { const date = r.competence_date || r.created_at.slice(0, 10); return date >= startDate && date <= endDate; });
     },
-    enabled: !!profile,
+    enabled: !!profile && periodValid,
   });
 
-  const { data: jobs = [], isLoading: loadingJobs } = useQuery({
-    queryKey: ["dre_jobs", startDate, endDate],
+  const { data: jobs = [], isLoading: loadingJobs, error: errorJobs } = useQuery({
+    queryKey: ["dre_jobs", profile?.tenant_id, startDate, endDate],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("jobs")
-        .select("sale_price, actual_total_cost, est_total_cost, actual_material_cost, est_material_cost, actual_machine_cost, est_machine_cost, actual_energy_cost, est_energy_cost, actual_labor_cost, est_labor_cost, actual_overhead, est_overhead, status, completed_at, created_at")
-        .in("status", ["completed", "shipped"]);
-      if (error) throw error;
-      // Filter by period based on completed_at
-      return data.filter((j: any) => {
-        const d = j.completed_at?.slice(0, 10) || j.created_at?.slice(0, 10);
-        return d >= startDate && d <= endDate;
-      });
+      const data = await allRows<any>((from, to) => supabase.from("jobs").select("*").in("status", ["completed", "shipped", "failed"]).order("id").range(from, to));
+      return data.filter(j => { const date = j.completed_at?.slice(0, 10) || (j.status === "failed" ? j.updated_at?.slice(0, 10) : null) || j.created_at?.slice(0, 10); return date >= startDate && date <= endDate; });
     },
-    enabled: !!profile,
+    enabled: !!profile && periodValid,
   });
 
-  const isLoading = loadingAR || loadingAP || loadingJobs;
+  const { data: purchaseItems = [], isLoading: loadingItems, error: errorItems } = useQuery({
+    queryKey: ["dre_purchase_items", profile?.tenant_id],
+    queryFn: () => allRows<any>((from, to) => supabase.from("purchase_order_items").select("purchase_order_id,inventory_item_id,total").order("id").range(from, to)),
+    enabled: !!profile && periodValid,
+  });
+  const isLoading = loadingAR || loadingAP || loadingJobs || loadingItems;
 
-  const dre = useMemo(() => {
-    // ── RECEITAS ──
-    // Receita de vendas (jobs concluídos com preço de venda)
-    const salesRevenue = jobs.reduce((s, j: any) => s + (j.sale_price || 0), 0);
-    // Receita de recebíveis (valores efetivamente recebidos)
-    const arRevenue = receivables.reduce((s, r: any) => s + (r.amount_received || 0), 0);
-    // Receita bruta = o maior entre AR e vendas (evitar dupla contagem quando AR já reflete as vendas)
-    // MAS agora mostramos ambos para transparência
-    const totalRevenue = salesRevenue || arRevenue; // Preferir sales se existir
-
-    // ── CUSTOS DE PRODUÇÃO (CMV) ──
-    const materialCost = jobs.reduce((s, j: any) => s + (j.actual_material_cost || j.est_material_cost || 0), 0);
-    const machineCost = jobs.reduce((s, j: any) => s + (j.actual_machine_cost || j.est_machine_cost || 0), 0);
-    const energyCost = jobs.reduce((s, j: any) => s + (j.actual_energy_cost || j.est_energy_cost || 0), 0);
-    const laborCost = jobs.reduce((s, j: any) => s + (j.actual_labor_cost || j.est_labor_cost || 0), 0);
-    const overheadCost = jobs.reduce((s, j: any) => s + (j.actual_overhead || j.est_overhead || 0), 0);
-    const totalCMV = materialCost + machineCost + energyCost + laborCost + overheadCost;
-
-    // ── LUCRO BRUTO ──
-    const grossProfit = totalRevenue - totalCMV;
-
-    // ── DESPESAS OPERACIONAIS (contas a pagar que NÃO são custo de produção) ──
-    const opExpenses = payables.reduce((s, p: any) => s + (p.amount_paid || 0), 0);
-
-    // ── RESULTADO LÍQUIDO ──
-    const netResult = grossProfit - opExpenses;
-    const grossMargin = totalRevenue > 0 ? (grossProfit / totalRevenue) * 100 : 0;
-    const netMargin = totalRevenue > 0 ? (netResult / totalRevenue) * 100 : 0;
-
-    return {
-      salesRevenue, arRevenue, totalRevenue,
-      materialCost, machineCost, energyCost, laborCost, overheadCost, totalCMV,
-      grossProfit, grossMargin,
-      opExpenses,
-      netResult, netMargin,
-      jobCount: jobs.length,
-    };
-  }, [receivables, payables, jobs]);
+  const hasError = errorAR || errorAP || errorJobs || errorItems;
+  const dre = useMemo(() => calculateFinancialResult(receivables, payables, jobs, purchaseItems), [receivables, payables, jobs, purchaseItems]);
 
   const lines = [
     { label: "RECEITA OPERACIONAL", value: dre.totalRevenue, bold: true, section: true },
-    { label: "Vendas / Jobs concluídos", value: dre.salesRevenue, indent: true, sub: `${dre.jobCount} jobs` },
-    { label: "Recebimentos (clientes)", value: dre.arRevenue, indent: true },
+    { label: "Títulos a receber por competência", value: dre.totalRevenue, indent: true, sub: `${dre.titleCount} títulos · recebidos e em aberto` },
     { label: "", value: 0, separator: true },
-    { label: "(-) CUSTO DOS PRODUTOS VENDIDOS", value: -dre.totalCMV, bold: true, section: true, negative: true },
+    { label: "(-) CUSTOS DE PRODUÇÃO E PERDAS", value: -dre.totalCMV, bold: true, section: true, negative: true },
     { label: "Material / Filamento", value: dre.materialCost, indent: true },
     { label: "Máquina (depreciação + manutenção)", value: dre.machineCost, indent: true },
     { label: "Energia", value: dre.energyCost, indent: true },
     { label: "Mão de obra", value: dre.laborCost, indent: true },
     { label: "Overhead", value: dre.overheadCost, indent: true },
+    { label: "Custos extras", value: dre.extrasCost, indent: true },
+    { label: "Ajustes do custo total apurado", value: dre.costAdjustment, indent: true },
     { label: "", value: 0, separator: true },
-    { label: "LUCRO BRUTO", value: dre.grossProfit, bold: true, highlight: true, sub: `${dre.grossMargin.toFixed(1)}% margem` },
+    { label: "RESULTADO BRUTO APURADO", value: dre.grossProfit, bold: true, highlight: true, sub: dre.grossMargin == null ? "Margem indisponível enquanto houver pendências" : `${dre.grossMargin.toFixed(1)}% margem` },
     { label: "", value: 0, separator: true },
     { label: "(-) DESPESAS OPERACIONAIS", value: -dre.opExpenses, bold: true, section: true, negative: true },
-    { label: "Contas a Pagar (pagas no período)", value: dre.opExpenses, indent: true },
+    { label: "Despesas por competência (pagas e em aberto)", value: dre.opExpenses, indent: true },
     { label: "", value: 0, separator: true },
-    { label: "RESULTADO LÍQUIDO", value: dre.netResult, bold: true, highlight: true, final: true },
+    { label: dre.isPartial ? "RESULTADO PARCIAL — COM PENDÊNCIAS" : "RESULTADO GERENCIAL", value: dre.netResult, bold: true, highlight: true, final: true },
   ];
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
-      <PageHeader title="DRE" description="Demonstrativo de Resultado do Exercício"
+      <PageHeader title="DRE gerencial" description="Receitas e despesas por competência, com custos da produção e perdas apuradas."
         breadcrumbs={[{ label: "Financeiro" }, { label: "DRE" }]}
         actions={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button variant="outline" size="sm" asChild><a href="/financeiro/pagar">Contas a Pagar</a></Button>
             <Button variant="outline" size="sm" asChild><a href="/financeiro/receber">Contas a Receber</a></Button>
           </div>
@@ -154,26 +110,40 @@ export default function DRE() {
         </div>
       </div>
 
+      {!periodValid && <p role="alert" className="rounded-lg border border-destructive/30 p-4 text-sm text-destructive">Informe um período válido: a data inicial deve ser anterior ou igual à final.</p>}
+      {hasError && <p role="alert" className="rounded-lg border border-destructive/30 p-4 text-sm text-destructive">Não foi possível carregar todas as fontes. O resultado está indisponível para evitar totais incompletos.</p>}
+      <div className="rounded-xl border bg-card p-4 text-sm text-muted-foreground space-y-2">
+        <p>Receitas vêm dos títulos financeiros. O preço dos jobs não é somado novamente. Aquisições vinculadas ao estoque ou classificadas fora de despesas ({fmtCurrency(dre.excludedPurchases)}) não são descontadas novamente.</p>
+        <p>Custos incluem produção concluída e falhas apuradas ({fmtCurrency(dre.failedCost)} em perdas). Produção em andamento permanece fora desta apuração; diferenças entre produção, entrega e receita devem ser conciliadas no fechamento.</p>
+        {dre.isPartial && <p className="font-semibold text-amber-800">Apuração parcial. As margens ficam indisponíveis até a revisão das pendências abaixo.</p>}
+        {dre.unknownPurchaseAmount > 0 && <p className="text-amber-800">{fmtCurrency(dre.unknownPurchaseAmount)} em compras ainda sem vínculo de estoque ou classificação contábil estão pendentes, fora do resultado parcial. Podem conter serviços e outras despesas. Revise a origem dos títulos e os itens da compra antes de considerar lucro.</p>}
+        {dre.unmeasuredFailedCount > 0 && <p className="text-amber-800">{dre.unmeasuredFailedCount} falhas não têm custo total real apurado. Não foi usado o custo estimado de uma peça concluída para inventar o valor da perda.</p>}
+        {dre.missingFailureDateCount > 0 && <p className="text-amber-800">{dre.missingFailureDateCount} falhas antigas não têm data de conclusão registrada; foi usada a última atualização para selecionar o período. Confira a competência dessas perdas.</p>}
+        {dre.estimatedCount > 0 && <p className="text-amber-700">{dre.estimatedCount} jobs usam algum custo estimado: finalize o apontamento dos custos reais.</p>}
+        {dre.unclassifiedCount > 0 && <p className="text-amber-700">{dre.unclassifiedCount} despesas sem plano de contas ({fmtCurrency(dre.unclassifiedExpenseAmount)}) estão incluídas no resultado parcial. Classifique antes do fechamento.</p>}
+        {dre.missingCompetenceCount > 0 && <p className="text-amber-700">{dre.missingCompetenceCount} títulos antigos não têm competência; foi usada a data de cadastro.</p>}
+      </div>
+      {periodValid && !hasError && <>
       {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
         <div className="rounded-xl border bg-card p-4">
           <p className="text-xs text-muted-foreground">Receita</p>
           <p className="text-2xl font-bold text-foreground">{fmtCurrency(dre.totalRevenue)}</p>
-          <p className="text-xs text-muted-foreground">{dre.jobCount} jobs concluídos</p>
+          <p className="text-xs text-muted-foreground">{dre.titleCount} títulos por competência</p>
         </div>
         <div className="rounded-xl border bg-card p-4">
-          <p className="text-xs text-muted-foreground">CMV</p>
+          <p className="text-xs text-muted-foreground">Custos de produção</p>
           <p className="text-2xl font-bold text-destructive">{fmtCurrency(dre.totalCMV)}</p>
         </div>
         <div className="rounded-xl border bg-card p-4">
           <p className="text-xs text-muted-foreground">Lucro Bruto</p>
           <p className={cn("text-2xl font-bold", dre.grossProfit >= 0 ? "text-foreground" : "text-destructive")}>{fmtCurrency(dre.grossProfit)}</p>
-          <p className="text-xs text-muted-foreground">Margem {dre.grossMargin.toFixed(1)}%</p>
+          <p className="text-xs text-muted-foreground">{dre.grossMargin == null ? "Margem indisponível" : `Margem ${dre.grossMargin.toFixed(1)}%`}</p>
         </div>
         <div className="rounded-xl border bg-card p-4">
-          <p className="text-xs text-muted-foreground">Resultado Líquido</p>
+          <p className="text-xs text-muted-foreground">{dre.isPartial ? "Resultado parcial" : "Resultado gerencial"}</p>
           <p className={cn("text-2xl font-bold", dre.netResult >= 0 ? "text-foreground" : "text-destructive")}>{fmtCurrency(dre.netResult)}</p>
-          <p className="text-xs text-muted-foreground">Margem {dre.netMargin.toFixed(1)}%</p>
+          <p className="text-xs text-muted-foreground">{dre.netMargin == null ? "Margem indisponível" : `Margem ${dre.netMargin.toFixed(1)}%`}</p>
         </div>
       </div>
 
@@ -219,6 +189,7 @@ export default function DRE() {
           </div>
         )}
       </div>
+      </>}
     </div>
   );
 }

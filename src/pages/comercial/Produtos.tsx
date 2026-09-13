@@ -25,11 +25,15 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { calculateProductCost, suggestedProductPrice } from "@/lib/product-costs";
+import { nonNegative, positiveInteger } from "@/lib/production";
+import { allRows } from "@/lib/finance";
+import { orderRequest } from "@/lib/sales-order";
 
 const fmtCurrency = (v: number | null) => v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
 const fmtDuration = (s: number | null) => {
   if (!s) return "—";
-  const h = (s / 60).toFixed(1).replace(".", ",");
+  const h = (s / 3600).toFixed(1).replace(".", ",");
   return `${h}h`;
 };
 
@@ -51,8 +55,11 @@ export default function Produtos() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const productRequest = useRef<{ signature: string; id: string } | null>(null);
+  const kitRequest = useRef<{ signature: string; id: string } | null>(null);
 
   const [search, setSearch] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [editItem, setEditItem] = useState<any>(null);
   const [bambuImportOpen, setBambuImportOpen] = useState(false);
@@ -78,6 +85,8 @@ export default function Produtos() {
   const [photoUrl, setPhotoUrl] = useState("");
   const [extraPhotos, setExtraPhotos] = useState<string[]>([]);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  const [photosLoading, setPhotosLoading] = useState(false);
+  const photoLoadVersion = useRef(0);
   const [notes, setNotes] = useState("");
   const [printerId, setPrinterId] = useState("");
   const [numColors, setNumColors] = useState("1");
@@ -95,39 +104,38 @@ export default function Produtos() {
 
   // Marketplace fee config
   const [channelConfig, setChannelConfig] = useState([
-    { key: "shopee", name: "Shopee", fee: 20, freeShipping: false, freeShippingExtra: 6, freeShippingType: "percent" as "percent" | "fixed", enabled: true },
-    { key: "ml", name: "Mercado Livre", fee: 16, freeShipping: true, freeShippingExtra: 5, freeShippingType: "percent" as "percent" | "fixed", enabled: true },
-    { key: "tiktok", name: "TikTok Shop", fee: 8, freeShipping: false, freeShippingExtra: 0, freeShippingType: "percent" as "percent" | "fixed", enabled: true },
+    { key: "shopee", name: "Shopee", fee: 0, freeShipping: false, freeShippingExtra: 0, freeShippingType: "percent" as "percent" | "fixed", enabled: true },
+    { key: "ml", name: "Mercado Livre", fee: 0, freeShipping: false, freeShippingExtra: 0, freeShippingType: "percent" as "percent" | "fixed", enabled: true },
+    { key: "tiktok", name: "TikTok Shop", fee: 0, freeShipping: false, freeShippingExtra: 0, freeShippingType: "percent" as "percent" | "fixed", enabled: true },
     { key: "particular", name: "Particular", fee: 0, freeShipping: false, freeShippingExtra: 0, freeShippingType: "percent" as "percent" | "fixed", enabled: true },
   ]);
   const [showChannelConfig, setShowChannelConfig] = useState(false);
 
-  const { data: products = [], isLoading } = useQuery({
-    queryKey: ["products"],
+  const { data: products = [], isLoading, error: productsError, refetch: refetchProducts } = useQuery({
+    queryKey: ["products", profile?.tenant_id],
     queryFn: async () => {
-      const { data, error } = await supabase.from("products").select("*, inventory_items(name)").order("name");
+      return allRows((from, to) => supabase.from("products").select("*, inventory_items(name)").eq("tenant_id", profile!.tenant_id).order("name").order("id").range(from, to));
+    },
+    enabled: !!profile,
+  });
+
+  const { data: materials = [], error: materialsError } = useQuery({
+    queryKey: ["inventory_items", "product-costs", profile?.tenant_id],
+    queryFn: async () => {
+      const { data, error } = await supabase.from("inventory_items").select("id, name, avg_cost, freight_cost, loss_coefficient, unit").eq("tenant_id", profile!.tenant_id).eq("is_active", true).order("name");
       if (error) throw error;
       return data;
     },
     enabled: !!profile,
   });
 
-  const { data: materials = [] } = useQuery({
-    queryKey: ["inventory_items"],
-    queryFn: async () => {
-      const { data, error } = await supabase.from("inventory_items").select("id, name, avg_cost, freight_cost, loss_coefficient, unit").eq("is_active", true).order("name");
-      if (error) throw error;
-      return data;
-    },
-    enabled: !!profile,
-  });
-
-  const { data: printers = [] } = useQuery({
-    queryKey: ["printers_for_cost"],
+  const { data: printers = [], error: printersError } = useQuery({
+    queryKey: ["printers_for_cost", profile?.tenant_id],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("printers")
         .select("id, name, power_watts, depreciation_per_hour, maintenance_cost_per_hour, acquisition_cost, useful_life_hours")
+        .eq("tenant_id", profile!.tenant_id)
         .eq("is_active", true)
         .order("name");
       if (error) throw error;
@@ -136,8 +144,8 @@ export default function Produtos() {
     enabled: !!profile,
   });
 
-  const { data: tenant } = useQuery({
-    queryKey: ["tenant"],
+  const { data: tenant, error: tenantError } = useQuery({
+    queryKey: ["tenant", profile?.tenant_id],
     queryFn: async () => {
       if (!profile) return null;
       const { data, error } = await supabase.from("tenants").select("*").eq("id", profile.tenant_id).single();
@@ -158,92 +166,34 @@ export default function Produtos() {
 
   const tenantSettings = useMemo(() => {
     const s = (tenant?.settings as any) || {};
+    const settingValue = (value: unknown) => value == null ? 0 : Number(String(value).replace(",", "."));
     return {
-      energy_cost_kwh: toNumber(s.energy_cost_kwh),
-      labor_cost_hour: toNumber(s.labor_cost_hour),
-      overhead_percent: toNumber(s.overhead_percent),
-      target_margin: toNumber(s.target_margin),
+      energy_cost_kwh: settingValue(s.energy_cost_kwh),
+      labor_cost_hour: settingValue(s.labor_cost_hour),
+      overhead_percent: settingValue(s.overhead_percent),
+      target_margin: s.target_margin == null ? 40 : settingValue(s.target_margin),
     };
   }, [tenant]);
 
-  // Cost breakdown calculation
+  // Weight, print time and finishing time are per plate. Extras are per unit.
   const costBreakdown = useMemo(() => {
-    const grams = parseFloat(estGrams) || 0;
-    const printHours = parseFloat(estTime) || 0;
-    const postMin = parseInt(postMinutes) || 0;
-    const laborHours = postMin / 60;
-
-    // Material cost (produto sempre em gramas)
-    const selectedMaterial = materials.find((m) => m.id === materialId);
-    const materialUnit = String(selectedMaterial?.unit || "").trim().toLowerCase();
-    const isKgUnit = ["kg", "quilo", "quilos", "kilogram", "kilograms"].includes(materialUnit);
-
-    // avg_cost respeita a unidade cadastrada no item
-    const baseCostPerGram = selectedMaterial
-      ? (isKgUnit ? selectedMaterial.avg_cost / 1000 : selectedMaterial.avg_cost)
-      : 0;
-
-    // freight_cost: tratar valores > 1 como R$/kg para evitar distorção quando item está em gramas
-    const rawFreight = Number(selectedMaterial?.freight_cost || 0);
-    const freightPerGram = rawFreight > 0
-      ? (isKgUnit ? rawFreight / 1000 : rawFreight > 1 ? rawFreight / 1000 : rawFreight)
-      : 0;
-
-    const lossCoeff = selectedMaterial?.loss_coefficient || 0.05;
-    const effectiveGrams = grams * (1 + lossCoeff);
-    const materialCost = effectiveGrams * (baseCostPerGram + freightPerGram);
-
-    // Energy + machine cost
-    const selectedPrinter = printers.find((p) => p.id === printerId) ?? printers[0];
-    const powerKw = (selectedPrinter?.power_watts || 200) / 1000;
-    const energyCost = powerKw * printHours * tenantSettings.energy_cost_kwh;
-
-    const persistedDepreciation = selectedPrinter?.depreciation_per_hour || 0;
-    const derivedDepreciation = selectedPrinter && (selectedPrinter.acquisition_cost || 0) > 0 && (selectedPrinter.useful_life_hours || 0) > 0
-      ? (selectedPrinter.acquisition_cost || 0) / (selectedPrinter.useful_life_hours || 1)
-      : 0;
-    const depreciationPerHour = persistedDepreciation > 0 ? persistedDepreciation : derivedDepreciation;
-    const maintenancePerHour = selectedPrinter?.maintenance_cost_per_hour || 0;
-    const machineCost = (depreciationPerHour + maintenancePerHour) * printHours;
-
-    // Labor cost
-    const laborCost = laborHours * tenantSettings.labor_cost_hour;
-
-    const subtotalPlate = materialCost + energyCost + machineCost + laborCost;
-    const overheadPlate = subtotalPlate * (tenantSettings.overhead_percent / 100);
-    const totalPlate = subtotalPlate + overheadPlate;
-
-    // Divide by prints per plate
-    const ppp = Math.max(1, parseInt(printsPerPlate) || 1);
-    const totalPerPiece = totalPlate / ppp;
-    const overhead = overheadPlate / ppp;
-
-    // Extras cost (not divided by prints per plate - each unit gets the extras)
-    const extrasCost = extras.reduce((sum, e) => sum + (e.cost || 0), 0);
-    const total = totalPerPiece + extrasCost;
-
-    // Suggested sale price
-    const margin = tenantSettings.target_margin || 40;
-    const suggestedPrice = margin < 100 ? total / (1 - margin / 100) : total * 2;
-
-    return {
-      materialCost: materialCost / ppp,
-      energyCost: energyCost / ppp,
-      machineCost: machineCost / ppp,
-      laborCost: laborCost / ppp,
-      overhead,
-      totalPerPiece,
-      total,
-      extrasCost,
-      totalPlate,
-      printsPerPlate: ppp,
-      suggestedPrice,
-      selectedPrinterName: selectedPrinter?.name || null,
-      hasMachineRate: (depreciationPerHour + maintenancePerHour) > 0,
-    };
-  }, [estGrams, estTime, postMinutes, materialId, printerId, printsPerPlate, materials, printers, tenantSettings, extras]);
-
+    try {
+      return { ...calculateProductCost({
+        grams: estGrams, printHours: estTime, postMinutes, printsPerPlate,
+        material: materials.find(material => material.id === materialId),
+        printer: printers.find(printer => printer.id === printerId),
+        settings: tenantSettings, extras,
+      }), error: null as string | null };
+    } catch (error) {
+      return { materialCost: 0, energyCost: 0, machineCost: 0, laborCost: 0, overhead: 0,
+        totalPerPiece: 0, total: 0, extrasCost: 0, totalPlate: 0, printsPerPlate: 1,
+        suggestedPrice: 0, selectedPrinterName: null, hasMachineRate: false,
+        error: error instanceof Error ? error.message : "Revise os parâmetros de custo." };
+    }
+  }, [estGrams, estTime, postMinutes, printsPerPlate, materialId, printerId, materials, printers, tenantSettings, extras]);
   const applyCalculatedCost = () => {
+    if (materialsError || printersError || tenantError || !tenant) { toast({ title: "Parâmetros indisponíveis", description: "Aguarde o carregamento ou atualize a página antes de calcular.", variant: "destructive" }); return; }
+    if (costBreakdown.error) { toast({ title: "Não foi possível calcular", description: costBreakdown.error, variant: "destructive" }); return; }
     setCostEstimate(costBreakdown.total.toFixed(2));
     if (!salePrice || parseFloat(salePrice) === 0) {
       setSalePrice(costBreakdown.suggestedPrice.toFixed(2));
@@ -252,11 +202,12 @@ export default function Produtos() {
 
   // Fetch Bambu tasks for import
   const { data: bambuTasks = [], isLoading: bambuTasksLoading } = useQuery({
-    queryKey: ["bambu_tasks_for_import"],
+    queryKey: ["bambu_tasks_for_import", profile?.tenant_id],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("bambu_tasks")
         .select("*, bambu_devices(name)")
+        .eq("tenant_id", profile!.tenant_id)
         .eq("status", "2")
         .order("start_time", { ascending: false })
         .limit(200);
@@ -269,7 +220,7 @@ export default function Produtos() {
   // Fetch Bambu projects (saved models / collections)
   const [bambuProjectsError, setBambuProjectsError] = useState("");
   const { data: bambuProjects = [], isLoading: bambuProjectsLoading } = useQuery({
-    queryKey: ["bambu_projects_for_import"],
+    queryKey: ["bambu_projects_for_import", profile?.tenant_id],
     queryFn: async () => {
       setBambuProjectsError("");
       const { data, error } = await supabase.functions.invoke("bambu-cloud-sync", {
@@ -287,12 +238,14 @@ export default function Produtos() {
   });
 
   const filtered = useMemo(() => {
-    if (!search) return products;
-    const s = search.toLowerCase();
-    return products.filter((p: any) => p.name.toLowerCase().includes(s) || p.sku?.toLowerCase().includes(s));
-  }, [products, search]);
+    const s = search.trim().toLowerCase();
+    return products.filter(p => (showArchived || p.is_active) && (!s || p.name.toLowerCase().includes(s) || p.sku?.toLowerCase().includes(s)));
+  }, [products, search, showArchived]);
 
   const resetForm = () => {
+    productRequest.current = null;
+    photoLoadVersion.current += 1;
+    setPhotosLoading(false);
     setName(""); setDescription(""); setSku(""); setCategory("printed_part"); setMaterialId("");
     setEstGrams(""); setEstTime(""); setPostMinutes(""); setCostEstimate(""); setSalePrice(""); setPhotoUrl(""); setExtraPhotos([]); setNotes(""); setPrinterId(""); setNumColors("1"); setPrintsPerPlate("1"); setExtras([]); setKitComponents([]);
   };
@@ -320,10 +273,16 @@ export default function Produtos() {
     }
     setExtras(regularExtras);
     setKitComponents(kitItems);
-    // Load extra photos
+    setExtraPhotos([]);
+    const loadVersion = ++photoLoadVersion.current;
+    // Keep the previous product's photos out of a newly opened editor.
     if (p.id) {
-      supabase.from("product_photos").select("url").eq("product_id", p.id).order("sort_order").then(({ data }) => {
-        setExtraPhotos((data || []).map((d: any) => d.url));
+      setPhotosLoading(true);
+      supabase.from("product_photos").select("url").eq("tenant_id", profile!.tenant_id).eq("product_id", p.id).order("sort_order").then(({ data, error }) => {
+        if (loadVersion !== photoLoadVersion.current) return;
+        if (error) { toast({ title: "Não foi possível carregar as fotos", description: "Feche e abra o produto novamente antes de salvar.", variant: "destructive" }); return; }
+        setExtraPhotos((data || []).map(d => d.url));
+        setPhotosLoading(false);
       });
     } else {
       setExtraPhotos([]);
@@ -335,15 +294,18 @@ export default function Produtos() {
     if (!files || !profile) return;
     setUploadingPhoto(true);
     try {
+      let hasMainPhoto = !!photoUrl;
       for (const file of Array.from(files)) {
+        if (!file.type.startsWith("image/") || file.size > 10 * 1024 * 1024) throw new Error("Envie somente imagens de até 10 MB cada.");
         const ext = file.name.split(".").pop();
         const path = `${profile.tenant_id}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
         const { error: uploadError } = await supabase.storage.from("product-photos").upload(path, file);
         if (uploadError) throw uploadError;
         const { data: urlData } = supabase.storage.from("product-photos").getPublicUrl(path);
         const publicUrl = urlData.publicUrl;
-        if (!photoUrl) {
+        if (!hasMainPhoto) {
           setPhotoUrl(publicUrl);
+          hasMainPhoto = true;
         } else {
           setExtraPhotos(prev => [...prev, publicUrl]);
         }
@@ -539,17 +501,6 @@ export default function Produtos() {
     }
   };
 
-  const saveExtraPhotos = async (productId: string) => {
-    if (!profile || extraPhotos.length === 0) return;
-    // Delete old extra photos
-    await supabase.from("product_photos").delete().eq("product_id", productId);
-    // Insert new ones
-    const rows = extraPhotos.map((url, i) => ({
-      product_id: productId, tenant_id: profile.tenant_id, url, sort_order: i,
-    }));
-    await supabase.from("product_photos").insert(rows);
-  };
-
   // Build combined extras array (regular extras + kit components stored as special entries)
   const buildExtrasPayload = () => {
     const regularExtras = extras
@@ -594,6 +545,7 @@ export default function Produtos() {
   }, [kitItems, products, kitMarginAdjust]);
 
   const resetKitBuilder = () => {
+    kitRequest.current = null;
     setKitName(""); setKitSku(""); setKitDescription(""); setKitMarginAdjust("0");
     setKitItems([{ productId: "", qty: 1 }]);
   };
@@ -601,8 +553,16 @@ export default function Produtos() {
   const createKitMut = useMutation({
     mutationFn: async () => {
       if (!profile) throw new Error("Sem perfil");
+      if (!kitName.trim()) throw new Error("Informe o nome do kit.");
       const validItems = kitItems.filter(ki => ki.productId);
       if (validItems.length === 0) throw new Error("Adicione pelo menos um produto ao kit");
+      const adjustment = Number(kitMarginAdjust);
+      if (!Number.isFinite(adjustment) || adjustment < -100) throw new Error("O ajuste de preço deve ser maior ou igual a -100%.");
+      for (const item of validItems) {
+        positiveInteger(item.qty, "Quantidade do componente", 10000);
+        const product = products.find(product => product.id === item.productId && product.is_active);
+        if (!product || product.cost_estimate == null || product.sale_price == null) throw new Error("Todos os componentes precisam ter custo e preço cadastrados.");
+      }
       const { totalCost, adjustedPrice, margin } = kitBuilderTotals;
       const extrasPayload = validItems.map(ki => {
         const prod = products.find((p: any) => p.id === ki.productId);
@@ -613,9 +573,9 @@ export default function Produtos() {
           _kit_qty: ki.qty,
         };
       });
-      const { error } = await supabase.from("products").insert({
-        tenant_id: profile.tenant_id,
-        name: kitName,
+      const rpc = supabase.rpc as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ error: { message: string } | null }>;
+      const payload = { p_product_id: null, p_product: {
+        name: kitName.trim(),
         description: kitDescription || null,
         sku: kitSku || null,
         category: "kit",
@@ -623,7 +583,9 @@ export default function Produtos() {
         sale_price: Math.round(adjustedPrice * 100) / 100,
         margin_percent: margin,
         extras: extrasPayload,
-      } as any);
+      }, p_photos: [] };
+      kitRequest.current = orderRequest(kitRequest.current, JSON.stringify(payload));
+      const { error } = await rpc("save_product_with_photos", { ...payload, p_request_id: kitRequest.current.id });
       if (error) throw error;
     },
     onSuccess: () => {
@@ -636,63 +598,81 @@ export default function Produtos() {
   });
 
 
+  const saveProduct = async (productId: string | null) => {
+    if (!profile) throw new Error("Sua sessão expirou. Entre novamente.");
+    if (!name.trim()) throw new Error("Informe o nome do produto.");
+    if (uploadingPhoto || photosLoading) throw new Error("Aguarde o carregamento das fotos antes de salvar.");
+    const cost = costEstimate.trim() ? nonNegative(costEstimate, "Custo estimado") : null;
+    const price = salePrice.trim() ? nonNegative(salePrice, "Preço de venda") : null;
+    const grams = nonNegative(estGrams, "Peso por placa");
+    const selectedMaterial = materials.find(material => material.id === materialId);
+    if (grams > 0 && !selectedMaterial) throw new Error("Selecione o material da receita de impressão.");
+    if (grams > 0 && selectedMaterial && !["g", "kg"].includes(selectedMaterial.unit)) throw new Error("O material de impressão deve usar gramas (g) ou quilogramas (kg).");
+    for (const extra of extras) {
+      nonNegative(extra.cost, "Custo do item extra");
+      if (extra.cost > 0 && !extra.name.trim()) throw new Error("Informe o nome de cada item extra com custo.");
+    }
+    for (const component of kitComponents) {
+      if (!component.productId || !products.some(product => product.id === component.productId && product.is_active)) throw new Error("Revise os componentes do kit.");
+      positiveInteger(component.qty, "Quantidade do componente", 10000);
+    }
+    const photos = [...new Set(extraPhotos.map(url => url.trim()).filter(Boolean))];
+    for (const url of [photoUrl.trim(), ...photos].filter(Boolean)) {
+      let valid = false;
+      try { valid = ["https:", "http:"].includes(new URL(url).protocol); } catch { /* invalid address */ }
+      if (!valid) throw new Error("Informe uma URL válida para as fotos do produto.");
+    }
+    const rpc = supabase.rpc as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ data: string | null; error: { message: string } | null }>;
+    const payload = {
+      p_product_id: productId,
+      p_product: {
+        name: name.trim(), description: description.trim() || null, sku: sku.trim() || null, category,
+        material_id: materialId || null, est_grams: grams,
+        est_time_minutes: Math.round(nonNegative(estTime, "Tempo por placa") * 60),
+        post_process_minutes: nonNegative(postMinutes, "Pós-processo por placa"),
+        cost_estimate: cost, sale_price: price,
+        margin_percent: price != null && price > 0 && cost != null ? ((price - cost) / price) * 100 : null,
+        notes: notes.trim() || null, photo_url: photoUrl.trim() || null,
+        num_colors: positiveInteger(numColors, "Número de cores", 16),
+        prints_per_plate: positiveInteger(printsPerPlate, "Peças por placa", 10000),
+        extras: buildExtrasPayload(),
+      },
+      p_photos: photos,
+    };
+    productRequest.current = orderRequest(productRequest.current, JSON.stringify(payload));
+    const { error } = await rpc("save_product_with_photos", { ...payload, p_request_id: productRequest.current.id });
+    if (error) throw new Error(error.message);
+  };
   const createMut = useMutation({
-    mutationFn: async () => {
-      if (!profile) throw new Error("Sem perfil");
-      const cost = costEstimate ? parseFloat(costEstimate) : 0;
-      const price = salePrice ? parseFloat(salePrice) : 0;
-      const margin = price > 0 ? ((price - cost) / price) * 100 : null;
-      const { data: inserted, error } = await supabase.from("products").insert({
-        tenant_id: profile.tenant_id, name, description: description || null, sku: sku || null,
-        category, material_id: materialId || null, est_grams: estGrams ? parseFloat(estGrams) : 0,
-        est_time_minutes: estTime ? Math.round(parseFloat(estTime) * 60) : 0, post_process_minutes: postMinutes ? parseInt(postMinutes) : 0,
-        cost_estimate: cost, sale_price: price, margin_percent: margin, notes: notes || null,
-        photo_url: photoUrl || null, num_colors: parseInt(numColors) || 1,
-        prints_per_plate: parseInt(printsPerPlate) || 1,
-        extras: buildExtrasPayload(),
-      } as any).select("id").single();
-      if (error) throw error;
-      if (inserted) await saveExtraPhotos(inserted.id);
-    },
+    mutationFn: () => saveProduct(null),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["products"] }); setCreateOpen(false); resetForm(); toast({ title: "Produto criado" }); },
-    onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
+    onError: (error: Error) => toast({ title: "Não foi possível salvar", description: error.message, variant: "destructive" }),
   });
-
   const updateMut = useMutation({
-    mutationFn: async () => {
-      if (!editItem) return;
-      const cost = costEstimate ? parseFloat(costEstimate) : 0;
-      const price = salePrice ? parseFloat(salePrice) : 0;
-      const margin = price > 0 ? ((price - cost) / price) * 100 : null;
-      const { error } = await supabase.from("products").update({
-        name, description: description || null, sku: sku || null, category,
-        material_id: materialId || null, est_grams: estGrams ? parseFloat(estGrams) : 0,
-        est_time_minutes: estTime ? Math.round(parseFloat(estTime) * 60) : 0, post_process_minutes: postMinutes ? parseInt(postMinutes) : 0,
-        cost_estimate: cost, sale_price: price, margin_percent: margin, notes: notes || null,
-        photo_url: photoUrl || null, num_colors: parseInt(numColors) || 1,
-        prints_per_plate: parseInt(printsPerPlate) || 1,
-        extras: buildExtrasPayload(),
-      } as any).eq("id", editItem.id);
-      if (error) throw error;
-      await saveExtraPhotos(editItem.id);
-    },
+    mutationFn: () => saveProduct(editItem?.id ?? null),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["products"] }); setEditItem(null); resetForm(); toast({ title: "Produto atualizado" }); },
-    onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
+    onError: (error: Error) => toast({ title: "Não foi possível salvar", description: error.message, variant: "destructive" }),
   });
-
   const deleteMut = useMutation({
-    mutationFn: async (id: string) => {
-      const { error } = await supabase.from("products").delete().eq("id", id);
+    mutationFn: async ({ id, active }: { id: string; active: boolean }) => {
+      const { data, error } = await supabase.from("products").update({ is_active: active }).eq("tenant_id", profile!.tenant_id).eq("id", id).select("id").single();
       if (error) throw error;
+      if (!data) throw new Error("Produto não encontrado.");
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["products"] }); toast({ title: "Produto removido" }); },
+    onSuccess: (_, input) => { qc.invalidateQueries({ queryKey: ["products"] }); toast({ title: input.active ? "Produto reativado" : "Produto arquivado", description: "O histórico de pedidos e produção foi preservado." }); },
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 
   const allPhotos = [photoUrl, ...extraPhotos].filter(Boolean);
+  const activeProducts = products.filter(product => product.is_active);
+  const pricedProducts = activeProducts.filter(product => product.sale_price != null);
+  const marginProducts = activeProducts.filter(product => product.sale_price != null && product.sale_price > 0 && product.cost_estimate != null);
+  const catalogRevenue = marginProducts.reduce((sum, product) => sum + product.sale_price!, 0);
+  const catalogCost = marginProducts.reduce((sum, product) => sum + product.cost_estimate!, 0);
 
   const formFields = (
     <div className="grid gap-4 max-h-[60vh] overflow-y-auto pr-1">
+      {(materialsError || printersError || tenantError) && <p role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm">Não foi possível carregar todos os parâmetros de custo. Atualize a página antes de aplicar o cálculo.</p>}
       {/* Photos gallery */}
       <div>
         <Label className="mb-2 block">Fotos do Produto</Label>
@@ -704,7 +684,8 @@ export default function Produtos() {
               <button
                 type="button"
                 onClick={() => removePhoto(url)}
-                className="absolute -top-1.5 -right-1.5 bg-destructive text-destructive-foreground rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                aria-label={`Remover foto ${i + 1}`}
+                className="absolute -top-1.5 -right-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-destructive text-destructive-foreground transition-opacity md:opacity-0 md:group-hover:opacity-100 md:focus:opacity-100"
               >
                 <X className="h-3 w-3" />
               </button>
@@ -741,16 +722,17 @@ export default function Produtos() {
         )}
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div className="col-span-2"><Label>Nome *</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Vaso Geométrico P" /></div>
+        <div className="sm:col-span-2"><Label htmlFor="product-name">Nome *</Label><Input id="product-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Vaso Geométrico P" /></div>
         <div><Label>Categoria</Label>
           <Select value={category} onValueChange={setCategory}><SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>{Object.entries(categoryLabels).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
           </Select>
         </div>
         <div><Label>SKU</Label><Input value={sku} onChange={(e) => setSku(e.target.value)} placeholder="VASO-GEO-P" /></div>
-        <div className="col-span-2"><Label>Descrição</Label><Textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2} /></div>
+        <div className="sm:col-span-2"><Label htmlFor="product-description">Descrição</Label><Textarea id="product-description" value={description} onChange={(e) => setDescription(e.target.value)} rows={2} /></div>
       </div>
       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Receita de Produção</p>
+      <p className="-mt-2 text-xs leading-relaxed text-muted-foreground">Informe peso, impressão e acabamento da placa inteira. O cálculo divide esses custos pelas peças da placa; extras são cobrados por unidade.</p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div><Label>Material</Label>
           <Select value={materialId || "none"} onValueChange={(v) => setMaterialId(v === "none" ? "" : v)}>
@@ -758,18 +740,18 @@ export default function Produtos() {
             <SelectContent><SelectItem value="none">Nenhum</SelectItem>{materials.map((m) => <SelectItem key={m.id} value={m.id}>{m.name} ({fmtCurrency(m.avg_cost)}/{m.unit || 'un'})</SelectItem>)}</SelectContent>
           </Select>
         </div>
-        <div><Label>Gramas Estimadas</Label><Input type="number" value={estGrams} onChange={(e) => setEstGrams(e.target.value)} placeholder="45" /></div>
-        <div><Label>Impressora</Label>
+        <div><Label htmlFor="product-grams">Peso por placa (g)</Label><Input id="product-grams" type="number" min="0" step="0.01" value={estGrams} onChange={(e) => setEstGrams(e.target.value)} placeholder="45" /></div>
+        <div><Label>Impressora de referência</Label>
           <Select value={printerId || "none"} onValueChange={(v) => setPrinterId(v === "none" ? "" : v)}>
             <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-            <SelectContent><SelectItem value="none">Automático</SelectItem>{printers.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent>
+            <SelectContent><SelectItem value="none">Selecionar para calcular</SelectItem>{printers.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent>
           </Select>
           {!printerId && costBreakdown.selectedPrinterName && (
             <p className="mt-1 text-[11px] text-muted-foreground">Usando {costBreakdown.selectedPrinterName} como referência de custo de máquina.</p>
           )}
         </div>
-        <div><Label>Tempo Impressão (h)</Label><Input type="number" step="0.1" value={estTime} onChange={(e) => setEstTime(e.target.value)} placeholder="2.5" /></div>
-        <div><Label>Pós-Processo (min)</Label><Input type="number" value={postMinutes} onChange={(e) => setPostMinutes(e.target.value)} placeholder="15" /></div>
+        <div><Label htmlFor="product-hours">Impressão por placa (h)</Label><Input id="product-hours" type="number" min="0" step="0.1" value={estTime} onChange={(e) => setEstTime(e.target.value)} placeholder="2.5" /></div>
+        <div><Label htmlFor="product-post">Acabamento por placa (min)</Label><Input id="product-post" type="number" min="0" value={postMinutes} onChange={(e) => setPostMinutes(e.target.value)} placeholder="15" /></div>
         <div>
           <Label>Nº de Cores</Label>
           <Select value={numColors} onValueChange={setNumColors}>
@@ -783,7 +765,7 @@ export default function Produtos() {
           </Select>
         </div>
         <div>
-          <Label>Peças por Prato</Label>
+          <Label>Peças por placa</Label>
           <Input type="number" min="1" value={printsPerPlate} onChange={(e) => setPrintsPerPlate(e.target.value)} placeholder="1" />
           {parseInt(printsPerPlate) > 1 && (
             <p className="mt-1 text-[11px] text-muted-foreground">Custo será dividido por {printsPerPlate} peças por prato.</p>
@@ -848,10 +830,9 @@ export default function Produtos() {
               const totalExtras = extras.reduce((s, e) => s + (e.cost || 0), 0);
               setCostEstimate((kitTotalCost + totalExtras).toFixed(2));
               if (!salePrice || parseFloat(salePrice) === 0) {
-                const margin = tenantSettings.target_margin || 40;
                 const total = kitTotalCost + totalExtras;
-                const suggested = margin < 100 ? total / (1 - margin / 100) : total * 2;
-                setSalePrice(suggested.toFixed(2));
+                try { setSalePrice(suggestedProductPrice(total, tenantSettings.target_margin).toFixed(2)); }
+                catch (error) { toast({ title: "Revise a margem desejada", description: (error as Error).message, variant: "destructive" }); return; }
               }
               toast({ title: "Custo do kit aplicado" });
             }}>
@@ -933,10 +914,12 @@ export default function Produtos() {
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
               <Calculator className="h-3.5 w-3.5" /> Composição de Custo Total
             </p>
-            <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={applyCalculatedCost}>
+            <Button type="button" variant="outline" size="sm" className="h-9 text-xs" onClick={applyCalculatedCost} disabled={!!costBreakdown.error}>
               Aplicar Custo Calculado
             </Button>
           </div>
+          {costBreakdown.error && <p role="alert" className="rounded-md bg-warning/10 p-3 text-xs leading-relaxed text-amber-800">{costBreakdown.error}</p>}
+          {!costBreakdown.error && <>
           {costBreakdown.printsPerPlate > 1 && (
             <p className="text-[11px] text-primary font-medium">📐 Custo impressão por peça (÷ {costBreakdown.printsPerPlate} peças/prato) — Prato total: {fmtCurrency(costBreakdown.totalPlate)}</p>
           )}
@@ -970,13 +953,14 @@ export default function Produtos() {
           {!costBreakdown.hasMachineRate && parseFloat(estTime) > 0 && (
             <p className="text-[11px] text-muted-foreground">⚠ Para calcular depreciação, preencha custo de aquisição e vida útil da impressora.</p>
           )}
+          </>}
         </div>
       )}
 
       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Precificação</p>
       <div className="grid grid-cols-2 gap-3">
-        <div><Label>Custo Estimado (R$)</Label><Input type="number" step="0.01" value={costEstimate} onChange={(e) => setCostEstimate(e.target.value)} placeholder="12.50" /></div>
-        <div><Label>Preço de Venda (R$)</Label><Input type="number" step="0.01" value={salePrice} onChange={(e) => setSalePrice(e.target.value)} placeholder="39.90" /></div>
+        <div><Label htmlFor="product-cost">Custo unitário (R$)</Label><Input id="product-cost" type="number" min="0" step="0.01" value={costEstimate} onChange={(e) => setCostEstimate(e.target.value)} placeholder="12.50" /></div>
+        <div><Label htmlFor="product-price">Preço unitário (R$)</Label><Input id="product-price" type="number" min="0" step="0.01" value={salePrice} onChange={(e) => setSalePrice(e.target.value)} placeholder="39.90" /></div>
       </div>
 
       {/* Marketplace fee simulator */}
@@ -994,6 +978,7 @@ export default function Produtos() {
                 <Settings2 className="h-3 w-3 mr-1" /> {showChannelConfig ? "Fechar" : "Taxas"}
               </Button>
             </div>
+            <p className="text-xs leading-relaxed text-muted-foreground">Preencha as taxas do seu contrato. Os valores começam em zero e esta simulação não é salva nem representa tarifas oficiais dos canais.</p>
 
             {showChannelConfig && (
               <div className="rounded-md border bg-background p-3 space-y-2">
@@ -1050,12 +1035,12 @@ export default function Produtos() {
               </div>
             )}
 
-            <div className="grid grid-cols-[1fr_auto_auto_auto_auto] gap-x-3 gap-y-1.5 text-xs items-center">
+            <div className="overflow-x-auto"><div className="grid min-w-[470px] grid-cols-[1fr_auto_auto_auto_auto] gap-x-3 gap-y-1.5 text-xs items-center">
               <span className="font-medium text-muted-foreground">Canal</span>
               <span className="font-medium text-muted-foreground text-right">Taxa</span>
               <span className="font-medium text-muted-foreground text-right">Líquido</span>
               <span className="font-medium text-muted-foreground text-right">Custo</span>
-              <span className="font-medium text-muted-foreground text-right">Lucro</span>
+              <span className="font-medium text-muted-foreground text-right">Resultado estimado</span>
               {channelConfig.filter(ch => ch.enabled).map(ch => {
                 const baseFeeAmount = price * (ch.fee / 100);
                 const shippingAmount = ch.freeShipping
@@ -1064,7 +1049,7 @@ export default function Produtos() {
                 const totalDeduction = baseFeeAmount + shippingAmount;
                 const net = price - totalDeduction;
                 const profit = net - cost;
-                const profitPct = net > 0 ? ((1 - cost / net) * 100) : 0;
+                const profitPct = price > 0 ? (profit / price) * 100 : 0;
                 const totalPct = ch.fee + (ch.freeShipping && ch.freeShippingType === "percent" ? ch.freeShippingExtra : 0);
                 return (
                   <div key={ch.key} className="contents">
@@ -1092,7 +1077,7 @@ export default function Produtos() {
                   </div>
                 );
               })}
-            </div>
+            </div></div>
           </div>
         );
       })()}
@@ -1105,7 +1090,7 @@ export default function Produtos() {
       <PageHeader title="Produtos" description="Catálogo de produtos e serviços"
         breadcrumbs={[{ label: "Comercial" }, { label: "Produtos" }]}
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button size="sm" variant="outline" onClick={() => setBambuImportOpen(true)}>
               <CloudDownload className="h-4 w-4 mr-1" /> Importar da Bambu
             </Button>
@@ -1121,23 +1106,25 @@ export default function Produtos() {
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="rounded-xl border bg-card p-4"><p className="text-xs text-muted-foreground">Produtos Ativos</p><p className="text-2xl font-bold text-foreground">{products.filter((p: any) => p.is_active).length}</p></div>
-        <div className="rounded-xl border bg-card p-4"><p className="text-xs text-muted-foreground">Ticket Médio</p><p className="text-2xl font-bold text-foreground">{fmtCurrency(products.length > 0 ? products.reduce((s: number, p: any) => s + (p.sale_price || 0), 0) / products.length : 0)}</p></div>
-        <div className="rounded-xl border bg-card p-4"><p className="text-xs text-muted-foreground">Margem Média</p><p className="text-2xl font-bold text-foreground">{products.length > 0 ? (products.reduce((s: number, p: any) => s + (p.margin_percent || 0), 0) / products.length).toFixed(1) : "0"}%</p></div>
+        <div className="rounded-xl border bg-card p-4"><p className="text-xs text-muted-foreground">Preço médio do catálogo ativo</p><p className="text-2xl font-bold text-foreground">{fmtCurrency(pricedProducts.length ? pricedProducts.reduce((sum, product) => sum + product.sale_price!, 0) / pricedProducts.length : null)}</p></div>
+        <div className="rounded-xl border bg-card p-4"><p className="text-xs text-muted-foreground">Margem do catálogo, ponderada por preço</p><p className="text-2xl font-bold text-foreground">{catalogRevenue > 0 ? `${((catalogRevenue - catalogCost) / catalogRevenue * 100).toFixed(1)}%` : "—"}</p><p className="mt-1 text-xs text-muted-foreground">Produtos ativos com preço e custo. Não é margem das vendas.</p></div>
       </div>
 
-      <div className="flex items-center gap-3">
+      {productsError && <div role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 p-4 text-sm">Não foi possível carregar o catálogo.<Button variant="link" onClick={() => void refetchProducts()}>Tentar novamente</Button></div>}
+      <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input className="pl-9" placeholder="Buscar por nome ou SKU…" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
+        <label className="flex min-h-10 items-center gap-2 text-sm text-muted-foreground"><Switch checked={showArchived} onCheckedChange={setShowArchived} />Mostrar arquivados</label>
       </div>
 
       <div className="rounded-xl border bg-card overflow-hidden">
         {isLoading ? (
           <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
-        ) : filtered.length === 0 ? (
+        ) : productsError && products.length === 0 ? null : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
-            <Package className="h-10 w-10 mb-3 opacity-40" /><p className="font-medium">Nenhum produto cadastrado</p>
+            <Package className="h-10 w-10 mb-3 opacity-40" /><p className="font-medium">{search ? "Nenhum produto encontrado" : "Nenhum produto ativo cadastrado"}</p>
           </div>
         ) : (
           <Table>
@@ -1159,7 +1146,7 @@ export default function Produtos() {
                     )}
                   </TableCell>
                   <TableCell>
-                    <div><p className="font-medium text-sm">{p.name}</p>{p.sku && <p className="text-xs text-muted-foreground">{p.sku}</p>}</div>
+                    <div><p className="font-medium text-sm">{p.name}{!p.is_active && <span className="ml-2 rounded bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">Arquivado</span>}</p>{p.sku && <p className="text-xs text-muted-foreground">{p.sku}</p>}</div>
                   </TableCell>
                   <TableCell className="text-sm">
                     {categoryLabels[p.category] || p.category}
@@ -1177,7 +1164,7 @@ export default function Produtos() {
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openEdit(p); }}><Edit className="h-3.5 w-3.5 mr-2" /> Editar</DropdownMenuItem>
                         <DropdownMenuSeparator />
-                        <DropdownMenuItem className="text-destructive" onClick={(e) => { e.stopPropagation(); deleteMut.mutate(p.id); }}><Trash2 className="h-3.5 w-3.5 mr-2" /> Excluir</DropdownMenuItem>
+                        <DropdownMenuItem disabled={deleteMut.isPending} onClick={(e) => { e.stopPropagation(); deleteMut.mutate({ id: p.id, active: !p.is_active }); }}><Package className="h-3.5 w-3.5 mr-2" /> {p.is_active ? "Arquivar" : "Reativar"}</DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>
@@ -1189,18 +1176,18 @@ export default function Produtos() {
       </div>
 
       {/* Create dialog */}
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="max-w-lg"><DialogHeader><DialogTitle>Novo Produto</DialogTitle><DialogDescription>Cadastrar produto ou serviço</DialogDescription></DialogHeader>
+      <Dialog open={createOpen} onOpenChange={open => { if (!createMut.isPending && !uploadingPhoto) setCreateOpen(open); }}>
+        <DialogContent className="max-w-2xl"><DialogHeader><DialogTitle>Novo Produto</DialogTitle><DialogDescription>Cadastro e custo unitário do produto ou serviço.</DialogDescription></DialogHeader>
           {formFields}
-          <DialogFooter><Button variant="outline" onClick={() => setCreateOpen(false)}>Cancelar</Button><Button onClick={() => createMut.mutate()} disabled={!name || createMut.isPending}>{createMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Criar</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" disabled={createMut.isPending || uploadingPhoto} onClick={() => setCreateOpen(false)}>Cancelar</Button><Button onClick={() => createMut.mutate()} disabled={!name.trim() || createMut.isPending || uploadingPhoto || photosLoading}>{createMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Criar</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
       {/* Edit dialog */}
-      <Dialog open={!!editItem} onOpenChange={(o) => { if (!o) { setEditItem(null); resetForm(); } }}>
-        <DialogContent className="max-w-lg"><DialogHeader><DialogTitle>Editar Produto</DialogTitle></DialogHeader>
+      <Dialog open={!!editItem} onOpenChange={(o) => { if (!o && !updateMut.isPending && !uploadingPhoto) { setEditItem(null); resetForm(); } }}>
+        <DialogContent className="max-w-2xl"><DialogHeader><DialogTitle>Editar Produto</DialogTitle><DialogDescription>Atualize o cadastro, a receita e a precificação.</DialogDescription></DialogHeader>
           {formFields}
-          <DialogFooter><Button variant="outline" onClick={() => { setEditItem(null); resetForm(); }}>Cancelar</Button><Button onClick={() => updateMut.mutate()} disabled={!name || updateMut.isPending}>{updateMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Salvar</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" disabled={updateMut.isPending || uploadingPhoto} onClick={() => { setEditItem(null); resetForm(); }}>Cancelar</Button><Button onClick={() => updateMut.mutate()} disabled={!name.trim() || updateMut.isPending || uploadingPhoto || photosLoading}>{updateMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} {photosLoading ? "Carregando fotos..." : "Salvar"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 

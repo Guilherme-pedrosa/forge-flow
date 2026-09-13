@@ -17,8 +17,8 @@ const fmtCurrency = (v: number) =>
 export default function Alertas() {
   const { profile } = useAuth();
 
-  const { data: items = [], isLoading } = useQuery({
-    queryKey: ["inventory_items"],
+  const { data: items = [], isLoading, error: loadError, refetch } = useQuery({
+    queryKey: ["inventory_items", "alerts"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("inventory_items")
@@ -33,19 +33,21 @@ export default function Alertas() {
 
   const alerts = useMemo(() => {
     return items
-      .filter((i) => i.min_stock != null && i.min_stock > 0 && i.current_stock < i.min_stock)
+      .filter((i) => i.current_stock < 0 || (i.min_stock != null && i.min_stock > 0 && i.current_stock < i.min_stock))
       .map((i) => ({
         ...i,
-        deficit: i.min_stock! - i.current_stock,
-        deficitPercent: i.min_stock! > 0 ? ((i.min_stock! - i.current_stock) / i.min_stock!) * 100 : 0,
-        restockCost: (i.min_stock! - i.current_stock) * i.avg_cost,
+        deficit: (i.min_stock ?? 0) - i.current_stock,
+        deficitPercent: i.min_stock! > 0 ? (((i.min_stock ?? 0) - i.current_stock) / i.min_stock!) * 100 : 0,
+        restockCost: ((i.min_stock ?? 0) - i.current_stock) * i.avg_cost,
       }))
       .sort((a, b) => b.deficitPercent - a.deficitPercent);
   }, [items]);
 
-  const criticalCount = alerts.filter((a) => a.current_stock === 0).length;
+  const criticalCount = alerts.filter((a) => a.current_stock <= 0).length;
   const warningCount = alerts.length - criticalCount;
   const totalRestockCost = alerts.reduce((s, a) => s + a.restockCost, 0);
+
+  if (loadError) return <div className="space-y-4 rounded-xl border bg-card p-6"><p role="alert" className="font-medium">Não foi possível carregar os dados.</p><p className="text-sm text-muted-foreground">{loadError.message}</p><Button variant="outline" onClick={() => refetch()}>Tentar novamente</Button></div>;
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
@@ -68,7 +70,7 @@ export default function Alertas() {
       {/* KPIs */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="rounded-xl border bg-card p-4">
-          <p className="text-xs text-muted-foreground">Críticos (zerado)</p>
+          <p className="text-xs text-muted-foreground">Críticos (sem saldo)</p>
           <p className={cn("text-2xl font-bold", criticalCount > 0 ? "text-destructive" : "text-foreground")}>{criticalCount}</p>
         </div>
         <div className="rounded-xl border bg-card p-4">
@@ -108,9 +110,9 @@ export default function Alertas() {
               {alerts.map((a) => (
                 <TableRow key={a.id}>
                   <TableCell>
-                    {a.current_stock === 0 ? (
+                    {a.current_stock <= 0 ? (
                       <span className="inline-flex items-center gap-1 text-xs font-semibold text-destructive">
-                        <AlertTriangle className="h-3.5 w-3.5" /> ZERADO
+                        <AlertTriangle className="h-3.5 w-3.5" /> {a.current_stock < 0 ? "NEGATIVO" : "ZERADO"}
                       </span>
                     ) : (
                       <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-600">

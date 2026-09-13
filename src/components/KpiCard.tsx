@@ -1,4 +1,3 @@
-import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 
 interface KpiCardProps {
@@ -13,19 +12,15 @@ interface KpiCardProps {
 
 export function KpiCard({ label, value, subvalue, trend, trendValue, icon, variant = "default" }: KpiCardProps) {
   return (
-    <motion.div
-      whileHover={{ y: -1 }}
-      transition={{ duration: 0.15, ease: [0.2, 0, 0, 1] }}
-      className="forge-card rounded-md p-4 flex flex-col gap-2"
-    >
-      <div className="flex items-center justify-between">
-        <span className="text-data-sm text-muted-foreground">{label}</span>
-        {icon && <span className="text-muted-foreground">{icon}</span>}
+    <div className="min-w-0 rounded-xl border bg-card p-3.5 shadow-sm sm:p-5">
+      <div className="mb-3 flex items-center justify-between gap-2 sm:mb-4 sm:gap-3">
+        <span className="text-xs font-medium text-muted-foreground">{label}</span>
+        {icon && <span className="hidden rounded-md bg-muted/60 p-2 text-muted-foreground min-[380px]:inline-flex">{icon}</span>}
       </div>
       <div className="flex items-baseline gap-2">
         <span
           className={cn(
-            "text-2xl font-semibold tracking-tight font-mono",
+            "break-words text-lg font-semibold tracking-tight tabular-nums sm:text-2xl",
             variant === "success" && "text-success",
             variant === "destructive" && "text-destructive",
             variant === "argus" && "text-primary"
@@ -33,10 +28,8 @@ export function KpiCard({ label, value, subvalue, trend, trendValue, icon, varia
         >
           {value}
         </span>
-        {subvalue && (
-          <span className="text-data-sm text-muted-foreground font-mono">{subvalue}</span>
-        )}
       </div>
+      {subvalue && <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{subvalue}</p>}
       {trend && trendValue && (
         <div className="flex items-center gap-1">
           <span
@@ -51,6 +44,6 @@ export function KpiCard({ label, value, subvalue, trend, trendValue, icon, varia
           </span>
         </div>
       )}
-    </motion.div>
+    </div>
   );
 }

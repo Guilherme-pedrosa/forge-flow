@@ -1,4 +1,5 @@
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
+import { allRows, localDate, money, positiveMoney, validDate, monthlyInstallments } from "@/lib/finance";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -54,6 +55,7 @@ interface NfeItem {
   cfop: string;
   ncm: string;
   inventoryItemId: string;
+  stockQuantity?: string;
 }
 
 interface NfeData {
@@ -66,6 +68,7 @@ interface NfeData {
   subtotal: number;
   discount: number;
   shipping: number;
+  additionalCosts: number;
   total: number;
 }
 
@@ -73,6 +76,7 @@ function parseNfeXml(xmlText: string): NfeData | null {
   try {
     const parser = new DOMParser();
     const doc = parser.parseFromString(xmlText, "text/xml");
+    if (doc.querySelector("parsererror")) return null;
 
     const ns = "http://www.portalfiscal.inf.br/nfe";
     const getTag = (parent: Element | Document, tag: string) =>
@@ -85,7 +89,7 @@ function parseNfeXml(xmlText: string): NfeData | null {
 
     const nfeNumber = ide ? getTag(ide, "nNF") : "";
     const nfeKey = infNFe?.getAttribute("Id")?.replace("NFe", "") || "";
-    const issueDate = ide ? getTag(ide, "dhEmi").slice(0, 10) : "";
+    const issueDate = ide ? (getTag(ide, "dhEmi") || getTag(ide, "dEmi")).slice(0, 10) : "";
 
     const vendorName = emit ? (getTag(emit, "xFant") || getTag(emit, "xNome")) : "";
     const vendorDoc = emit ? (getTag(emit, "CNPJ") || getTag(emit, "CPF")) : "";
@@ -115,7 +119,8 @@ function parseNfeXml(xmlText: string): NfeData | null {
     const shipping = ICMSTot ? parseFloat(getTag(ICMSTot, "vFrete") || "0") : 0;
     const total = ICMSTot ? parseFloat(getTag(ICMSTot, "vNF") || "0") : subtotal - discount + shipping;
 
-    return { nfeNumber, nfeKey, vendorName, vendorDoc, issueDate, items, subtotal, discount, shipping, total };
+    const additionalCosts = money(total - subtotal + discount - shipping);
+    return { nfeNumber, nfeKey, vendorName, vendorDoc, issueDate, items, subtotal, discount, shipping, additionalCosts, total };
   } catch {
     return null;
   }
@@ -147,7 +152,7 @@ export default function Compras() {
 
   // Manual create form
   const [vendorId, setVendorId] = useState("");
-  const [orderDate, setOrderDate] = useState(new Date().toISOString().slice(0, 10));
+  const [orderDate, setOrderDate] = useState(localDate());
   const [expectedDate, setExpectedDate] = useState("");
   const [notes, setNotes] = useState("");
   const [paymentMethodId, setPaymentMethodId] = useState("");
@@ -173,57 +178,35 @@ export default function Compras() {
     return match ? parseInt(match[1], 10) : 1;
   };
 
-  // Helper: generate installment AP entries
-  const generateInstallmentAP = (params: {
-    tenantId: string;
-    description: string;
-    totalAmount: number;
-    baseDueDate: string;
-    numInstallments: number;
-    vendorId: string | null;
-    paymentMethodId: string | null;
-    isPaid: boolean;
-    paymentDate: string | null;
-    notes: string;
-    createdBy: string;
-  }) => {
-    const { tenantId, description, totalAmount, baseDueDate, numInstallments, vendorId: vId, paymentMethodId: pmId, isPaid, paymentDate, notes: apNotes, createdBy } = params;
-    const n = Math.max(1, numInstallments);
-    const installmentAmount = Math.round((totalAmount / n) * 100) / 100;
-    const entries = [];
-    for (let i = 0; i < n; i++) {
-      const due = new Date(baseDueDate + "T00:00:00");
-      due.setDate(due.getDate() + i * 30);
-      const dueStr = due.toISOString().slice(0, 10);
-      const amt = i === n - 1 ? Math.round((totalAmount - installmentAmount * (n - 1)) * 100) / 100 : installmentAmount;
-      entries.push({
-        tenant_id: tenantId,
-        description: n > 1 ? `${description} (${i + 1}/${n})` : description,
-        amount: amt,
-        due_date: dueStr,
-        vendor_id: vId,
-        payment_method_id: pmId,
-        status: isPaid ? "paid" as const : "open" as const,
-        payment_date: isPaid ? paymentDate : null,
-        amount_paid: isPaid ? amt : 0,
-        installment_number: i + 1,
-        installment_total: n,
-        notes: apNotes,
-        created_by: createdBy,
-      });
-    }
-    return entries;
+  const purchaseRequests = useRef(new Map<string, { payload: string; id: string }>());
+  const [cancelOrderId, setCancelOrderId] = useState<string | null>(null);
+  useEffect(() => () => marketplaceImages.forEach(url => URL.revokeObjectURL(url)), [marketplaceImages]);
+
+  const persistPurchase = async (key: string, order: any, items: any[], count: number, firstDue: string, method: string | null) => {
+    if (!profile) throw new Error("Sessão indisponível.");
+    if (!validDate(order.order_date) || (order.expected_date && !validDate(order.expected_date))) throw new Error("Informe datas válidas para a compra.");
+    if (!items.length || items.some(i => !i.description?.trim() || !Number.isFinite(i.quantity) || i.quantity <= 0 || !Number.isFinite(i.unit_price) || i.unit_price < 0 || !Number.isFinite(i.total) || i.total < 0)) throw new Error("Revise os itens: descrição, quantidade positiva e preço válido são obrigatórios.");
+    order.total = positiveMoney(order.total);
+    order.additional_costs = money(order.additional_costs ?? 0);
+    for (const field of ["subtotal", "shipping", "discount"]) { order[field] = money(order[field] ?? 0); if (order[field] < 0) throw new Error("Totais, frete e desconto não podem ser negativos."); }
+    const installments = monthlyInstallments(order.total, count, firstDue).map((part, i) => ({ ...part,
+      description: `Compra${order.nfe_number ? ` NFe ${order.nfe_number}` : ""}${count > 1 ? ` (${i + 1}/${count})` : ""}`,
+      competence_date: order.order_date, vendor_id: order.vendor_id, payment_method_id: method,
+      installment_number: i + 1, installment_total: count, notes: order.notes || null,
+    }));
+    const payload = JSON.stringify([order, items, installments]);
+    let request = purchaseRequests.current.get(key);
+    if (!request || request.payload !== payload) { request = { payload, id: crypto.randomUUID() }; purchaseRequests.current.set(key, request); }
+    const { data, error } = await (supabase.rpc as any)("create_purchase_order", { p_order: order, p_items: items, p_installments: installments, p_request_id: request.id });
+    if (error) throw error;
+    if (typeof data !== "string") throw new Error("A criação não retornou o identificador da compra. Atualize a lista antes de repetir.");
+    return data as string;
   };
 
-  const { data: orders = [], isLoading } = useQuery({
-    queryKey: ["purchase_orders"],
+  const { data: orders = [], isLoading, error: ordersError } = useQuery({
+    queryKey: ["purchase_orders", profile?.tenant_id],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("purchase_orders")
-        .select("*, vendors(name)")
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return data;
+      return allRows<any>((from, to) => supabase.from("purchase_orders").select("*, vendors(name)").order("created_at", { ascending: false }).order("id").range(from, to));
     },
     enabled: !!profile,
   });
@@ -287,62 +270,16 @@ export default function Compras() {
     return list;
   }, [orders, statusFilter, search]);
 
-  const nextCode = `PC-${String(orders.length + 1).padStart(4, "0")}`;
+  const nextCode = "Gerado ao salvar";
 
   const createMut = useMutation({
     mutationFn: async () => {
-      if (!profile) throw new Error("Sem perfil");
-      const validItems = manualItems.filter((i) => i.description.trim());
-      const subtotal = validItems.reduce((s, i) => s + parseFloat(i.quantity || "0") * parseFloat(i.unitPrice || "0"), 0);
-      const { data: po, error } = await supabase.from("purchase_orders").insert({
-        tenant_id: profile.tenant_id,
-        code: nextCode,
-        vendor_id: vendorId || null,
-        order_date: orderDate,
-        expected_date: expectedDate || null,
-        subtotal, total: subtotal,
-        notes: notes || null,
-        status: "pending",
-        created_by: profile.user_id,
-      }).select().single();
-      if (error) throw error;
-
-      if (validItems.length > 0) {
-        const rows = validItems.map((i) => ({
-          tenant_id: profile.tenant_id,
-          purchase_order_id: po.id,
-          description: i.description,
-          quantity: parseFloat(i.quantity || "1"),
-          unit_price: parseFloat(i.unitPrice || "0"),
-          total: parseFloat(i.quantity || "1") * parseFloat(i.unitPrice || "0"),
-          inventory_item_id: i.inventoryItemId || null,
-        }));
-        const { error: ie } = await supabase.from("purchase_order_items").insert(rows);
-        if (ie) throw ie;
-      }
-
-      // Create accounts_payable (with installments)
-      if (subtotal > 0) {
-        const apDueDate = dueDate || expectedDate || orderDate;
-        const numInst = parseInt(installments || "1", 10);
-        const entries = generateInstallmentAP({
-          tenantId: profile.tenant_id,
-          description: `Compra ${nextCode}`,
-          totalAmount: subtotal,
-          baseDueDate: apDueDate,
-          numInstallments: numInst,
-          vendorId: vendorId || null,
-          paymentMethodId: paymentMethodId || null,
-          isPaid: false,
-          paymentDate: null,
-          notes: `Ref. pedido de compra ${nextCode}`,
-          createdBy: profile.user_id,
-        });
-        const { error: apErr } = await supabase.from("accounts_payable").insert(entries);
-        if (apErr) throw apErr;
-      }
+      const items = manualItems.map(i => ({ description: i.description.trim(), quantity: Number(i.quantity.replace(",", ".")), unit_price: Number(i.unitPrice.replace(",", ".")), total: money(Number(i.quantity.replace(",", ".")) * Number(i.unitPrice.replace(",", "."))), inventory_item_id: i.inventoryItemId || null, stock_quantity: null }));
+      const subtotal = money(items.reduce((sum, i) => sum + i.total, 0));
+      return persistPurchase("manual", { vendor_id: vendorId || null, order_date: orderDate, expected_date: expectedDate || null, subtotal, discount: 0, shipping: 0, total: subtotal, notes: notes.trim() || null }, items, Number(installments), dueDate || expectedDate || orderDate, paymentMethodId || null);
     },
     onSuccess: () => {
+      purchaseRequests.current.delete("manual");
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
       qc.invalidateQueries({ queryKey: ["accounts_payable"] });
       setCreateOpen(false);
@@ -354,110 +291,31 @@ export default function Compras() {
 
   const importXmlMut = useMutation({
     mutationFn: async () => {
-      if (!profile || !nfeData) throw new Error("Sem dados");
-
-      // Try to find or create vendor
+      if (!profile || !nfeData) throw new Error("Sem dados para importar.");
+      if (!/^\d{44}$/.test(nfeData.nfeKey)) throw new Error("A chave da NFe deve conter 44 dígitos.");
       let vid: string | null = null;
       if (nfeData.vendorDoc) {
-        const { data: existingVendor } = await supabase
-          .from("vendors")
-          .select("id")
-          .eq("document", nfeData.vendorDoc)
-          .maybeSingle();
-        if (existingVendor) {
-          vid = existingVendor.id;
-        } else {
-          const { data: newVendor } = await supabase.from("vendors").insert({
-            tenant_id: profile.tenant_id,
-            name: nfeData.vendorName || "Fornecedor NFe",
-            document: nfeData.vendorDoc,
-          }).select("id").single();
-          if (newVendor) vid = newVendor.id;
+        const { data: vendor, error: lookupError } = await supabase.from("vendors").select("id").eq("document", nfeData.vendorDoc).maybeSingle();
+        if (lookupError) throw lookupError;
+        if (vendor) vid = vendor.id;
+        else {
+          const { data, error } = await supabase.from("vendors").insert({ tenant_id: profile.tenant_id, name: nfeData.vendorName || "Fornecedor NFe", document: nfeData.vendorDoc }).select("id").single();
+          if (error) throw error;
+          vid = data.id;
         }
       }
-
-      const code = `PC-${String(orders.length + 1).padStart(4, "0")}`;
-      const shouldReceive = nfeMarkReceived;
-      
-      const { data: po, error } = await supabase.from("purchase_orders").insert({
-        tenant_id: profile.tenant_id,
-        code,
-        vendor_id: vid,
-        order_date: nfeData.issueDate || new Date().toISOString().slice(0, 10),
-        subtotal: nfeData.subtotal,
-        discount: nfeData.discount,
-        shipping: nfeData.shipping,
-        total: nfeData.total,
-        nfe_number: nfeData.nfeNumber,
-        nfe_key: nfeData.nfeKey,
-        nfe_xml: xmlRaw,
-        status: shouldReceive ? "received" : "pending",
-        received_date: shouldReceive ? (nfeData.issueDate || new Date().toISOString().slice(0, 10)) : null,
-        created_by: profile.user_id,
-      }).select().single();
-      if (error) throw error;
-
-      if (nfeData.items.length > 0) {
-        const rows = nfeData.items.map((i) => ({
-          tenant_id: profile.tenant_id,
-          purchase_order_id: po.id,
-          description: i.description,
-          quantity: i.quantity,
-          unit_price: i.unitPrice,
-          total: i.total,
-          cfop: i.cfop || null,
-          ncm: i.ncm || null,
-          inventory_item_id: i.inventoryItemId || null,
-        }));
-        const { error: ie } = await supabase.from("purchase_order_items").insert(rows);
-        if (ie) throw ie;
-
-        // If marking as received, create inventory movements for linked items
-        if (shouldReceive) {
-          for (const item of nfeData.items) {
-            if (item.inventoryItemId) {
-              await supabase.from("inventory_movements").insert({
-                tenant_id: profile.tenant_id,
-                item_id: item.inventoryItemId,
-                movement_type: "purchase_in" as const,
-                quantity: item.quantity,
-                unit_cost: item.unitPrice,
-                total_cost: item.total,
-                reference_type: "purchase_order",
-                reference_id: po.id,
-                notes: `Entrada via NFe ${nfeData.nfeNumber}`,
-                created_by: profile.user_id,
-              });
-            }
-          }
-        }
+      const items = nfeData.items.map(i => ({ description: i.description, quantity: i.quantity, unit_price: i.unitPrice, total: i.total, cfop: i.cfop || null, ncm: i.ncm || null, inventory_item_id: i.inventoryItemId || null, stock_quantity: i.inventoryItemId && i.stockQuantity ? Number(i.stockQuantity.replace(",", ".")) : null }));
+      if (nfeMarkReceived && items.some(i => i.inventory_item_id && !(i.stock_quantity > 0))) throw new Error("Informe a quantidade na unidade do estoque de cada item vinculado antes de receber.");
+      const id = await persistPurchase("xml", { vendor_id: vid, order_date: nfeData.issueDate, subtotal: nfeData.subtotal, discount: nfeData.discount, shipping: nfeData.shipping, additional_costs: nfeData.additionalCosts, total: nfeData.total, nfe_number: nfeData.nfeNumber, nfe_key: nfeData.nfeKey, nfe_xml: xmlRaw }, items, Number(nfeInstallments), nfeDueDate || nfeData.issueDate, null);
+      let receiveError = "";
+      if (nfeMarkReceived) {
+        const { error } = await (supabase.rpc as any)("receive_purchase_order", { p_order_id: id, p_received_date: localDate() });
+        if (error) receiveError = error.message;
       }
-
-      // Create accounts_payable for NFe (with installments)
-      if (nfeData.total > 0) {
-        const apDueDate = nfeDueDate || nfeData.issueDate || new Date().toISOString().slice(0, 10);
-        const numInst = parseInt(nfeInstallments || "1", 10);
-        const entries = generateInstallmentAP({
-          tenantId: profile.tenant_id,
-          description: `NFe ${nfeData.nfeNumber} - ${nfeData.vendorName || "Fornecedor"}`,
-          totalAmount: nfeData.total,
-          baseDueDate: apDueDate,
-          numInstallments: numInst,
-          vendorId: vid,
-          paymentMethodId: null,
-          isPaid: false,
-          paymentDate: null,
-          notes: `Ref. NFe ${nfeData.nfeNumber} - Pedido ${code}`,
-          createdBy: profile.user_id,
-        });
-        const { error: apErr } = await supabase.from("accounts_payable").insert(entries);
-        if (apErr) throw apErr;
-      }
-
-      const linkedCount = nfeData.items.filter(i => i.inventoryItemId).length;
-      return { shouldReceive, linkedCount, totalItems: nfeData.items.length };
+      return { shouldReceive: nfeMarkReceived && !receiveError, linkedCount: items.filter(i => i.inventory_item_id).length, totalItems: items.length, receiveError };
     },
     onSuccess: (result) => {
+      purchaseRequests.current.delete("xml");
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
       qc.invalidateQueries({ queryKey: ["vendors"] });
       qc.invalidateQueries({ queryKey: ["accounts_payable"] });
@@ -472,47 +330,17 @@ export default function Compras() {
       const msg = result?.shouldReceive
         ? `NFe importada! ${result.linkedCount} de ${result.totalItems} itens deram entrada no estoque.`
         : "NFe importada como pendente. Vincule os itens ao estoque e clique em 'Receber' quando o pedido chegar.";
-      toast({ title: "NFe importada!", description: msg });
+      toast({ title: result?.receiveError ? "NFe criada; recebimento pendente" : "NFe importada", description: result?.receiveError ? `A compra e as parcelas foram criadas. Abra a compra para concluir o recebimento: ${result.receiveError}` : msg, variant: result?.receiveError ? "destructive" : "default" });
     },
     onError: (e: any) => toast({ title: "Erro ao importar", description: e.message, variant: "destructive" }),
   });
 
   const receiveOrderMut = useMutation({
     mutationFn: async (orderId: string) => {
-      // Get order items
-      const { data: items } = await supabase
-        .from("purchase_order_items")
-        .select("*")
-        .eq("purchase_order_id", orderId);
-      if (!items || !profile) return { linked: 0, total: 0 };
-
-      let linkedCount = 0;
-      // Create inventory movements for items matched to inventory
-      for (const item of items) {
-        if (item.inventory_item_id) {
-          const { error } = await supabase.from("inventory_movements").insert({
-            tenant_id: profile.tenant_id,
-            item_id: item.inventory_item_id,
-            movement_type: "purchase_in" as const,
-            quantity: item.quantity,
-            unit_cost: item.unit_price,
-            total_cost: item.total,
-            reference_type: "purchase_order",
-            reference_id: orderId,
-            notes: `Entrada via pedido de compra`,
-            created_by: profile.user_id,
-          });
-          if (!error) linkedCount++;
-        }
-      }
-
-      const { error } = await supabase.from("purchase_orders").update({
-        status: "received",
-        received_date: new Date().toISOString().slice(0, 10),
-      }).eq("id", orderId);
+      if (!profile) throw new Error("Sessão indisponível.");
+      const { error } = await (supabase.rpc as any)("receive_purchase_order", { p_order_id: orderId, p_received_date: localDate() });
       if (error) throw error;
-
-      return { linked: linkedCount, total: items.length };
+      return { linked: receiveItems.filter(i => i.inventory_item_id).length, total: receiveItems.length };
     },
     onSuccess: (result) => {
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
@@ -532,19 +360,21 @@ export default function Compras() {
 
   const deleteMut = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from("purchase_orders").delete().eq("id", id);
+      const { error } = await (supabase.rpc as any)("cancel_purchase_order", { p_order_id: id });
       if (error) throw error;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
-      toast({ title: "Pedido excluído" });
+      qc.invalidateQueries({ queryKey: ["accounts_payable"] });
+      setCancelOrderId(null); setDetailOrder(null);
+      toast({ title: "Compra cancelada", description: "Pedido e títulos preservados no histórico." });
     },
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 
   const resetForm = () => {
     setVendorId("");
-    setOrderDate(new Date().toISOString().slice(0, 10));
+    setOrderDate(localDate());
     setExpectedDate("");
     setNotes("");
     setPaymentMethodId("");
@@ -582,19 +412,31 @@ export default function Compras() {
   const updateNfeItem = (idx: number, inventoryItemId: string) => {
     if (!nfeData) return;
     const updatedItems = [...nfeData.items];
-    updatedItems[idx] = { ...updatedItems[idx], inventoryItemId };
+    updatedItems[idx] = { ...updatedItems[idx], inventoryItemId, stockQuantity: "" };
     setNfeData({ ...nfeData, items: updatedItems });
   };
 
-  // Open receive confirmation with current items
+  const updateStockMut = useMutation({
+    mutationFn: async ({ id, values }: { id: string; values: { inventory_item_id?: string | null; stock_quantity?: number | null } }) => {
+      if (values.stock_quantity != null && (!Number.isFinite(values.stock_quantity) || values.stock_quantity <= 0)) throw new Error("Informe uma quantidade de estoque maior que zero.");
+      const { data, error } = await supabase.from("purchase_order_items").update(values as any).eq("id", id).select("id");
+      if (error) throw error;
+      if (!data?.length) throw new Error("O item não foi atualizado. Reabra o pedido.");
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["purchase_order_items", detailOrder?.id] }),
+    onError: (error: any) => { toast({ title: "Vínculo não salvo", description: error.message, variant: "destructive" }); qc.invalidateQueries({ queryKey: ["purchase_order_items", detailOrder?.id] }); },
+  });
+
   const openReceiveConfirm = async (orderId: string) => {
-    const { data: items } = await supabase
-      .from("purchase_order_items")
-      .select("*")
-      .eq("purchase_order_id", orderId);
-    setReceiveOrderId(orderId);
-    setReceiveItems(items || []);
-    setReceiveConfirmOpen(true);
+    const { data: items, error } = await supabase.from("purchase_order_items").select("*").eq("purchase_order_id", orderId);
+    if (error) { toast({ title: "Não foi possível carregar os itens", description: error.message, variant: "destructive" }); return; }
+    if (!items?.length) { toast({ title: "A compra não tem itens para receber", variant: "destructive" }); return; }
+    if (items.some((i: any) => i.inventory_item_id && !(i.stock_quantity > 0))) {
+      setDetailOrder(orders.find(o => o.id === orderId));
+      toast({ title: "Revise a quantidade de estoque", description: "Informe a quantidade na unidade de cada material. Exemplo: 1 rolo de 1 kg corresponde a 1.000 g.", variant: "destructive" });
+      return;
+    }
+    setReceiveOrderId(orderId); setReceiveItems(items); setReceiveConfirmOpen(true);
   };
 
   // ── Marketplace Screenshot Import ──
@@ -627,7 +469,7 @@ export default function Compras() {
       if (allPurchases.length > 0) {
         const firstPurchase = allPurchases[0];
         const detectedInst = parseInstallmentCount(firstPurchase.payment_installments);
-        if (detectedInst > 1) setMarketplaceInstallments(String(detectedInst));
+        setMarketplaceInstallments(String(detectedInst));
       }
       if (allPurchases.length === 0) {
         toast({ title: "Nenhuma compra identificada", description: "Não foi possível extrair dados da imagem.", variant: "destructive" });
@@ -661,97 +503,41 @@ export default function Compras() {
     outro: "Outro",
   };
 
+  const updateMarketplace = (field: string, value: string) => setMarketplaceParsed(list => list.map((p, index) => index === marketplaceSelectedIdx ? { ...p, [field]: ["shipping", "discount", "total"].includes(field) ? Number(value) : value } : p));
+  const updateMarketplaceItem = (rowIndex: number, field: string, value: string) => setMarketplaceParsed(list => list.map((p, index) => {
+    if (index !== marketplaceSelectedIdx) return p;
+    const items = p.items.map((item: any, itemIndex: number) => {
+      if (itemIndex !== rowIndex) return item;
+      const row = { ...item, [field]: field === "description" ? value : Number(value) };
+      row.total = Math.round(Number(row.quantity) * Number(row.unit_price) * 100) / 100;
+      return row;
+    });
+    return { ...p, items };
+  }));
+
   const importMarketplaceMut = useMutation({
     mutationFn: async (purchase: any) => {
-      if (!profile) throw new Error("Sem perfil");
-
+      if (!profile || !purchase) throw new Error("Sem dados para importar.");
       let vid: string | null = null;
-      if (purchase.vendor_name) {
-        const { data: existingVendor } = await supabase
-          .from("vendors")
-          .select("id")
-          .ilike("name", purchase.vendor_name)
-          .maybeSingle();
-        if (existingVendor) {
-          vid = existingVendor.id;
-        } else {
-          const { data: newVendor } = await supabase.from("vendors").insert({
-            tenant_id: profile.tenant_id,
-            name: purchase.vendor_name,
-          }).select("id").single();
-          if (newVendor) vid = newVendor.id;
+      if (purchase.vendor_name?.trim()) {
+        const { data: vendor, error } = await supabase.from("vendors").select("id").eq("name", purchase.vendor_name.trim()).maybeSingle();
+        if (error) throw error;
+        if (vendor) vid = vendor.id;
+        else {
+          const { data, error } = await supabase.from("vendors").insert({ tenant_id: profile.tenant_id, name: purchase.vendor_name.trim() }).select("id").single();
+          if (error) throw error;
+          vid = data.id;
         }
       }
-
-      let pmId = marketplacePaymentMethodId || null;
-      if (!pmId && purchase.payment_method && paymentMethods.length > 0) {
-        const pmMap: Record<string, string> = {
-          credit_card: "credit_card",
-          debit_card: "debit_card",
-          pix: "pix",
-          boleto: "boleto",
-        };
-        const aiType = pmMap[purchase.payment_method];
-        if (aiType) {
-          const found = paymentMethods.find((pm: any) => pm.type === aiType);
-          if (found) pmId = found.id;
-        }
-      }
-
-      const code = `PC-${String(orders.length + 1).padStart(4, "0")}`;
-      const marketplace = marketplaceLabels[purchase.marketplace] || purchase.marketplace || "Marketplace";
-      const totalAmount = purchase.total || 0;
-      const { data: po, error } = await supabase.from("purchase_orders").insert({
-        tenant_id: profile.tenant_id,
-        code,
-        vendor_id: vid,
-        order_date: purchase.order_date || new Date().toISOString().slice(0, 10),
-        subtotal: purchase.subtotal || totalAmount,
-        discount: purchase.discount || 0,
-        shipping: purchase.shipping || 0,
-        total: totalAmount,
-        status: "pending",
-        notes: `Importado de ${marketplace}${purchase.payment_installments ? ` | Pgto: ${purchase.payment_installments}` : ""}${purchase.notes ? ` | ${purchase.notes}` : ""}`,
-        created_by: profile.user_id,
-      }).select().single();
-      if (error) throw error;
-
-      if (purchase.items?.length > 0) {
-        const rows = purchase.items.map((i: any) => ({
-          tenant_id: profile.tenant_id,
-          purchase_order_id: po.id,
-          description: `${i.description}${i.color ? ` - ${i.color}` : ""}${i.variant ? ` (${i.variant})` : ""}`,
-          quantity: i.quantity || 1,
-          unit_price: i.unit_price || 0,
-          total: i.total || (i.quantity || 1) * (i.unit_price || 0),
-        }));
-        const { error: ie } = await supabase.from("purchase_order_items").insert(rows);
-        if (ie) throw ie;
-      }
-
-      // Create accounts_payable (with installments)
-      if (totalAmount > 0) {
-        const purchaseDate = purchase.order_date || new Date().toISOString().slice(0, 10);
-        const baseDue = marketplaceDueDate || purchaseDate;
-        const numInst = parseInt(marketplaceInstallments || "1", 10) || parseInstallmentCount(purchase.payment_installments);
-        const entries = generateInstallmentAP({
-          tenantId: profile.tenant_id,
-          description: `${marketplace} - ${purchase.vendor_name || code}`,
-          totalAmount,
-          baseDueDate: baseDue,
-          numInstallments: numInst,
-          vendorId: vid,
-          paymentMethodId: pmId,
-          isPaid: false,
-          paymentDate: null,
-          notes: `Ref. pedido ${code}${purchase.payment_installments ? ` | ${purchase.payment_installments}` : ""}`,
-          createdBy: profile.user_id,
-        });
-        const { error: apErr } = await supabase.from("accounts_payable").insert(entries);
-        if (apErr) throw apErr;
-      }
+      const marketplace = marketplaceLabels[purchase.marketplace] || "Marketplace";
+      const items = (purchase.items || []).map((i: any) => ({ description: `${i.description || ""}${i.color ? ` - ${i.color}` : ""}${i.variant ? ` (${i.variant})` : ""}`, quantity: Number(i.quantity), unit_price: Number(i.unit_price), total: money(i.total ?? Number(i.quantity) * Number(i.unit_price)), stock_quantity: null }));
+      const subtotal = money(items.reduce((sum: number, i: any) => sum + i.total, 0));
+      const total = money(purchase.total);
+      if (Math.abs(money(subtotal + Number(purchase.shipping || 0) - Number(purchase.discount || 0)) - total) > 0.01) throw new Error("O total não confere com itens, frete e desconto. Corrija os valores extraídos antes de importar.");
+      return persistPurchase("marketplace", { vendor_id: vid, order_date: purchase.order_date || localDate(), subtotal, discount: Number(purchase.discount || 0), shipping: Number(purchase.shipping || 0), total, notes: `Importado de ${marketplace}${purchase.notes ? ` | ${purchase.notes}` : ""}` }, items, Number(marketplaceInstallments || parseInstallmentCount(purchase.payment_installments)), marketplaceDueDate || purchase.order_date || localDate(), marketplacePaymentMethodId || null);
     },
     onSuccess: () => {
+      purchaseRequests.current.delete("marketplace");
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
       qc.invalidateQueries({ queryKey: ["vendors"] });
       qc.invalidateQueries({ queryKey: ["accounts_payable"] });
@@ -771,8 +557,8 @@ export default function Compras() {
   });
 
   const totalOrders = orders.length;
-  const pendingOrders = orders.filter((o: any) => o.status === "draft" || o.status === "pending").length;
-  const totalValue = orders.reduce((s: number, o: any) => s + (o.total || 0), 0);
+  const pendingOrders = orders.filter((o: any) => ["draft", "pending", "partial"].includes(o.status)).length;
+  const totalValue = orders.filter(o => o.status !== "cancelled").reduce((s: number, o: any) => s + (o.total || 0), 0);
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
@@ -781,7 +567,7 @@ export default function Compras() {
         description="Gerencie compras de materiais e importe NFes"
         breadcrumbs={[{ label: "Estoque", href: "/estoque/itens" }, { label: "Compras" }]}
         actions={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button variant="outline" size="sm" onClick={() => { setMarketplaceImages([]); setMarketplaceParsed([]); setMarketplaceImportOpen(true); }}>
               <Camera className="h-4 w-4 mr-1" /> Screenshot Compra
             </Button>
@@ -812,13 +598,13 @@ export default function Compras() {
       </div>
 
       {/* Filters */}
-      <div className="flex items-center gap-3">
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input className="pl-9" placeholder="Buscar por código, NFe, fornecedor…" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger className="w-[180px]"><SelectValue placeholder="Status" /></SelectTrigger>
+          <SelectTrigger className="w-full sm:w-[180px]"><SelectValue placeholder="Status" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Todos</SelectItem>
             {Object.entries(statusConfig).map(([k, v]) => (
@@ -828,6 +614,7 @@ export default function Compras() {
         </Select>
       </div>
 
+      {ordersError && <p role="alert" className="rounded-lg border border-destructive/30 p-4 text-sm text-destructive">Não foi possível carregar as compras. Atualize a página para tentar novamente.</p>}
       {/* Table */}
       <div className="rounded-xl border bg-card overflow-hidden">
         {isLoading ? (
@@ -865,20 +652,20 @@ export default function Compras() {
                     <TableCell>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                          <Button variant="ghost" size="icon" className="h-7 w-7"><MoreHorizontal className="h-4 w-4" /></Button>
+                          <Button variant="ghost" size="icon" className="h-9 w-9" aria-label={`Ações da compra ${o.code}`}><MoreHorizontal className="h-4 w-4" /></Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem onClick={(e) => { e.stopPropagation(); setDetailOrder(o); }}>
                             <Eye className="h-3.5 w-3.5 mr-2" /> Ver Detalhes
                           </DropdownMenuItem>
-                          {(o.status === "draft" || o.status === "pending") && (
+                          {(["draft", "pending", "partial"].includes(o.status)) && (
                             <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openReceiveConfirm(o.id); }}>
                               <CheckCircle2 className="h-3.5 w-3.5 mr-2" /> Receber
                             </DropdownMenuItem>
                           )}
                           <DropdownMenuSeparator />
-                          <DropdownMenuItem className="text-destructive" onClick={(e) => { e.stopPropagation(); deleteMut.mutate(o.id); }}>
-                            <Trash2 className="h-3.5 w-3.5 mr-2" /> Excluir
+                          <DropdownMenuItem className="text-destructive" onClick={(e) => { e.stopPropagation(); setCancelOrderId(o.id); }}>
+                            <Trash2 className="h-3.5 w-3.5 mr-2" /> Cancelar compra
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -892,8 +679,8 @@ export default function Compras() {
       </div>
 
       {/* Create Manual Dialog */}
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="max-w-2xl">
+      <Dialog open={createOpen} onOpenChange={v => !createMut.isPending && setCreateOpen(v)}>
+        <DialogContent className="max-w-2xl max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Nova Compra</DialogTitle>
             <DialogDescription>Código: {nextCode}</DialogDescription>
@@ -938,7 +725,7 @@ export default function Compras() {
               <div>
                 <Label>Vencimento 1ª parcela</Label>
                 <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
-                <p className="text-xs text-muted-foreground mt-1">Demais parcelas: +30 dias cada</p>
+                <p className="text-xs text-muted-foreground mt-1">Parcelas mensais no mesmo dia, ajustado ao último dia do mês</p>
               </div>
             </div>
 
@@ -949,13 +736,13 @@ export default function Compras() {
               </div>
               <div className="space-y-2">
                 {manualItems.map((item, idx) => (
-                  <div key={idx} className="grid grid-cols-[1fr_140px_80px_100px_32px] gap-2 items-end">
+                  <div key={idx} className="grid grid-cols-2 sm:grid-cols-[minmax(0,1fr)_140px_80px_100px_32px] gap-2 items-end rounded-lg border p-3 sm:border-0 sm:p-0">
                     <div>
-                      {idx === 0 && <Label className="text-xs">Descrição</Label>}
+                      <Label className="text-xs">Descrição</Label>
                       <Input value={item.description} onChange={(e) => updateManualItem(idx, "description", e.target.value)} placeholder="Material..." />
                     </div>
                     <div>
-                      {idx === 0 && <Label className="text-xs">Item Estoque</Label>}
+                      <Label className="text-xs">Item de estoque</Label>
                       <Select value={item.inventoryItemId || "none"} onValueChange={(v) => updateManualItem(idx, "inventoryItemId", v === "none" ? "" : v)}>
                         <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Vincular..." /></SelectTrigger>
                         <SelectContent>
@@ -967,11 +754,11 @@ export default function Compras() {
                       </Select>
                     </div>
                     <div>
-                      {idx === 0 && <Label className="text-xs">Qtd</Label>}
+                      <Label className="text-xs">Quantidade comprada</Label>
                       <Input type="number" value={item.quantity} onChange={(e) => updateManualItem(idx, "quantity", e.target.value)} />
                     </div>
                     <div>
-                      {idx === 0 && <Label className="text-xs">Preço Unit.</Label>}
+                      <Label className="text-xs">Preço unitário</Label>
                       <Input type="number" step="0.01" value={item.unitPrice} onChange={(e) => updateManualItem(idx, "unitPrice", e.target.value)} />
                     </div>
                     <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => removeManualItem(idx)} disabled={manualItems.length <= 1}>
@@ -1000,8 +787,8 @@ export default function Compras() {
       </Dialog>
 
       {/* XML Import Dialog */}
-      <Dialog open={xmlImportOpen} onOpenChange={setXmlImportOpen}>
-        <DialogContent className="max-w-2xl">
+      <Dialog open={xmlImportOpen} onOpenChange={v => !importXmlMut.isPending && setXmlImportOpen(v)}>
+        <DialogContent className="max-w-2xl max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Importar NFe XML</DialogTitle>
             <DialogDescription>Faça upload de um arquivo XML de Nota Fiscal Eletrônica</DialogDescription>
@@ -1028,6 +815,7 @@ export default function Compras() {
                 <div><span className="text-muted-foreground">Subtotal:</span> {fmtCurrency(nfeData.subtotal)}</div>
                 <div><span className="text-muted-foreground">Desconto:</span> {fmtCurrency(nfeData.discount)}</div>
                 <div><span className="text-muted-foreground">Frete:</span> {fmtCurrency(nfeData.shipping)}</div>
+                <div><span className="text-muted-foreground">Outros componentes do total da NF-e:</span> {fmtCurrency(nfeData.additionalCosts)}</div>
                 <div><span className="text-muted-foreground font-semibold">Total:</span> <span className="font-semibold">{fmtCurrency(nfeData.total)}</span></div>
               </div>
 
@@ -1062,6 +850,7 @@ export default function Compras() {
                               ))}
                             </SelectContent>
                           </Select>
+                          {item.inventoryItemId && <div className="mt-2"><Label className="text-xs">Entrada em {inventoryItems.find(inv => inv.id === item.inventoryItemId)?.unit}</Label><Input aria-label={`Quantidade de estoque de ${item.description}`} type="number" min="0.01" step="any" placeholder="Quantidade na unidade do estoque" value={item.stockQuantity || ""} onChange={e => setNfeData({ ...nfeData, items: nfeData.items.map((row, index) => index === idx ? { ...row, stockQuantity: e.target.value } : row) })} /></div>}
                         </TableCell>
                         <TableCell className="text-right text-sm">{item.quantity}</TableCell>
                         <TableCell className="text-right text-sm">{fmtCurrency(item.unitPrice)}</TableCell>
@@ -1117,7 +906,7 @@ export default function Compras() {
                 <Label className="mb-2 block">Vencimento 1ª parcela</Label>
                 <Input type="date" value={nfeDueDate} onChange={(e) => setNfeDueDate(e.target.value)} />
               </div>
-              <p className="text-xs text-muted-foreground col-span-2">Demais parcelas: +30 dias cada</p>
+              <p className="text-xs text-muted-foreground col-span-2">Parcelas mensais no mesmo dia, ajustado ao último dia do mês</p>
             </div>
           )}
 
@@ -1137,7 +926,7 @@ export default function Compras() {
 
       {/* Detail Dialog */}
       <Dialog open={!!detailOrder} onOpenChange={(o) => { if (!o) setDetailOrder(null); }}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Pedido {detailOrder?.code}</DialogTitle>
             <DialogDescription>
@@ -1183,14 +972,11 @@ export default function Compras() {
                         <TableRow key={item.id}>
                           <TableCell className="text-sm max-w-[160px] truncate">{item.description}</TableCell>
                           <TableCell>
-                            {detailOrder?.status !== "received" ? (
+                            {!["received", "cancelled"].includes(detailOrder?.status) ? (
                               <Select
                                 value={item.inventory_item_id || "none"}
-                                onValueChange={async (val) => {
-                                  const invId = val === "none" ? null : val;
-                                  await supabase.from("purchase_order_items").update({ inventory_item_id: invId }).eq("id", item.id);
-                                  qc.invalidateQueries({ queryKey: ["purchase_order_items", detailOrder?.id] });
-                                }}
+                                disabled={updateStockMut.isPending}
+                                onValueChange={val => updateStockMut.mutate({ id: item.id, values: { inventory_item_id: val === "none" ? null : val, stock_quantity: null } })}
                               >
                                 <SelectTrigger className="h-8 text-xs w-[180px]"><SelectValue placeholder="Vincular..." /></SelectTrigger>
                                 <SelectContent>
@@ -1207,6 +993,10 @@ export default function Compras() {
                                   : "— Não vinculado"}
                               </span>
                             )}
+                            {item.inventory_item_id && <div className="mt-2 space-y-1">
+                              <Label className="text-xs">Entrada em {inventoryItems.find(inv => inv.id === item.inventory_item_id)?.unit || "unidade do estoque"}</Label>
+                              {!["received", "cancelled"].includes(detailOrder?.status) ? <Input key={`${item.id}-${item.stock_quantity}`} aria-label={`Quantidade de estoque de ${item.description}`} type="number" min="0.01" step="any" placeholder="Ex.: 1000 g por rolo" defaultValue={item.stock_quantity ?? ""} disabled={updateStockMut.isPending} onBlur={e => { const value = Number(e.target.value); if (value !== item.stock_quantity) updateStockMut.mutate({ id: item.id, values: { stock_quantity: value } }); }} /> : <p className="text-sm tabular-nums">{item.stock_quantity ?? "Não informada"}</p>}
+                            </div>}
                           </TableCell>
                           <TableCell className="text-right text-sm">{item.quantity}</TableCell>
                           <TableCell className="text-right text-sm">{fmtCurrency(item.unit_price)}</TableCell>
@@ -1241,7 +1031,7 @@ export default function Compras() {
                     variant="default"
                     size="lg"
                     onClick={() => openReceiveConfirm(detailOrder.id)}
-                    disabled={receiveOrderMut.isPending}
+                    disabled={receiveOrderMut.isPending || updateStockMut.isPending}
                     className="gap-2"
                   >
                     <CheckCircle2 className="h-4 w-4" /> Receber Pedido
@@ -1264,8 +1054,8 @@ export default function Compras() {
       </Dialog>
 
       {/* Receive Confirmation Dialog */}
-      <Dialog open={receiveConfirmOpen} onOpenChange={setReceiveConfirmOpen}>
-        <DialogContent className="max-w-lg">
+      <Dialog open={receiveConfirmOpen} onOpenChange={v => !receiveOrderMut.isPending && setReceiveConfirmOpen(v)}>
+        <DialogContent className="max-w-lg max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Package className="h-5 w-5 text-primary" />
@@ -1295,7 +1085,7 @@ export default function Compras() {
                               <span className="font-medium">{item.description}</span>
                               <span className="text-xs text-muted-foreground ml-2">→ {inv?.name || "Estoque"}</span>
                             </div>
-                            <span className="font-mono text-emerald-600 font-semibold">+{item.quantity}{inv?.unit || ""}</span>
+                            <span className="font-mono text-emerald-600 font-semibold">+{item.stock_quantity}{inv?.unit || ""}</span>
                           </div>
                         );
                       })}
@@ -1326,7 +1116,7 @@ export default function Compras() {
             <Button variant="outline" onClick={() => setReceiveConfirmOpen(false)}>Cancelar</Button>
             <Button
               onClick={() => receiveOrderId && receiveOrderMut.mutate(receiveOrderId)}
-              disabled={receiveOrderMut.isPending}
+              disabled={receiveOrderMut.isPending || updateStockMut.isPending || !receiveItems.length}
               className="gap-2"
             >
               {receiveOrderMut.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
@@ -1336,6 +1126,7 @@ export default function Compras() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={!!cancelOrderId} onOpenChange={v => !v && !deleteMut.isPending && setCancelOrderId(null)}><DialogContent><DialogHeader><DialogTitle>Cancelar compra?</DialogTitle><DialogDescription>O pedido e as parcelas em aberto serão cancelados juntos e preservados no histórico. Compras recebidas ou com pagamentos precisam de um estorno específico.</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" onClick={() => setCancelOrderId(null)}>Voltar</Button><Button variant="destructive" disabled={deleteMut.isPending} onClick={() => cancelOrderId && deleteMut.mutate(cancelOrderId)}>Cancelar compra</Button></DialogFooter></DialogContent></Dialog>
       {/* Marketplace Screenshot Import Dialog */}
       <Dialog open={marketplaceImportOpen} onOpenChange={setMarketplaceImportOpen}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -1401,7 +1192,7 @@ export default function Compras() {
                       key={i}
                       variant={marketplaceSelectedIdx === i ? "default" : "outline"}
                       size="sm"
-                      onClick={() => setMarketplaceSelectedIdx(i)}
+                      onClick={() => { setMarketplaceSelectedIdx(i); setMarketplaceInstallments(String(parseInstallmentCount(p.payment_installments))); setMarketplaceDueDate(""); setMarketplacePaymentMethodId(""); }}
                       className="text-xs whitespace-nowrap"
                     >
                       {marketplaceLabels[p.marketplace] || "Compra"} #{i + 1}
@@ -1436,6 +1227,12 @@ export default function Compras() {
                       )}
                     </div>
 
+                    <div className="rounded-xl border p-4 space-y-3">
+                      <p className="text-sm font-medium">Revise os dados extraídos antes de importar</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3"><div><Label>Fornecedor</Label><Input aria-label="Fornecedor extraído" value={p.vendor_name || ""} onChange={e => updateMarketplace("vendor_name", e.target.value)} /></div><div><Label>Data da compra</Label><Input aria-label="Data extraída" type="date" value={p.order_date || ""} onChange={e => updateMarketplace("order_date", e.target.value)} /></div></div>
+                      <div className="grid grid-cols-3 gap-3">{[["shipping", "Frete"], ["discount", "Desconto"], ["total", "Total da compra"]].map(([field, label]) => <div key={field}><Label>{label} (R$)</Label><Input aria-label={label} type="number" min="0" step="0.01" value={p[field] ?? 0} onChange={e => updateMarketplace(field, e.target.value)} /></div>)}</div>
+                      <p className="text-xs text-muted-foreground">Corrija também quantidade e preço de cada item abaixo. O total da compra deve conferir com a soma dos itens, frete e desconto.</p>
+                    </div>
                     <div>
                       <Label className="mb-2 block">Forma de Pagamento</Label>
                       <Select value={marketplacePaymentMethodId} onValueChange={setMarketplacePaymentMethodId}>
@@ -1461,7 +1258,7 @@ export default function Compras() {
                         <Input type="date" value={marketplaceDueDate} onChange={(e) => setMarketplaceDueDate(e.target.value)} />
                       </div>
                     </div>
-                    <p className="text-xs text-muted-foreground">Será usada para gerar a(s) conta(s) a pagar. Demais parcelas: +30 dias cada.</p>
+                    <p className="text-xs text-muted-foreground">Será usada para gerar a(s) conta(s) a pagar. Demais parcelas: mesmo dia dos meses seguintes, ajustado ao último dia do mês.</p>
 
                     <div>
                       <Label className="mb-2 block">Itens ({p.items?.length || 0})</Label>
@@ -1478,11 +1275,11 @@ export default function Compras() {
                           {(p.items || []).map((item: any, idx: number) => (
                             <TableRow key={idx}>
                               <TableCell className="text-sm">
-                                {item.description}
+                                <Input aria-label={`Descrição do item ${idx + 1}`} value={item.description || ""} onChange={e => updateMarketplaceItem(idx, "description", e.target.value)} className="min-w-40" />
                                 {item.color && <span className="text-xs text-muted-foreground ml-1">({item.color})</span>}
                               </TableCell>
-                              <TableCell className="text-right text-sm">{item.quantity}</TableCell>
-                              <TableCell className="text-right text-sm">{fmtCurrency(item.unit_price)}</TableCell>
+                              <TableCell className="text-right text-sm"><Input aria-label={`Quantidade do item ${idx + 1}`} type="number" min="0.01" step="any" className="w-24" value={item.quantity ?? ""} onChange={e => updateMarketplaceItem(idx, "quantity", e.target.value)} /></TableCell>
+                              <TableCell className="text-right text-sm"><Input aria-label={`Preço do item ${idx + 1}`} type="number" min="0" step="0.01" className="w-28" value={item.unit_price ?? ""} onChange={e => updateMarketplaceItem(idx, "unit_price", e.target.value)} /></TableCell>
                               <TableCell className="text-right text-sm font-mono">{fmtCurrency(item.total)}</TableCell>
                             </TableRow>
                           ))}

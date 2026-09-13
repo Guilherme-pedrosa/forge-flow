@@ -1,8 +1,11 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
+import { ProductionTransitionDialog } from "@/components/production/ProductionTransitionDialog";
 import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
-import type { Database } from "@/integrations/supabase/types";
+import { estimateProductionCosts, productExtrasPerPiece, requiresProductionMeasurement, jobTransitions as nextStatuses, nonNegative } from "@/lib/production";
+import { createJobs, transitionJob, productionQueryKeys, type CreateJobInput } from "@/lib/production-api";
+import { orderRequest } from "@/lib/sales-order";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageHeader } from "@/components/shared/PageHeader";
 import {
@@ -53,7 +56,7 @@ const fmtMinutes = (m: number | null) => {
 };
 const fmtDate = (d: string | null) => {
   if (!d) return "—";
-  return new Date(d).toLocaleDateString("pt-BR");
+  return new Date(d.length === 10 ? `${d}T12:00:00` : d).toLocaleDateString("pt-BR");
 };
 
 const statusConfig: Record<JobStatus, { label: string; color: string; icon: React.ComponentType<{ className?: string }> }> = {
@@ -81,21 +84,6 @@ function JobStatusBadge({ status }: { status: JobStatus }) {
   );
 }
 
-// Status transitions
-const nextStatuses: Record<JobStatus, JobStatus[]> = {
-  draft: ["queued"],
-  queued: ["printing", "draft"],
-  printing: ["paused", "failed", "post_processing", "quality_check", "completed"],
-  paused: ["printing", "failed"],
-  failed: ["reprint", "draft"],
-  reprint: ["queued"],
-  post_processing: ["quality_check", "completed"],
-  quality_check: ["ready", "failed"],
-  ready: ["shipped", "completed"],
-  shipped: ["completed"],
-  completed: [],
-};
-
 // ── Main Component ──
 export default function Jobs() {
   const { profile } = useAuth();
@@ -106,9 +94,10 @@ export default function Jobs() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [detailJob, setDetailJob] = useState<JobRow | null>(null);
+  const [transition, setTransition] = useState<{ job: JobRow; status: JobStatus } | null>(null);
 
   // ── Fetch jobs ──
-  const { data: jobs = [], isLoading } = useQuery({
+  const { data: jobs = [], isLoading, error: loadError, refetch } = useQuery({
     queryKey: ["jobs"],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -157,7 +146,7 @@ export default function Jobs() {
   // ── Delete job ──
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from("jobs").delete().eq("id", id);
+      const { error } = await supabase.from("jobs").delete().eq("id", id).eq("status", "draft").is("started_at", null).select("id").single();
       if (error) throw error;
     },
     onSuccess: () => {
@@ -169,109 +158,21 @@ export default function Jobs() {
     },
   });
 
-  // ── Update status ──
   const statusMutation = useMutation({
-    mutationFn: async ({ id, status }: { id: string; status: JobStatus }) => {
-      // Fetch current job data
-      const { data: job, error: fetchErr } = await supabase.from("jobs").select("*").eq("id", id).single();
-      if (fetchErr || !job) throw fetchErr || new Error("Job não encontrado");
-
-      const updates: Database["public"]["Tables"]["jobs"]["Update"] = { status };
-      if (status === "printing" || status === "reprint") {
-        updates.started_at = new Date().toISOString();
-      }
-      if (status === "completed" || status === "shipped") {
-        updates.completed_at = new Date().toISOString();
-      }
-
-      // ── Ao concluir: calcular custos reais + consumir estoque ──
-      if (status === "completed" && profile) {
-        const actualGrams = job.actual_grams || job.est_grams;
-        const actualMinutes = job.actual_time_minutes || job.est_time_minutes;
-
-        // Calculate actual costs
-        let actualMaterialCost = 0;
-        if (actualGrams && job.material_id) {
-          const mat = materials.find(m => m.id === job.material_id);
-          if (mat && mat.avg_cost > 0) {
-            const costPerGram = mat.unit === "kg" ? mat.avg_cost / 1000 : mat.avg_cost;
-            actualMaterialCost = actualGrams * (1 + (mat.loss_coefficient || 0.05)) * costPerGram;
-          }
-        }
-
-        let actualMachineCost = 0;
-        let actualEnergyCost = 0;
-        if (actualMinutes && job.printer_id) {
-          const printer = printers.find(p => p.id === job.printer_id);
-          if (printer) {
-            const hours = actualMinutes / 60;
-            actualMachineCost = hours * (printer.depreciation_per_hour ?? 0) + hours * (printer.maintenance_cost_per_hour ?? 0);
-            actualEnergyCost = ((printer.power_watts ?? 150) / 1000) * hours * 0.85;
-          }
-        }
-
-        const actualTotalCost = actualMaterialCost + actualMachineCost + actualEnergyCost;
-        updates.actual_material_cost = actualMaterialCost;
-        updates.actual_machine_cost = actualMachineCost;
-        updates.actual_energy_cost = actualEnergyCost;
-        updates.actual_total_cost = actualTotalCost;
-        if (!job.actual_grams) updates.actual_grams = actualGrams;
-        if (!job.actual_time_minutes) updates.actual_time_minutes = actualMinutes;
-
-        // Calculate margin
-        if (job.sale_price && job.sale_price > 0) {
-          updates.margin_percent = ((job.sale_price - actualTotalCost) / job.sale_price) * 100;
-        }
-
-        // ── Consumir estoque (inventory_movement) ──
-        if (actualGrams && job.material_id && actualGrams > 0) {
-          const lossCoeff = materials.find(m => m.id === job.material_id)?.loss_coefficient || 0.05;
-          const totalConsumption = actualGrams * (1 + lossCoeff) + (job.purge_waste_grams || 0);
-
-          await supabase.from("inventory_movements").insert({
-            tenant_id: profile.tenant_id,
-            item_id: job.material_id,
-            movement_type: "job_consumption" as const,
-            quantity: totalConsumption,
-            unit_cost: materials.find(m => m.id === job.material_id)?.avg_cost || 0,
-            reference_type: "job",
-            reference_id: id,
-            notes: `Consumo automático — ${job.code}`,
-            created_by: profile.user_id,
-          });
-        }
-      }
-
-      const { error } = await supabase.from("jobs").update(updates).eq("id", id);
-      if (error) throw error;
-
-      // ── Sync: se todos os jobs do pedido estão concluídos, marcar pedido como "ready" ──
-      if (status === "completed" && job.order_id) {
-        const { data: siblingJobs } = await supabase
-          .from("jobs")
-          .select("id, status")
-          .eq("order_id", job.order_id);
-
-        const allDone = siblingJobs?.every(
-          (j) => j.id === id ? true : j.status === "completed" || j.status === "shipped"
-        );
-
-        if (allDone) {
-          await supabase.from("orders").update({ status: "ready" }).eq("id", job.order_id);
-        }
-      }
-    },
+    mutationFn: transitionJob,
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["jobs"] });
-      queryClient.invalidateQueries({ queryKey: ["orders"] });
-      queryClient.invalidateQueries({ queryKey: ["inventory_items"] });
+      productionQueryKeys.forEach(key => queryClient.invalidateQueries({ queryKey: [key] }));
+      setTransition(null);
       setDetailJob(null);
-      toast({ title: "Status atualizado" });
+      toast({ title: "Produção atualizada", description: "Status, custos e movimentações registrados juntos." });
     },
-    onError: (err: Error) => {
-      toast({ variant: "destructive", title: "Erro", description: err.message });
-    },
+    onError: (err: Error) => toast({ variant: "destructive", title: "Não foi possível atualizar", description: err.message }),
   });
+
+  const requestTransition = (job: JobRow, status: JobStatus) => {
+    if (["failed", "printing"].includes(status) || requiresProductionMeasurement(status, (job as unknown as { inventory_posted_at?: string }).inventory_posted_at)) setTransition({ job, status });
+    else statusMutation.mutate({ id: job.id, status });
+  };
 
   // ── Computed ──
   const counts = useMemo(() => {
@@ -306,7 +207,7 @@ export default function Jobs() {
   ];
 
   const getPrinterName = (id: string | null) => {
-    if (!id) return "Pool (auto)";
+    if (!id) return "Sem impressora";
     return printers.find(p => p.id === id)?.name ?? "—";
   };
   const getMaterialName = (id: string | null) => {
@@ -314,6 +215,8 @@ export default function Jobs() {
     const m = materials.find(m => m.id === id);
     return m ? `${m.name}${m.color ? ` (${m.color})` : ""}` : "—";
   };
+
+  if (loadError) return <div className="space-y-4 rounded-xl border bg-card p-6"><p role="alert" className="font-medium">Não foi possível carregar os dados.</p><p className="text-sm text-muted-foreground">{loadError.message}</p><Button variant="outline" onClick={() => refetch()}>Tentar novamente</Button></div>;
 
   return (
     <div className="space-y-6">
@@ -406,7 +309,7 @@ export default function Jobs() {
                     </div>
                   </TableCell>
                   <TableCell className="text-sm">{getMaterialName(job.material_id)}</TableCell>
-                  <TableCell className="text-center text-sm">—</TableCell>
+                  <TableCell className="text-center text-sm">1 OI</TableCell>
                   <TableCell className="text-sm">{getPrinterName(job.printer_id)}</TableCell>
                   <TableCell className="text-sm">{fmtDate(job.due_date)}</TableCell>
                   <TableCell><JobStatusBadge status={job.status} /></TableCell>
@@ -429,7 +332,7 @@ export default function Jobs() {
                             {nextStatuses[job.status].map((ns) => (
                               <DropdownMenuItem
                                 key={ns}
-                                onClick={() => statusMutation.mutate({ id: job.id, status: ns })}
+                                disabled={statusMutation.isPending} onClick={() => requestTransition(job, ns)}
                               >
                                 <ArrowRight className="h-4 w-4 mr-2" /> {statusConfig[ns].label}
                               </DropdownMenuItem>
@@ -437,12 +340,12 @@ export default function Jobs() {
                           </>
                         )}
                         <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          className="text-destructive"
-                          onClick={() => deleteMutation.mutate(job.id)}
+                        {job.status === "draft" && !job.started_at && <DropdownMenuItem
+                          className="text-destructive" disabled={deleteMutation.isPending}
+                          onClick={() => { if (window.confirm(`Excluir o rascunho ${job.code}?`)) deleteMutation.mutate(job.id); }}
                         >
-                          <Trash2 className="h-4 w-4 mr-2" /> Excluir
-                        </DropdownMenuItem>
+                          <Trash2 className="h-4 w-4 mr-2" /> Excluir rascunho
+                        </DropdownMenuItem>}
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </TableCell>
@@ -454,6 +357,7 @@ export default function Jobs() {
         </div>
       </div>
 
+      {transition && <ProductionTransitionDialog key={`${transition.job.id}-${transition.status}`} value={transition} printers={printers} pending={statusMutation.isPending} onClose={() => setTransition(null)} onSave={value => statusMutation.mutate(value)} />}
       {/* Dialogs */}
       <CreateJobDialog
         open={createOpen}
@@ -468,7 +372,7 @@ export default function Jobs() {
           onClose={() => setDetailJob(null)}
           printers={printers}
           materials={materials}
-          onStatusChange={(status) => statusMutation.mutate({ id: detailJob.id, status })}
+          onStatusChange={(status) => requestTransition(detailJob, status)}
         />
       )}
     </div>
@@ -504,15 +408,18 @@ function CreateJobDialog({
   const [estTimeMinutes, setEstTimeMinutes] = useState("");
   const [estGrams, setEstGrams] = useState("");
   const [numColors, setNumColors] = useState("1");
+  const [salePrice, setSalePrice] = useState("");
   const [purgeWasteGrams, setPurgeWasteGrams] = useState("");
   const [saving, setSaving] = useState(false);
+  const creationRequest = useRef<ReturnType<typeof orderRequest> | null>(null);
 
   const PURGE_GRAMS_PER_COLOR_CHANGE = 20;
 
   const reset = () => {
+    creationRequest.current = null;
     setProductId(""); setName(""); setDescription(""); setMaterialId(""); setSecondaryMaterialId("");
     setPrinterId(""); setDueDate(""); setPriority("5"); setEstTimeMinutes(""); setEstGrams("");
-    setNumColors("1"); setPurgeWasteGrams("");
+    setNumColors("1"); setPurgeWasteGrams(""); setSalePrice("");
   };
 
   const handleProductSelect = (id: string) => {
@@ -521,6 +428,7 @@ function CreateJobDialog({
     const p = products.find(pr => pr.id === id);
     if (!p) return;
     setName(p.name);
+    setSalePrice(p.sale_price == null ? "" : String(p.sale_price * Math.max(1, p.prints_per_plate ?? 1)));
     setDescription(p.description || "");
     if (p.material_id) setMaterialId(p.material_id);
     if (p.est_time_minutes) setEstTimeMinutes((p.est_time_minutes / 60).toFixed(2));
@@ -545,6 +453,7 @@ function CreateJobDialog({
   };
 
   const handleSave = async () => {
+    if (saving) return;
     if (!name.trim()) {
       toast({ variant: "destructive", title: "Nome da peça é obrigatório" });
       return;
@@ -552,65 +461,28 @@ function CreateJobDialog({
     if (!profile?.tenant_id) return;
     setSaving(true);
     try {
-      const now = new Date();
-      const datePart = now.toISOString().slice(0, 10).replace(/-/g, "");
-      const { count } = await supabase
-        .from("jobs")
-        .select("*", { count: "exact", head: true })
-        .eq("tenant_id", profile.tenant_id);
-      const seq = String((count ?? 0) + 1).padStart(3, "0");
-      const code = `OI-${datePart}-${seq}`;
-
-      const grams = estGrams ? Number(estGrams) : null;
-      const minutes = estTimeMinutes ? Math.round(Number(estTimeMinutes) * 60) : null;
-      const colors = parseInt(numColors) || 1;
-      const purge = parseFloat(purgeWasteGrams) || 0;
-
-      let estMaterialCost = 0;
-      if (grams && materialId) {
-        const mat = materials.find(m => m.id === materialId);
-        if (mat && mat.avg_cost > 0) {
-          const isKg = mat.unit === "kg";
-          const costPerGram = isKg ? mat.avg_cost / 1000 : mat.avg_cost;
-          const lossCoeff = (mat as any).loss_coefficient || 0.05;
-          estMaterialCost = grams * (1 + lossCoeff) * costPerGram;
-        }
-      }
-      if (colors > 1 && purge > 0) {
-        const purgeMat = secondaryMaterialId
-          ? materials.find(m => m.id === secondaryMaterialId)
-          : materials.find(m => m.id === materialId);
-        if (purgeMat && purgeMat.avg_cost > 0) {
-          const isKg = purgeMat.unit === "kg";
-          const costPerGram = isKg ? purgeMat.avg_cost / 1000 : purgeMat.avg_cost;
-          estMaterialCost += purge * costPerGram;
-        }
-      }
-
-      let estMachineCost = 0;
-      if (minutes && printerId) {
-        const printer = printers.find(p => p.id === printerId);
-        if (printer) {
-          const hours = minutes / 60;
-          estMachineCost = hours * (printer.depreciation_per_hour ?? 0) + hours * (printer.maintenance_cost_per_hour ?? 0);
-        }
-      }
-      let estEnergyCost = 0;
-      if (minutes && printerId) {
-        const printer = printers.find(p => p.id === printerId);
-        if (printer) {
-          const kwhRate = 0.85;
-          estEnergyCost = ((printer.power_watts ?? 150) / 1000) * (minutes / 60) * kwhRate;
-        }
-      }
-      const estTotalCost = estMaterialCost + estMachineCost + estEnergyCost;
-
-      const { error } = await supabase.from("jobs").insert({
-        tenant_id: profile.tenant_id,
-        code,
+      const grams = estGrams === "" ? null : nonNegative(estGrams, "Peso estimado");
+      const minutes = estTimeMinutes === "" ? null : Math.round(nonNegative(estTimeMinutes, "Tempo estimado") * 60);
+      const colors = Number(numColors);
+      const purge = nonNegative(purgeWasteGrams, "Purga");
+      const { data: tenant, error: tenantError } = await supabase.from("tenants").select("settings").eq("id", profile.tenant_id).single();
+      if (tenantError) throw tenantError;
+      const settings = tenant.settings as Record<string, unknown> | null;
+      const selectedProduct = products.find(product => product.id === productId);
+      if (selectedProduct?.category === "kit") throw new Error("Crie um pedido para o kit. O planejamento do pedido separa os componentes para apurar cada impressão.");
+      const costs = estimateProductionCosts({
+        extras: productExtrasPerPiece(selectedProduct?.extras) * Math.max(1, selectedProduct?.prints_per_plate ?? 1),
+        energyRate: nonNegative(settings?.energy_cost_kwh as number | undefined, "Tarifa de energia", 0.85),
+        grams: grams ?? 0, minutes: minutes ?? 0, purgeGrams: purge,
+        material: materials.find(m => m.id === materialId),
+        purgeMaterial: materials.find(m => m.id === secondaryMaterialId),
+        printer: printers.find(p => p.id === printerId),
+      });
+      const rows: CreateJobInput[] = [{
         name: name.trim(),
         description: description.trim() || null,
         product_id: productId || null,
+        sale_price: salePrice === "" ? null : nonNegative(salePrice, "Receita atribuída"),
         material_id: materialId || null,
         secondary_material_id: secondaryMaterialId || null,
         printer_id: printerId || null,
@@ -620,17 +492,18 @@ function CreateJobDialog({
         est_grams: grams,
         num_colors: colors,
         purge_waste_grams: purge,
-        est_material_cost: estMaterialCost,
-        est_machine_cost: estMachineCost,
-        est_energy_cost: estEnergyCost,
-        est_total_cost: estTotalCost,
-        created_by: profile.user_id,
+        est_material_cost: costs.material,
+        est_machine_cost: costs.machine,
+        est_energy_cost: costs.energy,
+        est_total_cost: costs.total,
+        est_extras_cost: costs.extras,
         status: "draft",
-      } as any);
+      }];
 
-      if (error) throw error;
-      queryClient.invalidateQueries({ queryKey: ["jobs"] });
-      toast({ title: "OI criada", description: code });
+      creationRequest.current = orderRequest(creationRequest.current, JSON.stringify(rows));
+      await createJobs(rows, creationRequest.current.id);
+      productionQueryKeys.forEach(key => queryClient.invalidateQueries({ queryKey: [key] }));
+      toast({ title: "OI criada", description: "Ordem salva como rascunho." });
       reset();
       onOpenChange(false);
     } catch (err: any) {
@@ -643,11 +516,11 @@ function CreateJobDialog({
   const isMultiColor = parseInt(numColors) > 1;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={next => { if (!saving) onOpenChange(next); }}>
       <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Nova Ordem de Impressão</DialogTitle>
-          <DialogDescription>Selecione um produto ou preencha manualmente.</DialogDescription>
+          <DialogDescription>Uma ordem representa uma placa de impressão. Peso e tempo são totais da placa. Os custos usam a tarifa da empresa; se não configurada, a referência é R$ 0,85/kWh.</DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-4 py-2">
@@ -731,9 +604,9 @@ function CreateJobDialog({
               <div className="grid gap-1.5">
                 <Label>Impressora</Label>
                 <Select value={printerId || "pool"} onValueChange={(v) => setPrinterId(v === "pool" ? "" : v)}>
-                  <SelectTrigger><SelectValue placeholder="Pool (auto)" /></SelectTrigger>
+                  <SelectTrigger><SelectValue placeholder="Sem impressora" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="pool">Pool (auto)</SelectItem>
+                    <SelectItem value="pool">Sem impressora</SelectItem>
                     {printers.map(p => (
                       <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
                     ))}
@@ -748,9 +621,9 @@ function CreateJobDialog({
               <div className="grid gap-1.5">
                 <Label>Impressora</Label>
                 <Select value={printerId || "pool"} onValueChange={(v) => setPrinterId(v === "pool" ? "" : v)}>
-                  <SelectTrigger><SelectValue placeholder="Pool (auto)" /></SelectTrigger>
+                  <SelectTrigger><SelectValue placeholder="Sem impressora" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="pool">Pool (auto)</SelectItem>
+                    <SelectItem value="pool">Sem impressora</SelectItem>
                     {printers.map(p => (
                       <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
                     ))}
@@ -760,8 +633,7 @@ function CreateJobDialog({
               <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
                 <p className="text-xs text-amber-600 dark:text-amber-400">
                   <AlertTriangle className="h-3 w-3 inline mr-1" />
-                  Impressão multicolor: torre de purga consome ~{purgeWasteGrams || PURGE_GRAMS_PER_COLOR_CHANGE}g extras.
-                  {parseInt(numColors) >= 3 && " Com 3+ cores, considere ~25-40g de perda."}
+                  Preencha a purga informada pelo fatiador. O valor sugerido é apenas uma previsão e deve ser conferido para cada placa.
                 </p>
               </div>
             </>
@@ -781,7 +653,7 @@ function CreateJobDialog({
               <Select value={priority} onValueChange={setPriority}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="1">Expedite</SelectItem>
+                  <SelectItem value="1">Urgente</SelectItem>
                   <SelectItem value="3">Alta</SelectItem>
                   <SelectItem value="5">Normal</SelectItem>
                   <SelectItem value="8">Baixa</SelectItem>
@@ -790,8 +662,9 @@ function CreateJobDialog({
             </div>
           </div>
 
+          <div className="grid gap-1.5"><Label>Receita atribuída à placa (R$)</Label><Input type="number" min="0" step="0.01" value={salePrice} onChange={event => setSalePrice(event.target.value)} placeholder="Opcional para produção em estoque" /><p className="text-xs text-muted-foreground">Total das peças da placa. Deixe vazio quando ainda não há venda atribuída.</p></div>
           <div className="grid gap-1.5">
-            <Label>SLA / Data prometida</Label>
+            <Label>Data prometida</Label>
             <Input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} />
           </div>
         </div>
@@ -823,7 +696,7 @@ function JobDetailDialog({
   onStatusChange: (status: JobStatus) => void;
 }) {
   const getPrinterName = (id: string | null) => {
-    if (!id) return "Pool (auto)";
+    if (!id) return "Sem impressora";
     return printers.find(p => p.id === id)?.name ?? "—";
   };
   const getMaterialName = (id: string | null) => {
@@ -869,7 +742,7 @@ function JobDetailDialog({
               <span className="text-sm text-muted-foreground">Status</span>
               <JobStatusBadge status={job.status} />
             </div>
-            <div className="grid grid-cols-2 gap-4 text-sm">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
               <InfoRow icon={PrinterIcon} label="Impressora" value={getPrinterName(job.printer_id)} />
               <InfoRow icon={Package} label="Material" value={getMaterialName(job.material_id)} />
               <InfoRow icon={Calendar} label="SLA" value={fmtDate(job.due_date)} />
@@ -917,13 +790,13 @@ function JobDetailDialog({
 
           {/* ── Execução ── */}
           <TabsContent value="execucao" className="space-y-4 pt-2">
-            <div className="grid grid-cols-2 gap-4 text-sm">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
               <InfoRow icon={Clock} label="Criado em" value={new Date(job.created_at).toLocaleString("pt-BR")} />
               <InfoRow icon={Play} label="Iniciado em" value={job.started_at ? new Date(job.started_at).toLocaleString("pt-BR") : "—"} />
               <InfoRow icon={CheckCircle2} label="Concluído em" value={job.completed_at ? new Date(job.completed_at).toLocaleString("pt-BR") : "—"} />
               <InfoRow icon={Timer} label="Tempo real" value={fmtMinutes(job.actual_time_minutes)} />
               <InfoRow icon={Weight} label="Gramas reais" value={fmtGrams(job.actual_grams)} />
-              <InfoRow icon={AlertTriangle} label="Waste" value={fmtGrams(job.waste_grams)} />
+              <InfoRow icon={AlertTriangle} label="Perda medida" value={fmtGrams(job.waste_grams)} />
             </div>
             {job.failure_reason && (
               <div className="rounded-lg bg-destructive/10 border border-destructive/20 p-3">
@@ -949,7 +822,8 @@ function JobDetailDialog({
                   <CostRow label="Máquina" est={job.est_machine_cost} actual={job.actual_machine_cost} />
                   <CostRow label="Energia" est={job.est_energy_cost} actual={job.actual_energy_cost} />
                   <CostRow label="Mão de obra" est={job.est_labor_cost} actual={job.actual_labor_cost} />
-                  <CostRow label="Overhead" est={job.est_overhead} actual={job.actual_overhead} />
+                  <CostRow label="Custos indiretos" est={job.est_overhead} actual={job.actual_overhead} />
+                  <CostRow label="Acessórios e embalagem" est={(job as unknown as { est_extras_cost?: number }).est_extras_cost ?? null} actual={(job as unknown as { actual_extras_cost?: number }).actual_extras_cost ?? null} />
                   <tr className="font-bold border-t">
                     <td className="p-2">Total</td>
                     <td className="text-right p-2">{fmtCurrency(job.est_total_cost)}</td>

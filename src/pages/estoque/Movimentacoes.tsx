@@ -1,4 +1,6 @@
-import { useState, useMemo } from "react";
+import { orderRequest } from "@/lib/sales-order";
+import { nonNegative, validateMovement, movementDirection } from "@/lib/production";
+import { useState, useMemo, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -43,6 +45,7 @@ export default function Movimentacoes() {
   const { profile } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
+  const request = useRef<{ signature: string; id: string } | null>(null);
 
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("all");
@@ -51,19 +54,21 @@ export default function Movimentacoes() {
   // Form
   const [itemId, setItemId] = useState("");
   const [movementType, setMovementType] = useState<MovementType>("purchase_in");
+  const [page, setPage] = useState(0);
   const [quantity, setQuantity] = useState("");
   const [unitCost, setUnitCost] = useState("");
   const [lotNumber, setLotNumber] = useState("");
   const [notes, setNotes] = useState("");
 
-  const { data: movements = [], isLoading } = useQuery({
-    queryKey: ["inventory_movements"],
+  const { data: movements = [], isLoading, error: loadError, refetch } = useQuery({
+    queryKey: ["inventory_movements", page, typeFilter],
     queryFn: async () => {
-      const { data, error } = await supabase
+      let query = supabase
         .from("inventory_movements")
         .select("*, inventory_items(name, unit)")
-        .order("created_at", { ascending: false })
-        .limit(200);
+        .order("created_at", { ascending: false }).order("id", { ascending: false });
+      if (typeFilter !== "all") query = query.eq("movement_type", typeFilter as MovementType);
+      const { data, error } = await query.range(page * 100, page * 100 + 99);
       if (error) throw error;
       return data;
     },
@@ -71,9 +76,9 @@ export default function Movimentacoes() {
   });
 
   const { data: items = [] } = useQuery({
-    queryKey: ["inventory_items"],
+    queryKey: ["inventory_items", "movement-select"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("inventory_items").select("id, name, unit, avg_cost").eq("is_active", true).order("name");
+      const { data, error } = await supabase.from("inventory_items").select("id, name, unit, avg_cost, current_stock").eq("is_active", true).order("name");
       if (error) throw error;
       return data;
     },
@@ -97,19 +102,21 @@ export default function Movimentacoes() {
   const createMut = useMutation({
     mutationFn: async () => {
       if (!profile) throw new Error("Sem perfil");
-      const { error } = await supabase.from("inventory_movements").insert({
-        tenant_id: profile.tenant_id,
-        item_id: itemId,
-        movement_type: movementType,
-        quantity: parseFloat(quantity),
-        unit_cost: unitCost ? parseFloat(unitCost) : null,
-        lot_number: lotNumber || null,
-        notes: notes || null,
-        created_by: profile.user_id,
-      });
-      if (error) throw error;
+      const item = items.find(value => value.id === itemId);
+      if (!item) throw new Error("Selecione um item ativo.");
+      const amount = Number(quantity);
+      validateMovement(movementType, amount, item.current_stock, notes);
+      if (movementType === "purchase_in" && !unitCost.trim()) throw new Error("Informe o custo por unidade da entrada.");
+      const cost = unitCost.trim() ? nonNegative(unitCost, "Custo unitário") : null;
+      const movement = { item_id: itemId, movement_type: movementType, quantity: amount,
+        unit_cost: movementType === "purchase_in" ? cost : null, lot_number: lotNumber.trim() || null, notes: notes.trim() || null };
+      request.current = orderRequest(request.current, JSON.stringify(movement));
+      const rpc = supabase.rpc as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ error: { message: string } | null }>;
+      const { error } = await rpc("post_inventory_movement", { p_movement: movement, p_request_id: request.current.id });
+      if (error) throw new Error(error.message);
     },
     onSuccess: () => {
+      request.current = null;
       qc.invalidateQueries({ queryKey: ["inventory_movements"] });
       qc.invalidateQueries({ queryKey: ["inventory_items"] });
       setCreateOpen(false);
@@ -119,6 +126,8 @@ export default function Movimentacoes() {
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 
+  if (loadError) return <div className="space-y-4 rounded-xl border bg-card p-6"><p role="alert" className="font-medium">Não foi possível carregar os dados.</p><p className="text-sm text-muted-foreground">{loadError.message}</p><Button variant="outline" onClick={() => refetch()}>Tentar novamente</Button></div>;
+
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       <PageHeader
@@ -126,19 +135,19 @@ export default function Movimentacoes() {
         description="Entradas, saídas e ajustes de estoque"
         breadcrumbs={[{ label: "Estoque", href: "/estoque/itens" }, { label: "Movimentações" }]}
         actions={
-          <Button size="sm" onClick={() => setCreateOpen(true)}>
+          <Button size="sm" onClick={() => { request.current = null; setCreateOpen(true); }}>
             <Plus className="h-4 w-4 mr-1" /> Nova Movimentação
           </Button>
         }
       />
 
       {/* Filters */}
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input className="pl-9" placeholder="Buscar por item, lote, notas…" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
-        <Select value={typeFilter} onValueChange={setTypeFilter}>
+        <Select value={typeFilter} onValueChange={value => { setTypeFilter(value); setPage(0); }}>
           <SelectTrigger className="w-[200px]"><SelectValue placeholder="Tipo" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Todos</SelectItem>
@@ -174,7 +183,7 @@ export default function Movimentacoes() {
             </TableHeader>
             <TableBody>
               {filtered.map((m) => {
-                const cfg = typeLabels[m.movement_type];
+                const cfg = { ...typeLabels[m.movement_type], direction: movementDirection(m.movement_type, m.quantity) };
                 const itemData = (m as any).inventory_items;
                 return (
                   <TableRow key={m.id}>
@@ -190,7 +199,7 @@ export default function Movimentacoes() {
                     </TableCell>
                     <TableCell className="text-sm font-medium">{itemData?.name || "—"}</TableCell>
                     <TableCell className="text-right font-mono text-sm">
-                      {cfg.direction === "out" ? "-" : "+"}{m.quantity.toLocaleString("pt-BR")}{itemData?.unit || ""}
+                      {cfg.direction === "out" ? "-" : "+"}{Math.abs(m.quantity).toLocaleString("pt-BR")}{itemData?.unit || ""}
                     </TableCell>
                     <TableCell className="text-right font-mono text-sm">{fmtCurrency(m.unit_cost)}</TableCell>
                     <TableCell className="text-right font-mono text-sm">{fmtCurrency(m.total_cost)}</TableCell>
@@ -204,8 +213,12 @@ export default function Movimentacoes() {
         )}
       </div>
 
+      <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
+        <span>Página {page + 1} · {movements.length} registros. A busca filtra esta página.</span>
+        <div className="flex gap-2"><Button variant="outline" disabled={page === 0 || isLoading} onClick={() => setPage(value => value - 1)}>Anterior</Button><Button variant="outline" disabled={movements.length < 100 || isLoading} onClick={() => setPage(value => value + 1)}>Próxima</Button></div>
+      </div>
       {/* Create Dialog */}
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+      <Dialog open={createOpen} onOpenChange={open => { if (!createMut.isPending) setCreateOpen(open); }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Nova Movimentação</DialogTitle>
@@ -228,7 +241,7 @@ export default function Movimentacoes() {
               <Select value={movementType} onValueChange={(v) => setMovementType(v as MovementType)}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {Object.entries(typeLabels).map(([k, v]) => (
+                  {Object.entries(typeLabels).filter(([key]) => key !== "job_consumption").map(([k, v]) => (
                     <SelectItem key={k} value={k}>{v.label}</SelectItem>
                   ))}
                 </SelectContent>
@@ -236,14 +249,15 @@ export default function Movimentacoes() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label>Quantidade *</Label>
+                <Label>{movementType === "adjustment" ? "Diferença de estoque" : "Quantidade"} ({items.find(item => item.id === itemId)?.unit ?? "unidade"}) *</Label>
                 <Input type="number" step="0.01" value={quantity} onChange={(e) => setQuantity(e.target.value)} placeholder="1000" />
               </div>
               <div>
-                <Label>Custo Unitário (R$)</Label>
-                <Input type="number" step="0.01" value={unitCost} onChange={(e) => setUnitCost(e.target.value)} placeholder="0.08" />
+                <Label>Custo (R$/{items.find(item => item.id === itemId)?.unit ?? "unidade"})</Label>
+                <Input disabled={movementType !== "purchase_in"} type="number" min="0" step="0.0001" value={unitCost} onChange={(e) => setUnitCost(e.target.value)} placeholder="0.08" />
               </div>
             </div>
+            <p className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">{movementType === "adjustment" ? "Informe a diferença: +2 acrescenta duas unidades; -2 retira duas. O ajuste exige justificativa." : "A quantidade e o custo devem usar a unidade do item. Ex.: 1 kg a R$ 80/kg, ou 1.000 g a R$ 0,08/g."}</p>
             <div>
               <Label>Lote</Label>
               <Input value={lotNumber} onChange={(e) => setLotNumber(e.target.value)} placeholder="LOT-2026-03" />
@@ -254,7 +268,7 @@ export default function Movimentacoes() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancelar</Button>
+            <Button variant="outline" disabled={createMut.isPending} onClick={() => setCreateOpen(false)}>Cancelar</Button>
             <Button onClick={() => createMut.mutate()} disabled={!itemId || !quantity || createMut.isPending}>
               {createMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Registrar
             </Button>

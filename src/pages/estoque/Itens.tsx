@@ -1,4 +1,6 @@
 import { useState, useMemo } from "react";
+import { Link } from "react-router-dom";
+import { nonNegative, gramsToStockUnit } from "@/lib/production";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -64,17 +66,18 @@ export default function Itens() {
   const [unit, setUnit] = useState("g");
   const [minStock, setMinStock] = useState("");
   const [avgCost, setAvgCost] = useState("");
-  const [lossCoefficient, setLossCoefficient] = useState("0.05");
+  const [lossCoefficient, setLossCoefficient] = useState("5");
   const [notes, setNotes] = useState("");
   const [currentStock, setCurrentStock] = useState("");
   const [freightCost, setFreightCost] = useState("");
 
-  const { data: items = [], isLoading } = useQuery({
+  const { data: items = [], isLoading, error: loadError, refetch } = useQuery({
     queryKey: ["inventory_items"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("inventory_items")
         .select("*")
+        .eq("is_active", true)
         .order("material_type")
         .order("name");
       if (error) throw error;
@@ -143,7 +146,7 @@ export default function Itens() {
   const resetForm = () => {
     setFormMode("group"); setParentId(""); setName(""); setCategory("filament");
     setMaterialType(""); setColor(""); setDiameter("1.75"); setBrand(""); setSku("");
-    setUnit("g"); setMinStock(""); setAvgCost(""); setLossCoefficient("0.05");
+    setUnit("g"); setMinStock(""); setAvgCost(""); setLossCoefficient("5");
     setNotes(""); setCurrentStock(""); setFreightCost("");
   };
 
@@ -162,7 +165,7 @@ export default function Itens() {
     setUnit(item.unit);
     setMinStock(item.min_stock?.toString() || "");
     setAvgCost(item.avg_cost?.toString() || "");
-    setLossCoefficient(item.loss_coefficient?.toString() || "0.05");
+    setLossCoefficient(String((item.loss_coefficient ?? 0.05) * 100));
     setNotes(item.notes || "");
     setCurrentStock(item.current_stock?.toString() || "0");
     setFreightCost(item.freight_cost?.toString() || "");
@@ -177,14 +180,26 @@ export default function Itens() {
     setDiameter(parent.diameter?.toString() || "1.75");
     setBrand(parent.brand || "");
     setUnit(parent.unit);
-    setLossCoefficient(parent.loss_coefficient?.toString() || "0.05");
+    setLossCoefficient(String((parent.loss_coefficient ?? 0.05) * 100));
     setName(`${parent.material_type || parent.name}`);
     setCreateOpen(true);
+  };
+
+  const validateItem = () => {
+    if (!(formMode === "color" ? materialType || name : name).trim() || (formMode === "color" && (!parentId || !color.trim()))) throw new Error("Informe o nome e, para uma cor, o material de origem e a cor.");
+    nonNegative(minStock, "Estoque mínimo");
+    nonNegative(diameter, "Diâmetro");
+    nonNegative(freightCost, "Frete");
+    if (nonNegative(lossCoefficient, "Perda prevista") > 100) throw new Error("A perda prevista deve ficar entre 0% e 100%.");
+    const parent = items.find(item => item.id === parentId);
+    if (formMode === "color" && parent && parent.unit !== unit) throw new Error("A cor deve usar a mesma unidade de estoque do material de origem.");
+    if (editItem && editItem.unit !== unit) throw new Error("A unidade de um item cadastrado não pode ser alterada. Cadastre um novo item para mudar a unidade.");
   };
 
   const createMut = useMutation({
     mutationFn: async () => {
       if (!profile) throw new Error("Sem perfil");
+      validateItem();
       const payload: any = {
         tenant_id: profile.tenant_id,
         name: formMode === "color" ? `${materialType || name} ${color}`.trim() : name,
@@ -196,9 +211,9 @@ export default function Itens() {
         sku: sku || null,
         unit,
         min_stock: minStock ? parseFloat(minStock) : 0,
-        avg_cost: avgCost ? parseFloat(avgCost) : 0,
-        current_stock: currentStock ? parseFloat(currentStock) : 0,
-        loss_coefficient: parseFloat(lossCoefficient) || 0.05,
+        avg_cost: 0,
+        current_stock: 0,
+        loss_coefficient: nonNegative(lossCoefficient, "Perda prevista", 5) / 100,
         notes: notes || null,
         freight_cost: freightCost ? parseFloat(freightCost) : 0,
         parent_id: formMode === "color" && parentId ? parentId : null,
@@ -218,7 +233,7 @@ export default function Itens() {
   const updateMut = useMutation({
     mutationFn: async () => {
       if (!editItem || !profile) return;
-      const newStock = currentStock ? parseFloat(currentStock) : 0;
+      validateItem();
       const payload: any = {
         name: formMode === "color" ? `${materialType || name} ${color}`.trim() : name,
         category,
@@ -229,27 +244,13 @@ export default function Itens() {
         sku: sku || null,
         unit,
         min_stock: minStock ? parseFloat(minStock) : 0,
-        avg_cost: avgCost ? parseFloat(avgCost) : 0,
-        current_stock: newStock,
-        loss_coefficient: parseFloat(lossCoefficient) || 0.05,
+        loss_coefficient: nonNegative(lossCoefficient, "Perda prevista", 5) / 100,
         notes: notes || null,
         freight_cost: freightCost ? parseFloat(freightCost) : 0,
         parent_id: formMode === "color" && parentId ? parentId : null,
       };
       const { error } = await supabase.from("inventory_items").update(payload).eq("id", editItem.id);
       if (error) throw error;
-      if (newStock !== editItem.current_stock) {
-        const diff = newStock - editItem.current_stock;
-        await supabase.from("inventory_movements").insert({
-          tenant_id: profile.tenant_id,
-          item_id: editItem.id,
-          movement_type: "adjustment",
-          quantity: Math.abs(diff),
-          unit_cost: avgCost ? parseFloat(avgCost) : editItem.avg_cost,
-          notes: `Ajuste manual de estoque: ${editItem.current_stock} → ${newStock}`,
-          stock_after: newStock,
-        });
-      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["inventory_items"] });
@@ -262,12 +263,15 @@ export default function Itens() {
 
   const deleteMut = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from("inventory_items").delete().eq("id", id);
+      const item = items.find(value => value.id === id);
+      if (!item || item.current_stock !== 0) throw new Error("Somente itens com saldo zero podem ser arquivados.");
+      if (items.some(value => value.parent_id === id)) throw new Error("Arquive as cores vinculadas antes de arquivar o material.");
+      const { error } = await supabase.from("inventory_items").update({ is_active: false }).eq("id", id).eq("current_stock", 0).select("id").single();
       if (error) throw error;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["inventory_items"] });
-      toast({ title: "Item removido" });
+      toast({ title: "Item arquivado", description: "O histórico de estoque foi preservado." });
     },
     onError: (e: any) => toast({ title: "Erro ao remover", description: e.message, variant: "destructive" }),
   });
@@ -280,8 +284,12 @@ export default function Itens() {
   // Compute aggregated stats for a parent
   const getGroupStats = (parent: any) => {
     const kids = childrenMap.get(parent.id) || [];
-    const totalStock = kids.reduce((s: number, k: any) => s + k.current_stock, 0);
-    const totalVal = kids.reduce((s: number, k: any) => s + k.current_stock * k.avg_cost, 0);
+    const totalStock = kids.reduce((sum: number, child: any) => {
+      if (child.unit === parent.unit) return sum + child.current_stock;
+      if (["g", "kg"].includes(child.unit) && ["g", "kg"].includes(parent.unit)) return sum + gramsToStockUnit(child.current_stock * (child.unit === "kg" ? 1000 : 1), parent.unit);
+      return sum;
+    }, parent.current_stock ?? 0);
+    const totalVal = kids.reduce((s: number, k: any) => s + k.current_stock * k.avg_cost, (parent.current_stock ?? 0) * (parent.avg_cost ?? 0));
     const avgCostGroup = totalStock > 0 ? totalVal / totalStock : 0;
     const belowMin = kids.some((k: any) => k.min_stock && k.current_stock < k.min_stock);
     return { totalStock, totalVal, avgCostGroup, belowMin, count: kids.length };
@@ -307,7 +315,11 @@ export default function Itens() {
       {formMode === "color" && !editItem && (
         <div>
           <Label>Material Pai *</Label>
-          <Select value={parentId} onValueChange={setParentId}>
+          <Select value={parentId} onValueChange={value => {
+            setParentId(value);
+            const parent = items.find(item => item.id === value);
+            if (parent) { setName(parent.name); setCategory(parent.category); setMaterialType(parent.material_type ?? ""); setUnit(parent.unit); setBrand(parent.brand ?? ""); setDiameter(String(parent.diameter ?? 1.75)); setLossCoefficient(String((parent.loss_coefficient ?? 0.05) * 100)); }
+          }}>
             <SelectTrigger><SelectValue placeholder="Selecione o material..." /></SelectTrigger>
             <SelectContent>
               {[...parentItems, ...orphanItems]
@@ -372,7 +384,7 @@ export default function Itens() {
         </div>
         <div>
           <Label>Unidade</Label>
-          <Select value={unit} onValueChange={setUnit}>
+          <Select value={unit} onValueChange={setUnit} disabled={!!editItem}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="g">Gramas (g)</SelectItem>
@@ -387,22 +399,23 @@ export default function Itens() {
           <Input type="number" value={minStock} onChange={(e) => setMinStock(e.target.value)} placeholder="200" />
         </div>
         <div>
-          <Label>Estoque Atual</Label>
-          <Input type="number" value={currentStock} onChange={(e) => setCurrentStock(e.target.value)} placeholder="0" />
+          <Label>Estoque atual ({unit})</Label>
+          <Input value={editItem ? currentStock : "0"} readOnly aria-readonly="true" className="bg-muted" />
         </div>
         <div>
           <Label>Custo Médio (R$/{unit})</Label>
-          <Input type="number" step="0.01" value={avgCost} onChange={(e) => setAvgCost(e.target.value)} placeholder="0.08" />
+          <Input value={editItem ? avgCost : "0"} readOnly aria-readonly="true" className="bg-muted" />
         </div>
         <div>
           <Label>Custo Frete (R$/kg)</Label>
           <Input type="number" step="0.01" value={freightCost} onChange={(e) => setFreightCost(e.target.value)} placeholder="10.00" />
         </div>
         <div>
-          <Label>Coef. Perda (%)</Label>
-          <Input type="number" step="0.01" value={lossCoefficient} onChange={(e) => setLossCoefficient(e.target.value)} placeholder="0.05" />
+          <Label>Perda prevista (%)</Label>
+          <Input type="number" min="0" max="100" step="0.01" value={lossCoefficient} onChange={(e) => setLossCoefficient(e.target.value)} placeholder="5" />
         </div>
       </div>
+      <p className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">O saldo e o custo médio são calculados pelas movimentações. Após cadastrar o item, registre a entrada em <Link className="font-medium text-primary underline" to="/estoque/movimentacoes">Movimentações</Link> ou em Compras.</p>
       <div>
         <Label>Observações</Label>
         <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} />
@@ -456,8 +469,8 @@ export default function Itens() {
                 <Edit className="h-3.5 w-3.5 mr-2" /> Editar
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem className="text-destructive" onClick={(e) => { e.stopPropagation(); deleteMut.mutate(item.id); }}>
-                <Trash2 className="h-3.5 w-3.5 mr-2" /> Excluir
+              <DropdownMenuItem className="text-destructive" onClick={(e) => { e.stopPropagation(); if (window.confirm(`Arquivar ${item.name}? O histórico será preservado.`)) deleteMut.mutate(item.id); }}>
+                <Trash2 className="h-3.5 w-3.5 mr-2" /> Arquivar
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -465,6 +478,8 @@ export default function Itens() {
       </TableRow>
     );
   };
+
+  if (loadError) return <div className="space-y-4 rounded-xl border bg-card p-6"><p role="alert" className="font-medium">Não foi possível carregar os dados.</p><p className="text-sm text-muted-foreground">{loadError.message}</p><Button variant="outline" onClick={() => refetch()}>Tentar novamente</Button></div>;
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
@@ -603,7 +618,7 @@ export default function Itens() {
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem className="text-destructive" onClick={(e) => { e.stopPropagation(); deleteMut.mutate(parent.id); }}>
-                              <Trash2 className="h-3.5 w-3.5 mr-2" /> Excluir
+                              <Trash2 className="h-3.5 w-3.5 mr-2" /> Arquivar
                             </DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>

@@ -1,3 +1,5 @@
+import { prepareOrder, salesOrderTransitions, escapePrintHtml, printableImageUrl, orderRequest } from "@/lib/sales-order";
+import { readProductionRows } from "@/lib/production-read";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -66,6 +68,7 @@ export default function Pedidos() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const printRef = useRef<HTMLDivElement>(null);
+  const saveRequest = useRef<{ signature: string; id: string } | null>(null);
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -84,13 +87,15 @@ export default function Pedidos() {
   const [lines, setLines] = useState<OrderLineItem[]>([newLine()]);
 
   const resetForm = () => {
+    saveRequest.current = null;
     setCustomerId(""); setDueDate(""); setPaymentDueDate(""); setNotes(""); setShipping(""); setDiscountVal("");
     setDeliveryAddress(""); setLines([newLine()]);
   };
 
   // Populate form from existing order for editing
   const startEdit = () => {
-    if (!viewOrder) return;
+    if (!viewOrder || viewOrder.status !== "draft" || itemsLoading || itemsError || linkedLoading || linkedError || linkedJobs.length) return;
+    saveRequest.current = null;
     setCustomerId(viewOrder.customer_id || "");
     setDueDate(viewOrder.due_date || "");
     setPaymentDueDate((viewOrder as any).payment_due_date || "");
@@ -105,7 +110,7 @@ export default function Pedidos() {
       setDeliveryAddress("");
       setNotes(rawNotes);
     }
-    setShipping("");
+    setShipping(String((viewOrder as unknown as { shipping?: number }).shipping ?? 0));
     // Load existing items into lines
     if (viewItems.length > 0) {
       setLines(viewItems.map((item: any) => ({
@@ -124,18 +129,16 @@ export default function Pedidos() {
   };
 
   // Queries
-  const { data: orders = [], isLoading } = useQuery({
+  const { data: orders = [], isLoading, error: ordersError, refetch } = useQuery({
     queryKey: ["orders"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("orders").select("*, customers(name, address, phone, email, document)").order("created_at", { ascending: false });
-      if (error) throw error;
-      return data;
+      return readProductionRows((from, to) => supabase.from("orders").select("*, customers(name, address, phone, email, document)").order("created_at", { ascending: false }).order("id").range(from, to));
     },
     enabled: !!profile,
   });
 
   const { data: customers = [] } = useQuery({
-    queryKey: ["customers"],
+    queryKey: ["customers", "order-select"],
     queryFn: async () => {
       const { data, error } = await supabase.from("customers").select("id, name, address, phone, email").eq("is_active", true).order("name");
       if (error) throw error;
@@ -166,7 +169,7 @@ export default function Pedidos() {
   });
 
   // Order items for viewing
-  const { data: viewItems = [] } = useQuery({
+  const { data: viewItems = [], isLoading: itemsLoading, error: itemsError } = useQuery({
     queryKey: ["order_items", viewOrderId],
     queryFn: async () => {
       const { data, error } = await supabase.from("order_items").select("*, products(name, photo_url)").eq("order_id", viewOrderId!).order("created_at");
@@ -177,7 +180,7 @@ export default function Pedidos() {
   });
 
   // Jobs linked to this order
-  const { data: linkedJobs = [] } = useQuery({
+  const { data: linkedJobs = [], isLoading: linkedLoading, error: linkedError } = useQuery({
     queryKey: ["order_jobs", viewOrderId],
     queryFn: async () => {
       const { data, error } = await supabase.from("jobs").select("id, code, name, status, est_total_cost, actual_total_cost").eq("order_id", viewOrderId!).order("code");
@@ -187,17 +190,15 @@ export default function Pedidos() {
     enabled: !!viewOrderId,
   });
 
-  // Auto-fill address when customer changes
-  useEffect(() => {
-    if (customerId) {
-      const c = customers.find((c) => c.id === customerId);
-      if (c?.address) {
-        const a = c.address as any;
-        const parts = [a.street, a.number, a.complement, a.neighborhood, a.city, a.state, a.zip].filter(Boolean);
-        setDeliveryAddress(parts.join(", ") || (typeof a === "string" ? a : ""));
-      }
-    }
-  }, [customerId, customers]);
+  const selectCustomer = (id: string) => {
+    setCustomerId(id);
+    const customer = customers.find(value => value.id === id);
+    const address = customer?.address;
+    if (typeof address === "string") setDeliveryAddress(address);
+    else if (address && typeof address === "object" && !Array.isArray(address)) {
+      setDeliveryAddress([address.street, address.number, address.complement, address.neighborhood, address.city, address.state, address.zip].filter(Boolean).join(", "));
+    } else setDeliveryAddress("");
+  };
 
   const filtered = useMemo(() => {
     let list = orders;
@@ -277,23 +278,23 @@ export default function Pedidos() {
 
   // Print PDF
   const handlePrint = async () => {
-    if (!printRef.current) return;
+    if (!printRef.current || itemsLoading || itemsError) return;
+    const viewOrder = orders.find(order => order.id === viewOrderId);
+    if (!viewOrder) return;
+    // Open synchronously in the user's click so mobile browsers do not block the PDF window.
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) { toast({ title: "Permita a janela de impressão", description: "O navegador bloqueou a abertura do documento." }); return; }
+    printWindow.opener = null;
 
     // Pre-fetch logo as base64
     let logoBase64 = "";
     if (tenant?.logo_url) {
-      logoBase64 = await fetchImageAsBase64(tenant.logo_url);
+      logoBase64 = printableImageUrl(await fetchImageAsBase64(tenant.logo_url));
     }
-
-    const printWindow = window.open("", "_blank");
-    if (!printWindow) return;
 
     const tenantSettings = (tenant?.settings as any) || {};
     const addr = tenantSettings.address || {};
     const companyAddress = [addr.street, addr.number, addr.complement, addr.neighborhood, addr.city, addr.state, addr.zip].filter(Boolean).join(", ");
-
-    const viewOrder = orders.find((o: any) => o.id === viewOrderId);
-    if (!viewOrder) return;
 
     const cfg = statusConfig[viewOrder.status] || statusConfig.draft;
     const customerName = (viewOrder as any).customers?.name || "—";
@@ -309,23 +310,23 @@ export default function Pedidos() {
     }));
 
     const itemsHtml = viewItems.map((item: any) => {
-      const imgB64 = itemImageMap.get(item.id);
+      const imgB64 = printableImageUrl(itemImageMap.get(item.id) ?? "");
       return `
       <tr>
         <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">
           <div style="display:flex;align-items:center;gap:10px;">
             ${imgB64 ? `<img src="${imgB64}" style="width:48px;height:48px;object-fit:cover;border-radius:6px;flex-shrink:0;" />` : ""}
-            <span>${item.description}</span>
+            <span>${escapePrintHtml(item.description)}</span>
           </div>
         </td>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:center;">${item.quantity}</td>
+        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:center;">${escapePrintHtml(item.quantity)}</td>
         <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right;font-family:monospace;">${fmtCurrency(item.unit_price)}</td>
         <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right;font-family:monospace;font-weight:600;">${fmtCurrency(item.total)}</td>
       </tr>
     `}).join("");
 
     const html = `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>${viewOrder.code}</title>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; style-src 'unsafe-inline';"><title>${escapePrintHtml(viewOrder.code)}</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color:#1a1a1a; padding:40px; max-width:800px; margin:0 auto; }
@@ -353,27 +354,27 @@ export default function Pedidos() {
 </style></head><body>
   <div class="header">
     <div class="company-info">
-      <div class="company-name">${tenant?.name || "Empresa"}</div>
-      ${tenantSettings.cnpj ? `<div class="company-detail">CNPJ: ${tenantSettings.cnpj}</div>` : ""}
-      ${tenantSettings.phone ? `<div class="company-detail">Tel: ${tenantSettings.phone}</div>` : ""}
-      ${tenantSettings.email ? `<div class="company-detail">${tenantSettings.email}</div>` : ""}
-      ${companyAddress ? `<div class="company-detail">${companyAddress}</div>` : ""}
+      <div class="company-name">${escapePrintHtml(tenant?.name || "Empresa")}</div>
+      ${tenantSettings.cnpj ? `<div class="company-detail">CNPJ: ${escapePrintHtml(tenantSettings.cnpj)}</div>` : ""}
+      ${tenantSettings.phone ? `<div class="company-detail">Tel: ${escapePrintHtml(tenantSettings.phone)}</div>` : ""}
+      ${tenantSettings.email ? `<div class="company-detail">${escapePrintHtml(tenantSettings.email)}</div>` : ""}
+      ${companyAddress ? `<div class="company-detail">${escapePrintHtml(companyAddress)}</div>` : ""}
     </div>
     ${logoBase64 ? `<img src="${logoBase64}" class="logo" />` : ""}
   </div>
 
   <div class="doc-title">
-    <h1>${viewOrder.code}</h1>
-    <span class="badge">${cfg.label}</span>
+    <h1>${escapePrintHtml(viewOrder.code)}</h1>
+    <span class="badge">${escapePrintHtml(cfg.label)}</span>
   </div>
 
   <div class="info-grid">
-    <div class="info-block"><label>Cliente</label><p>${customerName}</p></div>
+    <div class="info-block"><label>Cliente</label><p>${escapePrintHtml(customerName)}</p></div>
     <div class="info-block"><label>Data de Entrega</label><p>${viewOrder.due_date ? new Date(viewOrder.due_date + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</p></div>
     <div class="info-block"><label>Data de Emissão</label><p>${new Date(viewOrder.created_at).toLocaleDateString("pt-BR")}</p></div>
   </div>
 
-  ${viewOrder.notes ? `<div class="notes">${viewOrder.notes}</div>` : ""}
+  ${viewOrder.notes ? `<div class="notes">${escapePrintHtml(viewOrder.notes)}</div>` : ""}
 
   <table>
     <thead><tr>
@@ -384,6 +385,8 @@ export default function Pedidos() {
 
   <div class="totals">
     <div class="totals-box">
+      <div class="totals-row"><span>Subtotal</span><span>${fmtCurrency(viewItems.reduce((sum, item) => sum + item.total, 0))}</span></div>
+      ${Number((viewOrder as unknown as { shipping?: number }).shipping ?? 0) > 0 ? `<div class="totals-row"><span>Frete</span><span>${fmtCurrency(Number((viewOrder as unknown as { shipping?: number }).shipping))}</span></div>` : ""}
       ${viewOrder.discount > 0 ? `<div class="totals-row discount"><span>Desconto</span><span>- ${fmtCurrency(viewOrder.discount)}</span></div>` : ""}
       <div class="totals-row total"><span>Total</span><span>${fmtCurrency(viewOrder.total)}</span></div>
     </div>
@@ -394,295 +397,66 @@ export default function Pedidos() {
 
     printWindow.document.write(html);
     printWindow.document.close();
-    printWindow.onload = () => {
-      const images = Array.from(printWindow.document.images);
-      Promise.all(images.map((img) => (
-        img.complete
-          ? Promise.resolve()
-          : new Promise<void>((resolve) => {
-              img.onload = () => resolve();
-              img.onerror = () => resolve();
-            })
-      ))).finally(() => printWindow.print());
-    };
+    const images = Array.from(printWindow.document.images);
+    await Promise.race([
+      Promise.all(images.map(image => image.complete ? Promise.resolve() : new Promise<void>(resolve => { image.onload = () => resolve(); image.onerror = () => resolve(); }))),
+      new Promise<void>(resolve => window.setTimeout(resolve, 5000)),
+    ]);
+    if (!printWindow.closed) { printWindow.focus(); printWindow.print(); }
   };
 
-  // Mutations
+  const invalidateOrder = () => {
+    ["orders", "order_items", "order_jobs", "jobs", "fila_jobs", "accounts_receivable", "financial_ledger", "dashboard"].forEach(key => qc.invalidateQueries({ queryKey: [key] }));
+  };
+  const rpc = supabase.rpc as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
+  const saveOrder = async (id: string | null) => {
+    if (!profile) throw new Error("Sua sessão expirou. Entre novamente.");
+    const values = prepareOrder(lines, shipping, discountVal);
+    const payload = {
+      p_order_id: id,
+      p_order: { customer_id: customerId || null, due_date: dueDate || null, payment_due_date: paymentDueDate || null,
+        total: values.total, discount: values.discount, shipping: values.shipping,
+        notes: [deliveryAddress.trim() ? `📍 Entrega: ${deliveryAddress.trim()}` : "", notes.trim()].filter(Boolean).join("\n") || null },
+      p_items: values.items,
+    };
+    saveRequest.current = orderRequest(saveRequest.current, JSON.stringify(payload));
+    const { data, error } = await rpc("save_sales_order", { ...payload, p_request_id: saveRequest.current.id });
+    if (error) throw new Error(error.message);
+    return String(data);
+  };
   const createMut = useMutation({
-    mutationFn: async () => {
-      if (!profile) throw new Error("Sem perfil");
-      if (lines.every((l) => !l.description)) throw new Error("Adicione pelo menos um item");
-
-      const code = `ORC-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${String(orders.length + 1).padStart(3, "0")}`;
-      const { data: order, error } = await supabase.from("orders").insert({
-        tenant_id: profile.tenant_id, code, customer_id: customerId || null,
-        due_date: dueDate || null, payment_due_date: paymentDueDate || null,
-        total: grandTotal, discount: discountNum,
-        notes: [deliveryAddress ? `📍 Entrega: ${deliveryAddress}` : "", notes].filter(Boolean).join("\n") || null,
-        created_by: profile.user_id,
-      } as any).select("id").single();
-      if (error) throw error;
-
-      const validLines = lines.filter((l) => l.description);
-      if (validLines.length > 0) {
-        const { error: itemsErr } = await supabase.from("order_items").insert(
-          validLines.map((l) => ({
-            tenant_id: profile.tenant_id,
-            order_id: order.id,
-            product_id: l.product_id || null,
-            description: l.description,
-            quantity: l.quantity,
-            unit_price: l.unit_price,
-            total: l.total,
-            notes: l.notes || null,
-          }))
-        );
-        if (itemsErr) throw itemsErr;
-      }
+    mutationFn: () => saveOrder(null),
+    onSuccess: (id) => {
+      invalidateOrder(); setCreateOpen(false); resetForm(); setViewOrderId(id);
+      toast({ title: "Orçamento criado", description: "Itens, frete e total foram salvos juntos." });
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["orders"] });
-      setCreateOpen(false); resetForm();
-      toast({ title: "Orçamento criado com sucesso" });
-    },
-    onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
+    onError: (error: Error) => toast({ title: "Não foi possível salvar", description: error.message, variant: "destructive" }),
   });
-
   const updateStatusMut = useMutation({
     mutationFn: async ({ id, status }: { id: string; status: string }) => {
-      if (!profile) throw new Error("Sem perfil");
-
-      const arStatuses = ["approved", "in_production", "ready", "shipped", "delivered"];
-      const jobsStatuses = ["in_production", "ready", "shipped", "delivered"];
-
-      const { data: orderData, error: orderErr } = await supabase
-        .from("orders")
-        .select("id, code, total, due_date, payment_due_date, customer_id")
-        .eq("id", id)
-        .maybeSingle();
-      if (orderErr) throw orderErr;
-      if (!orderData) throw new Error("Pedido não encontrado");
-
-      const updates: any = { status };
-      if (arStatuses.includes(status)) updates.approved_at = new Date().toISOString();
-
-      const { error } = await supabase.from("orders").update(updates).eq("id", id);
-      if (error) throw error;
-
-      // ── Garantir Contas a Receber a partir de "Aprovado" ──
-      if (arStatuses.includes(status)) {
-        const dueDate = (orderData as any).payment_due_date || orderData.due_date || new Date().toISOString().slice(0, 10);
-
-        const { data: existingAR, error: arSelectErr } = await supabase
-          .from("accounts_receivable")
-          .select("id")
-          .eq("origin_id", id)
-          .eq("origin_type", "order")
-          .maybeSingle();
-
-        if (arSelectErr) throw arSelectErr;
-
-        if (existingAR) {
-          const { error: arUpdateErr } = await supabase
-            .from("accounts_receivable")
-            .update({
-              description: `Pedido ${orderData.code}`,
-              amount: orderData.total || 0,
-              due_date: dueDate,
-              customer_id: orderData.customer_id || null,
-              status: "open",
-            })
-            .eq("id", existingAR.id);
-
-          if (arUpdateErr) throw new Error(`Erro ao atualizar conta a receber: ${arUpdateErr.message}`);
-        } else {
-          const { error: arInsertErr } = await supabase.from("accounts_receivable").insert({
-            tenant_id: profile.tenant_id,
-            description: `Pedido ${orderData.code}`,
-            amount: orderData.total || 0,
-            due_date: dueDate,
-            competence_date: new Date().toISOString().slice(0, 10),
-            customer_id: orderData.customer_id || null,
-            origin_id: id,
-            origin_type: "order",
-            created_by: profile.user_id,
-            status: "open",
-          });
-
-          if (arInsertErr) throw new Error(`Erro ao criar conta a receber: ${arInsertErr.message}`);
-        }
-      }
-
-      // ── Garantir criação de Jobs para status de produção ──
-      if (jobsStatuses.includes(status)) {
-        const { count: existingJobsCount, error: jobsCountErr } = await supabase
-          .from("jobs")
-          .select("id", { count: "exact", head: true })
-          .eq("order_id", id);
-        if (jobsCountErr) throw jobsCountErr;
-
-        if ((existingJobsCount ?? 0) === 0) {
-          const { data: items, error: itemsErr } = await supabase
-            .from("order_items")
-            .select("*, products(id, name, description, material_id, est_time_minutes, est_grams, num_colors, cost_estimate, sale_price, post_process_minutes)")
-            .eq("order_id", id);
-          if (itemsErr) throw itemsErr;
-
-          const { data: allPrinters } = await supabase.from("printers").select("*").eq("is_active", true);
-          const { data: allMaterials } = await supabase.from("inventory_items").select("*").eq("is_active", true);
-          const pList = allPrinters || [];
-          const mList = allMaterials || [];
-
-          const { count: jobCount } = await supabase
-            .from("jobs")
-            .select("*", { count: "exact", head: true })
-            .eq("tenant_id", profile.tenant_id);
-
-          let seq = (jobCount ?? 0) + 1;
-          const datePart = new Date().toISOString().slice(0, 10).replace(/-/g, "");
-          const orderCode = orderData.code || id;
-          const orderDueDate = orderData.due_date || null;
-
-          const jobInserts: any[] = [];
-          for (const item of (items || [])) {
-            const prod = item.products as any;
-            for (let q = 0; q < (item.quantity || 1); q++) {
-              const code = `OI-${datePart}-${String(seq++).padStart(3, "0")}`;
-              const grams = prod?.est_grams || null;
-              const minutes = prod?.est_time_minutes || null;
-              const materialId = prod?.material_id || null;
-
-              let estMaterialCost = 0;
-              if (grams && materialId) {
-                const mat = mList.find((m: any) => m.id === materialId);
-                if (mat && mat.avg_cost > 0) {
-                  const costPerGram = mat.unit === "kg" ? mat.avg_cost / 1000 : mat.avg_cost;
-                  estMaterialCost = grams * (1 + (mat.loss_coefficient || 0.05)) * costPerGram;
-                }
-              }
-
-              let estMachineCost = 0;
-              let estEnergyCost = 0;
-              const defaultPrinter = pList[0];
-              if (minutes && defaultPrinter) {
-                const hours = minutes / 60;
-                estMachineCost = hours * (defaultPrinter.depreciation_per_hour ?? 0) + hours * (defaultPrinter.maintenance_cost_per_hour ?? 0);
-                estEnergyCost = ((defaultPrinter.power_watts ?? 150) / 1000) * hours * 0.85;
-              }
-
-              jobInserts.push({
-                tenant_id: profile.tenant_id,
-                code,
-                name: prod?.name || item.description,
-                description: `Pedido ${orderCode} — ${item.description}`,
-                product_id: prod?.id || null,
-                material_id: materialId,
-                order_id: id,
-                due_date: orderDueDate,
-                priority: 5,
-                est_time_minutes: minutes,
-                est_grams: grams,
-                num_colors: prod?.num_colors || 1,
-                est_material_cost: estMaterialCost,
-                est_machine_cost: estMachineCost,
-                est_energy_cost: estEnergyCost,
-                est_total_cost: estMaterialCost + estMachineCost + estEnergyCost,
-                sale_price: item.unit_price || prod?.sale_price || null,
-                created_by: profile.user_id,
-                status: "queued" as const,
-              });
-            }
-          }
-
-          if (jobInserts.length > 0) {
-            const { error: jobErr } = await supabase.from("jobs").insert(jobInserts);
-            if (jobErr) throw jobErr;
-          }
-        }
-      }
+      const { error } = await rpc("transition_sales_order", { p_order_id: id, p_status: status });
+      if (error) throw new Error(error.message);
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["orders"] });
-      qc.invalidateQueries({ queryKey: ["jobs"] });
-      qc.invalidateQueries({ queryKey: ["accounts_receivable"] });
-      toast({ title: "Status atualizado" });
-    },
-    onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
+    onSuccess: () => { invalidateOrder(); toast({ title: "Pedido atualizado", description: "Produção e financeiro foram conferidos na mesma operação." }); },
+    onError: (error: Error) => toast({ title: "Não foi possível avançar", description: error.message, variant: "destructive" }),
   });
-
-  // UPDATE ORDER
   const updateOrderMut = useMutation({
-    mutationFn: async () => {
-      if (!profile || !viewOrderId) throw new Error("Sem perfil");
-      if (lines.every((l) => !l.description)) throw new Error("Adicione pelo menos um item");
-
-      const composedNotes = [deliveryAddress ? `📍 Entrega: ${deliveryAddress}` : "", notes].filter(Boolean).join("\n") || null;
-
-      const { error } = await supabase.from("orders").update({
-        customer_id: customerId || null,
-        due_date: dueDate || null,
-        payment_due_date: paymentDueDate || null,
-        total: grandTotal,
-        discount: discountNum,
-        notes: composedNotes,
-      } as any).eq("id", viewOrderId);
-      if (error) throw error;
-
-      // Delete old items and re-insert
-      await supabase.from("order_items").delete().eq("order_id", viewOrderId);
-
-      const validLines = lines.filter((l) => l.description);
-      if (validLines.length > 0) {
-        const { error: itemsErr } = await supabase.from("order_items").insert(
-          validLines.map((l) => ({
-            tenant_id: profile.tenant_id,
-            order_id: viewOrderId,
-            product_id: l.product_id || null,
-            description: l.description,
-            quantity: l.quantity,
-            unit_price: l.unit_price,
-            total: l.total,
-            notes: l.notes || null,
-          }))
-        );
-        if (itemsErr) throw itemsErr;
-      }
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["orders"] });
-      qc.invalidateQueries({ queryKey: ["order_items", viewOrderId] });
-      qc.invalidateQueries({ queryKey: ["accounts_receivable"] });
-      setEditMode(false);
-      toast({ title: "Orçamento atualizado com sucesso" });
-    },
-    onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
+    mutationFn: () => saveOrder(viewOrderId),
+    onSuccess: () => { invalidateOrder(); saveRequest.current = null; setEditMode(false); toast({ title: "Orçamento atualizado" }); },
+    onError: (error: Error) => toast({ title: "Não foi possível salvar", description: error.message, variant: "destructive" }),
   });
+  const requestStatus = (id: string, status: string) => {
+    if (updateStatusMut.isPending) return;
+    if (status === "cancelled" && !window.confirm("Cancelar este pedido? O histórico será preservado. Pedidos com pagamentos ou produção iniciada exigem regularização antes do cancelamento.")) return;
+    updateStatusMut.mutate({ id, status });
+  };
 
-  const deleteMut = useMutation({
-    mutationFn: async (id: string) => {
-      // Delete linked jobs first
-      await supabase.from("jobs").delete().eq("order_id", id);
-      // Delete linked AR entries
-      await supabase.from("accounts_receivable").delete().eq("origin_id", id).eq("origin_type", "order");
-      // Delete order items
-      await supabase.from("order_items").delete().eq("order_id", id);
-      // Delete order
-      const { error } = await supabase.from("orders").delete().eq("id", id);
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["orders"] });
-      qc.invalidateQueries({ queryKey: ["jobs"] });
-      qc.invalidateQueries({ queryKey: ["accounts_receivable"] });
-      toast({ title: "Pedido removido" });
-    },
-    onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
-  });
-
-  const totalValue = orders.reduce((s: number, o: any) => s + (o.total || 0), 0);
+  const totalValue = orders.filter(order => !["draft", "cancelled"].includes(order.status)).reduce((s: number, o: any) => s + (o.total || 0), 0);
   const openOrders = orders.filter((o: any) => !["delivered", "cancelled"].includes(o.status)).length;
 
   const viewOrder = viewOrderId ? orders.find((o: any) => o.id === viewOrderId) : null;
+
+  if (ordersError) return <div className="space-y-4 rounded-xl border bg-card p-6"><p role="alert">Não foi possível carregar os pedidos. {ordersError.message}</p><Button variant="outline" onClick={() => refetch()}>Tentar novamente</Button></div>;
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
@@ -694,7 +468,7 @@ export default function Pedidos() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="rounded-xl border bg-card p-4"><p className="text-xs text-muted-foreground">Total de Pedidos</p><p className="text-2xl font-bold text-foreground">{orders.length}</p></div>
         <div className="rounded-xl border bg-card p-4"><p className="text-xs text-muted-foreground">Em Aberto</p><p className="text-2xl font-bold text-foreground">{openOrders}</p></div>
-        <div className="rounded-xl border bg-card p-4"><p className="text-xs text-muted-foreground">Valor Total</p><p className="text-2xl font-bold text-foreground">{fmtCurrency(totalValue)}</p></div>
+        <div className="rounded-xl border bg-card p-4"><p className="text-xs text-muted-foreground">Vendas confirmadas</p><p className="text-2xl font-bold text-foreground">{fmtCurrency(totalValue)}</p></div>
       </div>
 
       <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
@@ -737,20 +511,20 @@ export default function Pedidos() {
                     <TableCell className="text-right font-mono text-sm">{fmtCurrency(o.total)}</TableCell>
                     <TableCell>
                       <DropdownMenu>
-                        <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}><Button variant="ghost" size="icon" className="h-7 w-7"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
+                        <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}><Button variant="ghost" size="icon" className="h-10 w-10" aria-label="Ações"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          {o.status === "draft" && <DropdownMenuItem onClick={() => updateStatusMut.mutate({ id: o.id, status: "approved" })}><CheckCircle2 className="h-3.5 w-3.5 mr-2" /> Aprovar</DropdownMenuItem>}
-                          {o.status === "approved" && <DropdownMenuItem onClick={() => updateStatusMut.mutate({ id: o.id, status: "in_production" })}><Clock className="h-3.5 w-3.5 mr-2" /> Produzir</DropdownMenuItem>}
-                          {o.status === "in_production" && <DropdownMenuItem onClick={() => updateStatusMut.mutate({ id: o.id, status: "ready" })}><CheckCircle2 className="h-3.5 w-3.5 mr-2" /> Pronto</DropdownMenuItem>}
-                          {o.status === "ready" && <DropdownMenuItem onClick={() => updateStatusMut.mutate({ id: o.id, status: "shipped" })}><Truck className="h-3.5 w-3.5 mr-2" /> Enviar</DropdownMenuItem>}
-                          {o.status === "shipped" && <DropdownMenuItem onClick={() => updateStatusMut.mutate({ id: o.id, status: "delivered" })}><CheckCircle2 className="h-3.5 w-3.5 mr-2" /> Entregue</DropdownMenuItem>}
+                          {o.status === "draft" && <DropdownMenuItem disabled={updateStatusMut.isPending} onClick={() => requestStatus(o.id, "approved")}><CheckCircle2 className="h-3.5 w-3.5 mr-2" /> Aprovar</DropdownMenuItem>}
+                          {o.status === "approved" && <DropdownMenuItem disabled={updateStatusMut.isPending} onClick={() => requestStatus(o.id, "in_production")}><Clock className="h-3.5 w-3.5 mr-2" /> Produzir</DropdownMenuItem>}
+                          {o.status === "in_production" && <DropdownMenuItem disabled={updateStatusMut.isPending} onClick={() => requestStatus(o.id, "ready")}><CheckCircle2 className="h-3.5 w-3.5 mr-2" /> Pronto</DropdownMenuItem>}
+                          {o.status === "ready" && <DropdownMenuItem disabled={updateStatusMut.isPending} onClick={() => requestStatus(o.id, "shipped")}><Truck className="h-3.5 w-3.5 mr-2" /> Enviar</DropdownMenuItem>}
+                          {o.status === "shipped" && <DropdownMenuItem disabled={updateStatusMut.isPending} onClick={() => requestStatus(o.id, "delivered")}><CheckCircle2 className="h-3.5 w-3.5 mr-2" /> Entregue</DropdownMenuItem>}
                           {o.status !== "draft" && (
                             <DropdownMenuItem onClick={() => navigate(`/financeiro/receber?pedido=${o.code}`)}>
                               <DollarSign className="h-3.5 w-3.5 mr-2" /> Ver no Financeiro
                             </DropdownMenuItem>
                           )}
                           <DropdownMenuSeparator />
-                          <DropdownMenuItem className="text-destructive" onClick={(e) => { e.stopPropagation(); deleteMut.mutate(o.id); }}><Trash2 className="h-3.5 w-3.5 mr-2" /> Excluir</DropdownMenuItem>
+                          {(salesOrderTransitions[o.status] ?? []).includes("cancelled") && <DropdownMenuItem className="text-destructive" disabled={updateStatusMut.isPending} onClick={(event) => { event.stopPropagation(); requestStatus(o.id, "cancelled"); }}><X className="h-3.5 w-3.5 mr-2" /> Cancelar pedido</DropdownMenuItem>}
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>
@@ -764,7 +538,7 @@ export default function Pedidos() {
       </div>
 
       {/* CREATE ORDER DIALOG */}
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+      <Dialog open={createOpen} onOpenChange={open => { if (!createMut.isPending) setCreateOpen(open); }}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-hidden flex flex-col w-[95vw] sm:w-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2"><ShoppingCart className="h-5 w-5 text-primary" /> Novo Orçamento</DialogTitle>
@@ -776,7 +550,7 @@ export default function Pedidos() {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <Label>Cliente</Label>
-                <Select value={customerId || "none"} onValueChange={(v) => setCustomerId(v === "none" ? "" : v)}>
+                <Select value={customerId || "none"} onValueChange={(v) => selectCustomer(v === "none" ? "" : v)}>
                   <SelectTrigger><SelectValue placeholder="Selecione o cliente" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">Sem cliente</SelectItem>
@@ -825,21 +599,21 @@ export default function Pedidos() {
                       <TableRow key={line.id}>
                         <TableCell className="p-1.5">
                           <Select value={line.product_id || "custom"} onValueChange={(v) => updateLine(line.id, "product_id", v === "custom" ? "" : v)}>
-                            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Selecione" /></SelectTrigger>
+                            <SelectTrigger className="h-10 text-sm"><SelectValue placeholder="Selecione" /></SelectTrigger>
                             <SelectContent>
                               <SelectItem value="custom">Personalizado</SelectItem>
                               {products.map((p) => <SelectItem key={p.id} value={p.id}>{p.name} {p.sale_price ? `(${fmtCurrency(p.sale_price)})` : ""}</SelectItem>)}
                             </SelectContent>
                           </Select>
                           {!line.product_id && (
-                            <Input className="mt-1 h-7 text-xs" value={line.description} onChange={(e) => updateLine(line.id, "description", e.target.value)} placeholder="Descrição do item" />
+                            <Input className="mt-1 h-10 text-sm" value={line.description} onChange={(e) => updateLine(line.id, "description", e.target.value)} placeholder="Descrição do item" />
                           )}
                         </TableCell>
-                        <TableCell className="p-1.5"><Input type="number" min={1} className="h-8 text-xs text-center" value={line.quantity} onChange={(e) => updateLine(line.id, "quantity", e.target.value)} /></TableCell>
-                        <TableCell className="p-1.5"><Input type="number" step="0.01" className="h-8 text-xs text-right" value={line.unit_price} onChange={(e) => updateLine(line.id, "unit_price", e.target.value)} /></TableCell>
+                        <TableCell className="p-1.5"><Input type="number" min={1} className="h-10 text-sm text-center" value={line.quantity} onChange={(e) => updateLine(line.id, "quantity", e.target.value)} /></TableCell>
+                        <TableCell className="p-1.5"><Input type="number" step="0.01" className="h-10 text-sm text-right" value={line.unit_price} onChange={(e) => updateLine(line.id, "unit_price", e.target.value)} /></TableCell>
                         <TableCell className="p-1.5 text-right font-mono text-xs font-medium">{fmtCurrency(line.total)}</TableCell>
                         <TableCell className="p-1.5">
-                          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => removeLine(line.id)}>
+                          <Button variant="ghost" size="icon" className="h-10 w-10" aria-label="Ações" onClick={() => removeLine(line.id)}>
                             <X className="h-3.5 w-3.5 text-muted-foreground" />
                           </Button>
                         </TableCell>
@@ -885,7 +659,7 @@ export default function Pedidos() {
           </div>
 
           <DialogFooter className="mt-4">
-            <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancelar</Button>
+            <Button variant="outline" disabled={createMut.isPending} onClick={() => setCreateOpen(false)}>Cancelar</Button>
             <Button onClick={() => createMut.mutate()} disabled={createMut.isPending}>
               {createMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Criar Orçamento
             </Button>
@@ -894,8 +668,8 @@ export default function Pedidos() {
       </Dialog>
 
       {/* VIEW / EDIT ORDER DIALOG */}
-      <Dialog open={!!viewOrderId} onOpenChange={(o) => { if (!o) { setViewOrderId(null); setEditMode(false); } }}>
-        <DialogContent className={cn("w-[95vw] sm:w-auto", editMode ? "max-w-3xl max-h-[90vh] overflow-hidden flex flex-col" : "max-w-2xl")}>
+      <Dialog open={!!viewOrderId} onOpenChange={(o) => { if (!o && !updateOrderMut.isPending) { setViewOrderId(null); setEditMode(false); } }}>
+        <DialogContent className={cn("w-[95vw] sm:w-auto", editMode ? "max-w-3xl max-h-[90vh] overflow-hidden flex flex-col" : "max-w-2xl max-h-[90dvh] overflow-y-auto")}>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <FileText className="h-5 w-5 text-primary" />
@@ -912,12 +686,12 @@ export default function Pedidos() {
                 return (
                   <div className="rounded-lg border bg-muted/30 p-3 space-y-2">
                     <p className="text-xs text-muted-foreground">Status do Pedido</p>
-                    <div className="flex items-center gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
                       <Select
                         value={viewOrder.status}
                         onValueChange={(nextStatus) => {
                           if (nextStatus !== viewOrder.status) {
-                            updateStatusMut.mutate({ id: viewOrder.id, status: nextStatus });
+                            requestStatus(viewOrder.id, nextStatus);
                           }
                         }}
                       >
@@ -925,8 +699,8 @@ export default function Pedidos() {
                           <SelectValue placeholder="Selecione o status" />
                         </SelectTrigger>
                         <SelectContent>
-                          {Object.entries(statusConfig).map(([k, v]) => (
-                            <SelectItem key={k} value={k}>{v.label}</SelectItem>
+                          {[viewOrder.status, ...(salesOrderTransitions[viewOrder.status] ?? [])].map(status => (
+                            <SelectItem key={status} value={status}>{statusConfig[status].label}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
@@ -972,7 +746,7 @@ export default function Pedidos() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {viewItems.length === 0 ? (
+                    {itemsLoading || itemsError ? <TableRow><TableCell colSpan={4} role={itemsError ? "alert" : "status"}>{itemsError ? "Não foi possível carregar os itens. Tente abrir novamente." : "Carregando itens..."}</TableCell></TableRow> : viewItems.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
                           <Package className="h-6 w-6 mx-auto mb-1 opacity-40" />
@@ -1026,7 +800,7 @@ export default function Pedidos() {
                                   {statusLabels[j.status] || j.status}
                                 </span>
                               </TableCell>
-                              <TableCell className="text-right font-mono text-xs">{fmtCurrency(j.actual_total_cost || j.est_total_cost)}</TableCell>
+                              <TableCell className="text-right font-mono text-xs">{j.actual_total_cost == null ? `${fmtCurrency(j.est_total_cost)} (est.)` : fmtCurrency(j.actual_total_cost)}</TableCell>
                             </TableRow>
                           );
                         })}
@@ -1036,16 +810,17 @@ export default function Pedidos() {
                 </div>
               )}
 
-              <div className="flex justify-between items-end">
+              <div className="flex flex-col sm:flex-row justify-between sm:items-end gap-4">
                 <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={handlePrint}>
+                  <Button variant="outline" size="sm" onClick={handlePrint} disabled={itemsLoading || !!itemsError}>
                     <Printer className="h-4 w-4 mr-1" /> Imprimir / PDF
                   </Button>
-                  <Button variant="outline" size="sm" onClick={startEdit}>
-                    <Pencil className="h-4 w-4 mr-1" /> Editar
-                  </Button>
+                  {viewOrder.status === "draft" && linkedJobs.length === 0 && <Button variant="outline" size="sm" disabled={itemsLoading || !!itemsError || linkedLoading || !!linkedError} onClick={startEdit}>
+                    <Pencil className="h-4 w-4 mr-1" /> Editar rascunho
+                  </Button>}
                 </div>
-                <div className="w-64 space-y-1 text-sm">
+                <div className="w-full sm:w-64 space-y-1 text-sm">
+                  {Number((viewOrder as unknown as { shipping?: number }).shipping ?? 0) > 0 && <div className="flex justify-between text-muted-foreground"><span>Frete</span><span>{fmtCurrency(Number((viewOrder as unknown as { shipping?: number }).shipping))}</span></div>}
                   {viewOrder.discount > 0 && (
                     <div className="flex justify-between text-muted-foreground">
                       <span>Desconto</span><span className="font-mono text-destructive">- {fmtCurrency(viewOrder.discount)}</span>
@@ -1065,7 +840,7 @@ export default function Pedidos() {
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <Label>Cliente</Label>
-                  <Select value={customerId || "none"} onValueChange={(v) => setCustomerId(v === "none" ? "" : v)}>
+                  <Select value={customerId || "none"} onValueChange={(v) => selectCustomer(v === "none" ? "" : v)}>
                     <SelectTrigger><SelectValue placeholder="Selecione o cliente" /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="none">Sem cliente</SelectItem>
@@ -1111,21 +886,21 @@ export default function Pedidos() {
                         <TableRow key={line.id}>
                           <TableCell className="p-1.5">
                             <Select value={line.product_id || "custom"} onValueChange={(v) => updateLine(line.id, "product_id", v === "custom" ? "" : v)}>
-                              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Selecione" /></SelectTrigger>
+                              <SelectTrigger className="h-10 text-sm"><SelectValue placeholder="Selecione" /></SelectTrigger>
                               <SelectContent>
                                 <SelectItem value="custom">Personalizado</SelectItem>
                                 {products.map((p) => <SelectItem key={p.id} value={p.id}>{p.name} {p.sale_price ? `(${fmtCurrency(p.sale_price)})` : ""}</SelectItem>)}
                               </SelectContent>
                             </Select>
                             {!line.product_id && (
-                              <Input className="mt-1 h-7 text-xs" value={line.description} onChange={(e) => updateLine(line.id, "description", e.target.value)} placeholder="Descrição do item" />
+                              <Input className="mt-1 h-10 text-sm" value={line.description} onChange={(e) => updateLine(line.id, "description", e.target.value)} placeholder="Descrição do item" />
                             )}
                           </TableCell>
-                          <TableCell className="p-1.5"><Input type="number" min={1} className="h-8 text-xs text-center" value={line.quantity} onChange={(e) => updateLine(line.id, "quantity", e.target.value)} /></TableCell>
-                          <TableCell className="p-1.5"><Input type="number" step="0.01" className="h-8 text-xs text-right" value={line.unit_price} onChange={(e) => updateLine(line.id, "unit_price", e.target.value)} /></TableCell>
+                          <TableCell className="p-1.5"><Input type="number" min={1} className="h-10 text-sm text-center" value={line.quantity} onChange={(e) => updateLine(line.id, "quantity", e.target.value)} /></TableCell>
+                          <TableCell className="p-1.5"><Input type="number" step="0.01" className="h-10 text-sm text-right" value={line.unit_price} onChange={(e) => updateLine(line.id, "unit_price", e.target.value)} /></TableCell>
                           <TableCell className="p-1.5 text-right font-mono text-xs font-medium">{fmtCurrency(line.total)}</TableCell>
                           <TableCell className="p-1.5">
-                            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => removeLine(line.id)}>
+                            <Button variant="ghost" size="icon" className="h-10 w-10" aria-label="Ações" onClick={() => removeLine(line.id)}>
                               <X className="h-3.5 w-3.5 text-muted-foreground" />
                             </Button>
                           </TableCell>
@@ -1169,7 +944,7 @@ export default function Pedidos() {
               </div>
 
               <DialogFooter>
-                <Button variant="outline" onClick={() => setEditMode(false)}>Cancelar</Button>
+                <Button variant="outline" disabled={updateOrderMut.isPending} onClick={() => setEditMode(false)}>Cancelar</Button>
                 <Button onClick={() => updateOrderMut.mutate()} disabled={updateOrderMut.isPending}>
                   {updateOrderMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Salvar Alterações
                 </Button>

@@ -1,4 +1,5 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
+import { allRows, localDate, money, positiveMoney, validDate } from "@/lib/finance";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -42,11 +43,13 @@ export default function CaixaBancos() {
   const [txAccountId, setTxAccountId] = useState("");
   const [txType, setTxType] = useState("credit");
   const [txAmount, setTxAmount] = useState("");
-  const [txDate, setTxDate] = useState(new Date().toISOString().slice(0, 10));
+  const [txDate, setTxDate] = useState(localDate());
   const [txDescription, setTxDescription] = useState("");
+  const requestRef = useRef({ payload: "", id: crypto.randomUUID() });
+  const [month, setMonth] = useState(localDate().slice(0, 7));
 
-  const { data: accounts = [], isLoading: loadingAccounts } = useQuery({
-    queryKey: ["bank_accounts"],
+  const { data: accounts = [], isLoading: loadingAccounts, error: accountsError } = useQuery({
+    queryKey: ["bank_accounts", profile?.tenant_id],
     queryFn: async () => {
       const { data, error } = await supabase.from("bank_accounts").select("*").order("name");
       if (error) throw error;
@@ -55,14 +58,13 @@ export default function CaixaBancos() {
     enabled: !!profile,
   });
 
-  const { data: transactions = [], isLoading: loadingTx } = useQuery({
-    queryKey: ["bank_transactions"],
+  const { data: transactions = [], isLoading: loadingTx, error: txError } = useQuery({
+    queryKey: ["bank_transactions", "cash", profile?.tenant_id, month],
     queryFn: async () => {
-      const { data, error } = await supabase.from("bank_transactions").select("*, bank_accounts(name)").order("transaction_date", { ascending: false }).limit(200);
-      if (error) throw error;
-      return data;
+      const end = localDate(new Date(Number(month.slice(0, 4)), Number(month.slice(5)), 0, 12));
+      return allRows((from, to) => supabase.from("bank_transactions").select("*, bank_accounts(name)").gte("transaction_date", `${month}-01`).lte("transaction_date", end).order("transaction_date", { ascending: false }).order("id").range(from, to));
     },
-    enabled: !!profile,
+    enabled: !!profile && /^\d{4}-\d{2}$/.test(month),
   });
 
   const totalBalance = accounts.reduce((s, a) => s + a.current_balance, 0);
@@ -70,9 +72,10 @@ export default function CaixaBancos() {
   const createAccountMut = useMutation({
     mutationFn: async () => {
       if (!profile) throw new Error("Sem perfil");
-      const bal = initialBalance ? parseFloat(initialBalance) : 0;
+      if (!accName.trim()) throw new Error("Informe o nome da conta.");
+      const bal = initialBalance ? money(initialBalance) : 0;
       const { error } = await supabase.from("bank_accounts").insert({
-        tenant_id: profile.tenant_id, name: accName, bank_name: bankName || null,
+        tenant_id: profile.tenant_id, name: accName.trim(), bank_name: bankName.trim() || null,
         initial_balance: bal, current_balance: bal,
       });
       if (error) throw error;
@@ -84,23 +87,23 @@ export default function CaixaBancos() {
   const createTxMut = useMutation({
     mutationFn: async () => {
       if (!profile) throw new Error("Sem perfil");
-      const amt = parseFloat(txAmount);
-      const { error } = await supabase.from("bank_transactions").insert({
-        tenant_id: profile.tenant_id, bank_account_id: txAccountId, type: txType,
-        amount: amt, transaction_date: txDate, description: txDescription || null,
+      const amt = positiveMoney(txAmount);
+      if (!validDate(txDate) || txDate > localDate()) throw new Error("Informe uma data válida, até hoje.");
+      if (!accounts.some(a => a.id === txAccountId && a.is_active)) throw new Error("Selecione uma conta ativa.");
+      if (!txDescription.trim()) throw new Error("Informe a descrição do lançamento.");
+      const payload = JSON.stringify([txAccountId, txType, amt, txDate, txDescription.trim()]);
+      if (requestRef.current.payload !== payload) requestRef.current = { payload, id: crypto.randomUUID() };
+      const { error } = await (supabase.rpc as any)("register_bank_transaction", {
+        p_bank_account_id: txAccountId, p_type: txType, p_amount: amt, p_date: txDate,
+        p_description: txDescription.trim(), p_request_id: requestRef.current.id,
       });
       if (error) throw error;
-      // Update balance
-      const account = accounts.find(a => a.id === txAccountId);
-      if (account) {
-        const newBalance = txType === "credit" ? account.current_balance + amt : account.current_balance - amt;
-        await supabase.from("bank_accounts").update({ current_balance: newBalance }).eq("id", txAccountId);
-      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["bank_transactions"] });
       qc.invalidateQueries({ queryKey: ["bank_accounts"] });
       setCreateTxOpen(false); setTxAccountId(""); setTxAmount(""); setTxDescription("");
+      requestRef.current = { payload: "", id: crypto.randomUUID() };
       toast({ title: "Lançamento registrado" });
     },
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
@@ -111,17 +114,21 @@ export default function CaixaBancos() {
       <PageHeader title="Caixa e Bancos" description="Contas bancárias e fluxo de caixa"
         breadcrumbs={[{ label: "Financeiro", href: "/financeiro/dre" }, { label: "Caixa e Bancos" }]}
         actions={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button variant="outline" size="sm" onClick={() => setCreateAccountOpen(true)}><Plus className="h-4 w-4 mr-1" /> Nova Conta</Button>
             <Button size="sm" onClick={() => setCreateTxOpen(true)}><Plus className="h-4 w-4 mr-1" /> Lançamento</Button>
           </div>
         }
       />
 
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4"><p className="text-sm text-muted-foreground">Baixas de títulos já movimentam o caixa. Use lançamento manual para outras entradas e saídas.</p><div><Label htmlFor="cash-month">Mês dos lançamentos</Label><Input id="cash-month" type="month" value={month} onChange={e => e.target.value && setMonth(e.target.value)} /></div></div>
+      {txError && <p role="alert" className="rounded-lg border border-destructive/30 p-3 text-sm text-destructive">Não foi possível carregar os lançamentos. Os totais do período estão indisponíveis.</p>}
+
+      {accountsError && <p role="alert" className="rounded-lg border border-destructive/30 p-4 text-sm text-destructive">Não foi possível carregar as contas. O saldo está indisponível.</p>}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="rounded-xl border bg-card p-4"><p className="text-xs text-muted-foreground">Saldo Total</p><p className={cn("text-2xl font-bold", totalBalance >= 0 ? "text-foreground" : "text-destructive")}>{fmtCurrency(totalBalance)}</p></div>
-        <div className="rounded-xl border bg-card p-4"><p className="text-xs text-muted-foreground">Contas Ativas</p><p className="text-2xl font-bold text-foreground">{accounts.filter(a => a.is_active).length}</p></div>
-        <div className="rounded-xl border bg-card p-4"><p className="text-xs text-muted-foreground">Lançamentos (mês)</p><p className="text-2xl font-bold text-foreground">{transactions.length}</p></div>
+        <div className="rounded-xl border bg-card p-4"><p className="text-xs text-muted-foreground">Saldo Total</p><p className={cn("text-2xl font-bold", totalBalance >= 0 ? "text-foreground" : "text-destructive")}>{loadingAccounts || accountsError ? "—" : fmtCurrency(totalBalance)}</p></div>
+        <div className="rounded-xl border bg-card p-4"><p className="text-xs text-muted-foreground">Contas Ativas</p><p className="text-2xl font-bold text-foreground">{loadingAccounts || accountsError ? "—" : accounts.filter(a => a.is_active).length}</p></div>
+        <div className="rounded-xl border bg-card p-4"><p className="text-xs text-muted-foreground">Lançamentos no mês selecionado</p><p className="text-2xl font-bold text-foreground">{loadingTx || txError ? "—" : transactions.length}</p></div>
       </div>
 
       <Tabs defaultValue="accounts">
@@ -174,7 +181,7 @@ export default function CaixaBancos() {
 
       {/* New Account */}
       <Dialog open={createAccountOpen} onOpenChange={setCreateAccountOpen}>
-        <DialogContent className="max-w-sm"><DialogHeader><DialogTitle>Nova Conta</DialogTitle></DialogHeader>
+        <DialogContent className="max-w-sm max-h-[90dvh] overflow-y-auto"><DialogHeader><DialogTitle>Nova Conta</DialogTitle></DialogHeader>
           <div className="grid gap-4">
             <div><Label>Nome *</Label><Input value={accName} onChange={(e) => setAccName(e.target.value)} placeholder="Conta Corrente" /></div>
             <div><Label>Banco</Label><Input value={bankName} onChange={(e) => setBankName(e.target.value)} placeholder="Nubank" /></div>
@@ -185,12 +192,12 @@ export default function CaixaBancos() {
       </Dialog>
 
       {/* New Transaction */}
-      <Dialog open={createTxOpen} onOpenChange={setCreateTxOpen}>
-        <DialogContent className="max-w-sm"><DialogHeader><DialogTitle>Novo Lançamento</DialogTitle></DialogHeader>
+      <Dialog open={createTxOpen} onOpenChange={v => !createTxMut.isPending && setCreateTxOpen(v)}>
+        <DialogContent className="max-w-sm max-h-[90dvh] overflow-y-auto"><DialogHeader><DialogTitle>Novo Lançamento</DialogTitle></DialogHeader>
           <div className="grid gap-4">
             <div><Label>Conta *</Label>
               <Select value={txAccountId} onValueChange={setTxAccountId}><SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-                <SelectContent>{accounts.map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}</SelectContent>
+                <SelectContent>{accounts.filter(a => a.is_active).map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div><Label>Tipo</Label>
@@ -200,11 +207,11 @@ export default function CaixaBancos() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div><Label>Valor *</Label><Input type="number" step="0.01" value={txAmount} onChange={(e) => setTxAmount(e.target.value)} placeholder="100.00" /></div>
-              <div><Label>Data *</Label><Input type="date" value={txDate} onChange={(e) => setTxDate(e.target.value)} /></div>
+              <div><Label>Data *</Label><Input type="date" max={localDate()} value={txDate} onChange={(e) => setTxDate(e.target.value)} /></div>
             </div>
-            <div><Label>Descrição</Label><Input value={txDescription} onChange={(e) => setTxDescription(e.target.value)} placeholder="Pagamento fornecedor" /></div>
+            <div><Label>Descrição *</Label><Input value={txDescription} onChange={(e) => setTxDescription(e.target.value)} placeholder="Identifique a origem do lançamento" /></div>
           </div>
-          <DialogFooter><Button variant="outline" onClick={() => setCreateTxOpen(false)}>Cancelar</Button><Button onClick={() => createTxMut.mutate()} disabled={!txAccountId || !txAmount || createTxMut.isPending}>{createTxMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Registrar</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={() => setCreateTxOpen(false)}>Cancelar</Button><Button onClick={() => createTxMut.mutate()} disabled={!txAccountId || !txAmount || !txDate || !txDescription.trim() || createTxMut.isPending}>{createTxMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Registrar</Button></DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "react-router-dom";
 import { Loader2, Flame } from "lucide-react";
+import { AuthFrame } from "@/components/shared/AuthFrame";
 
 export default function Signup() {
   const [email, setEmail] = useState("");
@@ -38,22 +39,21 @@ export default function Signup() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background p-4">
-      <Card className="w-full max-w-md border-border">
-        <CardHeader className="text-center space-y-2">
-          <div className="mx-auto h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center">
-            <Flame className="h-7 w-7 text-primary" />
-          </div>
-          <CardTitle className="text-2xl font-bold tracking-tight">Criar conta</CardTitle>
-          <CardDescription>Comece a usar o ForgeOS</CardDescription>
+    <AuthFrame>
+      <Card className="w-full max-w-md border-0 bg-transparent shadow-none">
+        <CardHeader className="space-y-2 px-0 pb-7">
+          <CardTitle className="text-3xl font-semibold tracking-tight">Crie sua conta</CardTitle>
+          <CardDescription className="text-sm">Seu acesso ao Forge & Flow.</CardDescription>
         </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSignup} className="space-y-4">
+        <CardContent className="px-0">
+          <form onSubmit={handleSignup} className="space-y-5">
             <div className="space-y-2">
               <Label htmlFor="email">E-mail</Label>
               <Input
                 id="email"
                 type="email"
+                autoComplete="email"
+                className="h-12 bg-card"
                 placeholder="seu@email.com"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -65,6 +65,8 @@ export default function Signup() {
               <Input
                 id="password"
                 type="password"
+                autoComplete="new-password"
+                className="h-12 bg-card"
                 placeholder="Mínimo 6 caracteres"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
@@ -72,7 +74,7 @@ export default function Signup() {
                 required
               />
             </div>
-            <Button type="submit" className="w-full" disabled={loading}>
+            <Button type="submit" className="h-12 w-full" disabled={loading}>
               {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Criar conta
             </Button>
@@ -85,6 +87,6 @@ export default function Signup() {
           </p>
         </CardContent>
       </Card>
-    </div>
+    </AuthFrame>
   );
 }

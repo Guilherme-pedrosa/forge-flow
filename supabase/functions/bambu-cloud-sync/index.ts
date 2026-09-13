@@ -1,4 +1,4 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -59,6 +59,16 @@ Deno.serve(async (req) => {
 
     const body = await req.json();
     const { action } = body;
+    // The service-role client bypasses RLS, so enforce tenant roles before writes.
+    const { data: roles, error: rolesError } = await supabase.from("user_roles")
+      .select("role").eq("user_id", user.id).eq("tenant_id", profile.tenant_id);
+    const canOperate = roles?.some((entry: { role: string }) => ["owner", "admin", "manager", "operator"].includes(entry.role));
+    const canConnect = roles?.some((entry: { role: string }) => ["owner", "admin", "manager"].includes(entry.role));
+    if (rolesError || !canOperate || (["login", "verify_code"].includes(action) && !canConnect)) {
+      return new Response(JSON.stringify({ error: "Seu perfil não tem permissão para esta operação da integração." }), {
+        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     // ── Step 1: Login to Bambu Cloud ──
     if (action === "login") {
@@ -1044,8 +1054,10 @@ Deno.serve(async (req) => {
             const fcData = await firecrawlRes.json();
             
             if (fcData.success !== false) {
-              const html = fcData.data?.html || fcData.html || "";
-              const markdown = fcData.data?.markdown || fcData.markdown || "";
+              const htmlValue: unknown = fcData.data?.html || fcData.html || "";
+              const markdownValue: unknown = fcData.data?.markdown || fcData.markdown || "";
+              const html = typeof htmlValue === "string" ? htmlValue : "";
+              const markdown = typeof markdownValue === "string" ? markdownValue : "";
               
               console.log("Firecrawl HTML length:", html.length, "Markdown length:", markdown.length);
               
@@ -1316,7 +1328,7 @@ Deno.serve(async (req) => {
                 const normalizedProfiles = parsedProfiles.length > 0
                   ? parsedProfiles.map((p, idx) => ({
                       ...p,
-                      profile_id: p.profile_id || profileIds[idx] || null,
+                      profile_id: profileIds[idx] || null,
                       weight_grams: p.weight_grams || weightGrams,
                       time_seconds: p.time_seconds || timeSeconds,
                       plates: p.plates || totalPlates,
@@ -1764,7 +1776,7 @@ function extractFromHtml(html: string, selectedProfileId?: string | null): any |
 
 // ── Fetch devices from Bambu Cloud and upsert into DB ──
 async function fetchAndSyncDevices(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient,
   accessToken: string,
   connectionId: string,
   tenantId: string
@@ -1886,7 +1898,7 @@ async function fetchAndSyncDevices(
 
 // ── Fetch task history from Bambu Cloud and upsert into DB ──
 async function fetchAndSyncTasks(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient,
   accessToken: string,
   devId: string,
   bambuDeviceId: string,
@@ -1957,19 +1969,8 @@ async function fetchAndSyncTasks(
       }
     }
 
-    // Update printer stats
-    if (printerId && totalPrints > 0) {
-      const totalPrintHours = Math.round((totalPrintSeconds / 3600) * 100) / 100;
-      await supabase
-        .from("printers")
-        .update({
-          total_prints: totalPrints,
-          total_print_hours: totalPrintHours,
-          total_failures: totalFailures,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", printerId);
-    }
+    // A remote history page is incomplete and can overlap ERP jobs. Keep it in
+    // bambu_tasks; never overwrite the printer's accumulated accounting counters.
   } catch (err) {
     console.error(`Error fetching tasks for device ${devId}:`, err);
   }

@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
+import { positiveInteger, productExtrasPerPiece, requiresProductionMeasurement } from "@/lib/production";
+import { createJobs, transitionJob, productionQueryKeys, type CreateJobInput } from "@/lib/production-api";
+import { orderRequest } from "@/lib/sales-order";
+import { ProductionTransitionDialog } from "@/components/production/ProductionTransitionDialog";
+import type { Tables } from "@/integrations/supabase/types";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -42,16 +48,18 @@ const statusConfig: Record<JobStatus, { label: string; color: string; icon: any 
   completed:       { label: "Concluído",     color: "bg-emerald-100 text-emerald-700 border-emerald-200", icon: CheckCircle2 },
 };
 
-const QUEUE_STATUSES: JobStatus[] = ["queued", "printing", "paused", "post_processing", "quality_check"];
+const QUEUE_STATUSES: JobStatus[] = ["queued", "printing", "paused", "post_processing", "quality_check", "failed", "reprint"];
 
 export default function Fila() {
   const { profile } = useAuth();
   const qc = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
+  const [transition, setTransition] = useState<{ job: Tables<"jobs">; status: JobStatus } | null>(null);
   const [selProductId, setSelProductId] = useState<string>("");
   const [selPrinterId, setSelPrinterId] = useState<string>("");
   const [selQty, setSelQty] = useState<string>("1");
   const [selPriority, setSelPriority] = useState<string>("5");
+  const creationRequest = useRef<ReturnType<typeof orderRequest> | null>(null);
 
   const { data: printers = [] } = useQuery({
     queryKey: ["fila_printers"],
@@ -72,7 +80,7 @@ export default function Fila() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("products")
-        .select("id, name, sku, est_grams, est_time_minutes, cost_estimate, sale_price, material_id, num_colors")
+        .select("id, name, sku, est_grams, est_time_minutes, cost_estimate, sale_price, material_id, num_colors, prints_per_plate, extras, category")
         .eq("is_active", true)
         .order("name");
       if (error) throw error;
@@ -81,7 +89,7 @@ export default function Fila() {
     enabled: !!profile,
   });
 
-  const { data: jobs = [], refetch: refetchJobs } = useQuery({
+  const { data: jobs = [], refetch: refetchJobs, isLoading: jobsLoading, error: jobsError } = useQuery({
     queryKey: ["fila_jobs"],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -126,122 +134,40 @@ export default function Fila() {
     refetchInterval: 15000,
   });
 
-  // Auto-link bambu tasks ↔ queued jobs by name + printer + time window
-  useEffect(() => {
-    if (!jobs.length || !bambuTasks.length || !bambuDevices.length) return;
-    const unlinkedTasks = bambuTasks.filter(t => !t.job_id && t.design_title);
-    if (!unlinkedTasks.length) return;
-
-    const candidates: { jobId: string; taskId: string; bambuTaskId: string }[] = [];
-
-    for (const task of unlinkedTasks) {
-      const device = bambuDevices.find(d => d.id === task.bambu_device_id);
-      const printerId = device?.printer_id;
-      if (!printerId || !task.start_time) continue;
-      const taskTime = new Date(task.start_time).getTime();
-
-      const candidate = jobs.find(j => {
-        if (j.bambu_task_id) return false;
-        if (j.printer_id !== printerId) return false;
-        const productName = (j.products?.name || j.name || "").toLowerCase().trim();
-        const designName = (task.design_title || "").toLowerCase().trim();
-        if (!productName || !designName) return false;
-        // fuzzy: substring match either way
-        const nameMatch = designName.includes(productName) || productName.includes(designName);
-        if (!nameMatch) return false;
-        // window: job created within ±6h of task start
-        const jobTime = new Date(j.created_at).getTime();
-        return Math.abs(taskTime - jobTime) < 1000 * 60 * 60 * 6;
-      });
-
-      if (candidate) {
-        candidates.push({ jobId: candidate.id, taskId: task.id, bambuTaskId: task.bambu_task_id });
-      }
-    }
-
-    if (!candidates.length) return;
-
-    (async () => {
-      for (const c of candidates) {
-        await supabase.from("jobs").update({
-          bambu_task_id: c.bambuTaskId,
-          status: "printing" as JobStatus,
-          started_at: new Date().toISOString(),
-        }).eq("id", c.jobId);
-        await supabase.from("bambu_tasks").update({ job_id: c.jobId }).eq("id", c.taskId);
-      }
-      qc.invalidateQueries({ queryKey: ["fila_jobs"] });
-      qc.invalidateQueries({ queryKey: ["fila_bambu_tasks"] });
-      toast.success(`${candidates.length} tarefa(s) Bambu vinculada(s) automaticamente`);
-    })();
-  }, [jobs, bambuTasks, bambuDevices, qc]);
-
-  // Reflect bambu task completion → mark job ready
-  useEffect(() => {
-    if (!jobs.length || !bambuTasks.length) return;
-    const linkedFinished = bambuTasks.filter(t =>
-      t.job_id && t.status && ["FINISH", "SUCCESS", "completed"].some(s => (t.status || "").toUpperCase().includes(s.toUpperCase()))
-    );
-    const updates = linkedFinished
-      .map(t => jobs.find(j => j.id === t.job_id))
-      .filter(j => j && j.status === "printing")
-      .map(j => j!.id);
-    if (!updates.length) return;
-    (async () => {
-      for (const id of updates) {
-        await supabase.from("jobs").update({
-          status: "ready" as JobStatus,
-          completed_at: new Date().toISOString(),
-        }).eq("id", id);
-      }
-      qc.invalidateQueries({ queryKey: ["fila_jobs"] });
-    })();
-  }, [jobs, bambuTasks, qc]);
-
   const createJobsMut = useMutation({
     mutationFn: async () => {
       if (!profile?.tenant_id) throw new Error("Sem tenant");
       const product = products.find(p => p.id === selProductId);
       const printer = printers.find(p => p.id === selPrinterId);
       if (!product) throw new Error("Selecione um produto");
+      if (product.category === "kit") throw new Error("Use Pedidos para planejar o kit; os componentes serão separados automaticamente.");
       if (!printer) throw new Error("Selecione uma impressora");
-      const qty = Math.max(1, parseInt(selQty) || 1);
-      const priority = Math.min(10, Math.max(1, parseInt(selPriority) || 5));
+      const qty = positiveInteger(selQty, "Quantidade de placas", 100);
+      const priority = positiveInteger(selPriority, "Prioridade", 10);
+      if (["maintenance", "offline", "error"].includes(printer.status)) throw new Error("Selecione uma impressora disponível para planejar a produção.");
 
-      // Generate sequential codes
-      const { data: lastJob } = await supabase
-        .from("jobs")
-        .select("code")
-        .order("created_at", { ascending: false })
-        .limit(1);
-      let nextNum = 1;
-      if (lastJob?.[0]?.code) {
-        const m = lastJob[0].code.match(/(\d+)$/);
-        if (m) nextNum = parseInt(m[1]) + 1;
-      }
-
-      const rows = Array.from({ length: qty }).map((_, i) => ({
-        tenant_id: profile.tenant_id,
-        code: `JOB-${String(nextNum + i).padStart(5, "0")}`,
+      const rows: CreateJobInput[] = Array.from({ length: qty }).map(() => ({
         name: product.name,
         product_id: product.id,
         printer_id: printer.id,
         material_id: product.material_id,
-        status: "queued" as JobStatus,
+        status: "queued" as const,
         priority,
         num_colors: product.num_colors || 1,
         est_grams: product.est_grams || 0,
         est_time_minutes: product.est_time_minutes || 0,
-        est_total_cost: product.cost_estimate || 0,
-        sale_price: product.sale_price || 0,
+        est_total_cost: product.cost_estimate == null ? null : product.cost_estimate * Math.max(1, product.prints_per_plate ?? 1),
+        est_extras_cost: productExtrasPerPiece(product.extras) * Math.max(1, product.prints_per_plate ?? 1),
+        sale_price: product.sale_price == null ? null : product.sale_price * Math.max(1, product.prints_per_plate ?? 1),
       }));
 
-      const { error } = await supabase.from("jobs").insert(rows);
-      if (error) throw error;
+      creationRequest.current = orderRequest(creationRequest.current, JSON.stringify(rows));
+      return createJobs(rows, creationRequest.current.id);
     },
     onSuccess: () => {
+      creationRequest.current = null;
       toast.success("Jobs adicionados à fila");
-      qc.invalidateQueries({ queryKey: ["fila_jobs"] });
+      productionQueryKeys.forEach(key => qc.invalidateQueries({ queryKey: [key] }));
       setCreateOpen(false);
       setSelProductId("");
       setSelQty("1");
@@ -250,26 +176,13 @@ export default function Fila() {
   });
 
   const updateStatusMut = useMutation({
-    mutationFn: async ({ id, status, extra }: { id: string; status: JobStatus; extra?: any }) => {
-      const { error } = await supabase.from("jobs").update({ status, ...(extra || {}) }).eq("id", id);
-      if (error) throw error;
-    },
+    mutationFn: transitionJob,
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["fila_jobs"] });
+      productionQueryKeys.forEach(key => qc.invalidateQueries({ queryKey: [key] }));
+      setTransition(null);
+      toast.success("Fila atualizada");
     },
-    onError: (e: any) => toast.error(e.message || "Erro"),
-  });
-
-  const deleteJobMut = useMutation({
-    mutationFn: async (id: string) => {
-      const { error } = await supabase.from("jobs").delete().eq("id", id);
-      if (error) throw error;
-    },
-    onSuccess: () => {
-      toast.success("Job removido");
-      qc.invalidateQueries({ queryKey: ["fila_jobs"] });
-    },
-    onError: (e: any) => toast.error(e.message || "Erro"),
+    onError: (e: Error) => toast.error(e.message || "Não foi possível atualizar a produção"),
   });
 
   const jobsByPrinter = useMemo(() => {
@@ -277,7 +190,7 @@ export default function Fila() {
     for (const p of printers) map.set(p.id, []);
     map.set(null, []);
     for (const j of jobs) {
-      const key = j.printer_id || null;
+      const key = printers.some(p => p.id === j.printer_id) ? j.printer_id : null;
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(j);
     }
@@ -300,13 +213,14 @@ export default function Fila() {
     <div className="space-y-4">
       <PageHeader
         title="Fila de Impressão"
+        description="Capacidade por impressora, prioridades e etapas de produção."
         breadcrumbs={[{ label: "Início", href: "/" }, { label: "Planejamento" }, { label: "Fila" }]}
         actions={
           <div className="flex gap-2">
             <Button variant="outline" size="sm" onClick={() => refetchJobs()}>
               <RefreshCw className="h-4 w-4 mr-2" /> Atualizar
             </Button>
-            <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+            <Dialog open={createOpen} onOpenChange={open => { if (!createJobsMut.isPending) setCreateOpen(open); }}>
               <DialogTrigger asChild>
                 <Button size="sm">
                   <Plus className="h-4 w-4 mr-2" /> Adicionar à fila
@@ -358,7 +272,7 @@ export default function Fila() {
                       {(() => {
                         const p = products.find(x => x.id === selProductId);
                         if (!p) return null;
-                        return `Estimativa por placa: ${p.est_grams || 0}g · ${p.est_time_minutes || 0}min · R$ ${(p.cost_estimate || 0).toFixed(2)}`;
+                        return `Estimativa por placa: ${p.est_grams || 0}g · ${p.est_time_minutes || 0}min · R$ ${((p.cost_estimate ?? 0) * Math.max(1, p.prints_per_plate ?? 1)).toFixed(2)}`;
                       })()}
                     </div>
                   )}
@@ -375,6 +289,13 @@ export default function Fila() {
         }
       />
 
+      {jobsError && <p role="alert" className="rounded-lg bg-destructive/10 p-4 text-sm text-destructive">Não foi possível atualizar a fila: {jobsError.message}</p>}
+      {jobsLoading && <p role="status" className="text-sm text-muted-foreground">Carregando fila de produção...</p>}
+      {transition && <ProductionTransitionDialog key={`${transition.job.id}-${transition.status}`} value={transition} printers={printers} pending={updateStatusMut.isPending} onClose={() => setTransition(null)} onSave={value => updateStatusMut.mutate(value)} />}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4 text-sm">
+        <div className="space-y-1"><p className="text-muted-foreground">A fila acompanha a produção. Confirme o controle de qualidade e os consumos reais antes de concluir cada ordem.</p>{bambuTasks.some(task => !task.job_id) && <p className="text-xs text-muted-foreground">Há {bambuTasks.filter(task => !task.job_id).length} tarefas recentes da Bambu sem vínculo com uma ordem. Elas não alteram a produção automaticamente.</p>}</div>
+        <Button variant="outline" asChild><Link to="/producao/jobs">Abrir ordens e apurar custos</Link></Button>
+      </div>
       {/* KPI strip */}
       <div className="grid grid-cols-3 gap-3">
         <Card className="p-4">
@@ -405,7 +326,7 @@ export default function Fila() {
                   <Printer className="h-4 w-4 flex-shrink-0 text-muted-foreground" />
                   <div className="min-w-0">
                     <div className="font-semibold text-sm truncate">{printer.name}</div>
-                    <div className="text-[10px] text-muted-foreground truncate">{printer.model}</div>
+                    <div className="text-xs text-muted-foreground truncate">{printer.model}</div>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
@@ -415,12 +336,12 @@ export default function Fila() {
                       live.online ? "bg-emerald-500 animate-pulse" : "bg-muted-foreground/30"
                     )} title={live.online ? "Online" : "Offline"} />
                   )}
-                  <Badge variant="outline" className="text-[10px]">{printerJobs.length}</Badge>
+                  <Badge variant="outline" className="text-xs">{printerJobs.length}</Badge>
                 </div>
               </div>
 
               {live?.online && live.print_status && (
-                <div className="px-3 py-2 text-[11px] bg-blue-50 border-b border-blue-100 text-blue-900">
+                <div className="px-3 py-2 text-xs bg-blue-50 border-b border-blue-100 text-blue-900">
                   Bambu: <strong>{live.print_status}</strong>
                   {live.progress != null && ` · ${live.progress}%`}
                   {live.remaining_time != null && ` · ${Math.round(live.remaining_time)}min`}
@@ -442,38 +363,38 @@ export default function Fila() {
                     >
                       <div className="flex items-start justify-between gap-2">
                         <div className="flex items-start gap-2 min-w-0 flex-1">
-                          <GripVertical className="h-3.5 w-3.5 text-muted-foreground/40 mt-0.5 flex-shrink-0" />
+                          <Clock className="h-3.5 w-3.5 text-muted-foreground/40 mt-0.5 flex-shrink-0" />
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-1.5 mb-0.5">
-                              <span className="text-[10px] font-mono text-muted-foreground">#{idx + 1}</span>
+                              <span className="text-xs font-mono text-muted-foreground">#{idx + 1}</span>
                               <span className="text-xs font-semibold truncate">{j.products?.name || j.name}</span>
                             </div>
-                            <div className="text-[10px] text-muted-foreground font-mono">{j.code}</div>
+                            <div className="text-xs text-muted-foreground font-mono">{j.code}</div>
                             <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                              <Badge variant="outline" className={cn("text-[10px] py-0 px-1.5 gap-1 border", cfg.color)}>
+                              <Badge variant="outline" className={cn("text-xs py-0 px-1.5 gap-1 border", cfg.color)}>
                                 <Icon className="h-2.5 w-2.5" /> {cfg.label}
                               </Badge>
                               {j.bambu_task_id && (
-                                <Badge variant="outline" className="text-[10px] py-0 px-1.5 gap-1 bg-blue-50 text-blue-700 border-blue-200">
+                                <Badge variant="outline" className="text-xs py-0 px-1.5 gap-1 bg-blue-50 text-blue-700 border-blue-200">
                                   <Link2 className="h-2.5 w-2.5" /> Bambu
                                 </Badge>
                               )}
-                              <span className="text-[10px] text-muted-foreground">P{j.priority}</span>
+                              <span className="text-xs text-muted-foreground">P{j.priority}</span>
                               {j.est_time_minutes ? (
-                                <span className="text-[10px] text-muted-foreground">{j.est_time_minutes}min</span>
+                                <span className="text-xs text-muted-foreground">{j.est_time_minutes}min</span>
                               ) : null}
                             </div>
                           </div>
                         </div>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-6 w-6 flex-shrink-0">
+                            <Button variant="ghost" size="icon" className="h-10 w-10 flex-shrink-0" aria-label="Ações da ordem">
                               <MoreVertical className="h-3.5 w-3.5" />
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             {j.status === "queued" && (
-                              <DropdownMenuItem onClick={() => updateStatusMut.mutate({ id: j.id, status: "printing", extra: { started_at: new Date().toISOString() } })}>
+                              <DropdownMenuItem disabled={updateStatusMut.isPending} onClick={() => setTransition({ job: j, status: "printing" })}>
                                 <Play className="h-3.5 w-3.5 mr-2" /> Iniciar manualmente
                               </DropdownMenuItem>
                             )}
@@ -482,10 +403,10 @@ export default function Fila() {
                                 <DropdownMenuItem onClick={() => updateStatusMut.mutate({ id: j.id, status: "paused" })}>
                                   <Pause className="h-3.5 w-3.5 mr-2" /> Pausar
                                 </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => updateStatusMut.mutate({ id: j.id, status: "ready", extra: { completed_at: new Date().toISOString() } })}>
-                                  <CheckCircle2 className="h-3.5 w-3.5 mr-2" /> Marcar pronto
+                                <DropdownMenuItem disabled={updateStatusMut.isPending} onClick={() => { if (requiresProductionMeasurement("quality_check", j.inventory_posted_at)) setTransition({ job: j, status: "quality_check" }); else updateStatusMut.mutate({ id: j.id, status: "quality_check" }); }}>
+                                  <CheckCircle2 className="h-3.5 w-3.5 mr-2" /> Enviar para qualidade
                                 </DropdownMenuItem>
-                                <DropdownMenuItem onClick={() => updateStatusMut.mutate({ id: j.id, status: "failed" })}>
+                                <DropdownMenuItem disabled={updateStatusMut.isPending} onClick={() => setTransition({ job: j, status: "failed" })}>
                                   <XCircle className="h-3.5 w-3.5 mr-2" /> Marcar falha
                                 </DropdownMenuItem>
                               </>
@@ -495,9 +416,7 @@ export default function Fila() {
                                 <Play className="h-3.5 w-3.5 mr-2" /> Retomar
                               </DropdownMenuItem>
                             )}
-                            <DropdownMenuItem onClick={() => deleteJobMut.mutate(j.id)} className="text-destructive">
-                              <Trash2 className="h-3.5 w-3.5 mr-2" /> Remover
-                            </DropdownMenuItem>
+                            <DropdownMenuItem asChild><Link to="/producao/jobs"><CheckCircle2 className="h-3.5 w-3.5 mr-2" /> Conferir ordem e custos</Link></DropdownMenuItem>
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </div>
@@ -523,7 +442,11 @@ export default function Fila() {
               {jobsByPrinter.get(null)!.map(j => (
                 <div key={j.id} className="border rounded-md p-2.5">
                   <div className="text-xs font-semibold">{j.products?.name || j.name}</div>
-                  <div className="text-[10px] text-muted-foreground font-mono">{j.code}</div>
+                  <div className="text-xs text-muted-foreground font-mono mb-3">{j.code}</div>
+                  <Select onValueChange={printerId => updateStatusMut.mutate({ id: j.id, status: j.status, printerId })} disabled={updateStatusMut.isPending}>
+                    <SelectTrigger aria-label={`Atribuir impressora para ${j.code}`}><SelectValue placeholder="Atribuir impressora" /></SelectTrigger>
+                    <SelectContent>{printers.map(printer => <SelectItem key={printer.id} value={printer.id}>{printer.name}</SelectItem>)}</SelectContent>
+                  </Select>
                 </div>
               ))}
             </div>

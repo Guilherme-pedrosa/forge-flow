@@ -1,4 +1,8 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef } from "react";
+import { nonNegative, positiveInteger } from "@/lib/production";
+import { readProductionRows } from "@/lib/production-read";
+import { escapePrintHtml, orderRequest } from "@/lib/sales-order";
+import { commissionPercent, unitCommission, prepareConsignmentItems } from "@/lib/consignment";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -19,7 +23,7 @@ import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle,
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -38,10 +42,6 @@ const getItemSalePrice = (item: any) => {
   return (item as any).sale_price ?? item.products?.sale_price ?? 0;
 };
 
-/** Comissão do PDV = 20% do preço de venda */
-const COMMISSION_PERCENT = 20;
-const getCommission = (salePrice: number) => Math.round(salePrice * COMMISSION_PERCENT / 100 * 100) / 100;
-
 const movementLabels: Record<string, { label: string; color: string; icon: typeof Plus }> = {
   placement: { label: "Colocação", color: "bg-primary/10 text-primary", icon: ArrowUpFromLine },
   sale: { label: "Venda", color: "bg-emerald-100 text-emerald-700", icon: ShoppingCart },
@@ -53,6 +53,7 @@ export default function Consignado() {
   const { profile } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
+  const operations = useRef<Record<string, { signature: string; id: string }>>({});
 
   const [search, setSearch] = useState("");
   const [createLocOpen, setCreateLocOpen] = useState(false);
@@ -70,8 +71,8 @@ export default function Consignado() {
   const [newCustEmail, setNewCustEmail] = useState("");
   const [newCustDocument, setNewCustDocument] = useState("");
   const [newCustBirthday, setNewCustBirthday] = useState("");
-  const [locDiscountPercent, setLocDiscountPercent] = useState("29");
-  const [locDiscountInput, setLocDiscountInput] = useState("29");
+  const [locCommissionPercent, setLocCommissionPercent] = useState("20");
+  const [locCommissionInput, setLocCommissionInput] = useState("20");
   // Movement form (non-sale)
   const [movProductId, setMovProductId] = useState("");
   const [movQty, setMovQty] = useState("");
@@ -86,13 +87,15 @@ export default function Consignado() {
   // Inline qty edit
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [editQtyValue, setEditQtyValue] = useState("");
+  const [editOriginalQty, setEditOriginalQty] = useState(0);
+  const [editQtyReason, setEditQtyReason] = useState("");
   const [productPopoverOpen, setProductPopoverOpen] = useState(false);
   // Inline price edit
   const [editingPriceItemId, setEditingPriceItemId] = useState<string | null>(null);
   const [editPriceValue, setEditPriceValue] = useState("");
 
   // ── Queries ──
-  const { data: locations = [], isLoading } = useQuery({
+  const { data: locations = [], isLoading, error: locationsError, refetch: refetchLocations } = useQuery({
     queryKey: ["consignment_locations"],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -116,15 +119,13 @@ export default function Consignado() {
     enabled: !!profile,
   });
 
-  const { data: allItems = [] } = useQuery({
+  const { data: allItems = [], isLoading: itemsLoading, error: itemsError } = useQuery({
     queryKey: ["consignment_items"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      return readProductionRows((from, to) => supabase
         .from("consignment_items")
         .select("*, products(name, photo_url, sale_price, cost_estimate), consignment_locations(name)")
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return data;
+        .order("created_at", { ascending: false }).order("id").range(from, to));
     },
     enabled: !!profile,
   });
@@ -143,22 +144,21 @@ export default function Consignado() {
     enabled: !!profile,
   });
 
-  const { data: movements = [] } = useQuery({
+  const { data: movements = [], isLoading: movementsLoading, error: movementsError } = useQuery({
     queryKey: ["consignment_movements", viewLocId],
     queryFn: async () => {
-      const { data, error } = await supabase
+      return readProductionRows((from, to) => supabase
         .from("consignment_movements")
         .select("*, products(name)")
         .eq("location_id", viewLocId!)
-        .order("created_at", { ascending: false })
-        .limit(100);
-      if (error) throw error;
-      return data;
+        .order("created_at", { ascending: false }).order("id").range(from, to));
     },
     enabled: !!viewLocId,
   });
 
   const viewLoc = locations.find((l: any) => l.id === viewLocId);
+  const COMMISSION_PERCENT = commissionPercent((viewLoc as unknown as { commission_percent?: number })?.commission_percent);
+  const getCommission = (price: number) => Number.isFinite(price) && price >= 0 ? unitCommission(price, COMMISSION_PERCENT) : 0;
   const viewLocItems = allItems.filter((i: any) => i.location_id === viewLocId);
 
   const filtered = useMemo(() => {
@@ -170,22 +170,34 @@ export default function Consignado() {
   // Per-location summary
   const locationSummary = useMemo(() => {
     const map: Record<string, { totalItems: number; totalValue: number }> = {};
-    for (const item of allItems as any[]) {
+    for (const item of allItems.filter(value => locations.some(location => location.id === value.location_id))) {
       if (!map[item.location_id]) map[item.location_id] = { totalItems: 0, totalValue: 0 };
       map[item.location_id].totalItems += item.current_qty;
-      map[item.location_id].totalValue += item.current_qty * (item.products?.sale_price || 0);
+      map[item.location_id].totalValue += item.current_qty * getItemSalePrice(item);
     }
     return map;
-  }, [allItems]);
+  }, [allItems, locations]);
 
   const totalItemsOut = Object.values(locationSummary).reduce((s, v) => s + v.totalItems, 0);
   const totalValueOut = Object.values(locationSummary).reduce((s, v) => s + v.totalValue, 0);
 
+  const invalidateConsignment = () => ["consignment_locations", "consignment_items", "consignment_movements", "orders", "accounts_receivable", "financial_ledger", "customers", "customers_consignment", "dashboard"].forEach(key => qc.invalidateQueries({ queryKey: [key] }));
+  const runOperation = async (name: string, payload: Record<string, unknown>, operation: string) => {
+    const signature = JSON.stringify({ name, payload });
+    const request = orderRequest(operations.current[operation] ?? null, signature);
+    operations.current[operation] = request;
+    const rpc = supabase.rpc as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
+    const { data, error } = await rpc(name, { ...payload, p_request_id: request.id });
+    if (error) throw new Error(error.message);
+    delete operations.current[operation];
+    return data;
+  };
   // ── Mutations ──
   const resetLocForm = () => {
+    delete operations.current.location;
     setLocMode("existing"); setLocCustomerId(""); setLocName("");
     setNewCustName(""); setNewCustPhone(""); setNewCustEmail(""); setNewCustDocument(""); setNewCustBirthday("");
-    setLocDiscountPercent("29"); setLocDiscountInput("29");
+    setLocCommissionPercent("20"); setLocCommissionInput("20");
   };
 
   const createLocMut = useMutation({
@@ -193,46 +205,16 @@ export default function Consignado() {
       if (!profile) throw new Error("Sem perfil");
       if (!locName.trim()) throw new Error("Informe o nome do ponto");
 
-      let customerId: string;
-
-      if (locMode === "existing") {
-        if (!locCustomerId) throw new Error("Selecione um cliente");
-        customerId = locCustomerId;
-      } else {
-        if (!newCustName.trim()) throw new Error("Informe o nome do cliente");
-        const { data: created, error: custErr } = await supabase
-          .from("customers")
-          .insert({
-            tenant_id: profile.tenant_id,
-            name: newCustName.trim(),
-            phone: newCustPhone || null,
-            email: newCustEmail || null,
-            document: newCustDocument || null,
-            birthday: newCustBirthday || null,
-            is_active: true,
-          })
-          .select("id")
-          .single();
-        if (custErr) throw custErr;
-        customerId = created.id;
-      }
-
-      const c = customers.find((x) => x.id === customerId) as any;
-      const addr = c?.address as any;
-      const addrStr = addr
-        ? [addr.street, addr.number, addr.complement, addr.neighborhood, addr.city, addr.state].filter(Boolean).join(", ")
-        : null;
-
-      const { error } = await supabase.from("consignment_locations").insert({
-        tenant_id: profile.tenant_id,
-        name: locName.trim(),
-        customer_id: customerId,
-        contact_name: c?.name || newCustName.trim(),
-        phone: c?.phone || newCustPhone || null,
-        address: addrStr || null,
-        discount_percent: parseFloat(locDiscountPercent) || 29,
-      } as any);
-      if (error) throw error;
+      if (locMode === "existing" && !locCustomerId) throw new Error("Selecione um cliente.");
+      if (locMode === "new" && !newCustName.trim()) throw new Error("Informe o nome do cliente.");
+      const percent = commissionPercent(locCommissionPercent);
+      const customer = customers.find(value => value.id === locCustomerId);
+      const address = customer?.address;
+      const addressText = typeof address === "string" ? address : address && typeof address === "object" && !Array.isArray(address) ? [address.street, address.number, address.complement, address.neighborhood, address.city, address.state].filter(Boolean).join(", ") : null;
+      return runOperation("create_consignment_location", {
+        p_location: { name: locName.trim(), customer_id: locMode === "existing" ? locCustomerId : null, contact_name: customer?.name || newCustName.trim(), phone: customer?.phone || newCustPhone.trim() || null, address: addressText, commission_percent: percent },
+        p_customer: locMode === "new" ? { name: newCustName.trim(), phone: newCustPhone.trim() || null, email: newCustEmail.trim() || null, document: newCustDocument.trim() || null, birthday: newCustBirthday || null } : null,
+      }, "location");
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["consignment_locations"] });
@@ -246,14 +228,15 @@ export default function Consignado() {
 
   const deleteLocMut = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from("consignment_locations").delete().eq("id", id);
+      if (allItems.some(item => item.location_id === id && item.current_qty !== 0)) throw new Error("Recolha todo o estoque do ponto antes de arquivar.");
+      const { error } = await supabase.from("consignment_locations").update({ is_active: false }).eq("id", id);
       if (error) throw error;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["consignment_locations"] });
       qc.invalidateQueries({ queryKey: ["consignment_items"] });
       if (viewLocId) setViewLocId(null);
-      toast({ title: "Ponto removido" });
+      toast({ title: "Ponto arquivado", description: "O histórico foi preservado." });
     },
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
@@ -262,162 +245,14 @@ export default function Consignado() {
     mutationFn: async () => {
       if (!profile || !viewLocId) throw new Error("Sem contexto");
 
-      // ── SALE: multi-item flow ──
-      if (movementType === "sale") {
-        if (saleItems.length === 0) throw new Error("Adicione pelo menos um item");
-        const loc = locations.find((l: any) => l.id === viewLocId);
-        if (!(loc as any)?.customer_id) {
-          throw new Error("Este ponto não tem um cliente vinculado. Edite o ponto e associe um cliente antes de registrar vendas.");
-        }
-
-        const saleTotal = saleItems.reduce((s, si) => s + si.unitPrice * si.qty, 0);
-
-        // Order code
-        const { count: orderCount } = await supabase
-          .from("orders")
-          .select("*", { count: "exact", head: true })
-          .eq("tenant_id", profile.tenant_id);
-        const code = `CSG-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${String((orderCount ?? 0) + 1).padStart(3, "0")}`;
-
-        const { data: order, error: orderErr } = await supabase.from("orders").insert({
-          tenant_id: profile.tenant_id,
-          code,
-          customer_id: (loc as any)?.customer_id || null,
-          total: saleTotal,
-          status: "approved",
-          approved_at: new Date().toISOString(),
-          notes: `Venda consignado — ${loc?.name || ""}${movNotes ? `\n${movNotes}` : ""}`,
-          created_by: profile.user_id,
-        } as any).select("id").single();
-        if (orderErr) throw orderErr;
-
-        for (const si of saleItems) {
-          const product = products.find((p: any) => p.id === si.productId);
-
-          // Movement record
-          const { error: movErr } = await supabase.from("consignment_movements").insert({
-            tenant_id: profile.tenant_id,
-            location_id: viewLocId,
-            product_id: si.productId,
-            movement_type: "sale" as any,
-            quantity: si.qty,
-            unit_price: si.unitPrice,
-            total: si.unitPrice * si.qty,
-            notes: movNotes || null,
-            created_by: profile.user_id,
-          });
-          if (movErr) throw movErr;
-
-          // Order item
-          await supabase.from("order_items").insert({
-            tenant_id: profile.tenant_id,
-            order_id: order.id,
-            product_id: si.productId,
-            description: product?.name || "Produto consignado",
-            quantity: si.qty,
-            unit_price: si.unitPrice,
-            total: si.unitPrice * si.qty,
-          });
-
-          // Update consignment_items
-          const { data: existing } = await supabase
-            .from("consignment_items")
-            .select("*")
-            .eq("location_id", viewLocId)
-            .eq("product_id", si.productId)
-            .maybeSingle();
-
-          if (existing) {
-            await supabase.from("consignment_items").update({
-              current_qty: existing.current_qty - si.qty,
-              total_sold: existing.total_sold + si.qty,
-            }).eq("id", existing.id);
-          }
-        }
-
-        // AR = total - comissão (consignatário repassa o líquido)
-        const commissionTotal = saleItems.reduce((s, si) => s + getCommission(si.unitPrice) * si.qty, 0);
-        const netReceivable = saleTotal - commissionTotal;
-        const { error: arErr } = await supabase.from("accounts_receivable").insert({
-          tenant_id: profile.tenant_id,
-          description: `Consignado ${loc?.name} — ${code}`,
-          amount: netReceivable,
-          due_date: new Date().toISOString().slice(0, 10),
-          competence_date: new Date().toISOString().slice(0, 10),
-          customer_id: (loc as any)?.customer_id || null,
-          origin_id: order.id,
-          origin_type: "order",
-          created_by: profile.user_id,
-          status: "open",
-        });
-        if (arErr) throw new Error(`Erro ao criar conta a receber: ${arErr.message}`);
-        return;
-      }
-
-      // ── NON-SALE: single product flow ──
-      const qty = parseInt(movQty);
-      if (!qty || qty <= 0) throw new Error("Quantidade inválida");
-      if (!movProductId) throw new Error("Selecione um produto");
-
-      const price = parseFloat(movPrice) || null;
-      const total = price ? price * qty : null;
-
-      const { error: movErr } = await supabase.from("consignment_movements").insert({
-        tenant_id: profile.tenant_id,
-        location_id: viewLocId,
-        product_id: movProductId,
-        movement_type: movementType as any,
-        quantity: qty,
-        unit_price: price,
-        total,
-        notes: movNotes || null,
-        created_by: profile.user_id,
-      });
-      if (movErr) throw movErr;
-
-      const { data: existing } = await supabase
-        .from("consignment_items")
-        .select("*")
-        .eq("location_id", viewLocId)
-        .eq("product_id", movProductId)
-        .maybeSingle();
-
-      const cur = existing || { current_qty: 0, total_placed: 0, total_sold: 0, total_returned: 0 };
-      let newQty = cur.current_qty;
-      let newPlaced = cur.total_placed;
-      let newReturned = cur.total_returned;
-
-      switch (movementType) {
-        case "placement":
-        case "replenishment":
-          newQty += qty;
-          newPlaced += qty;
-          break;
-        case "return":
-          newQty -= qty;
-          newReturned += qty;
-          break;
-      }
-
-      if (existing) {
-        await supabase.from("consignment_items").update({
-          current_qty: newQty,
-          total_placed: newPlaced,
-          total_returned: newReturned,
-        }).eq("id", existing.id);
-      } else {
-        await supabase.from("consignment_items").insert({
-          tenant_id: profile.tenant_id,
-          location_id: viewLocId,
-          product_id: movProductId,
-          current_qty: newQty,
-          total_placed: newPlaced,
-          total_sold: 0,
-          total_returned: newReturned,
-        });
-      }
+      const rawItems = movementType === "sale"
+        ? saleItems.map(item => ({ product_id: item.productId, quantity: item.qty, unit_price: item.unitPrice }))
+        : [{ product_id: movProductId, quantity: movQty, unit_price: viewLocItems.find(item => item.product_id === movProductId)?.sale_price ?? products.find(product => product.id === movProductId)?.sale_price ?? 0 }];
+      const items = prepareConsignmentItems(rawItems, movementType, viewLocItems);
+      return runOperation("post_consignment_movement", { p_location_id: viewLocId, p_type: movementType, p_items: items, p_notes: movNotes.trim() || null }, "movement");
     },
     onSuccess: () => {
+      invalidateConsignment();
       qc.invalidateQueries({ queryKey: ["consignment_items"] });
       qc.invalidateQueries({ queryKey: ["consignment_movements"] });
       qc.invalidateQueries({ queryKey: ["orders"] });
@@ -436,26 +271,13 @@ export default function Consignado() {
       const itemsToReturn = viewLocItems.filter((i: any) => i.current_qty > 0);
       if (itemsToReturn.length === 0) throw new Error("Nenhum item para recolher");
 
-      for (const item of itemsToReturn as any[]) {
-        // Insert return movement
-        await supabase.from("consignment_movements").insert({
-          tenant_id: profile.tenant_id,
-          location_id: viewLocId,
-          product_id: item.product_id,
-          movement_type: "return" as any,
-          quantity: item.current_qty,
-          notes: "Recolhimento total",
-          created_by: profile.user_id,
-        }).then(({ error }) => { if (error) throw error; });
-
-        // Zero out the item
-        await supabase.from("consignment_items").update({
-          current_qty: 0,
-          total_returned: item.total_returned + item.current_qty,
-        }).eq("id", item.id).then(({ error }) => { if (error) throw error; });
-      }
+      return runOperation("post_consignment_movement", {
+        p_location_id: viewLocId, p_type: "return", p_notes: "Recolhimento total confirmado",
+        p_items: itemsToReturn.map(item => ({ product_id: item.product_id, quantity: item.current_qty, unit_price: getItemSalePrice(item) })),
+      }, "return-all");
     },
     onSuccess: () => {
+      invalidateConsignment();
       qc.invalidateQueries({ queryKey: ["consignment_items"] });
       qc.invalidateQueries({ queryKey: ["consignment_movements"] });
       toast({ title: "Todos os itens foram recolhidos" });
@@ -468,34 +290,14 @@ export default function Consignado() {
       if (!profile || !viewLocId) throw new Error("Sem contexto");
       const item = viewLocItems.find((i: any) => i.id === itemId);
       if (!item) throw new Error("Item não encontrado");
-      if (newQty < 0) throw new Error("Quantidade não pode ser negativa");
-
-      const diff = newQty - item.current_qty;
-      const movType = diff >= 0 ? "placement" : "return";
-      const absQty = Math.abs(diff);
-
-      if (absQty > 0) {
-        // Register adjustment movement
-        const { error: movErr } = await supabase.from("consignment_movements").insert({
-          tenant_id: profile.tenant_id,
-          location_id: viewLocId,
-          product_id: item.product_id,
-          movement_type: movType as any,
-          quantity: absQty,
-          notes: `Ajuste manual: ${item.current_qty} → ${newQty}`,
-          created_by: profile.user_id,
-        });
-        if (movErr) throw movErr;
-
-        const updates: any = { current_qty: newQty };
-        if (diff > 0) updates.total_placed = item.total_placed + absQty;
-        if (diff < 0) updates.total_returned = item.total_returned + absQty;
-
-        const { error } = await supabase.from("consignment_items").update(updates).eq("id", itemId);
-        if (error) throw error;
-      }
+      nonNegative(newQty, "Quantidade");
+      if (!Number.isInteger(newQty)) throw new Error("A quantidade deve ser inteira.");
+      if (!editQtyValue.trim() || !editQtyReason.trim()) throw new Error("Informe a quantidade conferida e o motivo do ajuste.");
+      if (newQty === editOriginalQty) throw new Error("A quantidade informada já é o saldo atual.");
+      return runOperation("adjust_consignment_stock", { p_item_id: itemId, p_new_quantity: newQty, p_expected_quantity: editOriginalQty, p_reason: editQtyReason.trim() }, "adjustment");
     },
     onSuccess: () => {
+      invalidateConsignment();
       qc.invalidateQueries({ queryKey: ["consignment_items"] });
       qc.invalidateQueries({ queryKey: ["consignment_movements"] });
       setEditingItemId(null);
@@ -506,11 +308,13 @@ export default function Consignado() {
 
   const updatePriceMut = useMutation({
     mutationFn: async ({ itemId, newPrice }: { itemId: string; newPrice: number }) => {
-      if (newPrice < 0) throw new Error("Preço não pode ser negativo");
+      if (!editPriceValue.trim()) throw new Error("Informe o preço de venda.");
+      nonNegative(newPrice, "Preço de venda");
       const { error } = await supabase.from("consignment_items").update({ sale_price: newPrice } as any).eq("id", itemId);
       if (error) throw error;
     },
     onSuccess: () => {
+      invalidateConsignment();
       qc.invalidateQueries({ queryKey: ["consignment_items"] });
       setEditingPriceItemId(null);
       toast({ title: "Preço atualizado" });
@@ -519,7 +323,7 @@ export default function Consignado() {
   });
 
   const buildConsignmentHtml = () => {
-    if (!viewLoc) return "";
+    if (!viewLoc || itemsLoading || itemsError) return "";
     const today = new Date().toLocaleDateString("pt-BR");
     const itemsWithStock = viewLocItems.filter((i: any) => i.current_qty > 0);
     const totalValue = itemsWithStock.reduce((sum: number, i: any) => {
@@ -538,15 +342,15 @@ export default function Consignado() {
       return `
       <tr>
         <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:center">${idx + 1}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid #ddd">${item.products?.name || "—"}</td>
-        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:center">${item.current_qty}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #ddd">${escapePrintHtml(item.products?.name || "—")}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:center">${escapePrintHtml(item.current_qty)}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right">${fmtCurrency(price)}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right">${fmtCurrency(commission)}</td>
         <td style="padding:6px 8px;border-bottom:1px solid #ddd;text-align:right">${fmtCurrency(item.current_qty * price)}</td>
       </tr>
     `;}).join("");
 
-    return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Consignado - ${viewLoc.name}</title>
+    return `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline';"><title>Consignado - ${escapePrintHtml(viewLoc.name)}</title>
       <style>
         @media print { @page { margin: 15mm; } body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
         body { font-family: 'Segoe UI', Arial, sans-serif; color: #222; font-size: 13px; max-width: 800px; margin: 0 auto; padding: 20px; }
@@ -569,11 +373,11 @@ export default function Consignado() {
       <h2>Termo de Consignação</h2>
       <p class="sub">Emitido em ${today}</p>
       <div class="info-grid">
-        <div><span>Ponto:</span> <strong>${viewLoc.name}</strong></div>
-        <div><span>Cliente:</span> <strong>${customerName}</strong></div>
-        <div><span>Contato:</span> ${viewLoc.contact_name || "—"}</div>
-        <div><span>Telefone:</span> ${viewLoc.phone || "—"}</div>
-        <div><span>Endereço:</span> ${viewLoc.address || "—"}</div>
+        <div><span>Ponto:</span> <strong>${escapePrintHtml(viewLoc.name)}</strong></div>
+        <div><span>Cliente:</span> <strong>${escapePrintHtml(customerName)}</strong></div>
+        <div><span>Contato:</span> ${escapePrintHtml(viewLoc.contact_name || "—")}</div>
+        <div><span>Telefone:</span> ${escapePrintHtml(viewLoc.phone || "—")}</div>
+        <div><span>Endereço:</span> ${escapePrintHtml(viewLoc.address || "—")}</div>
       </div>
       <table>
         <thead><tr>
@@ -602,31 +406,25 @@ export default function Consignado() {
       </p>
       <div class="sig">
         <div class="sig-box">Responsável pela Empresa</div>
-        <div class="sig-box">${customerName}<br/><span style="font-size:10px;color:#888">Consignatário(a)</span></div>
+        <div class="sig-box">${escapePrintHtml(customerName)}<br/><span style="font-size:10px;color:#888">Consignatário(a)</span></div>
       </div>
-      <button class="print-btn" onclick="window.print()">🖨 Imprimir / Salvar PDF</button>
+      <p class="print-btn">Use a opção Imprimir do navegador para salvar em PDF.</p>
     </body></html>`;
   };
 
   const downloadConsignment = () => {
     const html = buildConsignmentHtml();
     if (!html) return;
-    const blob = new Blob([html], { type: "text/html" });
-    const url = URL.createObjectURL(blob);
-    const w = window.open(url, "_blank");
-    // Fallback for mobile browsers that block window.open
-    if (!w) {
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `consignado-${viewLoc?.name?.replace(/\s+/g, "-").toLowerCase() || "termo"}.html`;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-    }
-    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    const popup = window.open("", "_blank");
+    if (!popup) { toast({ title: "Permita a janela de impressão", description: "O navegador bloqueou a abertura do documento." }); return; }
+    popup.opener = null;
+    popup.document.write(html); popup.document.close();
+    popup.focus(); popup.print();
   };
 
   const openMovement = (type: string) => {
+    if (itemsLoading || itemsError || movementMut.isPending || returnAllMut.isPending) return;
+    delete operations.current.movement;
     setMovementType(type);
     setMovProductId("");
     setMovQty("");
@@ -641,11 +439,13 @@ export default function Consignado() {
   // Sale helpers
   const addSaleItem = () => {
     if (!saleAddProductId) return;
-    const qty = parseInt(saleAddQty) || 1;
+    let qty: number;
+    try { qty = positiveInteger(saleAddQty, "Quantidade", 10000); } catch (error) { toast({ title: "Quantidade inválida", description: (error as Error).message, variant: "destructive" }); return; }
     const ci = viewLocItems.find((i: any) => i.product_id === saleAddProductId);
     const product = products.find((p: any) => p.id === saleAddProductId);
     const unitPrice = (ci as any)?.sale_price ?? product?.sale_price ?? 0;
     const existing = saleItems.find((si) => si.productId === saleAddProductId);
+    if (!ci || qty + (existing?.qty ?? 0) > ci.current_qty) { toast({ title: "Saldo insuficiente no ponto", variant: "destructive" }); return; }
     if (existing) {
       setSaleItems(saleItems.map((si) => si.productId === saleAddProductId ? { ...si, qty: si.qty + qty } : si));
     } else {
@@ -663,8 +463,16 @@ export default function Consignado() {
   const saleTotalCommission = saleItems.reduce((s, si) => s + getCommission(si.unitPrice) * si.qty, 0);
   const saleNetReceivable = saleTotalValue - saleTotalCommission;
 
+  if (locationsError || itemsError) return <div className="space-y-4 rounded-xl border bg-card p-6"><p role="alert">Não foi possível carregar o consignado. {(locationsError || itemsError)?.message}</p><Button variant="outline" onClick={() => { refetchLocations(); qc.invalidateQueries({ queryKey: ["consignment_items"] }); }}>Tentar novamente</Button></div>;
+
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
+      <Dialog open={!!editingItemId} onOpenChange={open => { if (!open && !adjustQtyMut.isPending) setEditingItemId(null); }}>
+        <DialogContent className="max-w-md"><DialogHeader><DialogTitle>Conferir estoque do ponto</DialogTitle><DialogDescription>Saldo anterior: {editOriginalQty} peças. O ajuste registra a diferença e a justificativa no histórico.</DialogDescription></DialogHeader>
+          <div className="space-y-4"><div className="space-y-2"><Label htmlFor="consignment-qty">Quantidade contada</Label><Input id="consignment-qty" type="number" min="0" step="1" value={editQtyValue} onChange={event => setEditQtyValue(event.target.value)} /></div><div className="space-y-2"><Label htmlFor="consignment-reason">Motivo do ajuste</Label><Textarea id="consignment-reason" value={editQtyReason} onChange={event => setEditQtyReason(event.target.value)} placeholder="Descreva a divergência encontrada na conferência física" /></div></div>
+          <DialogFooter><Button variant="outline" disabled={adjustQtyMut.isPending} onClick={() => setEditingItemId(null)}>Cancelar</Button><Button disabled={adjustQtyMut.isPending || !editQtyReason.trim() || !editQtyValue.trim()} onClick={() => adjustQtyMut.mutate({ itemId: editingItemId!, newQty: Number(editQtyValue) })}>{adjustQtyMut.isPending ? "Registrando..." : "Registrar ajuste"}</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
       <PageHeader
         title="Consignado"
         description="Gestão de produtos em consignação"
@@ -732,7 +540,7 @@ export default function Consignado() {
                   </div>
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                      <Button variant="ghost" size="icon" className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Button variant="ghost" size="icon" className="h-10 w-10" aria-label="Ações do ponto">
                         <MoreHorizontal className="h-4 w-4" />
                       </Button>
                     </DropdownMenuTrigger>
@@ -741,8 +549,8 @@ export default function Consignado() {
                         <Eye className="h-3.5 w-3.5 mr-2" /> Ver Detalhes
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
-                      <DropdownMenuItem className="text-destructive" onClick={(e) => { e.stopPropagation(); deleteLocMut.mutate(loc.id); }}>
-                        <Trash2 className="h-3.5 w-3.5 mr-2" /> Excluir
+                      <DropdownMenuItem className="text-destructive" onClick={(e) => { e.stopPropagation(); if (window.confirm(`Arquivar ${loc.name}? O histórico será preservado.`)) deleteLocMut.mutate(loc.id); }}>
+                        <Trash2 className="h-3.5 w-3.5 mr-2" /> Arquivar
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
@@ -767,7 +575,7 @@ export default function Consignado() {
       )}
 
       {/* ── Create Location Dialog ── */}
-      <Dialog open={createLocOpen} onOpenChange={(o) => { if (!o) { setCreateLocOpen(false); resetLocForm(); } else setCreateLocOpen(true); }}>
+      <Dialog open={createLocOpen} onOpenChange={(o) => { if (createLocMut.isPending) return; if (!o) { setCreateLocOpen(false); resetLocForm(); } else setCreateLocOpen(true); }}>
         <DialogContent className="max-w-md">
           <DialogHeader><DialogTitle>Novo Ponto de Consignação</DialogTitle></DialogHeader>
           <div className="grid gap-4">
@@ -809,33 +617,31 @@ export default function Consignado() {
               <Input value={locName} onChange={(e) => setLocName(e.target.value)} placeholder="Ex: Vitrine Loja Centro" />
             </div>
             <div>
-              <Label>Desconto sobre preço de venda (%)</Label>
+              <Label>Comissão do ponto de venda (%)</Label>
               <Input
                 type="text"
                 inputMode="decimal"
-                value={locDiscountInput}
+                value={locCommissionInput}
                 onChange={(e) => {
                   const raw = e.target.value.replace(/[^0-9.,]/g, "");
-                  setLocDiscountInput(raw);
+                  setLocCommissionInput(raw);
                   const normalized = raw.replace(",", ".");
                   const parsed = parseFloat(normalized);
-                  if (!isNaN(parsed)) setLocDiscountPercent(String(parsed));
+                  setLocCommissionPercent(normalized === "" ? "" : String(parsed));
                 }}
                 onBlur={() => {
-                  const val = parseFloat(locDiscountPercent) || 29;
-                  const clamped = Math.min(Math.max(val, 0), 100);
-                  setLocDiscountPercent(String(clamped));
-                  setLocDiscountInput(String(clamped).replace(".", ","));
+                  const parsed = Number(locCommissionInput.replace(",", "."));
+                  if (Number.isFinite(parsed)) { setLocCommissionPercent(String(parsed)); setLocCommissionInput(String(parsed).replace(".", ",")); }
                 }}
-                placeholder="29"
+                placeholder="20"
               />
               <p className="text-xs text-muted-foreground mt-1">
-                Padrão: 29%. O preço nunca ficará abaixo do custo estimado.
+                Comissão retida pelo ponto em cada venda. Padrão: 20%. Informe 0 para repasse integral.
               </p>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => { setCreateLocOpen(false); resetLocForm(); }}>Cancelar</Button>
+            <Button variant="outline" disabled={createLocMut.isPending} onClick={() => { setCreateLocOpen(false); resetLocForm(); }}>Cancelar</Button>
             <Button
               onClick={() => createLocMut.mutate()}
               disabled={
@@ -882,9 +688,10 @@ export default function Consignado() {
                 </div>
               </div>
 
+              <p className="text-sm text-muted-foreground">Comissão do ponto: <strong className="text-foreground">{COMMISSION_PERCENT}%</strong>. A venda registra o repasse líquido a receber; o estoque permanece rastreado no ponto.</p>
               {/* Edit customer link if missing */}
               {!(viewLoc as any).customer_id && (
-                <div className="flex items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">
+                <div className="flex flex-wrap items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">
                   <span className="text-destructive">⚠ Vincule um cliente a este ponto para registrar vendas.</span>
                   <Select value="" onValueChange={async (val) => {
                     const { error } = await supabase.from("consignment_locations").update({ customer_id: val } as any).eq("id", viewLocId!);
@@ -917,12 +724,12 @@ export default function Consignado() {
                   <ArrowDownToLine className="h-3.5 w-3.5 mr-1" /> Devolver
                 </Button>
                 {viewLocItems.some((i: any) => i.current_qty > 0) && (
-                  <Button size="sm" variant="outline" className="text-destructive border-destructive/30 hover:bg-destructive/5" onClick={() => returnAllMut.mutate()} disabled={returnAllMut.isPending}>
+                  <Button size="sm" variant="outline" className="text-destructive border-destructive/30 hover:bg-destructive/5" onClick={() => { if (window.confirm("Recolher todas as peças deste ponto? Confirme que a devolução física foi conferida.")) returnAllMut.mutate(); }} disabled={returnAllMut.isPending}>
                     {returnAllMut.isPending ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Package className="h-3.5 w-3.5 mr-1" />} Recolher Tudo
                   </Button>
                 )}
                 <Button size="sm" variant="outline" onClick={() => downloadConsignment()}>
-                  <Download className="h-3.5 w-3.5 mr-1" /> Baixar PDF
+                  <Download className="h-3.5 w-3.5 mr-1" /> Imprimir / PDF
                 </Button>
               </div>
 
@@ -933,7 +740,7 @@ export default function Consignado() {
                 </TabsList>
 
                 <TabsContent value="stock">
-                  {viewLocItems.length === 0 ? (
+                  {itemsLoading || itemsError ? <p role={itemsError ? "alert" : "status"} className="p-4 text-sm">{itemsError ? "Não foi possível carregar o estoque deste ponto." : "Carregando estoque..."}</p> : viewLocItems.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
                       <Package className="h-8 w-8 mb-2 opacity-40" />
                       <p className="text-sm">Nenhum item neste ponto</p>
@@ -966,36 +773,12 @@ export default function Consignado() {
                                 </div>
                               </TableCell>
                               <TableCell className="text-center font-bold">
-                                {editingItemId === item.id ? (
-                                  <div className="flex items-center gap-1 justify-center">
-                                    <Input
-                                      type="number"
-                                      min={0}
-                                      className="w-16 h-7 text-center text-sm p-1"
-                                      value={editQtyValue}
-                                      onChange={(e) => setEditQtyValue(e.target.value)}
-                                      onKeyDown={(e) => {
-                                        if (e.key === "Enter") adjustQtyMut.mutate({ itemId: item.id, newQty: parseInt(editQtyValue) || 0 });
-                                        if (e.key === "Escape") setEditingItemId(null);
-                                      }}
-                                      autoFocus
-                                    />
-                                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => adjustQtyMut.mutate({ itemId: item.id, newQty: parseInt(editQtyValue) || 0 })} disabled={adjustQtyMut.isPending}>
-                                      {adjustQtyMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-                                    </Button>
-                                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setEditingItemId(null)}>
-                                      <X className="h-3 w-3" />
-                                    </Button>
-                                  </div>
-                                ) : (
-                                  <button
-                                    className="inline-flex items-center gap-1 hover:text-primary transition-colors cursor-pointer"
-                                    onClick={() => { setEditingItemId(item.id); setEditQtyValue(String(item.current_qty)); }}
-                                  >
-                                    {item.current_qty}
-                                    <Pencil className="h-3 w-3 opacity-0 group-hover:opacity-50" />
-                                  </button>
-                                )}
+                                <button className="inline-flex min-h-10 items-center gap-2 hover:text-primary" onClick={() => {
+                                  delete operations.current.adjustment;
+                                  setEditingItemId(item.id); setEditQtyValue(String(item.current_qty)); setEditOriginalQty(item.current_qty); setEditQtyReason("");
+                                }} aria-label={`Conferir saldo de ${item.products?.name ?? "produto"}`}>
+                                  {item.current_qty}<Pencil className="h-3.5 w-3.5 text-muted-foreground" />
+                                </button>
                               </TableCell>
                               <TableCell className="text-right font-mono text-sm font-semibold">
                                 {editingPriceItemId === item.id ? (
@@ -1004,19 +787,19 @@ export default function Consignado() {
                                       type="number"
                                       step="0.01"
                                       min={0}
-                                      className="w-20 h-7 text-right text-sm p-1"
+                                      className="w-24 h-10 text-right text-sm p-2"
                                       value={editPriceValue}
                                       onChange={(e) => setEditPriceValue(e.target.value)}
                                       onKeyDown={(e) => {
-                                        if (e.key === "Enter") updatePriceMut.mutate({ itemId: item.id, newPrice: parseFloat(editPriceValue) || 0 });
+                                        if (e.key === "Enter") updatePriceMut.mutate({ itemId: item.id, newPrice: Number(editPriceValue) });
                                         if (e.key === "Escape") setEditingPriceItemId(null);
                                       }}
                                       autoFocus
                                     />
-                                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => updatePriceMut.mutate({ itemId: item.id, newPrice: parseFloat(editPriceValue) || 0 })} disabled={updatePriceMut.isPending}>
+                                    <Button size="icon" variant="ghost" className="h-10 w-10" aria-label="Ações" onClick={() => updatePriceMut.mutate({ itemId: item.id, newPrice: Number(editPriceValue) })} disabled={updatePriceMut.isPending}>
                                       {updatePriceMut.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
                                     </Button>
-                                    <Button size="icon" variant="ghost" className="h-7 w-7" onClick={() => setEditingPriceItemId(null)}>
+                                    <Button size="icon" variant="ghost" className="h-10 w-10" aria-label="Ações" onClick={() => setEditingPriceItemId(null)}>
                                       <X className="h-3 w-3" />
                                     </Button>
                                   </div>
@@ -1047,6 +830,7 @@ export default function Consignado() {
                 </TabsContent>
 
                 <TabsContent value="movements">
+                  {(movementsLoading || movementsError) && <p role={movementsError ? "alert" : "status"} className="p-4 text-sm">{movementsError ? "Não foi possível carregar as movimentações." : "Carregando movimentações..."}</p>}
                   {movements.length === 0 ? (
                     <div className="flex flex-col items-center justify-center py-10 text-muted-foreground">
                       <ArrowRightLeft className="h-8 w-8 mb-2 opacity-40" />
@@ -1063,6 +847,7 @@ export default function Consignado() {
                             <TableHead className="text-center">Qtd</TableHead>
                             <TableHead className="text-right">Preço Unit.</TableHead>
                             <TableHead className="text-right">Total</TableHead>
+                            <TableHead>Justificativa</TableHead>
                           </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -1079,7 +864,7 @@ export default function Consignado() {
                                 <TableCell className="text-sm">{mov.products?.name || "—"}</TableCell>
                                 <TableCell className="text-center font-medium">{mov.quantity}</TableCell>
                                 <TableCell className="text-right font-mono text-sm">{fmtCurrency(mov.unit_price)}</TableCell>
-                                <TableCell className="text-right font-mono text-sm">{fmtCurrency(mov.total)}</TableCell>
+                                <TableCell className="text-right font-mono text-sm">{fmtCurrency(mov.total)}</TableCell><TableCell className="max-w-xs whitespace-normal text-sm">{mov.notes || "—"}</TableCell>
                               </TableRow>
                             );
                           })}
@@ -1095,7 +880,7 @@ export default function Consignado() {
       </Dialog>
 
       {/* ── Movement Dialog ── */}
-      <Dialog open={movementOpen} onOpenChange={setMovementOpen}>
+      <Dialog open={movementOpen} onOpenChange={open => { if (!movementMut.isPending) setMovementOpen(open); }}>
         <DialogContent className={cn("max-w-md", movementType === "sale" && "max-w-lg")}>
           <DialogHeader>
             <DialogTitle>
@@ -1188,7 +973,7 @@ export default function Consignado() {
                                 className="w-14 h-7 text-center text-sm p-1"
                                 value={si.qty}
                                 onChange={(e) => {
-                                  const v = parseInt(e.target.value) || 1;
+                                  const v = Number(e.target.value);
                                   setSaleItems(saleItems.map((x) => x.productId === si.productId ? { ...x, qty: v } : x));
                                 }}
                               />
@@ -1199,7 +984,7 @@ export default function Consignado() {
                                 className="w-20 h-7 text-right text-sm p-1 ml-auto"
                                 value={si.unitPrice}
                                 onChange={(e) => {
-                                  const v = parseFloat(e.target.value) || 0;
+                                  const v = Number(e.target.value);
                                   setSaleItems(saleItems.map((x) => x.productId === si.productId ? { ...x, unitPrice: v } : x));
                                 }}
                               />
@@ -1304,7 +1089,7 @@ export default function Consignado() {
           )}
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setMovementOpen(false)}>Cancelar</Button>
+            <Button variant="outline" disabled={movementMut.isPending} onClick={() => setMovementOpen(false)}>Cancelar</Button>
             <Button
               onClick={() => movementMut.mutate()}
               disabled={

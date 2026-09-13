@@ -54,7 +54,7 @@ export default function BambuLab() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("bambu_connections")
-        .select("*")
+        .select("id,tenant_id,bambu_email,bambu_uid,is_active,last_sync_at,region,created_at,updated_at")
         .eq("is_active", true)
         .maybeSingle();
       if (error) throw error;
@@ -165,10 +165,7 @@ export default function BambuLab() {
   const disconnectMut = useMutation({
     mutationFn: async () => {
       if (!connection) return;
-      const { error } = await supabase
-        .from("bambu_connections")
-        .update({ is_active: false, access_token_encrypted: null })
-        .eq("id", connection.id);
+      const { error } = await (supabase.rpc as any)("disconnect_bambu_connection", { p_connection_id: connection.id });
       if (error) throw error;
     },
     onSuccess: () => {
@@ -177,6 +174,7 @@ export default function BambuLab() {
       qc.invalidateQueries({ queryKey: ["bambu_tasks"] });
       toast({ title: "Desconectado", description: "Conexão Bambu Lab removida." });
     },
+    onError: (error: Error) => toast({ title: "Não foi possível desconectar", description: error.message, variant: "destructive" }),
   });
 
   const resetLoginForm = () => {
@@ -200,12 +198,12 @@ export default function BambuLab() {
         description="Integração com Bambu Lab Cloud — impressoras, tarefas e histórico"
         breadcrumbs={[{ label: "Integrações" }, { label: "Bambu Lab" }]}
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {isConnected && (
               <>
                 <Button size="sm" variant="outline" onClick={() => syncMut.mutate()} disabled={syncMut.isPending}>
                   {syncMut.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />}
-                  Sincronizar
+                  Sincronizar manualmente
                 </Button>
                 <Button size="sm" variant="ghost" className="text-destructive" onClick={() => disconnectMut.mutate()}>
                   <LogOut className="h-4 w-4 mr-1" /> Desconectar
@@ -231,7 +229,7 @@ export default function BambuLab() {
           </div>
           <h3 className="text-lg font-semibold text-foreground mb-2">Conecte sua conta Bambu Lab</h3>
           <p className="text-sm text-muted-foreground max-w-md mb-6">
-            Faça login com seu e-mail e senha da Bambu Lab para sincronizar automaticamente impressoras, tarefas e consumo de filamento.
+            Conecte sua conta Bambu Lab para consultar impressoras, tarefas e consumo de filamento. Use Sincronizar manualmente para atualizar os dados.
           </p>
           <div className="flex items-center gap-4 text-xs text-muted-foreground mb-6">
             <span className="flex items-center gap-1"><Printer className="h-3.5 w-3.5" /> Impressoras</span>
@@ -277,7 +275,7 @@ export default function BambuLab() {
             <Card className="p-4">
               <p className="text-xs text-muted-foreground">Tempo Total</p>
               <p className="text-2xl font-bold text-foreground">{Math.round(totalTimeSeconds / 3600)}h</p>
-              <p className="text-[10px] text-muted-foreground">Última sync: {fmtDate(connection.last_sync_at)}</p>
+              <p className="text-[10px] text-muted-foreground">Última sincronização: {fmtDate(connection.last_sync_at)}</p>
             </Card>
           </div>
 

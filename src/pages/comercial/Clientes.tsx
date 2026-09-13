@@ -178,10 +178,10 @@ export default function Clientes() {
 
   const deleteMut = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from("customers").delete().eq("id", id);
+      const { error } = await supabase.from("customers").update({ is_active: false }).eq("id", id);
       if (error) throw error;
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["customers"] }); toast({ title: "Cliente removido" }); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["customers"] }); toast({ title: "Cliente arquivado", description: "Pedidos e histórico financeiro foram preservados." }); },
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
 
@@ -335,7 +335,7 @@ export default function Clientes() {
                         <DropdownMenuContent align="end">
                           <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openEdit(c); }}><Edit className="h-3.5 w-3.5 mr-2" /> Editar</DropdownMenuItem>
                           <DropdownMenuSeparator />
-                          <DropdownMenuItem className="text-destructive" onClick={(e) => { e.stopPropagation(); deleteMut.mutate(c.id); }}><Trash2 className="h-3.5 w-3.5 mr-2" /> Excluir</DropdownMenuItem>
+                          <DropdownMenuItem className="text-destructive" onClick={(e) => { e.stopPropagation(); deleteMut.mutate(c.id); }}><Trash2 className="h-3.5 w-3.5 mr-2" /> Arquivar</DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
                     </TableCell>

@@ -1,3 +1,4 @@
+import { nonNegative } from "@/lib/production";
 import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -68,12 +69,13 @@ export default function Impressoras() {
   const [bambuCloudOpen, setBambuCloudOpen] = useState(false);
 
   // ── Fetch printers ──
-  const { data: printers = [], isLoading } = useQuery({
+  const { data: printers = [], isLoading, error: loadError, refetch } = useQuery({
     queryKey: ["printers"],
     queryFn: async () => {
       const { data, error } = await supabase
         .from("printers")
         .select("*")
+        .eq("is_active", true)
         .order("name");
       if (error) throw error;
       return data;
@@ -103,12 +105,15 @@ export default function Impressoras() {
   // ── Delete printer ──
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from("printers").delete().eq("id", id);
+      const { count, error: jobsError } = await supabase.from("jobs").select("id", { count: "exact", head: true }).eq("printer_id", id).in("status", ["queued", "printing", "paused", "reprint", "post_processing", "quality_check"]);
+      if (jobsError) throw jobsError;
+      if (count) throw new Error("Realoque ou conclua as ordens desta impressora antes de arquivar.");
+      const { error } = await supabase.from("printers").update({ is_active: false }).eq("id", id);
       if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["printers"] });
-      toast({ title: "Impressora removida" });
+      toast({ title: "Impressora arquivada", description: "Custos e histórico de produção foram preservados." });
     },
     onError: (err: Error) => {
       toast({ variant: "destructive", title: "Erro ao remover", description: err.message });
@@ -140,6 +145,8 @@ export default function Impressoras() {
   const totalPrints = printers.reduce((sum, p) => sum + (p.total_prints ?? 0), 0);
   const totalFailures = printers.reduce((sum, p) => sum + (p.total_failures ?? 0), 0);
   const failRate = totalPrints > 0 ? (totalFailures / totalPrints) * 100 : 0;
+
+  if (loadError) return <div className="space-y-4 rounded-xl border bg-card p-6"><p role="alert" className="font-medium">Não foi possível carregar os dados.</p><p className="text-sm text-muted-foreground">{loadError.message}</p><Button variant="outline" onClick={() => refetch()}>Tentar novamente</Button></div>;
 
   return (
     <div className="space-y-6 page-enter">
@@ -205,7 +212,7 @@ export default function Impressoras() {
           </div>
           <div className="flex items-center gap-2 text-muted-foreground">
             <Zap className="h-4 w-4" />
-            <span>Consumo total: <strong className="text-foreground">{printers.reduce((s, p) => s + (p.power_watts ?? 0), 0)}W</strong></span>
+            <span>Potência instalada: <strong className="text-foreground">{printers.reduce((s, p) => s + (p.power_watts ?? 0), 0)}W</strong></span>
           </div>
         </div>
       )}
@@ -279,7 +286,7 @@ export default function Impressoras() {
                     <TableCell>
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                          <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <Button variant="ghost" size="icon" className="h-10 w-10" aria-label="Ações da impressora">
                             <MoreHorizontal className="h-4 w-4" />
                           </Button>
                         </DropdownMenuTrigger>
@@ -293,9 +300,9 @@ export default function Impressoras() {
                           <DropdownMenuSeparator />
                           <DropdownMenuItem
                             className="text-destructive"
-                            onClick={() => deleteMutation.mutate(p.id)}
+                            onClick={() => { if (window.confirm(`Arquivar ${p.name}? O histórico será preservado.`)) deleteMutation.mutate(p.id); }} disabled={deleteMutation.isPending}
                           >
-                            <Trash2 className="h-4 w-4 mr-2" /> Remover
+                            <Trash2 className="h-4 w-4 mr-2" /> Arquivar
                           </DropdownMenuItem>
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -330,21 +337,26 @@ function CreatePrinterDialog({ open, onOpenChange }: { open: boolean; onOpenChan
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!profile) return;
+    if (!profile || loading) return;
+    try {
+      nonNegative(form.power_watts, "Potência"); nonNegative(form.acquisition_cost, "Valor de aquisição");
+      if (nonNegative(form.useful_life_hours, "Vida útil") <= 0) throw new Error("A vida útil deve ser maior que zero.");
+      if (!form.name.trim() || !form.model.trim()) throw new Error("Informe nome e modelo da impressora.");
+    } catch (error) { toast({ variant: "destructive", title: "Confira o cadastro", description: (error as Error).message }); return; }
     setLoading(true);
 
-    const powerWatts = Number(form.power_watts) || 150;
-    const acquisitionCost = Number(form.acquisition_cost) || 0;
-    const usefulLifeHours = Number(form.useful_life_hours) || 10000;
+    const powerWatts = Number(form.power_watts);
+    const acquisitionCost = Number(form.acquisition_cost);
+    const usefulLifeHours = Number(form.useful_life_hours);
     const depreciationPerHour = acquisitionCost > 0 && usefulLifeHours > 0
       ? acquisitionCost / usefulLifeHours
       : 0;
 
     const { error } = await supabase.from("printers").insert({
       tenant_id: profile.tenant_id,
-      name: form.name,
+      name: form.name.trim(),
       brand: form.brand,
-      model: form.model,
+      model: form.model.trim(),
       serial_number: form.serial_number || null,
       ip_address: form.ip_address || null,
       power_watts: powerWatts,
@@ -544,15 +556,21 @@ function EditPrinterDialog({ printer, onClose }: { printer: PrinterRow | null; o
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loading) return;
+    try {
+      nonNegative(form.power_watts, "Potência"); nonNegative(form.acquisition_cost, "Valor de aquisição"); nonNegative(form.maintenance_cost_per_hour, "Custo de manutenção");
+      if (nonNegative(form.useful_life_hours, "Vida útil") <= 0) throw new Error("A vida útil deve ser maior que zero.");
+      if (!form.name.trim() || !form.model.trim()) throw new Error("Informe nome e modelo da impressora.");
+    } catch (error) { toast({ variant: "destructive", title: "Confira o cadastro", description: (error as Error).message }); return; }
     setLoading(true);
 
     const { error } = await supabase.from("printers").update({
-      name: form.name,
+      name: form.name.trim(),
       brand: form.brand,
-      model: form.model,
+      model: form.model.trim(),
       serial_number: form.serial_number || null,
       ip_address: form.ip_address || null,
-      power_watts: Number(form.power_watts) || 150,
+      power_watts: Number(form.power_watts),
       acquisition_cost: acquisitionCost,
       useful_life_hours: usefulLifeHours,
       depreciation_per_hour: depreciationPerHour,
