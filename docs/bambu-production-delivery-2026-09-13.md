@@ -1,10 +1,10 @@
 # Forge & Flow — produção Bambu, arquivos e várias placas
 
-## Escopo e andamento
+## Escopo entregue
 
 Esta entrega continua a [revisão do ERP](erp-review-2026-09-12.md). Reúne os pedidos de integrar produção efetiva, estoque, custos, falhas, identificação de produtos por arquivo/link e projetos com várias placas. O [benchmark](benchmark-print-farm-2026-09-13.md) separa as funções implementadas das sugestões para o próximo ciclo.
 
-Código preparado a partir de `50851c4a01f794de285d677e707be8e640cb7dd4`, na branch `Codex/local-preparacao-bambu-producao-real`. Validação integrada e publicação em andamento; a evidência final será registrada ao concluir. Todo o trabalho usa GitHub e ferramentas diretas de infraestrutura. Nenhuma mensagem ao agente do Lovable.
+Código preparado a partir de `50851c4a01f794de285d677e707be8e640cb7dd4`, na branch `Codex/local-preparacao-bambu-producao-real`, e enviado à `main` no commit `0dc28d99175dd5068c458f13a6bf9ae90281d3c0`. Versão publicada em [elevare3d.lovable.app](https://elevare3d.lovable.app), com conferência dos módulos servidos às 08:44 de 13/09/2026 (Brasília). Todo o trabalho usou GitHub e ferramentas diretas de infraestrutura. Nenhuma mensagem ao agente do Lovable.
 
 ## O que mudou
 
@@ -47,6 +47,7 @@ A rejeição de qualidade pode atingir uma ou várias OIs da mesma tentativa. De
 - `20260913031000_bambu_direct_sync.sql`: consulta cloud com fila interna, atualização do histórico, intervalo mínimo e repetição após falhas. Substitui o agendamento antigo que recebia HTTP 401.
 - `20260913032000_product_plates.sql`: placas, referências agregadas, lotes, pedidos e reimpressões.
 - `20260913033000_bambu_quality.sql`: rejeições, perdas de qualidade e referências líquidas de peças rejeitadas.
+- `20260913034000_bambu_history_window.sql`: aviso de abrangência do histórico baseado no total remoto ou na ausência desse metadado.
 - `BambuProductionPanel`, `ProductPrintSources`, `ProductPrintPlates` e `ProductionPlatePlan`: interfaces de conferência e planejamento.
 - Adaptadores de RPC preservam a instância do cliente Supabase; a correção também alcança produto, pedido, consignação e movimentação de estoque.
 
@@ -54,8 +55,12 @@ A rejeição de qualidade pode atingir uma ou várias OIs da mesma tentativa. De
 
 Comandos reproduzíveis: `npm run typecheck`, `npm test`, `npm run test:database`, `npm run test:bambu` e `npm run build`. Os testes PostgreSQL usam bancos locais isolados, materiais e impressoras fictícios. Não iniciam impressões nem criam transações de teste no ERP real.
 
+Resultado: 212 testes de interface/lógica e 85 cenários PostgreSQL passaram; typecheck e build também. O navegador foi conferido em 320, 390 e 1440 pixels, com dados fictícios, incluindo campos, seletores, erro de apuração, planejamento e rejeição. A simulação não equivale a uma pesagem física nem a um teste de teclado num iPhone real.
+
 Casos cobertos incluem atualização de tarefa em andamento, status ausente, opt-in do fatiador, consumo parcial medido, múltiplos materiais, saldo insuficiente, repetição, rateio entre ordens, dados entre empresas, várias placas, kits, centavos, mudança de produto e revisão dos vínculos.
 
 Antes da aplicação, o banco real tinha 529 tarefas Bambu, uma ordem, um movimento de estoque, seis títulos a pagar e nenhum título a receber. A implantação não deve apurar esse histórico automaticamente nem alterar esses saldos.
 
 As quatro migrations principais foram aplicadas juntas em 13/09/2026. A consulta real respondeu HTTP 200 para os dois dispositivos às 08:37 (Brasília), atualizando 20 tarefas de cada um. A conferência posterior preservou as 529 tarefas, as contagens de ordens/movimentos/títulos e os saldos/custos médios dos oito materiais. Nenhuma tentativa histórica foi contabilizada. O agendamento novo está ativo e o antigo está desativado.
+
+A migration 034 também foi aplicada; o ciclo das 08:43 confirmou HTTP 200 nos dois dispositivos e o aviso de possível histórico incompleto. A publicação direta teve identificador `51f64cd9-d7d6-4a15-88a5-ef2797e3f0e7`. Foram verificados HTTP 200 e os novos contratos/textos nos módulos publicados de Bambu, Produtos e Perdas. A última etapa operacional para cada perfil é confirmar o produto, a placa e os filamentos utilizados antes de habilitar sua apuração automática.

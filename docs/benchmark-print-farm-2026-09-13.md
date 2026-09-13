@@ -2,7 +2,7 @@
 
 Consulta realizada em **13/09/2026**, com leitura das páginas oficiais indicadas ao longo do documento. O objetivo é comparar funções e orientar o desenvolvimento do Forge & Flow. Não há classificação de “melhor sistema”: escopo, hardware, plano contratado e forma de iniciar as impressões mudam o que cada produto consegue fazer. Não foram realizadas assinaturas, demonstrações autenticadas ou medições independentes de desempenho desses serviços.
 
-**Estado da entrega Forge & Flow: implementação principal concluída localmente, com integração final em andamento. Publicação pendente de confirmação.** Histórico Bambu, apuração, fontes e múltiplas placas já têm código e testes locais. A revisão específica de rejeição de qualidade após a apuração está sendo integrada na migration `20260913033000_bambu_quality.sql`. O responsável pela entrega deve registrar a aplicação das migrations, a publicação e a validação no ambiente publicado; este documento não afirma que já aconteceram. O roteiro futuro abaixo exclui funções já entregues no código.
+**Estado da entrega Forge & Flow: implementação validada e publicada em 13/09/2026.** Histórico Bambu, apuração, fontes, múltiplas placas e rejeição de qualidade estão no commit `0dc28d9`, com cinco migrations aplicadas. A sincronização real respondeu HTTP 200 nos dois dispositivos. Os testes e a conferência da publicação estão no [relatório da entrega](bambu-production-delivery-2026-09-13.md). O roteiro futuro abaixo exclui funções já entregues no código.
 
 ## O que as referências documentam
 
@@ -40,7 +40,7 @@ A página oficial também descreve acompanhamento de pedidos, trabalhos prontos 
 
 ## Aplicação à entrega atual do Forge & Flow
 
-As decisões a seguir vêm da revisão do código local. A situação descrita é de implementação e validação local; não comprova disponibilidade no ambiente publicado.
+As decisões a seguir vêm da revisão do código e da implementação desta entrega, com evidências de validação e publicação no relatório vinculado acima.
 
 | Frente | Implementado localmente | Limite que deve aparecer para o operador |
 | --- | --- | --- |
@@ -58,9 +58,9 @@ O histórico remoto, a ordem do ERP e o lançamento de consumo têm identidades 
 
 **O upload não interpreta automaticamente o 3MF, STL ou G-code.** O código atual armazena o arquivo e calcula seu hash; placas, capacidade e estimativas são cadastradas pelo operador. Metadados recebidos no histórico Bambu servem para conferir a associação e a apuração. Eles não representam uma importação completa da geometria, dos objetos, da disposição na mesa ou dos parâmetros internos do arquivo.
 
-**Qualidade está em integração final na migration 033.** Esse ajuste trata separadamente o resultado físico informado pela Bambu e a inspeção: uma impressão concluída pode gerar uma ordem rejeitada depois. A rejeição deve preservar o consumo e o custo da tentativa, sem baixar material novamente, e excluir a parcela rejeitada da referência de produção aceita. A reimpressão conserva a ligação com a tentativa anterior. A aceitação/rejeição parcial entre várias ordens alocadas é distinta de dividir, dentro de uma única ordem, oito peças boas e duas rejeitadas; esse segundo caso permanece no roteiro futuro.
+**Qualidade foi integrada e testada na migration 033.** Esse ajuste trata separadamente o resultado físico informado pela Bambu e a inspeção: uma impressão concluída pode gerar uma ordem rejeitada depois. A rejeição preserva o consumo e o custo da tentativa, sem baixar material novamente, e exclui a parcela rejeitada da referência de produção aceita. A reimpressão conserva a ligação com a tentativa anterior. A aceitação/rejeição parcial entre várias ordens alocadas é distinta de dividir, dentro de uma única ordem, oito peças boas e duas rejeitadas; esse segundo caso permanece no roteiro futuro.
 
-A validação local já cobre pedidos com várias placas, capacidade diferente por placa, custos parciais, kits, fechamento dos centavos, repetição segura de operações, transações revertidas quando uma etapa falha, preservação da fonte pai, edição do produto e o fluxo pedido → ordens → apuração Bambu. A revisão de qualidade requer sua própria conclusão de integração e testes. Esses ensaios usam banco PostgreSQL isolado com dados fictícios; não comprovam autenticação, dados ou comportamento do ambiente publicado.
+A validação local cobre pedidos com várias placas, capacidade diferente por placa, custos parciais, kits, fechamento dos centavos, repetição segura de operações, transações revertidas quando uma etapa falha, preservação da fonte pai, edição do produto, qualidade e o fluxo pedido → ordens → apuração Bambu. Esses ensaios usam banco PostgreSQL isolado com dados fictícios. A conferência real verificou a consulta autorizada das duas impressoras, a preservação dos saldos e a publicação dos módulos; não foram criadas movimentações de teste na empresa.
 
 ## Próximas melhorias, em ordem de prioridade
 
@@ -106,4 +106,4 @@ Evoluir a referência atual de gramas, duração e custo por placa para uma aná
 
 Os indicadores propostos para acompanhar a evolução são: percentual de tarefas com SKU/revisão identificados; percentual de consumo com origem e material confirmados; tempo até resolver uma pendência; divergência entre bobina pesada e saldo registrado; peças boas/rejeitadas por tentativa; diferença entre custo previsto e apurado; e entregas atrasadas por indisponibilidade de máquina ou material. As metas devem ser definidas após medir a operação; este documento não inventa percentuais de ganho.
 
-A próxima decisão técnica depende da conclusão da integração, da publicação verificada e da observação da operação. Tarefas completas, falhas, repetição de eventos e dados insuficientes já fazem parte dos ensaios locais; o ciclo publicado deve confirmar esses comportamentos antes de ampliar a automação.
+A próxima decisão técnica depende da observação da operação com os vínculos de produto, placa e filamento conferidos. Tarefas completas, falhas, repetição de eventos e dados insuficientes fazem parte dos ensaios locais; os primeiros apontamentos da operação devem ser conciliados com material e peças físicos antes de ampliar a automação.
