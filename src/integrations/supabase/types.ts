@@ -10,14 +10,12 @@ export type Database = {
   // Allows to automatically instantiate createClient with right options
   // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
   __InternalSupabase: {
-    PostgrestVersion: "14.4"
+    PostgrestVersion: "14.5"
   }
   public: {
     Tables: {
       accounts_payable: {
         Row: {
-          origin_id: string | null
-          origin_type: string | null
           account_id: string | null
           amount: number
           amount_paid: number
@@ -32,6 +30,8 @@ export type Database = {
           installment_number: number | null
           installment_total: number | null
           notes: string | null
+          origin_id: string | null
+          origin_type: string | null
           parent_id: string | null
           payment_date: string | null
           payment_method_id: string | null
@@ -41,8 +41,6 @@ export type Database = {
           vendor_id: string | null
         }
         Insert: {
-          origin_id?: string | null
-          origin_type?: string | null
           account_id?: string | null
           amount: number
           amount_paid?: number
@@ -57,6 +55,8 @@ export type Database = {
           installment_number?: number | null
           installment_total?: number | null
           notes?: string | null
+          origin_id?: string | null
+          origin_type?: string | null
           parent_id?: string | null
           payment_date?: string | null
           payment_method_id?: string | null
@@ -66,8 +66,6 @@ export type Database = {
           vendor_id?: string | null
         }
         Update: {
-          origin_id?: string | null
-          origin_type?: string | null
           account_id?: string | null
           amount?: number
           amount_paid?: number
@@ -82,6 +80,8 @@ export type Database = {
           installment_number?: number | null
           installment_total?: number | null
           notes?: string | null
+          origin_id?: string | null
+          origin_type?: string | null
           parent_id?: string | null
           payment_date?: string | null
           payment_method_id?: string | null
@@ -502,6 +502,420 @@ export type Database = {
           },
         ]
       }
+      bambu_production_allocations: {
+        Row: {
+          job_id: string
+          quantity: number
+          task_id: string
+          tenant_id: string
+        }
+        Insert: {
+          job_id: string
+          quantity: number
+          task_id: string
+          tenant_id: string
+        }
+        Update: {
+          job_id?: string
+          quantity?: number
+          task_id?: string
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bambu_production_allocations_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: true
+            referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bambu_production_allocations_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "bambu_production_records"
+            referencedColumns: ["task_id"]
+          },
+          {
+            foreignKeyName: "bambu_production_allocations_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bambu_production_profiles: {
+        Row: {
+          auto_enabled: boolean
+          auto_from: string
+          bambu_device_id: string
+          created_by: string | null
+          extras_cost: number
+          id: string
+          labor_cost: number
+          materials: Json
+          overhead: number
+          plate_id: string | null
+          product_id: string
+          project_key: string
+          tenant_id: string
+          units: number
+          updated_at: string
+          use_slicer: boolean
+        }
+        Insert: {
+          auto_enabled?: boolean
+          auto_from?: string
+          bambu_device_id: string
+          created_by?: string | null
+          extras_cost?: number
+          id?: string
+          labor_cost?: number
+          materials: Json
+          overhead?: number
+          plate_id?: string | null
+          product_id: string
+          project_key: string
+          tenant_id: string
+          units: number
+          updated_at?: string
+          use_slicer?: boolean
+        }
+        Update: {
+          auto_enabled?: boolean
+          auto_from?: string
+          bambu_device_id?: string
+          created_by?: string | null
+          extras_cost?: number
+          id?: string
+          labor_cost?: number
+          materials?: Json
+          overhead?: number
+          plate_id?: string | null
+          product_id?: string
+          project_key?: string
+          tenant_id?: string
+          units?: number
+          updated_at?: string
+          use_slicer?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bambu_production_profiles_bambu_device_id_fkey"
+            columns: ["bambu_device_id"]
+            isOneToOne: false
+            referencedRelation: "bambu_devices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bambu_production_profiles_plate_id_fkey"
+            columns: ["plate_id"]
+            isOneToOne: false
+            referencedRelation: "product_print_plates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bambu_production_profiles_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bambu_production_profiles_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bambu_production_records: {
+        Row: {
+          allocations: Json
+          auto_enabled: boolean
+          consumption_source: string | null
+          created_at: string
+          elapsed_seconds: number | null
+          energy_cost: number | null
+          extras_cost: number | null
+          job_ids: string[] | null
+          labor_cost: number | null
+          machine_cost: number | null
+          material_cost: number | null
+          materials: Json | null
+          outcome: string
+          overhead: number | null
+          plate_id: string | null
+          posted_at: string | null
+          problem: string | null
+          product_id: string | null
+          profile_id: string | null
+          quality_loss_cost: number
+          quality_loss_grams: number
+          quality_rejected_units: number
+          quality_state: string
+          source_snapshot: Json | null
+          state: string
+          task_id: string
+          tenant_id: string
+          total_cost: number | null
+          total_grams: number | null
+          units: number | null
+          updated_at: string
+          use_slicer: boolean
+        }
+        Insert: {
+          allocations?: Json
+          auto_enabled?: boolean
+          consumption_source?: string | null
+          created_at?: string
+          elapsed_seconds?: number | null
+          energy_cost?: number | null
+          extras_cost?: number | null
+          job_ids?: string[] | null
+          labor_cost?: number | null
+          machine_cost?: number | null
+          material_cost?: number | null
+          materials?: Json | null
+          outcome?: string
+          overhead?: number | null
+          plate_id?: string | null
+          posted_at?: string | null
+          problem?: string | null
+          product_id?: string | null
+          profile_id?: string | null
+          quality_loss_cost?: number
+          quality_loss_grams?: number
+          quality_rejected_units?: number
+          quality_state?: string
+          source_snapshot?: Json | null
+          state?: string
+          task_id: string
+          tenant_id: string
+          total_cost?: number | null
+          total_grams?: number | null
+          units?: number | null
+          updated_at?: string
+          use_slicer?: boolean
+        }
+        Update: {
+          allocations?: Json
+          auto_enabled?: boolean
+          consumption_source?: string | null
+          created_at?: string
+          elapsed_seconds?: number | null
+          energy_cost?: number | null
+          extras_cost?: number | null
+          job_ids?: string[] | null
+          labor_cost?: number | null
+          machine_cost?: number | null
+          material_cost?: number | null
+          materials?: Json | null
+          outcome?: string
+          overhead?: number | null
+          plate_id?: string | null
+          posted_at?: string | null
+          problem?: string | null
+          product_id?: string | null
+          profile_id?: string | null
+          quality_loss_cost?: number
+          quality_loss_grams?: number
+          quality_rejected_units?: number
+          quality_state?: string
+          source_snapshot?: Json | null
+          state?: string
+          task_id?: string
+          tenant_id?: string
+          total_cost?: number | null
+          total_grams?: number | null
+          units?: number | null
+          updated_at?: string
+          use_slicer?: boolean
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bambu_production_records_plate_id_fkey"
+            columns: ["plate_id"]
+            isOneToOne: false
+            referencedRelation: "product_print_plates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bambu_production_records_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bambu_production_records_profile_id_fkey"
+            columns: ["profile_id"]
+            isOneToOne: false
+            referencedRelation: "bambu_production_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bambu_production_records_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: true
+            referencedRelation: "bambu_production_review"
+            referencedColumns: ["task_id"]
+          },
+          {
+            foreignKeyName: "bambu_production_records_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: true
+            referencedRelation: "bambu_tasks"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bambu_production_records_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bambu_quality_rejections: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          elapsed_seconds: number
+          grams: number
+          job_id: string
+          material_cost: number
+          quantity: number
+          reason: string
+          task_id: string
+          tenant_id: string
+          total_cost: number
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          elapsed_seconds: number
+          grams: number
+          job_id: string
+          material_cost: number
+          quantity: number
+          reason: string
+          task_id: string
+          tenant_id: string
+          total_cost: number
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          elapsed_seconds?: number
+          grams?: number
+          job_id?: string
+          material_cost?: number
+          quantity?: number
+          reason?: string
+          task_id?: string
+          tenant_id?: string
+          total_cost?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bambu_quality_rejections_job_id_fkey"
+            columns: ["job_id"]
+            isOneToOne: true
+            referencedRelation: "jobs"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bambu_quality_rejections_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "bambu_production_records"
+            referencedColumns: ["task_id"]
+          },
+          {
+            foreignKeyName: "bambu_quality_rejections_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bambu_sync_state: {
+        Row: {
+          bambu_device_id: string
+          connection_id: string
+          history_may_be_truncated: boolean
+          http_status: number | null
+          last_attempt_at: string | null
+          last_error: string | null
+          last_error_code: string | null
+          last_requested_at: string | null
+          last_success_at: string | null
+          next_attempt_at: string | null
+          status: string
+          tasks_received: number
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          bambu_device_id: string
+          connection_id: string
+          history_may_be_truncated?: boolean
+          http_status?: number | null
+          last_attempt_at?: string | null
+          last_error?: string | null
+          last_error_code?: string | null
+          last_requested_at?: string | null
+          last_success_at?: string | null
+          next_attempt_at?: string | null
+          status?: string
+          tasks_received?: number
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          bambu_device_id?: string
+          connection_id?: string
+          history_may_be_truncated?: boolean
+          http_status?: number | null
+          last_attempt_at?: string | null
+          last_error?: string | null
+          last_error_code?: string | null
+          last_requested_at?: string | null
+          last_success_at?: string | null
+          next_attempt_at?: string | null
+          status?: string
+          tasks_received?: number
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bambu_sync_state_bambu_device_id_fkey"
+            columns: ["bambu_device_id"]
+            isOneToOne: true
+            referencedRelation: "bambu_devices"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bambu_sync_state_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "bambu_connections"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bambu_sync_state_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       bambu_tasks: {
         Row: {
           bambu_device_id: string | null
@@ -820,8 +1234,8 @@ export type Database = {
       }
       consignment_locations: {
         Row: {
-          commission_percent: number
           address: string | null
+          commission_percent: number
           contact_name: string | null
           created_at: string
           customer_id: string | null
@@ -835,8 +1249,8 @@ export type Database = {
           updated_at: string
         }
         Insert: {
-          commission_percent?: number
           address?: string | null
+          commission_percent?: number
           contact_name?: string | null
           created_at?: string
           customer_id?: string | null
@@ -850,8 +1264,8 @@ export type Database = {
           updated_at?: string
         }
         Update: {
-          commission_percent?: number
           address?: string | null
+          commission_percent?: number
           contact_name?: string | null
           created_at?: string
           customer_id?: string | null
@@ -1048,16 +1462,12 @@ export type Database = {
       }
       inventory_items: {
         Row: {
-          material_code: string | null
-          material_description: string | null
-          color_code: string | null
-          color_hex: string | null
-          material_identified_at: string | null
-          material_identified_by: string | null
           avg_cost: number
           brand: string | null
           category: string
           color: string | null
+          color_code: string | null
+          color_hex: string | null
           created_at: string
           current_stock: number
           diameter: number | null
@@ -1066,6 +1476,10 @@ export type Database = {
           is_active: boolean
           last_cost: number | null
           loss_coefficient: number
+          material_code: string | null
+          material_description: string | null
+          material_identified_at: string | null
+          material_identified_by: string | null
           material_type: string | null
           min_stock: number | null
           name: string
@@ -1078,16 +1492,12 @@ export type Database = {
           vendor_id: string | null
         }
         Insert: {
-          material_code?: string | null
-          material_description?: string | null
-          color_code?: string | null
-          color_hex?: string | null
-          material_identified_at?: string | null
-          material_identified_by?: string | null
           avg_cost?: number
           brand?: string | null
           category?: string
           color?: string | null
+          color_code?: string | null
+          color_hex?: string | null
           created_at?: string
           current_stock?: number
           diameter?: number | null
@@ -1096,6 +1506,10 @@ export type Database = {
           is_active?: boolean
           last_cost?: number | null
           loss_coefficient?: number
+          material_code?: string | null
+          material_description?: string | null
+          material_identified_at?: string | null
+          material_identified_by?: string | null
           material_type?: string | null
           min_stock?: number | null
           name: string
@@ -1108,16 +1522,12 @@ export type Database = {
           vendor_id?: string | null
         }
         Update: {
-          material_code?: string | null
-          material_description?: string | null
-          color_code?: string | null
-          color_hex?: string | null
-          material_identified_at?: string | null
-          material_identified_by?: string | null
           avg_cost?: number
           brand?: string | null
           category?: string
           color?: string | null
+          color_code?: string | null
+          color_hex?: string | null
           created_at?: string
           current_stock?: number
           diameter?: number | null
@@ -1126,6 +1536,10 @@ export type Database = {
           is_active?: boolean
           last_cost?: number | null
           loss_coefficient?: number
+          material_code?: string | null
+          material_description?: string | null
+          material_identified_at?: string | null
+          material_identified_by?: string | null
           material_type?: string | null
           min_stock?: number | null
           name?: string
@@ -1138,6 +1552,13 @@ export type Database = {
           vendor_id?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "inventory_items_material_code_fkey"
+            columns: ["material_code"]
+            isOneToOne: false
+            referencedRelation: "material_code_catalog"
+            referencedColumns: ["code"]
+          },
           {
             foreignKeyName: "inventory_items_parent_id_fkey"
             columns: ["parent_id"]
@@ -1271,29 +1692,16 @@ export type Database = {
       }
       jobs: {
         Row: {
-          production_snapshot: Json | null
-          production_snapshot_origin: string | null
-          production_snapshot_at: string | null
-          print_file_snapshot: Json | null
-          actual_time_seconds: number | null
-          actual_material_usage: Json | null
-          produced_quantity: number | null
-          print_plate_id: string | null
-          planned_quantity: number
-          inventory_posted_at: string | null
-          secondary_actual_grams: number | null
-          order_item_id: string | null
-          order_unit_index: number | null
-          est_extras_cost: number | null
-          actual_extras_cost: number | null
-          creation_request_id: string | null
           actual_energy_cost: number | null
+          actual_extras_cost: number | null
           actual_grams: number | null
           actual_labor_cost: number | null
           actual_machine_cost: number | null
           actual_material_cost: number | null
+          actual_material_usage: Json | null
           actual_overhead: number | null
           actual_time_minutes: number | null
+          actual_time_seconds: number | null
           actual_total_cost: number | null
           bambu_subtask_id: string | null
           bambu_task_id: string | null
@@ -1301,9 +1709,11 @@ export type Database = {
           completed_at: string | null
           created_at: string
           created_by: string | null
+          creation_request_id: string | null
           description: string | null
           due_date: string | null
           est_energy_cost: number | null
+          est_extras_cost: number | null
           est_grams: number | null
           est_labor_cost: number | null
           est_machine_cost: number | null
@@ -1313,20 +1723,31 @@ export type Database = {
           est_total_cost: number | null
           failure_reason: string | null
           id: string
+          inventory_posted_at: string | null
           margin_percent: number | null
           material_id: string | null
           name: string
           num_colors: number
           order_id: string | null
+          order_item_id: string | null
+          order_unit_index: number | null
+          planned_quantity: number
           post_minutes: number | null
           prep_minutes: number | null
+          print_file_snapshot: Json | null
+          print_plate_id: string | null
           printer_id: string | null
           priority: number
+          produced_quantity: number | null
           product_id: string | null
+          production_snapshot: Json | null
+          production_snapshot_at: string | null
+          production_snapshot_origin: string | null
           purge_waste_grams: number | null
           qc_minutes: number | null
           reprint_of: string | null
           sale_price: number | null
+          secondary_actual_grams: number | null
           secondary_material_id: string | null
           started_at: string | null
           status: Database["public"]["Enums"]["job_status"]
@@ -1335,29 +1756,16 @@ export type Database = {
           waste_grams: number | null
         }
         Insert: {
-          production_snapshot?: Json | null
-          production_snapshot_origin?: string | null
-          production_snapshot_at?: string | null
-          print_file_snapshot?: Json | null
-          actual_time_seconds?: number | null
-          actual_material_usage?: Json | null
-          produced_quantity?: number | null
-          print_plate_id?: string | null
-          planned_quantity?: number
-          inventory_posted_at?: string | null
-          secondary_actual_grams?: number | null
-          order_item_id?: string | null
-          order_unit_index?: number | null
-          est_extras_cost?: number | null
-          actual_extras_cost?: number | null
-          creation_request_id?: string | null
           actual_energy_cost?: number | null
+          actual_extras_cost?: number | null
           actual_grams?: number | null
           actual_labor_cost?: number | null
           actual_machine_cost?: number | null
           actual_material_cost?: number | null
+          actual_material_usage?: Json | null
           actual_overhead?: number | null
           actual_time_minutes?: number | null
+          actual_time_seconds?: number | null
           actual_total_cost?: number | null
           bambu_subtask_id?: string | null
           bambu_task_id?: string | null
@@ -1365,9 +1773,11 @@ export type Database = {
           completed_at?: string | null
           created_at?: string
           created_by?: string | null
+          creation_request_id?: string | null
           description?: string | null
           due_date?: string | null
           est_energy_cost?: number | null
+          est_extras_cost?: number | null
           est_grams?: number | null
           est_labor_cost?: number | null
           est_machine_cost?: number | null
@@ -1377,20 +1787,31 @@ export type Database = {
           est_total_cost?: number | null
           failure_reason?: string | null
           id?: string
+          inventory_posted_at?: string | null
           margin_percent?: number | null
           material_id?: string | null
           name: string
           num_colors?: number
           order_id?: string | null
+          order_item_id?: string | null
+          order_unit_index?: number | null
+          planned_quantity?: number
           post_minutes?: number | null
           prep_minutes?: number | null
+          print_file_snapshot?: Json | null
+          print_plate_id?: string | null
           printer_id?: string | null
           priority?: number
+          produced_quantity?: number | null
           product_id?: string | null
+          production_snapshot?: Json | null
+          production_snapshot_at?: string | null
+          production_snapshot_origin?: string | null
           purge_waste_grams?: number | null
           qc_minutes?: number | null
           reprint_of?: string | null
           sale_price?: number | null
+          secondary_actual_grams?: number | null
           secondary_material_id?: string | null
           started_at?: string | null
           status?: Database["public"]["Enums"]["job_status"]
@@ -1399,29 +1820,16 @@ export type Database = {
           waste_grams?: number | null
         }
         Update: {
-          production_snapshot?: Json | null
-          production_snapshot_origin?: string | null
-          production_snapshot_at?: string | null
-          print_file_snapshot?: Json | null
-          actual_time_seconds?: number | null
-          actual_material_usage?: Json | null
-          produced_quantity?: number | null
-          print_plate_id?: string | null
-          planned_quantity?: number
-          inventory_posted_at?: string | null
-          secondary_actual_grams?: number | null
-          order_item_id?: string | null
-          order_unit_index?: number | null
-          est_extras_cost?: number | null
-          actual_extras_cost?: number | null
-          creation_request_id?: string | null
           actual_energy_cost?: number | null
+          actual_extras_cost?: number | null
           actual_grams?: number | null
           actual_labor_cost?: number | null
           actual_machine_cost?: number | null
           actual_material_cost?: number | null
+          actual_material_usage?: Json | null
           actual_overhead?: number | null
           actual_time_minutes?: number | null
+          actual_time_seconds?: number | null
           actual_total_cost?: number | null
           bambu_subtask_id?: string | null
           bambu_task_id?: string | null
@@ -1429,9 +1837,11 @@ export type Database = {
           completed_at?: string | null
           created_at?: string
           created_by?: string | null
+          creation_request_id?: string | null
           description?: string | null
           due_date?: string | null
           est_energy_cost?: number | null
+          est_extras_cost?: number | null
           est_grams?: number | null
           est_labor_cost?: number | null
           est_machine_cost?: number | null
@@ -1441,20 +1851,31 @@ export type Database = {
           est_total_cost?: number | null
           failure_reason?: string | null
           id?: string
+          inventory_posted_at?: string | null
           margin_percent?: number | null
           material_id?: string | null
           name?: string
           num_colors?: number
           order_id?: string | null
+          order_item_id?: string | null
+          order_unit_index?: number | null
+          planned_quantity?: number
           post_minutes?: number | null
           prep_minutes?: number | null
+          print_file_snapshot?: Json | null
+          print_plate_id?: string | null
           printer_id?: string | null
           priority?: number
+          produced_quantity?: number | null
           product_id?: string | null
+          production_snapshot?: Json | null
+          production_snapshot_at?: string | null
+          production_snapshot_origin?: string | null
           purge_waste_grams?: number | null
           qc_minutes?: number | null
           reprint_of?: string | null
           sale_price?: number | null
+          secondary_actual_grams?: number | null
           secondary_material_id?: string | null
           started_at?: string | null
           status?: Database["public"]["Enums"]["job_status"]
@@ -1475,6 +1896,20 @@ export type Database = {
             columns: ["order_id"]
             isOneToOne: false
             referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "jobs_order_item_id_fkey"
+            columns: ["order_item_id"]
+            isOneToOne: false
+            referencedRelation: "order_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "jobs_print_plate_id_fkey"
+            columns: ["print_plate_id"]
+            isOneToOne: false
+            referencedRelation: "product_print_plates"
             referencedColumns: ["id"]
           },
           {
@@ -1514,48 +1949,113 @@ export type Database = {
           },
         ]
       }
+      makerworld_import_requests: {
+        Row: {
+          completed_at: string | null
+          design_id: string
+          expires_at: string
+          message: string | null
+          payload: Json | null
+          request_id: number
+          requested_at: string
+          requested_by: string
+          source_url: string
+          status: string
+          tenant_id: string
+        }
+        Insert: {
+          completed_at?: string | null
+          design_id: string
+          expires_at?: string
+          message?: string | null
+          payload?: Json | null
+          request_id: number
+          requested_at?: string
+          requested_by: string
+          source_url: string
+          status?: string
+          tenant_id: string
+        }
+        Update: {
+          completed_at?: string | null
+          design_id?: string
+          expires_at?: string
+          message?: string | null
+          payload?: Json | null
+          request_id?: number
+          requested_at?: string
+          requested_by?: string
+          source_url?: string
+          status?: string
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "makerworld_import_requests_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      material_code_catalog: {
+        Row: {
+          code: string
+          label: string
+        }
+        Insert: {
+          code: string
+          label: string
+        }
+        Update: {
+          code?: string
+          label?: string
+        }
+        Relationships: []
+      }
       order_items: {
         Row: {
-          quoted_estimated_cost: number | null
-          source_quote_item_id: string | null
-          product_snapshot: Json | null
           created_at: string
           description: string
           id: string
           notes: string | null
           order_id: string
           product_id: string | null
+          product_snapshot: Json | null
           quantity: number
+          quoted_estimated_cost: number | null
+          source_quote_item_id: string | null
           tenant_id: string
           total: number
           unit_price: number
         }
         Insert: {
-          quoted_estimated_cost?: number | null
-          source_quote_item_id?: string | null
-          product_snapshot?: Json | null
           created_at?: string
           description: string
           id?: string
           notes?: string | null
           order_id: string
           product_id?: string | null
+          product_snapshot?: Json | null
           quantity?: number
+          quoted_estimated_cost?: number | null
+          source_quote_item_id?: string | null
           tenant_id: string
           total?: number
           unit_price?: number
         }
         Update: {
-          quoted_estimated_cost?: number | null
-          source_quote_item_id?: string | null
-          product_snapshot?: Json | null
           created_at?: string
           description?: string
           id?: string
           notes?: string | null
           order_id?: string
           product_id?: string | null
+          product_snapshot?: Json | null
           quantity?: number
+          quoted_estimated_cost?: number | null
+          source_quote_item_id?: string | null
           tenant_id?: string
           total?: number
           unit_price?: number
@@ -1576,6 +2076,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "order_items_source_quote_item_id_fkey"
+            columns: ["source_quote_item_id"]
+            isOneToOne: true
+            referencedRelation: "sales_quote_items"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "order_items_tenant_id_fkey"
             columns: ["tenant_id"]
             isOneToOne: false
@@ -1586,9 +2093,6 @@ export type Database = {
       }
       orders: {
         Row: {
-          requires_material_recipe: boolean
-          source_quote_id: string | null
-          shipping: number
           approved_at: string | null
           code: string
           created_at: string
@@ -1599,15 +2103,15 @@ export type Database = {
           id: string
           notes: string | null
           payment_due_date: string | null
+          requires_material_recipe: boolean
+          shipping: number
+          source_quote_id: string | null
           status: string
           tenant_id: string
           total: number
           updated_at: string
         }
         Insert: {
-          requires_material_recipe?: boolean
-          source_quote_id?: string | null
-          shipping?: number
           approved_at?: string | null
           code: string
           created_at?: string
@@ -1618,15 +2122,15 @@ export type Database = {
           id?: string
           notes?: string | null
           payment_due_date?: string | null
+          requires_material_recipe?: boolean
+          shipping?: number
+          source_quote_id?: string | null
           status?: string
           tenant_id: string
           total?: number
           updated_at?: string
         }
         Update: {
-          requires_material_recipe?: boolean
-          source_quote_id?: string | null
-          shipping?: number
           approved_at?: string | null
           code?: string
           created_at?: string
@@ -1637,6 +2141,9 @@ export type Database = {
           id?: string
           notes?: string | null
           payment_due_date?: string | null
+          requires_material_recipe?: boolean
+          shipping?: number
+          source_quote_id?: string | null
           status?: string
           tenant_id?: string
           total?: number
@@ -1648,6 +2155,13 @@ export type Database = {
             columns: ["customer_id"]
             isOneToOne: false
             referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "orders_source_quote_id_fkey"
+            columns: ["source_quote_id"]
+            isOneToOne: true
+            referencedRelation: "sales_quotes"
             referencedColumns: ["id"]
           },
           {
@@ -1780,6 +2294,129 @@ export type Database = {
           },
         ]
       }
+      product_material_recipe_lines: {
+        Row: {
+          grams: number
+          id: string
+          item_id: string
+          item_snapshot: Json
+          recipe_version_id: string
+          tenant_id: string
+        }
+        Insert: {
+          grams: number
+          id?: string
+          item_id: string
+          item_snapshot: Json
+          recipe_version_id: string
+          tenant_id: string
+        }
+        Update: {
+          grams?: number
+          id?: string
+          item_id?: string
+          item_snapshot?: Json
+          recipe_version_id?: string
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "product_material_recipe_lines_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: false
+            referencedRelation: "inventory_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "product_material_recipe_lines_recipe_version_id_fkey"
+            columns: ["recipe_version_id"]
+            isOneToOne: false
+            referencedRelation: "product_material_recipe_versions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "product_material_recipe_lines_recipe_version_id_fkey"
+            columns: ["recipe_version_id"]
+            isOneToOne: false
+            referencedRelation: "product_material_requirements"
+            referencedColumns: ["recipe_version_id"]
+          },
+          {
+            foreignKeyName: "product_material_recipe_lines_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      product_material_recipe_versions: {
+        Row: {
+          basis: string
+          created_at: string
+          created_by: string
+          id: string
+          is_current: boolean
+          non_material_cost_per_unit: number | null
+          notes: string | null
+          plate_id: string | null
+          product_id: string
+          tenant_id: string
+          units_per_print: number
+          version: number
+        }
+        Insert: {
+          basis: string
+          created_at?: string
+          created_by: string
+          id?: string
+          is_current?: boolean
+          non_material_cost_per_unit?: number | null
+          notes?: string | null
+          plate_id?: string | null
+          product_id: string
+          tenant_id: string
+          units_per_print: number
+          version: number
+        }
+        Update: {
+          basis?: string
+          created_at?: string
+          created_by?: string
+          id?: string
+          is_current?: boolean
+          non_material_cost_per_unit?: number | null
+          notes?: string | null
+          plate_id?: string | null
+          product_id?: string
+          tenant_id?: string
+          units_per_print?: number
+          version?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "product_material_recipe_versions_plate_id_fkey"
+            columns: ["plate_id"]
+            isOneToOne: false
+            referencedRelation: "product_print_plates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "product_material_recipe_versions_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "product_material_recipe_versions_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       product_photos: {
         Row: {
           caption: string | null
@@ -1825,20 +2462,207 @@ export type Database = {
           },
         ]
       }
+      product_print_plates: {
+        Row: {
+          actual_cost_per_unit: number | null
+          actual_grams_per_unit: number | null
+          actual_sample_units: number | null
+          actual_seconds_per_unit: number | null
+          actual_source: string | null
+          actual_updated_at: string | null
+          created_at: string
+          est_cost_per_unit: number | null
+          est_grams: number | null
+          est_time_seconds: number | null
+          id: string
+          is_active: boolean
+          label: string
+          material_id: string | null
+          model_id: string | null
+          plate_index: number
+          printer_id: string | null
+          product_id: string
+          profile_id: string | null
+          source_id: string | null
+          tenant_id: string
+          units_per_plate: number
+          updated_at: string
+        }
+        Insert: {
+          actual_cost_per_unit?: number | null
+          actual_grams_per_unit?: number | null
+          actual_sample_units?: number | null
+          actual_seconds_per_unit?: number | null
+          actual_source?: string | null
+          actual_updated_at?: string | null
+          created_at?: string
+          est_cost_per_unit?: number | null
+          est_grams?: number | null
+          est_time_seconds?: number | null
+          id?: string
+          is_active?: boolean
+          label: string
+          material_id?: string | null
+          model_id?: string | null
+          plate_index: number
+          printer_id?: string | null
+          product_id: string
+          profile_id?: string | null
+          source_id?: string | null
+          tenant_id: string
+          units_per_plate?: number
+          updated_at?: string
+        }
+        Update: {
+          actual_cost_per_unit?: number | null
+          actual_grams_per_unit?: number | null
+          actual_sample_units?: number | null
+          actual_seconds_per_unit?: number | null
+          actual_source?: string | null
+          actual_updated_at?: string | null
+          created_at?: string
+          est_cost_per_unit?: number | null
+          est_grams?: number | null
+          est_time_seconds?: number | null
+          id?: string
+          is_active?: boolean
+          label?: string
+          material_id?: string | null
+          model_id?: string | null
+          plate_index?: number
+          printer_id?: string | null
+          product_id?: string
+          profile_id?: string | null
+          source_id?: string | null
+          tenant_id?: string
+          units_per_plate?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "product_print_plates_material_id_fkey"
+            columns: ["material_id"]
+            isOneToOne: false
+            referencedRelation: "inventory_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "product_print_plates_printer_id_fkey"
+            columns: ["printer_id"]
+            isOneToOne: false
+            referencedRelation: "printers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "product_print_plates_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "product_print_plates_source_id_fkey"
+            columns: ["source_id"]
+            isOneToOne: false
+            referencedRelation: "product_print_sources"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "product_print_plates_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      product_print_sources: {
+        Row: {
+          created_at: string
+          design_id: string | null
+          file_name: string | null
+          file_path: string | null
+          file_sha256: string | null
+          id: string
+          instance_id: string | null
+          is_active: boolean
+          label: string
+          model_id: string | null
+          plate_index: number | null
+          product_id: string
+          profile_id: string | null
+          source_url: string | null
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          design_id?: string | null
+          file_name?: string | null
+          file_path?: string | null
+          file_sha256?: string | null
+          id?: string
+          instance_id?: string | null
+          is_active?: boolean
+          label?: string
+          model_id?: string | null
+          plate_index?: number | null
+          product_id: string
+          profile_id?: string | null
+          source_url?: string | null
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          design_id?: string | null
+          file_name?: string | null
+          file_path?: string | null
+          file_sha256?: string | null
+          id?: string
+          instance_id?: string | null
+          is_active?: boolean
+          label?: string
+          model_id?: string | null
+          plate_index?: number | null
+          product_id?: string
+          profile_id?: string | null
+          source_url?: string | null
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "product_print_sources_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "product_print_sources_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       products: {
         Row: {
-          actual_print_grams_per_unit: number | null
-          actual_print_seconds_per_unit: number | null
           actual_print_cost_per_unit: number | null
+          actual_print_grams_per_unit: number | null
           actual_print_sample_units: number | null
-          actual_print_updated_at: string | null
+          actual_print_seconds_per_unit: number | null
           actual_print_source: string | null
+          actual_print_updated_at: string | null
           category: string
           cost_estimate: number | null
           created_at: string
           description: string | null
           est_grams: number | null
           est_time_minutes: number | null
+          external_import: Json | null
           extras: Json
           id: string
           is_active: boolean
@@ -1856,18 +2680,19 @@ export type Database = {
           updated_at: string
         }
         Insert: {
-          actual_print_grams_per_unit?: number | null
-          actual_print_seconds_per_unit?: number | null
           actual_print_cost_per_unit?: number | null
+          actual_print_grams_per_unit?: number | null
           actual_print_sample_units?: number | null
-          actual_print_updated_at?: string | null
+          actual_print_seconds_per_unit?: number | null
           actual_print_source?: string | null
+          actual_print_updated_at?: string | null
           category?: string
           cost_estimate?: number | null
           created_at?: string
           description?: string | null
           est_grams?: number | null
           est_time_minutes?: number | null
+          external_import?: Json | null
           extras?: Json
           id?: string
           is_active?: boolean
@@ -1885,18 +2710,19 @@ export type Database = {
           updated_at?: string
         }
         Update: {
-          actual_print_grams_per_unit?: number | null
-          actual_print_seconds_per_unit?: number | null
           actual_print_cost_per_unit?: number | null
+          actual_print_grams_per_unit?: number | null
           actual_print_sample_units?: number | null
-          actual_print_updated_at?: string | null
+          actual_print_seconds_per_unit?: number | null
           actual_print_source?: string | null
+          actual_print_updated_at?: string | null
           category?: string
           cost_estimate?: number | null
           created_at?: string
           description?: string | null
           est_grams?: number | null
           est_time_minutes?: number | null
+          external_import?: Json | null
           extras?: Json
           id?: string
           is_active?: boolean
@@ -1973,7 +2799,6 @@ export type Database = {
       }
       purchase_order_items: {
         Row: {
-          stock_quantity: number | null
           cfop: string | null
           created_at: string
           description: string
@@ -1983,12 +2808,12 @@ export type Database = {
           notes: string | null
           purchase_order_id: string
           quantity: number
+          stock_quantity: number | null
           tenant_id: string
           total: number
           unit_price: number
         }
         Insert: {
-          stock_quantity?: number | null
           cfop?: string | null
           created_at?: string
           description: string
@@ -1998,12 +2823,12 @@ export type Database = {
           notes?: string | null
           purchase_order_id: string
           quantity?: number
+          stock_quantity?: number | null
           tenant_id: string
           total?: number
           unit_price?: number
         }
         Update: {
-          stock_quantity?: number | null
           cfop?: string | null
           created_at?: string
           description?: string
@@ -2013,6 +2838,7 @@ export type Database = {
           notes?: string | null
           purchase_order_id?: string
           quantity?: number
+          stock_quantity?: number | null
           tenant_id?: string
           total?: number
           unit_price?: number
@@ -2121,6 +2947,179 @@ export type Database = {
             columns: ["vendor_id"]
             isOneToOne: false
             referencedRelation: "vendors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sales_quote_items: {
+        Row: {
+          description: string
+          estimated_total_cost: number | null
+          estimated_unit_cost: number | null
+          id: string
+          line_index: number
+          notes: string | null
+          product_id: string
+          product_snapshot: Json
+          quantity: number
+          quote_id: string
+          tenant_id: string
+          total: number | null
+          unit_price: number | null
+        }
+        Insert: {
+          description: string
+          estimated_total_cost?: number | null
+          estimated_unit_cost?: number | null
+          id?: string
+          line_index: number
+          notes?: string | null
+          product_id: string
+          product_snapshot: Json
+          quantity: number
+          quote_id: string
+          tenant_id: string
+          total?: number | null
+          unit_price?: number | null
+        }
+        Update: {
+          description?: string
+          estimated_total_cost?: number | null
+          estimated_unit_cost?: number | null
+          id?: string
+          line_index?: number
+          notes?: string | null
+          product_id?: string
+          product_snapshot?: Json
+          quantity?: number
+          quote_id?: string
+          tenant_id?: string
+          total?: number | null
+          unit_price?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_quote_items_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_quote_items_quote_id_fkey"
+            columns: ["quote_id"]
+            isOneToOne: false
+            referencedRelation: "sales_quotes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_quote_items_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sales_quotes: {
+        Row: {
+          approved_at: string | null
+          code: string
+          converted_at: string | null
+          created_at: string
+          created_by: string | null
+          customer_id: string | null
+          customer_snapshot: Json | null
+          discount: number
+          due_date: string | null
+          id: string
+          issued_at: string | null
+          notes: string | null
+          order_id: string | null
+          payment_due_date: string | null
+          rejected_at: string | null
+          rejection_reason: string | null
+          revision: number
+          shipping: number
+          status: string
+          subtotal: number | null
+          tenant_id: string
+          total: number | null
+          updated_at: string
+          valid_until: string | null
+        }
+        Insert: {
+          approved_at?: string | null
+          code: string
+          converted_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          customer_id?: string | null
+          customer_snapshot?: Json | null
+          discount?: number
+          due_date?: string | null
+          id?: string
+          issued_at?: string | null
+          notes?: string | null
+          order_id?: string | null
+          payment_due_date?: string | null
+          rejected_at?: string | null
+          rejection_reason?: string | null
+          revision?: number
+          shipping?: number
+          status?: string
+          subtotal?: number | null
+          tenant_id: string
+          total?: number | null
+          updated_at?: string
+          valid_until?: string | null
+        }
+        Update: {
+          approved_at?: string | null
+          code?: string
+          converted_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          customer_id?: string | null
+          customer_snapshot?: Json | null
+          discount?: number
+          due_date?: string | null
+          id?: string
+          issued_at?: string | null
+          notes?: string | null
+          order_id?: string | null
+          payment_due_date?: string | null
+          rejected_at?: string | null
+          rejection_reason?: string | null
+          revision?: number
+          shipping?: number
+          status?: string
+          subtotal?: number | null
+          tenant_id?: string
+          total?: number | null
+          updated_at?: string
+          valid_until?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_quotes_customer_id_fkey"
+            columns: ["customer_id"]
+            isOneToOne: false
+            referencedRelation: "customers"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_quotes_order_id_fkey"
+            columns: ["order_id"]
+            isOneToOne: true
+            referencedRelation: "orders"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_quotes_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
             referencedColumns: ["id"]
           },
         ]
@@ -2245,37 +3244,172 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      bambu_production_review: {
+        Row: {
+          auto_enabled: boolean | null
+          bambu_task_id: string | null
+          completed_units: number | null
+          consumption_source: string | null
+          design_title: string | null
+          device_name: string | null
+          elapsed_seconds: number | null
+          ended_at: string | null
+          outcome: string | null
+          planned_grams: number | null
+          plate_id: string | null
+          plate_index: number | null
+          plate_label: string | null
+          posted_at: string | null
+          problem: string | null
+          product_id: string | null
+          product_name: string | null
+          quality_loss_cost: number | null
+          quality_loss_grams: number | null
+          quality_rejected_units: number | null
+          quality_state: string | null
+          raw_status: string | null
+          started_at: string | null
+          state: string | null
+          task_id: string | null
+          tenant_id: string | null
+          total_cost: number | null
+          units: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bambu_production_records_plate_id_fkey"
+            columns: ["plate_id"]
+            isOneToOne: false
+            referencedRelation: "product_print_plates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bambu_production_records_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "bambu_tasks_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      product_material_requirements: {
+        Row: {
+          basis: string | null
+          color: string | null
+          color_code: string | null
+          color_hex: string | null
+          cost_known: boolean | null
+          cost_per_print: number | null
+          cost_per_unit: number | null
+          current_stock: number | null
+          grams: number | null
+          grams_per_print: number | null
+          grams_per_unit: number | null
+          item_id: string | null
+          line_id: string | null
+          material_code: string | null
+          material_description: string | null
+          material_ready: boolean | null
+          material_type: string | null
+          name: string | null
+          non_material_cost_per_unit: number | null
+          plate_id: string | null
+          product_id: string | null
+          recipe_version: number | null
+          recipe_version_id: string | null
+          tenant_id: string | null
+          unit: string | null
+          unit_cost: number | null
+          units_per_print: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "inventory_items_material_code_fkey"
+            columns: ["material_code"]
+            isOneToOne: false
+            referencedRelation: "material_code_catalog"
+            referencedColumns: ["code"]
+          },
+          {
+            foreignKeyName: "product_material_recipe_lines_item_id_fkey"
+            columns: ["item_id"]
+            isOneToOne: false
+            referencedRelation: "inventory_items"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "product_material_recipe_versions_plate_id_fkey"
+            columns: ["plate_id"]
+            isOneToOne: false
+            referencedRelation: "product_print_plates"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "product_material_recipe_versions_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "product_material_recipe_versions_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Functions: {
-
-      product_material_recipe_catalog: { Args: {  }; Returns: Json }
-      save_product_print_source: { Args: { p_source_id: string | null; p_product_id: string; p_source: Json }; Returns: string }
-      archive_product_print_source: { Args: { p_source_id: string }; Returns: undefined }
-      bind_product_print_source: { Args: { p_source_id: string; p_task_id: string }; Returns: string }
-      save_product_print_plate: { Args: { p_plate_id: string | null; p_product_id: string; p_source_id: string | null; p_plate: Json }; Returns: string }
-      archive_product_print_plate: { Args: { p_plate_id: string }; Returns: undefined }
-      bind_product_print_plate: { Args: { p_plate_id: string; p_task_id: string }; Returns: string }
-      plan_product_plates: { Args: { p_product_id: string; p_quantity: number; p_request_id: string }; Returns: string[] }
-      request_bambu_sync: { Args: {  }; Returns: Json }
+      account_bambu_production: {
+        Args: {
+          p_extras_cost: number
+          p_labor_cost: number
+          p_materials: Json
+          p_overhead: number
+          p_reason: string
+          p_request_id: string
+          p_seconds: number
+          p_task_id: string
+          p_units: number
+        }
+        Returns: Json
+      }
+      adjust_consignment_stock: {
+        Args: {
+          p_expected_quantity: number
+          p_item_id: string
+          p_new_quantity: number
+          p_reason: string
+          p_request_id: string
+        }
+        Returns: string
+      }
+      archive_product_print_plate: {
+        Args: { p_plate_id: string }
+        Returns: undefined
+      }
+      archive_product_print_source: {
+        Args: { p_source_id: string }
+        Returns: undefined
+      }
       bambu_production_preview: { Args: { p_task_id: string }; Returns: Json }
-      configure_bambu_production: { Args: { p_task_id: string; p_product_id: string; p_units: number; p_materials: Json; p_auto: boolean; p_use_slicer: boolean; p_labor_cost: number; p_overhead: number; p_extras_cost: number; p_allocations: Json; p_plate_id?: string | null }; Returns: string }
-      account_bambu_production: { Args: { p_task_id: string; p_materials: Json | null; p_seconds: number | null; p_units: number | null; p_labor_cost: number | null; p_overhead: number | null; p_extras_cost: number | null; p_reason: string | null; p_request_id: string }; Returns: Json }
-      register_bank_transaction: { Args: { p_bank_account_id: string; p_type: string; p_amount: number; p_date: string; p_description: string; p_request_id: string }; Returns: string }
-      settle_financial_title: { Args: { p_kind: string; p_title_id: string; p_amount: number; p_date: string; p_bank_account_id: string; p_request_id: string }; Returns: string }
-      create_purchase_order: { Args: { p_order: Json; p_items: Json; p_installments: Json; p_request_id: string }; Returns: string }
-      receive_purchase_order: { Args: { p_order_id: string; p_received_date: string }; Returns: string }
-      cancel_purchase_order: { Args: { p_order_id: string }; Returns: string }
-      save_sales_order: { Args: { p_order_id: string | null; p_order: Json; p_items: Json; p_request_id: string }; Returns: string }
-      transition_sales_order: { Args: { p_order_id: string; p_status: string }; Returns: string }
-      save_product_with_photos: { Args: { p_product_id: string | null; p_product: Json; p_photos: Json; p_request_id: string }; Returns: string }
-      post_inventory_movement: { Args: { p_movement: Json; p_request_id: string }; Returns: string }
-      create_consignment_location: { Args: { p_location: Json; p_customer: Json | null; p_request_id: string }; Returns: string }
-      post_consignment_movement: { Args: { p_location_id: string; p_type: string; p_items: Json; p_notes: string | null; p_request_id: string }; Returns: string }
-      adjust_consignment_stock: { Args: { p_item_id: string; p_new_quantity: number; p_expected_quantity: number; p_reason: string; p_request_id: string }; Returns: string }
-      disconnect_bambu_connection: { Args: { p_connection_id: string }; Returns: undefined }
-      transition_job: { Args: { p_job_id: string; p_status: string; p_actual_grams?: number | null; p_actual_time_minutes?: number | null; p_waste_grams?: number | null; p_failure_reason?: string | null; p_printer_id?: string | null; p_secondary_actual_grams?: number | null; p_actual_labor_cost?: number | null; p_actual_overhead?: number | null; p_actual_extras_cost?: number | null }; Returns: string }
-      create_jobs: { Args: { p_jobs: Json; p_request_id: string }; Returns: string[] }
+      bind_product_print_plate: {
+        Args: { p_plate_id: string; p_task_id: string }
+        Returns: string
+      }
+      bind_product_print_source: {
+        Args: { p_source_id: string; p_task_id: string }
+        Returns: string
+      }
       bootstrap_tenant: {
         Args: {
           _display_name: string
@@ -2284,6 +3418,54 @@ export type Database = {
         }
         Returns: string
       }
+      cancel_purchase_order: { Args: { p_order_id: string }; Returns: string }
+      configure_bambu_production: {
+        Args: {
+          p_allocations: Json
+          p_auto: boolean
+          p_extras_cost: number
+          p_labor_cost: number
+          p_materials: Json
+          p_overhead: number
+          p_plate_id?: string
+          p_product_id: string
+          p_task_id: string
+          p_units: number
+          p_use_slicer: boolean
+        }
+        Returns: string
+      }
+      convert_sales_quote: {
+        Args: { p_quote_id: string; p_request_id: string }
+        Returns: string
+      }
+      create_consignment_location: {
+        Args: { p_customer: Json; p_location: Json; p_request_id: string }
+        Returns: string
+      }
+      create_jobs: {
+        Args: { p_jobs: Json; p_request_id: string }
+        Returns: string[]
+      }
+      create_purchase_order: {
+        Args: {
+          p_installments: Json
+          p_items: Json
+          p_order: Json
+          p_request_id: string
+        }
+        Returns: string
+      }
+      disconnect_bambu_connection: {
+        Args: { p_connection_id: string }
+        Returns: undefined
+      }
+      erp_can_write: { Args: { financial?: boolean }; Returns: boolean }
+      erp_print_file_is_referenced: {
+        Args: { p_path: string }
+        Returns: boolean
+      }
+      get_makerworld_import: { Args: { p_request_id: number }; Returns: Json }
       get_user_tenant_id: { Args: never; Returns: string }
       has_role: {
         Args: {
@@ -2291,6 +3473,144 @@ export type Database = {
           _user_id: string
         }
         Returns: boolean
+      }
+      job_production_review: { Args: { p_job_id: string }; Returns: Json }
+      plan_product_plates: {
+        Args: { p_product_id: string; p_quantity: number; p_request_id: string }
+        Returns: string[]
+      }
+      post_consignment_movement: {
+        Args: {
+          p_items: Json
+          p_location_id: string
+          p_notes: string
+          p_request_id: string
+          p_type: string
+        }
+        Returns: string
+      }
+      post_inventory_movement: {
+        Args: { p_movement: Json; p_request_id: string }
+        Returns: string
+      }
+      prepare_job_print_file: {
+        Args: {
+          p_job_id: string
+          p_printer_id: string
+          p_reason: string
+          p_request_id: string
+          p_source_id: string
+        }
+        Returns: string
+      }
+      product_material_recipe_catalog: { Args: never; Returns: Json }
+      product_material_recipe_preview: {
+        Args: { p_product_id: string }
+        Returns: Json
+      }
+      receive_purchase_order: {
+        Args: { p_order_id: string; p_received_date: string }
+        Returns: string
+      }
+      register_bank_transaction: {
+        Args: {
+          p_amount: number
+          p_bank_account_id: string
+          p_date: string
+          p_description: string
+          p_request_id: string
+          p_type: string
+        }
+        Returns: string
+      }
+      request_bambu_sync: { Args: never; Returns: Json }
+      request_makerworld_import: { Args: { p_url: string }; Returns: number }
+      save_product_material_recipe: {
+        Args: {
+          p_basis: string
+          p_lines: Json
+          p_non_material_cost_per_unit?: number
+          p_notes: string
+          p_plate_id: string
+          p_product_id: string
+          p_request_id: string
+        }
+        Returns: string
+      }
+      save_product_print_plate: {
+        Args: {
+          p_plate: Json
+          p_plate_id: string
+          p_product_id: string
+          p_source_id: string
+        }
+        Returns: string
+      }
+      save_product_print_source: {
+        Args: { p_product_id: string; p_source: Json; p_source_id: string }
+        Returns: string
+      }
+      save_product_with_photos: {
+        Args: {
+          p_photos: Json
+          p_product: Json
+          p_product_id: string
+          p_request_id: string
+        }
+        Returns: string
+      }
+      save_sales_order: {
+        Args: {
+          p_items: Json
+          p_order: Json
+          p_order_id: string
+          p_request_id: string
+        }
+        Returns: string
+      }
+      save_sales_quote: {
+        Args: {
+          p_items: Json
+          p_quote: Json
+          p_quote_id: string
+          p_request_id: string
+        }
+        Returns: string
+      }
+      settle_financial_title: {
+        Args: {
+          p_amount: number
+          p_bank_account_id: string
+          p_date: string
+          p_kind: string
+          p_request_id: string
+          p_title_id: string
+        }
+        Returns: string
+      }
+      transition_job: {
+        Args: {
+          p_actual_extras_cost?: number
+          p_actual_grams?: number
+          p_actual_labor_cost?: number
+          p_actual_overhead?: number
+          p_actual_time_minutes?: number
+          p_failure_reason?: string
+          p_job_id: string
+          p_printer_id?: string
+          p_secondary_actual_grams?: number
+          p_status: string
+          p_waste_grams?: number
+        }
+        Returns: string
+      }
+      transition_sales_order: {
+        Args: { p_order_id: string; p_status: string }
+        Returns: string
+      }
+      transition_sales_quote: {
+        Args: { p_quote_id: string; p_reason?: string; p_status: string }
+        Returns: string
       }
     }
     Enums: {
@@ -2349,12 +3669,12 @@ export type Tables<
   DefaultSchemaTableNameOrOptions extends
     | keyof (DefaultSchema["Tables"] & DefaultSchema["Views"])
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof (DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"] &
         DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Views"])
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -2378,11 +3698,11 @@ export type TablesInsert<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -2403,11 +3723,11 @@ export type TablesUpdate<
   DefaultSchemaTableNameOrOptions extends
     | keyof DefaultSchema["Tables"]
     | { schema: keyof DatabaseWithoutInternals },
-  TableName extends DefaultSchemaTableNameOrOptions extends {
+  TableName extends (DefaultSchemaTableNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaTableNameOrOptions["schema"]]["Tables"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaTableNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -2428,11 +3748,11 @@ export type Enums<
   DefaultSchemaEnumNameOrOptions extends
     | keyof DefaultSchema["Enums"]
     | { schema: keyof DatabaseWithoutInternals },
-  EnumName extends DefaultSchemaEnumNameOrOptions extends {
+  EnumName extends (DefaultSchemaEnumNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[DefaultSchemaEnumNameOrOptions["schema"]]["Enums"]
-    : never = never,
+    : never) = never,
 > = DefaultSchemaEnumNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
@@ -2445,11 +3765,11 @@ export type CompositeTypes<
   PublicCompositeTypeNameOrOptions extends
     | keyof DefaultSchema["CompositeTypes"]
     | { schema: keyof DatabaseWithoutInternals },
-  CompositeTypeName extends PublicCompositeTypeNameOrOptions extends {
+  CompositeTypeName extends (PublicCompositeTypeNameOrOptions extends {
     schema: keyof DatabaseWithoutInternals
   }
     ? keyof DatabaseWithoutInternals[PublicCompositeTypeNameOrOptions["schema"]]["CompositeTypes"]
-    : never = never,
+    : never) = never,
 > = PublicCompositeTypeNameOrOptions extends {
   schema: keyof DatabaseWithoutInternals
 }
