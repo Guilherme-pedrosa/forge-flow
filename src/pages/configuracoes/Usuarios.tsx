@@ -192,6 +192,39 @@ export default function UsuariosPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Dialog Nova Senha */}
+      <Dialog open={!!pwTarget} onOpenChange={(v) => { if (!v) setPwTarget(null); }}>
+        <DialogContent className="w-[95vw] sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Definir nova senha</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <p className="text-sm text-muted-foreground">
+              A nova senha vale imediatamente para <span className="font-medium text-foreground">{pwTarget?.display_name}</span>.
+            </p>
+            <div className="space-y-1.5">
+              <Label htmlFor="new-password">Nova senha</Label>
+              <div className="relative">
+                <Input id="new-password" type={showNewPw ? "text" : "password"} placeholder="Mínimo 8 caracteres"
+                  autoComplete="new-password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
+                <button type="button" className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  onClick={() => setShowNewPw(!showNewPw)}>
+                  {showNewPw ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPwTarget(null)}>Cancelar</Button>
+            <Button disabled={newPassword.length < 8 || resetPassword.isPending}
+              onClick={() => pwTarget && resetPassword.mutate({ user_id: pwTarget.user_id, password: newPassword })}>
+              {resetPassword.isPending && <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />}
+              Salvar senha
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
