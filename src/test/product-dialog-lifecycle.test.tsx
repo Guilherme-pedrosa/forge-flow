@@ -72,7 +72,7 @@ describe("fechamento do editor do produto", () => {
   it("salvar a fonte encerra seu rascunho e libera o cadastro", async () => {
     mount(); const dialog = await openProduct();
     fireEvent.click(await within(dialog).findByRole("button", { name: "Adicionar fonte" }));
-    fireEvent.change(within(dialog).getByLabelText("Link do modelo ou perfil"), { target: { value: "https://makerworld.com/en/models/123" } });
+    fireEvent.change(within(dialog).getByLabelText("Link do modelo ou perfil"), { target: { value: "https://models.example.test/modelo.3mf" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "Salvar fonte" }));
     await waitFor(() => expect(within(dialog).queryByRole("button", { name: "Cancelar fonte" })).not.toBeInTheDocument());
     await waitFor(() => expect(within(dialog).getByRole("button", { name: "Salvar" })).toBeEnabled());
@@ -101,7 +101,7 @@ describe("fechamento do editor do produto", () => {
   });
   it("fechar receita aninhada preserva o produto aberto e não herda a trava de edição", async () => {
     mock.hasPlate = true; mount(); const productDialog = await openProduct();
-    fireEvent.click(await within(productDialog).findByRole("button", { name: "Materiais e cores desta placa" }));
+    fireEvent.click(await within(productDialog).findByRole("button", { name: "Preparar materiais e rendimento" }));
     const recipeDialog = await screen.findByRole("dialog", { name: "Receita da placa" });
     fireEvent.click(await within(recipeDialog).findByRole("button", { name: "Definir composição" }));
     fireEvent.click(within(recipeDialog).getByRole("button", { name: "Fechar" }));

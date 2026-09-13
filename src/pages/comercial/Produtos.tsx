@@ -435,11 +435,11 @@ export default function Produtos() {
       setPhotoUrl(images[0] || ""); setExtraPhotos(images.slice(1));
       setNotes(`Importado do MakerWorld — ID: ${model.id}
 ${selected?.name ? `Perfil: ${selected.name}
-` : ""}Especificações por placa e filamentos disponíveis na referência importada. Confirme a composição com materiais e cores do estoque.`);
+` : ""}Placas, pesos, tempos e filamentos importados. Confirme o rendimento e os materiais do estoque para calcular o custo por produto.`);
     }
     setMakerOptionOpen(false); setMakerModelToImport(null); setBambuImportOpen(false);
     if (!updating) setCreateOpen(true);
-    toast({ title: updating ? "Referência atualizada para revisão" : "Modelo importado para revisão", description: `${images.length} fotos e ${profiles.length} perfis. Salve o cadastro para guardar os detalhes e o link.` });
+    toast({ title: updating ? "Dados carregados para revisão" : "Modelo carregado", description: `${images.length} fotos e ${variant?.plate_details?.length || 0} placas nesta configuração. Salve para preparar os materiais e calcular o custo.` });
   };
 
   const loadMakerWorld = async (url: string, applyToEditor = false) => {
@@ -639,12 +639,22 @@ ${selected?.name ? `Perfil: ${selected.name}
       p_photos: photos,
     };
     productRequest.current = orderRequest(productRequest.current, JSON.stringify(payload));
-    const { error } = await rpc("save_product_with_photos", { ...payload, p_request_id: productRequest.current.id });
+    const { data, error } = await rpc("save_product_with_photos", { ...payload, p_request_id: productRequest.current.id });
     if (error) throw new Error(error.message);
+    if (!data) throw new Error("O salvamento não foi confirmado. Atualize a lista antes de repetir.");
+    return { id: data, imported: !!externalImport };
   };
   const createMut = useMutation({
     mutationFn: () => saveProduct(null),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["products"] }); setCreateOpen(false); resetForm(); toast({ title: "Produto criado" }); },
+    onSuccess: async result => {
+      setCreateOpen(false); resetForm();
+      await qc.invalidateQueries({ queryKey: ["products"] });
+      if (result.imported) {
+        const refreshed = await refetchProducts(); const product = refreshed.data?.find(product => product.id === result.id);
+        if (product) openEdit(product);
+        toast({ title: "Produto e placas cadastrados", description: "Confira os materiais e o rendimento das placas para concluir a precificação." });
+      } else toast({ title: "Produto criado" });
+    },
     onError: (error: Error) => toast({ title: "Não foi possível salvar", description: error.message, variant: "destructive" }),
   });
   const updateMut = useMutation({

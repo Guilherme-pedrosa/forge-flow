@@ -32,6 +32,23 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("product plate configuration", () => {
+  it("exibe placas importadas em preparação com tempo, filamentos e custos por impressão, preservando rendimento nulo ao editar", async () => {
+    mock.plates = [{ ...base, id: "plate-1", plate_index: 1, label: "Base importada", units_per_plate: null, actual_sample_units: 0, est_grams: 125, est_time_seconds: 3600, imported_filaments: [{ type: "PLA", color: "#FF0000", grams: 100 }, { type: "PETG", color: "#0000FF", grams: 25 }] }];
+    mock.rpc.mockImplementation(async (name: string) => ({ data: name === "product_print_plate_preparation" ? { material_cost_per_print: 12.5, energy_cost_per_print: 1, machine_cost_per_print: 2, known_cost_per_print: 15.5, missing: ["Confirme o rendimento da placa"] } : "plate-1", error: null }));
+    mount();
+    expect(await screen.findByText("Placa 1 · Base importada")).toBeInTheDocument();
+    expect(screen.getByText("Em preparação · rendimento por impressão pendente")).toBeInTheDocument();
+    expect(screen.getByText("125 g")).toBeInTheDocument(); expect(screen.getByText("1h")).toBeInTheDocument();
+    expect(screen.getByText("PLA · #FF0000")).toBeInTheDocument(); expect(screen.getByText("PETG · #0000FF")).toBeInTheDocument();
+    expect(screen.getByText("100 g")).toBeInTheDocument(); expect(screen.getByText("25 g")).toBeInTheDocument();
+    expect(await screen.findByText(/R\$\s15,50/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Editar placa 1" }));
+    expect(screen.getByLabelText("Unidades do produto atendidas por impressão desta placa")).toHaveValue(null);
+    expect(screen.getByLabelText("Peso estimado por impressão (g)")).toHaveValue(125);
+    expect(screen.getByLabelText("Tempo estimado por impressão (min)")).toHaveValue(60);
+    fireEvent.click(screen.getByRole("button", { name: "Salvar placa" }));
+    await waitFor(() => expect(mock.rpc).toHaveBeenCalledWith("save_product_print_plate", expect.objectContaining({ p_plate: expect.objectContaining({ units_per_plate: null, est_grams: 125, est_time_seconds: 3600 }) })));
+  });
   it("loads observed costs even when the planner cached a narrower plate projection", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
     client.setQueryData(["product_print_plates", "tenant-1", "product-1"], mock.plates.map(plate => ({
@@ -44,7 +61,7 @@ describe("product plate configuration", () => {
   });
   it("shows base plus lid as an eighteen-real product", async () => {
     mount();
-    expect(await screen.findByText(/Produto completo · 2 placas ativas/)).toBeInTheDocument();
+    expect(await screen.findByText(/2 placas · .* por conjunto de impressões/)).toBeInTheDocument();
     expect(screen.getByText(/R\$\s18,00/)).toBeInTheDocument();
     expect(screen.getByText("20min")).toBeInTheDocument();
     expect(screen.queryByText(/R\$\s9,00/)).not.toBeInTheDocument();
@@ -80,6 +97,7 @@ describe("product plate configuration", () => {
   });
   it("binds the selected execution to the lid plate, not just to its source or product", async () => {
     mount();
+    const details = await screen.findAllByText("Custos, impressora e histórico"); fireEvent.click(details[1]);
     const bindButtons = await screen.findAllByRole("button", { name: "Vincular impressão desta placa" });
     fireEvent.click(bindButtons[1]);
     await screen.findByRole("option", { name: /Tampa do produto.*#101/ });

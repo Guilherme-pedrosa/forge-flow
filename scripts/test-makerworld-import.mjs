@@ -48,7 +48,7 @@ const reference=()=>({schema_version:1,provider:'makerworld',id:'1169522',design
   tags:['Organizer'],categories:[],files:[],accessories:[],documentation:[],warnings:[],
   profiles:[{...variant({profile_id:'241221531',weight_grams:100,time_seconds:6000,plates:3,plate_details:[{index:1,filaments:[],images:[],objects:[],warnings:[]}],filaments:[{type:'PLA',color:'Black'}]}),instance_id:'1177581',name:'All parts',variants:[variant({profile_id:'241221532',printer_model:'Other printer'})]},
     {...variant({profile_id:'241221540'}),instance_id:'1177582',name:'Second profile',variants:[]}],
-  selected_profile_id:'1177581',selected_variant_profile_id:'241221532',metadata_complete:true});
+  selected_profile_id:'1177581',selected_variant_profile_id:null,metadata_complete:true});
 const save=(product,photos=images,p=null,requestId=next())=>scalar('SELECT save_product_with_photos($1,$2::jsonb,$3::jsonb,$4)',[p,JSON.stringify(product),JSON.stringify(photos),requestId]);
 const draft=()=>({name:'Imported product',material_id:null,est_grams:100,est_time_minutes:100,prints_per_plate:1,cost_estimate:null,sale_price:null,external_import:reference()});
 async function test(name,fn){try{await fn();passed++;console.log('PASS '+name);}catch(error){console.error('FAIL '+name+': '+error.message+' '+(error.where??''));throw error;}}
@@ -147,7 +147,7 @@ await test('Missing schema or normalized arrays, null entries and nested incompl
 await test('A selected printer variant must belong to the selected public profile, including its base variant',async()=>{
   const before=await scalar('SELECT count(*)::integer FROM products');
   for(const selected_variant_profile_id of ['241221540','foreign-variant'])await assert.rejects(save({...draft(),external_import:{...reference(),selected_variant_profile_id}}),/não pertence/);
-  await assert.rejects(save({...draft(),external_import:{...reference(),selected_profile_id:null,selected_instance_id:null}}),/não pertence/);
+  await assert.rejects(save({...draft(),external_import:{...reference(),selected_profile_id:null,selected_instance_id:null,selected_variant_profile_id:'241221532'}}),/não pertence/);
   assert.equal(await scalar('SELECT count(*)::integer FROM products'),before);
   const base={...reference(),selected_variant_profile_id:'241221531'};const p=await save({...draft(),external_import:base});assert.deepEqual(await scalar('SELECT external_import FROM products WHERE id=$1',[p]),base);
 });

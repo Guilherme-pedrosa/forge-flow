@@ -11,6 +11,7 @@ export function MakerWorldPrinterOption({ profile, value, onChange }: { profile?
   if (!profile) return null;
   return <div className="space-y-2"><label htmlFor="maker-printer-variant" className="text-sm font-medium">Configuração da impressora</label>
     <select id="maker-printer-variant" className="min-h-11 w-full min-w-0 rounded-lg border bg-background px-3 text-base" value={value} onChange={event => onChange(event.target.value)}>
+      <option value="" disabled>Selecione a impressora e o bico</option>
       {[profile, ...profile.variants].map((variant, index) => <option key={index} value={index}>{variant.printer_model || "Impressora não informada"}{variant.nozzle_diameter ? ` · bico ${variant.nozzle_diameter} mm` : ""} · {grams(variant.weight_grams)} · {duration(variant.time_seconds)}</option>)}
     </select>
     <p className="text-xs text-muted-foreground">Use a configuração correspondente à impressora que produzirá o item.</p>

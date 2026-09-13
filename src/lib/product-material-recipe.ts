@@ -1,5 +1,5 @@
 export type RecipeBasis = "per_unit" | "per_print";
-export type RecipeDraftLine = { item_id: string; grams: string };
+export type RecipeDraftLine = { item_id: string; grams: string; imported_reference?: string; imported_match?: "unique" | "ambiguous" | "missing" };
 export type MaterialRecipeLine = {
   item_id: string; name: string; unit: string; material_code: string | null;
   color: string | null; color_code: string | null; color_hex: string | null;
@@ -16,7 +16,7 @@ export type ProductMaterialSnapshot = {
   schema_version: number;
   product: { id: string; name: string; prints_per_plate: number };
   recipe: MaterialRecipe | null;
-  plates: { id: string; label: string | null; units_per_plate: number; recipe: MaterialRecipe | null }[];
+  plates: { id: string; label: string | null; units_per_plate: number | null; recipe: MaterialRecipe | null; imported_filaments?: unknown; imported_plate_metadata?: unknown }[];
   components: { product_id: string; quantity: number }[];
   complete: boolean; missing: string[]; cost_per_unit: number | null;
 };
@@ -49,9 +49,9 @@ export function recipeNonMaterialCost(value: string): number {
 }
 
 /** Changing the displayed basis preserves the physical recipe, including distinct colors. */
-export function convertRecipeBasis(lines: RecipeDraftLine[], from: RecipeBasis, to: RecipeBasis, units: number): RecipeDraftLine[] {
+export function convertRecipeBasis(lines: RecipeDraftLine[], from: RecipeBasis, to: RecipeBasis, units: number | null): RecipeDraftLine[] {
   if (from === to) return lines;
-  if (!Number.isInteger(units) || units < 1 || units > 10_000) throw new Error("Defina a quantidade de unidades atendidas por impressão antes da composição.");
+  if (units == null || !Number.isInteger(units) || units < 1 || units > 10_000) throw new Error("Defina a quantidade de unidades atendidas por impressão antes da composição.");
   return lines.map(line => {
     if (!line.grams.trim()) return line;
     const value = decimal(line.grams, "os gramas");

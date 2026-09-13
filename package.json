@@ -15,7 +15,8 @@
     "test:materials": "node scripts/test-product-material-recipe.mjs && node scripts/test-sales-quotes.mjs && node scripts/test-production-files.mjs && node scripts/test-bambu-material-recipe.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
     "test:watch": "vitest",
-    "test:makerworld": "node scripts/test-makerworld-import.mjs"
+    "test:makerworld": "node scripts/test-makerworld-import.mjs",
+    "test:print-import": "node scripts/test-operational-print-import.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

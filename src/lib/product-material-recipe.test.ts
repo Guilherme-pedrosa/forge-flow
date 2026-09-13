@@ -16,6 +16,7 @@ describe("composição explícita por unidade ou impressão", () => {
   it("impede duplicação do mesmo estoque e capacidade inexistente", () => {
     expect(() => prepareRecipeLines([{ item_id: "red", grams: "10" }, { item_id: "red", grams: "5" }])).toThrow("repetido");
     expect(() => convertRecipeBasis([], "per_unit", "per_print", 0)).toThrow("quantidade");
+    expect(() => convertRecipeBasis([{ item_id: "red", grams: "100" }], "per_print", "per_unit", null)).toThrow("quantidade");
   });
   it("zero nos demais custos exige informação explícita", () => {
     expect(recipeNonMaterialCost("0")).toBe(0);

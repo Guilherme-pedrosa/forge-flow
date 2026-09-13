@@ -32,4 +32,8 @@ describe("a product requiring several printing plates", () => {
     expect(() => optionalPlateNumber("-1", "Peso")).toThrow();
     expect(() => optionalPlateNumber("Infinity", "Peso")).toThrow();
   });
+  it("retains unknown yield without inventing a one-piece plate or complete unit totals", () => {
+    expect(sumProductPlateReferences([plate({ units_per_plate: null, actual_sample_units: 0, est_grams: 100, est_time_seconds: 3600 })]))
+      .toMatchObject({ count: 1, unconfirmedUnits: 1, grams: null, seconds: null, cost: null, incomplete: true, printGrams: 100, printSeconds: 3600 });
+  });
 });
