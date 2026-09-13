@@ -38,17 +38,20 @@ As páginas agora carregam sob demanda. A estrutura de navegação e os controle
 | PostgreSQL isolado com PGlite | 36 cenários passaram, carregando as migrations e exercitando transações, reversão por erro, repetição segura, permissões, isolamento entre empresas, centavos, custos, kits e consignado. |
 | Typecheck | `npm run typecheck` passou, usando `tsconfig.app.json`. |
 | Build | `npm run build` passou, com separação de páginas em arquivos carregados sob demanda. |
+| Funções internas | `deno check` passou para `create-user` e `bambu-cloud-sync`; isso valida o código, não a publicação no servidor. |
 | Interface local | Verificada com dados fictícios em larguras de 320, 390 e 1440 px. Os fluxos observados de pagamento e formulários de produto e pedido não apresentaram transbordamento horizontal. |
 
 Os testes não criaram dados reais na operação. PGlite usa PostgreSQL isolado; os cenários de repetição e saldo desatualizado não equivalem a um ensaio de carga com vários usuários simultâneos. A inspeção visual local não comprova autenticação na instância publicada, funcionamento em aparelho físico ou comportamento de todas as combinações de teclado e navegador móvel.
 
 ## Estado de publicação
 
-**Preparado; verificar publicação no histórico Git e no banco.** Este relatório registra a entrega local validada. O estado efetivo do frontend e das seis migrations deve ser confirmado no histórico da publicação e no banco de destino, sem inferi-lo a partir do build local.
+**Frontend e banco publicados.** O commit `df84292b1d150e883d40d0c90558046a38c8073e` foi enviado por avanço normal para `main`, e o conector confirmou o mesmo SHA no Lovable. A publicação direta `b1b56d64-24b0-480a-b835-d2a2ca8eefde` entregou a interface em https://d-craft-os.lovable.app: título, tela de login, CSS atualizado e páginas carregadas sob demanda foram conferidos na URL pública.
+
+As seis migrations foram aplicadas juntas, em uma transação, e registradas no histórico do Supabase. A conferência antes/depois preservou 55 produtos, 1 job, 10 pedidos, 8 compras, 6 títulos a pagar, nenhum recebível, nenhuma transação bancária e 1 movimentação de estoque. Totais de saldos, quantidades de estoque e valores de títulos também permaneceram iguais. Uma leitura sob o papel autenticado confirmou acesso da empresa às tabelas e funções, com leitura da credencial Bambu negada. Nenhuma compra, impressão ou baixa fictícia foi criada no banco real.
 
 As migrations em `supabase/migrations/20260913010000_erp_integrity.sql` até `20260913015000_erp_job_creation.sql` cobrem integridade e financeiro, produção, vendas, consignado, proteções de escrita e criação de ordens. Os novos fluxos do frontend dependem dessas operações no banco; não existe fallback para as gravações independentes anteriores.
 
-As correções de `create-user` e das funções Bambu estão no código. A publicação dessas edge functions não foi comprovada por este trabalho, pois não havia uma ferramenta direta de deployment disponível. A criação de usuário inclui validação e compensação para evitar identidade órfã quando perfil ou papel falham; isso depende da atualização da função no servidor.
+As correções de `create-user` e `bambu-cloud-sync` estão no GitHub, mas a publicação dessas edge functions ficou pendente: as ferramentas disponíveis não expõem essa operação direta e o painel não ofereceu controle de deploy. Após publicar o frontend, o Cloud ainda mostrava ambas as funções com atualização em 15/03/2026, e `create-user` continuava com 24 deployments. A criação de usuário inclui validação e compensação para evitar identidade órfã quando perfil ou papel falham; isso depende da atualização da função no servidor. Nenhuma mensagem foi enviada ao agente do Lovable.
 
 Na inspeção do ambiente, o cron `bambu-hourly-sync`, com ação `all` e credencial anônima, apresentou **seis respostas HTTP 401**. A sincronização automática permanece uma pendência; a opção de sincronização manual foi mantida. A existência da opção não comprova sucesso de uma sincronização autenticada em produção.
 
