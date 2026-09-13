@@ -27,8 +27,8 @@ type FileMetadata = { file_path: string; file_name: string; file_sha256: string 
 const taskStatus: Record<string, string> = { "1": "Em andamento", "2": "Concluída", "3": "Falha / interrupção", "4": "Em andamento" };
 const dateLabel = (value: string | null) => value && Number.isFinite(new Date(value).getTime()) ? new Date(value).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }) : "Data não informada";
 
-export default function ProductPrintSources({ productId, tenantId, onBusyChange }: {
-  productId: string; tenantId: string; onBusyChange?: (busy: boolean) => void;
+export default function ProductPrintSources({ productId, tenantId, onBusyChange, onDraftChange }: {
+  productId: string; tenantId: string; onBusyChange?: (busy: boolean) => void; onDraftChange?: (editing: boolean) => void;
 }) {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -41,6 +41,10 @@ export default function ProductPrintSources({ productId, tenantId, onBusyChange 
   const [taskSearch, setTaskSearch] = useState("");
   const [downloadId, setDownloadId] = useState<string | null>(null);
   const [platesBusy, setPlatesBusy] = useState<Record<string, boolean>>({});
+  const [platesDraft, setPlatesDraft] = useState<Record<string, boolean>>({});
+  const handlePlateDraft = useCallback((sourceId: string, value: boolean) => {
+    setPlatesDraft(previous => previous[sourceId] === value ? previous : { ...previous, [sourceId]: value });
+  }, []);
   const handlePlateBusy = useCallback((sourceId: string, value: boolean) => {
     setPlatesBusy(previous => previous[sourceId] === value ? previous : { ...previous, [sourceId]: value });
   }, []);
@@ -91,8 +95,8 @@ export default function ProductPrintSources({ productId, tenantId, onBusyChange 
       if (!data) throw new Error("O vínculo não foi confirmado. Atualize a lista antes de tentar novamente.");
       return { id: data, needsTaskBinding: printSourceNeedsTaskBinding(identifiers) };
     },
-    onSuccess: async result => {
-      resetForm(); await refreshSources();
+    onSuccess: result => {
+      resetForm(); void refreshSources();
       if (result.needsTaskBinding) { setBindingSource(result.id); setTaskId(""); setTaskSearch(""); }
       toast({ title: "Fonte de impressão salva", description: result.needsTaskBinding ? "Escolha uma impressão Bambu para concluir o vínculo com o SKU." : "Os identificadores serão conferidos na conciliação Bambu." });
     },
@@ -105,8 +109,8 @@ export default function ProductPrintSources({ productId, tenantId, onBusyChange 
       if (bindError) throw new Error(bindError.message);
       if (!data) throw new Error("O vínculo não foi confirmado. Atualize a lista antes de tentar novamente.");
     },
-    onSuccess: async () => {
-      await refreshSources(); setBindingSource(null); setTaskId("");
+    onSuccess: () => {
+      void refreshSources(); setBindingSource(null); setTaskId("");
       toast({ title: "Impressão vinculada ao produto", description: "Os identificadores Bambu foram registrados para reconhecer o SKU." });
     },
     onError: (err: Error) => toast({ title: "Não foi possível vincular a impressão", description: err.message, variant: "destructive" }),
@@ -116,14 +120,17 @@ export default function ProductPrintSources({ productId, tenantId, onBusyChange 
       const { error: archiveError } = await rpc("archive_product_print_source", { p_source_id: id });
       if (archiveError) throw new Error(archiveError.message);
     },
-    onSuccess: async (_, id) => {
+    onSuccess: (_, id) => {
       if (bindingSource === id) setBindingSource(null);
-      await refreshSources(); toast({ title: "Fonte arquivada", description: "O arquivo e o histórico foram preservados." });
+      void refreshSources(); toast({ title: "Fonte arquivada", description: "O arquivo e o histórico foram preservados." });
     },
     onError: (err: Error) => toast({ title: "Não foi possível arquivar", description: err.message, variant: "destructive" }),
   });
-  const busy = save.isPending || bind.isPending || archive.isPending || !!downloadId || Object.values(platesBusy).some(Boolean);
-  useEffect(() => { onBusyChange?.(busy); return () => onBusyChange?.(false); }, [busy, onBusyChange]);
+  const writePending = save.isPending || bind.isPending || archive.isPending || Object.values(platesBusy).some(Boolean);
+  const busy = writePending || !!downloadId;
+  useEffect(() => { onBusyChange?.(writePending); return () => onBusyChange?.(false); }, [writePending, onBusyChange]);
+  const hasDraft = formOpen || (!!bindingSource && !!taskId) || Object.values(platesDraft).some(Boolean);
+  useEffect(() => { onDraftChange?.(hasDraft); return () => onDraftChange?.(false); }, [hasDraft, onDraftChange]);
 
   const download = async (source: Source) => {
     if (!source.file_path) return;
@@ -174,7 +181,7 @@ export default function ProductPrintSources({ productId, tenantId, onBusyChange 
         source.plate_index != null && `Placa ${source.plate_index}`,
       ].filter(Boolean).join(" · ")}</p>}
       {bindingSource === source.id && <div className="border-t pt-3 space-y-3">
-        <div className="flex justify-between items-center gap-2"><p className="text-sm font-medium">Selecione a impressão deste produto</p><Button type="button" size="icon" variant="ghost" className="h-8 w-8" aria-label="Fechar vínculo da impressão" disabled={busy} onClick={() => setBindingSource(null)}><X className="h-4 w-4" /></Button></div>
+        <div className="flex justify-between items-center gap-2"><p className="text-sm font-medium">Selecione a impressão deste produto</p><Button type="button" size="icon" variant="ghost" className="h-11 w-11" aria-label="Fechar vínculo da impressão" disabled={bind.isPending} onClick={() => { setBindingSource(null); setTaskId(""); setTaskSearch(""); }}><X className="h-4 w-4" /></Button></div>
         <div><Label htmlFor={`task-search-${source.id}`}>Buscar por nome, impressora ou ID Bambu</Label><Input id={`task-search-${source.id}`} value={taskSearch} onChange={event => { setTaskSearch(event.target.value); setTaskId(""); }} disabled={busy} /></div>
         {tasksError ? <p role="alert" className="text-xs text-destructive">Não foi possível carregar as impressões. <Button type="button" size="sm" variant="ghost" onClick={() => refetchTasks()}>Tentar novamente</Button></p> : <div>
           <Label htmlFor={`source-task-${source.id}`}>Impressão do histórico</Label>
@@ -187,7 +194,7 @@ export default function ProductPrintSources({ productId, tenantId, onBusyChange 
         {selectedTask && <p className="rounded-md bg-background p-3 text-xs leading-relaxed">{selectedTask.design_title || "Impressão sem título"} · {taskStatus[selectedTask.status || ""] || "Status não informado"} · {dateLabel(selectedTask.start_time)}. Os identificadores desta impressão serão associados ao SKU. Isso não registra consumo nem altera a quantidade produzida.</p>}
         <Button type="button" size="sm" disabled={busy || !selectedTask || !!tasksError} onClick={() => bind.mutate()}>{bind.isPending && <Loader2 className="mr-1 h-4 w-4 animate-spin" />} Confirmar vínculo com este produto</Button>
       </div>}
-      <ProductPrintPlates productId={productId} tenantId={tenantId} sourceId={source.id} showProductTotal={sourceIndex === 0} onBusyChange={handlePlateBusy} />
+      <ProductPrintPlates productId={productId} tenantId={tenantId} sourceId={source.id} showProductTotal={sourceIndex === 0} onBusyChange={handlePlateBusy} onDraftChange={handlePlateDraft} />
     </article>)}
     {formOpen && <div className="border-t pt-3 space-y-3">
       <p className="text-sm font-medium">{editing ? "Editar fonte" : "Nova fonte"}</p>
@@ -205,7 +212,7 @@ export default function ProductPrintSources({ productId, tenantId, onBusyChange 
           ["design_id", "Design ID"], ["instance_id", "Instance ID"], ["model_id", "Model ID"], ["profile_id", "Profile ID"], ["plate_index", "Placa no histórico"],
         ] as const).map(([key, label]) => <div key={key}><Label htmlFor={`print-source-${key}`}>{label}</Label><Input id={`print-source-${key}`} value={draft[key]} onChange={event => setDraft({ ...draft, [key]: event.target.value })} type={key === "plate_index" ? "number" : "text"} min={key === "plate_index" ? 0 : undefined} step={key === "plate_index" ? 1 : undefined} disabled={busy} /></div>)}</div>
       </details>
-      <div className="flex flex-wrap justify-end gap-2"><Button type="button" variant="outline" size="sm" disabled={busy} onClick={resetForm}>Cancelar fonte</Button><Button type="button" size="sm" disabled={busy} onClick={() => save.mutate()}>{save.isPending && <Loader2 className="mr-1 h-4 w-4 animate-spin" />} Salvar fonte</Button></div>
+      <div className="flex flex-wrap justify-end gap-2"><Button type="button" variant="outline" size="sm" className="min-h-11" disabled={save.isPending} onClick={resetForm}>Cancelar fonte</Button><Button type="button" size="sm" className="min-h-11" disabled={busy} onClick={() => save.mutate()}>{save.isPending && <Loader2 className="mr-1 h-4 w-4 animate-spin" />} Salvar fonte</Button></div>
     </div>}
   </section>;
 }

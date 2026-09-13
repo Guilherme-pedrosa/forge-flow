@@ -30,9 +30,9 @@ export async function fetchProductMaterialRecipe(productId: string): Promise<Pro
   return data as ProductMaterialSnapshot;
 }
 
-export default function ProductMaterialRecipe({ productId, tenantId, plateId = null, suggestedNonMaterialCost, onBusyChange, onSaved }: {
+export default function ProductMaterialRecipe({ productId, tenantId, plateId = null, suggestedNonMaterialCost, onBusyChange, onDraftChange, onSaved }: {
   productId: string; tenantId: string; plateId?: string | null;
-  suggestedNonMaterialCost?: number | null; onBusyChange?: (busy: boolean) => void; onSaved?: () => void;
+  suggestedNonMaterialCost?: number | null; onBusyChange?: (busy: boolean) => void; onDraftChange?: (editing: boolean) => void; onSaved?: () => void;
 }) {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -64,9 +64,9 @@ export default function ProductMaterialRecipe({ productId, tenantId, plateId = n
     if (error) throw new Error(error.message);
     if (typeof data !== "string") throw new Error("Não foi possível confirmar o salvamento da composição. Tente novamente.");
     return data;
-  }, onSuccess: async () => {
+  }, onSuccess: () => {
     setEditing(false); request.current = null;
-    await Promise.all([
+    void Promise.all([
       qc.invalidateQueries({ queryKey: ["product_material_recipe"] }),
       qc.invalidateQueries({ queryKey: ["product_material_recipe_history", tenantId, productId] }),
       qc.invalidateQueries({ queryKey: ["product_material_requirements"] }),
@@ -76,8 +76,14 @@ export default function ProductMaterialRecipe({ productId, tenantId, plateId = n
     onSaved?.();
     toast({ title: "Nova versão da composição salva", description: "Orçamentos já emitidos mantêm a versão aprovada." });
   }, onError: error => toast({ title: "Composição não salva", description: error.message, variant: "destructive" }) });
-  useEffect(() => { onBusyChange?.(editing || save.isPending); return () => onBusyChange?.(false); }, [editing, save.isPending, onBusyChange]);
-  useEffect(() => { setEditing(false); request.current = null; }, [productId, plateId]);
+  // Opening a draft must never lock its containing dialog. Only an active write does.
+  useEffect(() => { onBusyChange?.(save.isPending); return () => onBusyChange?.(false); }, [save.isPending, onBusyChange]);
+  useEffect(() => { onDraftChange?.(editing); return () => onDraftChange?.(false); }, [editing, onDraftChange]);
+  const cancelEdit = () => {
+    if (save.isPending) return;
+    setEditing(false); setLines([]); setOtherCost(""); setNotes(""); setConversionNotice(false);
+  };
+  useEffect(() => { setEditing(false); setLines([]); setOtherCost(""); setNotes(""); setConversionNotice(false); request.current = null; }, [productId, plateId]);
   const beginEdit = () => {
     setBasis(recipe?.basis ?? "per_print");
     setLines(recipe?.lines.map(line => ({ item_id: line.item_id, grams: String(line.grams) })) ?? [{ item_id: "", grams: "" }]);
@@ -126,7 +132,7 @@ export default function ProductMaterialRecipe({ productId, tenantId, plateId = n
       <div className="space-y-2 rounded-md bg-muted/40 p-3"><label className="block space-y-1.5"><span className="text-xs font-medium">Demais custos por unidade: energia, máquina, trabalho e adicionais</span><Input inputMode="decimal" value={otherCost} onChange={event => setOtherCost(event.target.value)} disabled={save.isPending} placeholder="Informe o valor em R$, inclusive 0" /></label><p className="text-xs text-muted-foreground">{plateId ? "Informe somente o custo desta placa por unidade do produto. " : ""}Inclua acabamento e extras correspondentes uma única vez. Este valor exige confirmação, mesmo quando for zero.</p>{suggestedNonMaterialCost != null && Number.isFinite(suggestedNonMaterialCost) && suggestedNonMaterialCost >= 0 && <Button type="button" variant="outline" size="sm" className="h-auto whitespace-normal text-left" disabled={save.isPending} onClick={() => setOtherCost(String(Number(suggestedNonMaterialCost.toFixed(6))))}>Preencher sugestão do cálculo: {fmt(suggestedNonMaterialCost)}</Button>}</div>
       <label className="block space-y-1.5"><span className="text-xs font-medium">Motivo ou observações desta versão</span><Textarea value={notes} onChange={event => setNotes(event.target.value)} disabled={save.isPending} placeholder="Ex.: ajuste de suporte ou revisão do consumo de cada cor" /></label>
       <p className="text-xs text-muted-foreground">Ao trocar um item, você declara uma nova composição. O sistema não substitui cor ou material apenas por nome semelhante.</p>
-      <div className="flex flex-wrap justify-end gap-2"><Button type="button" variant="outline" disabled={save.isPending} onClick={() => setEditing(false)}>Cancelar</Button><Button type="button" disabled={save.isPending || inventory.isLoading || !!inventory.error} onClick={() => save.mutate()}>{save.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Salvar nova versão</Button></div>
+      <div className="flex flex-wrap justify-end gap-2"><Button type="button" className="min-h-11" variant="outline" disabled={save.isPending} onClick={cancelEdit}>Cancelar composição</Button><Button type="button" className="min-h-11" disabled={save.isPending || inventory.isLoading || !!inventory.error} onClick={() => save.mutate()}>{save.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Salvar nova versão</Button></div>
     </div>}
     {history.error && <p className="text-xs text-destructive">Não foi possível consultar o histórico de versões.</p>}
     {!!history.data?.length && <details className="border-t pt-3 text-xs"><summary className="cursor-pointer font-medium">Histórico · {history.data.length} versão(ões)</summary><ol className="mt-3 space-y-2">{history.data.map(version => <li key={version.id} className="break-words text-muted-foreground"><strong className="text-foreground">v{version.version}{version.is_current ? " · atual" : ""}</strong> · {new Date(version.created_at).toLocaleString("pt-BR")} · {version.units_per_print} un./impressão{version.notes ? ` · ${version.notes}` : ""}</li>)}</ol></details>}

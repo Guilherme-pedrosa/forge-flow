@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import ProductMaterialRecipe, { fetchProductMaterialRecipe } from "./ProductMaterialRecipe";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { Archive, Layers3, Loader2, Pencil, Plus, Printer, X } from "lucide-react";
@@ -29,24 +29,28 @@ const currency = (value: number | null) => value == null ? "Não informado" : va
 const grams = (value: number | null) => value == null ? "Não informado" : `${value.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} g`;
 const initialDraft = () => ({ plate_index: "1", label: "", units_per_plate: "1", material_id: "", printer_id: "", est_grams: "", est_time_minutes: "", est_cost_per_unit: "", model_id: "", profile_id: "" });
 
-function PlateRecipe({ productId, tenantId, plateId, onBusy }: { productId: string; tenantId: string; plateId: string; onBusy: (id: string, busy: boolean) => void }) {
+function PlateRecipe({ productId, tenantId, plateId, onBusy, onDraft }: { productId: string; tenantId: string; plateId: string; onBusy: (id: string, busy: boolean) => void; onDraft: (id: string, editing: boolean) => void }) {
   const [open, setOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState(false);
-  useEffect(() => { onBusy(plateId, open); return () => onBusy(plateId, false); }, [onBusy, plateId, open]);
+  useEffect(() => { onBusy(plateId, saving); return () => onBusy(plateId, false); }, [onBusy, plateId, saving]);
+  useEffect(() => { onDraft(plateId, open && editing); return () => onDraft(plateId, false); }, [onDraft, plateId, open, editing]);
   return <>
     <Button type="button" variant="outline" className="h-auto min-h-11 w-full whitespace-normal text-left" onClick={() => setOpen(true)}>Materiais e cores desta placa</Button>
-    <Dialog open={open} onOpenChange={next => { if (next || !editing) setOpen(next); }}>
-      <DialogContent className="max-w-2xl max-sm:p-3" onEscapeKeyDown={event => { if (editing) event.preventDefault(); }} onInteractOutside={event => { if (editing) event.preventDefault(); }}>
-        <DialogHeader><DialogTitle>Receita da placa</DialogTitle><DialogDescription>Confira a composição e salve uma nova versão quando necessário.</DialogDescription></DialogHeader>
-        <ProductMaterialRecipe productId={productId} tenantId={tenantId} plateId={plateId} onBusyChange={setEditing} />
+    <Dialog open={open} onOpenChange={next => { if (!saving) setOpen(next); }}>
+      <DialogContent className="max-w-2xl max-sm:p-3" closeDisabled={saving} aria-busy={saving} onEscapeKeyDown={event => { if (saving) event.preventDefault(); }} onInteractOutside={event => { if (saving) event.preventDefault(); }}>
+        <DialogHeader className="pr-10"><DialogTitle>Receita da placa</DialogTitle><DialogDescription>Confira a composição e salve uma nova versão quando necessário.</DialogDescription></DialogHeader>
+        {open && <ProductMaterialRecipe productId={productId} tenantId={tenantId} plateId={plateId} onBusyChange={setSaving} onDraftChange={setEditing} />}
+        <DialogFooter><Button type="button" className="min-h-11" variant="outline" disabled={saving} onClick={() => setOpen(false)}>Fechar composição</Button></DialogFooter>
       </DialogContent>
     </Dialog>
   </>;
 }
 
-export default function ProductPrintPlates({ productId, tenantId, sourceId, showProductTotal = false, onBusyChange }: {
+export default function ProductPrintPlates({ productId, tenantId, sourceId, showProductTotal = false, onBusyChange, onDraftChange }: {
   productId: string; tenantId: string; sourceId: string; showProductTotal?: boolean;
   onBusyChange?: (sourceId: string, busy: boolean) => void;
+  onDraftChange?: (sourceId: string, editing: boolean) => void;
 }) {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -58,6 +62,8 @@ export default function ProductPrintPlates({ productId, tenantId, sourceId, show
   const [taskSearch, setTaskSearch] = useState("");
   const [recipeBusy, setRecipeBusy] = useState<Record<string, boolean>>({});
   const reportRecipeBusy = useCallback((id: string, busy: boolean) => setRecipeBusy(previous => previous[id] === busy ? previous : { ...previous, [id]: busy }), []);
+  const [recipeDraft, setRecipeDraft] = useState<Record<string, boolean>>({});
+  const reportRecipeDraft = useCallback((id: string, editing: boolean) => setRecipeDraft(previous => previous[id] === editing ? previous : { ...previous, [id]: editing }), []);
   const key = ["product_print_plates", tenantId, productId, "reference"];
   const { data: allPlates = [], isLoading, error, refetch } = useQuery({
     queryKey: key,
@@ -110,7 +116,7 @@ export default function ProductPrintPlates({ productId, tenantId, sourceId, show
       if (!data) throw new Error("A placa não foi confirmada. Atualize a lista antes de tentar novamente.");
       return data;
     },
-    onSuccess: async id => { reset(); await refresh(); setBindingPlate(id); setTaskId(""); setTaskSearch(""); toast({ title: "Placa salva", description: "Vincule a impressão Bambu correspondente a esta placa." }); },
+    onSuccess: id => { reset(); void refresh(); setBindingPlate(id); setTaskId(""); setTaskSearch(""); toast({ title: "Placa salva", description: "Vincule a impressão Bambu correspondente a esta placa." }); },
     onError: (err: Error) => toast({ title: "Não foi possível salvar a placa", description: err.message, variant: "destructive" }),
   });
   const archive = useMutation({
@@ -118,7 +124,7 @@ export default function ProductPrintPlates({ productId, tenantId, sourceId, show
       const { error: archiveError } = await rpc("archive_product_print_plate", { p_plate_id: id });
       if (archiveError) throw new Error(archiveError.message);
     },
-    onSuccess: async (_, id) => { if (bindingPlate === id) setBindingPlate(null); await refresh(); toast({ title: "Placa arquivada", description: "Ela deixa de compor novas produções. O histórico foi preservado." }); },
+    onSuccess: (_, id) => { if (bindingPlate === id) setBindingPlate(null); void refresh(); toast({ title: "Placa arquivada", description: "Ela deixa de compor novas produções. O histórico foi preservado." }); },
     onError: (err: Error) => toast({ title: "Não foi possível arquivar a placa", description: err.message, variant: "destructive" }),
   });
   const bind = useMutation({
@@ -128,11 +134,13 @@ export default function ProductPrintPlates({ productId, tenantId, sourceId, show
       if (bindError) throw new Error(bindError.message);
       if (!data) throw new Error("O vínculo não foi confirmado. Atualize a lista antes de tentar novamente.");
     },
-    onSuccess: async () => { await refresh(); setBindingPlate(null); setTaskId(""); toast({ title: "Impressão vinculada à placa" }); },
+    onSuccess: () => { void refresh(); setBindingPlate(null); setTaskId(""); toast({ title: "Impressão vinculada à placa" }); },
     onError: (err: Error) => toast({ title: "Não foi possível vincular esta placa", description: err.message, variant: "destructive" }),
   });
   const busy = save.isPending || archive.isPending || bind.isPending || Object.values(recipeBusy).some(Boolean);
   useEffect(() => { onBusyChange?.(sourceId, busy); return () => onBusyChange?.(sourceId, false); }, [busy, onBusyChange, sourceId]);
+  const hasDraft = formOpen || (!!bindingPlate && !!taskId) || Object.values(recipeDraft).some(Boolean);
+  useEffect(() => { onDraftChange?.(sourceId, hasDraft); return () => onDraftChange?.(sourceId, false); }, [hasDraft, onDraftChange, sourceId]);
 
   const field = (name: keyof ReturnType<typeof initialDraft>, label: string, props: { type?: string; min?: number; step?: string } = {}) => <div>
     <Label htmlFor={`plate-${sourceId}-${name}`}>{label}</Label>
@@ -177,13 +185,13 @@ export default function ProductPrintPlates({ productId, tenantId, sourceId, show
         {actual && <div className="rounded-md bg-muted/40 p-2.5 text-xs space-y-1"><p className="font-medium">Referência da produção desta placa · {actual.sampleUnits.toLocaleString("pt-BR")} unidades contabilizadas</p><p>{actual.gramsLabel} · {actual.durationLabel} de tempo decorrido · {actual.costLabel} por unidade do produto</p><p className="text-muted-foreground">{actual.materialSource}</p>{actual.updatedLabel && <p className="text-muted-foreground">Atualizada em {actual.updatedLabel}</p>}</div>}
         <Button type="button" size="sm" variant="outline" className="h-auto min-h-9 max-w-full whitespace-normal py-2 text-left" disabled={busy} onClick={() => { setBindingPlate(plate.id); setTaskId(""); setTaskSearch(""); }}><Printer className="mr-1 h-3.5 w-3.5 shrink-0" /> Vincular impressão desta placa</Button>
         {bindingPlate === plate.id && <div className="border-t pt-3 space-y-2">
-          <div className="flex items-center justify-between gap-2"><p className="text-xs font-medium">Escolha uma execução desta placa</p><Button type="button" size="icon" variant="ghost" className="h-8 w-8" aria-label="Fechar vínculo da placa" disabled={busy} onClick={() => setBindingPlate(null)}><X className="h-4 w-4" /></Button></div>
+          <div className="flex items-center justify-between gap-2"><p className="text-xs font-medium">Escolha uma execução desta placa</p><Button type="button" size="icon" variant="ghost" className="h-11 w-11" aria-label="Fechar vínculo da placa" disabled={bind.isPending} onClick={() => { setBindingPlate(null); setTaskId(""); setTaskSearch(""); }}><X className="h-4 w-4" /></Button></div>
           <div><Label htmlFor={`plate-search-${plate.id}`}>Buscar impressão</Label><Input id={`plate-search-${plate.id}`} value={taskSearch} onChange={event => { setTaskSearch(event.target.value); setTaskId(""); }} disabled={busy} placeholder="Nome, impressora ou ID Bambu" /></div>
           {tasksError ? <p role="alert" className="text-xs text-destructive">Não foi possível carregar o histórico. <Button type="button" size="sm" variant="ghost" onClick={() => refetchTasks()}>Tentar novamente</Button></p> : <div><Label htmlFor={`plate-task-${plate.id}`}>Impressão Bambu da placa {plate.plate_index}</Label><select id={`plate-task-${plate.id}`} className="h-11 w-full min-w-0 rounded-md border bg-background px-3 text-sm" value={taskId} onChange={event => setTaskId(event.target.value)} disabled={busy || tasksLoading}><option value="">{tasksLoading ? "Carregando…" : "Selecione a impressão desta placa"}</option>{filteredTasks.map(task => <option key={task.id} value={task.id}>{task.design_title || "Sem título"} · {task.start_time ? new Date(task.start_time).toLocaleDateString("pt-BR") : "Sem data"} · {task.bambu_devices?.name || "Impressora"} · #{task.bambu_task_id}</option>)}</select></div>}
           {selectedTask && <p className="text-xs leading-relaxed text-muted-foreground">{selectedTask.design_title || "Sem título"} · #{selectedTask.bambu_task_id}. Confirme que esta execução corresponde à placa {plate.plate_index}. O vínculo identifica a placa; consumo e quantidade continuam sujeitos à apuração.</p>}
           <Button type="button" size="sm" className="h-auto min-h-9 max-w-full whitespace-normal py-2 text-left" disabled={busy || !selectedTask || !!tasksError} onClick={() => bind.mutate()}>{bind.isPending && <Loader2 className="mr-1 h-4 w-4 shrink-0 animate-spin" />} Confirmar vínculo desta placa</Button>
         </div>}
-        <PlateRecipe productId={productId} tenantId={tenantId} plateId={plate.id} onBusy={reportRecipeBusy} />
+        <PlateRecipe productId={productId} tenantId={tenantId} plateId={plate.id} onBusy={reportRecipeBusy} onDraft={reportRecipeDraft} />
       </article>;
     })}
     {formOpen && <div className="border-t pt-3 space-y-3">
@@ -200,7 +208,7 @@ export default function ProductPrintPlates({ productId, tenantId, sourceId, show
         {field("est_cost_per_unit", "Custo estimado por unidade do produto (R$)", { type: "number", min: 0, step: "0.01" })}
       </div>
       <div className="rounded-lg border p-3 text-xs space-y-2"><p className="font-medium">Identificadores Bambu desta placa</p><p className="text-muted-foreground">Vincule uma impressão do histórico para registrar os IDs exatos.</p>{(draft.model_id || draft.profile_id) && <dl className="grid grid-cols-1 gap-2 sm:grid-cols-2"><div><dt className="text-muted-foreground">Model ID da placa</dt><dd className="break-all font-mono">{draft.model_id || "Não vinculado"}</dd></div><div><dt className="text-muted-foreground">Profile ID da placa</dt><dd className="break-all font-mono">{draft.profile_id || "Não vinculado"}</dd></div></dl>}</div>
-      <div className="flex flex-wrap justify-end gap-2"><Button type="button" size="sm" variant="outline" disabled={busy} onClick={reset}>Cancelar placa</Button><Button type="button" size="sm" disabled={busy} onClick={() => save.mutate()}>{save.isPending && <Loader2 className="mr-1 h-4 w-4 animate-spin" />} Salvar placa</Button></div>
+      <div className="flex flex-wrap justify-end gap-2"><Button type="button" size="sm" className="min-h-11" variant="outline" disabled={save.isPending} onClick={reset}>Cancelar placa</Button><Button type="button" size="sm" className="min-h-11" disabled={busy} onClick={() => save.mutate()}>{save.isPending && <Loader2 className="mr-1 h-4 w-4 animate-spin" />} Salvar placa</Button></div>
     </div>}
   </section>;
 }

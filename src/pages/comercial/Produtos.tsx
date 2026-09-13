@@ -32,6 +32,8 @@ import { orderRequest } from "@/lib/sales-order";
 import { productProductionReference } from "@/lib/product-production-reference";
 import ProductPrintSources from "./ProductPrintSources";
 import ProductMaterialRecipe from "./ProductMaterialRecipe";
+import MakerWorldReference, { MakerWorldPrinterOption } from "./MakerWorldReference";
+import { fetchMakerWorldModel, externalImportReference, legacyMakerWorldUrl, readProductExternalImport, type ProductExternalImport } from "@/lib/makerworld-import";
 
 const fmtCurrency = (v: number | null) => v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
 const fmtDuration = (s: number | null) => {
@@ -74,6 +76,14 @@ export default function Produtos() {
   const [makerOptionOpen, setMakerOptionOpen] = useState(false);
   const [makerModelToImport, setMakerModelToImport] = useState<any | null>(null);
   const [makerOptionIndex, setMakerOptionIndex] = useState("0");
+  const [makerVariantIndex, setMakerVariantIndex] = useState("0");
+  const [externalImport, setExternalImport] = useState<ProductExternalImport | null>(null);
+  const makerRequest = useRef<AbortController | null>(null);
+  const makerImportTarget = useRef<string | null>(null);
+  useEffect(() => () => makerRequest.current?.abort(), []);
+  useEffect(() => {
+    if (!bambuImportOpen && !editItem && !makerOptionOpen) { makerRequest.current?.abort(); setMakerWorldLoading(false); }
+  }, [bambuImportOpen, editItem, makerOptionOpen]);
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -91,7 +101,10 @@ export default function Produtos() {
   const [photosLoading, setPhotosLoading] = useState(false);
   const [sourceBusy, setPrintSourceBusy] = useState(false);
   const [recipeBusy, setRecipeBusy] = useState(false);
+  const [sourceDraft, setSourceDraft] = useState(false);
+  const [recipeDraft, setRecipeDraft] = useState(false);
   const printSourceBusy = sourceBusy || recipeBusy;
+  const hasProductionDraft = sourceDraft || recipeDraft;
   const photoLoadVersion = useRef(0);
   const [notes, setNotes] = useState("");
   const [printerId, setPrinterId] = useState("");
@@ -264,13 +277,21 @@ export default function Produtos() {
 
   const resetForm = () => {
     productRequest.current = null;
+    setExternalImport(null);
     photoLoadVersion.current += 1;
     setPhotosLoading(false);
+    setPrintSourceBusy(false); setRecipeBusy(false);
+    setSourceDraft(false); setRecipeDraft(false);
     setName(""); setDescription(""); setSku(""); setCategory("printed_part"); setMaterialId("");
     setEstGrams(""); setEstTime(""); setPostMinutes(""); setCostEstimate(""); setSalePrice(""); setPhotoUrl(""); setExtraPhotos([]); setNotes(""); setPrinterId(""); setNumColors("1"); setPrintsPerPlate("1"); setExtras([]); setKitComponents([]);
   };
 
   const openEdit = (p: any) => {
+    makerRequest.current?.abort(); setMakerWorldLoading(false);
+    setExternalImport(readProductExternalImport(p.external_import));
+    makerImportTarget.current = p.id;
+    setPrintSourceBusy(false); setRecipeBusy(false);
+    setSourceDraft(false); setRecipeDraft(false);
     setEditItem(p); setName(p.name); setDescription(p.description || ""); setSku(p.sku || "");
     setCategory(p.category); setMaterialId(p.material_id || ""); setEstGrams(p.est_grams?.toString() || "");
     setEstTime(p.est_time_minutes ? (p.est_time_minutes / 60).toFixed(2) : ""); setPostMinutes(p.post_process_minutes?.toString() || "");
@@ -382,117 +403,73 @@ export default function Produtos() {
     toast({ title: "Dados importados", description: "Preencha custo e preço para finalizar o cadastro." });
   };
 
-  const importFromMakerWorld = (model: any, selectedProfileIndex?: number) => {
+  const importFromMakerWorld = (model: any, selectedProfileIndex?: number, selectedVariantIndex = 0) => {
     const profiles = Array.isArray(model.profiles) ? model.profiles : [];
-
-    if (selectedProfileIndex == null && profiles.length > 1) {
+    if (selectedProfileIndex == null && profiles.length > 0) {
       setMakerModelToImport(model);
-      setMakerOptionIndex("0");
+      const requested = profiles.findIndex((entry: any) => entry.instance_id === model.selected_instance_id);
+      setMakerOptionIndex(String(Math.max(0, requested)));
+      setMakerVariantIndex("0");
       setBambuImportOpen(false);
       setMakerOptionOpen(true);
       return;
     }
-
-    const profileIdx = selectedProfileIndex ?? 0;
-    const selectedProfile = profiles[profileIdx] || profiles[0] || null;
-
-    // Peso/tempo não são mais preenchidos automaticamente no import do MakerWorld
-    // para evitar cadastrar valores incorretos.
-    // ── Material: auto-match pelo tipo dominante do filamento ──
-    const dominantFilamentType = (selectedProfile?.filaments || [])
-      .reduce((best: any, f: any) => (!best || toNumber(f?.grams) > toNumber(best?.grams) ? f : best), null)
-      ?.type?.toUpperCase() || "";
-
-    const autoMatchedMaterial = dominantFilamentType
-      ? materials.find((m: any) => {
-          const mt = (m.name || "").toUpperCase();
-          return mt.includes(dominantFilamentType);
-        })
-      : null;
-
-    resetForm();
-    setName(model.title || "Produto MakerWorld");
-    setPhotoUrl(model.thumbnail || "");
-    setCategory("printed_part");
-
-    // Auto-selecionar material pelo tipo do filamento
-    if (autoMatchedMaterial) {
-      setMaterialId(autoMatchedMaterial.id);
+    const index = selectedProfileIndex ?? 0;
+    const selected = profiles[index];
+    const variant = selectedVariantIndex > 0 ? selected?.variants?.[selectedVariantIndex - 1] : selected;
+    const updating = makerImportTarget.current != null && makerImportTarget.current === editItem?.id;
+    if (!updating) {
+      resetForm(); setName(model.title); setCategory("printed_part");
+      const colors = new Set((variant?.filaments || []).map((filament: any) => filament.color).filter(Boolean));
+      if (colors.size > 0 && colors.size <= 16) setNumColors(String(colors.size));
     }
-
-    if (model.gallery?.length > 0) {
-      const gallery = model.gallery.filter((u: string) => u !== model.thumbnail);
-      setExtraPhotos(gallery.slice(0, 5));
+    const imported = externalImportReference(model, model.source_url, index);
+    imported.selected_variant_profile_id = variant?.profile_id || null;
+    setExternalImport(imported);
+    setDescription(model.description || (updating ? description : ""));
+    const images = [...new Set([model.thumbnail, ...(model.gallery || [])].filter(Boolean))] as string[];
+    if (updating) {
+      if (!photoUrl && images[0]) setPhotoUrl(images[0]);
+      setExtraPhotos(previous => [...new Set([...previous, ...images])].filter(url => url !== (photoUrl || images[0])));
+    } else {
+      setPhotoUrl(images[0] || ""); setExtraPhotos(images.slice(1));
+      setNotes(`Importado do MakerWorld — ID: ${model.id}
+${selected?.name ? `Perfil: ${selected.name}
+` : ""}Especificações por placa e filamentos disponíveis na referência importada. Confirme a composição com materiais e cores do estoque.`);
     }
-
-    const profilePlates = Array.isArray(selectedProfile?.plates)
-      ? selectedProfile.plates.length
-      : Math.round(toNumber(selectedProfile?.plates ?? selectedProfile?.plate_count ?? selectedProfile?.plateCount));
-
-    const modelPlates = Array.isArray(model?.plates)
-      ? model.plates.length
-      : Math.round(toNumber(model?.plates ?? model?.plate_count ?? model?.plateCount));
-
-    const plates = Math.max(profilePlates, modelPlates, 0);
-
-    const noteParts: string[] = [
-      `Importado do MakerWorld — ID: ${model.id}`,
-      selectedProfile?.name ? `Profile: ${selectedProfile.name}` : "",
-    ].filter(Boolean);
-
-    noteParts.push("⚠ Peso e tempo não foram preenchidos automaticamente. Preencha manualmente.");
-
-    if (selectedProfile?.filaments?.length > 0) {
-      setNumColors(String(selectedProfile.filaments.length));
-      const filInfo = selectedProfile.filaments
-        .map((f: any) => `${f.color || "?"} (${f.type}) ${toNumber(f.grams).toFixed(0)}g`)
-        .join(", ");
-      noteParts.push(`Filamentos: ${filInfo}`);
-    }
-
-    if (dominantFilamentType) {
-      noteParts.push(`Material dominante: ${dominantFilamentType}${autoMatchedMaterial ? ` → ${autoMatchedMaterial.name}` : " (não encontrado no estoque)"}`);
-    }
-
-    if (plates > 1) {
-      noteParts.push(`Plates: ${plates} (produto único; total já considera múltiplos pratos)`);
-    }
-
-    setNotes(noteParts.join("\n"));
-    setDescription(model.description || "");
-    setMakerOptionOpen(false);
-    setMakerModelToImport(null);
-    setBambuImportOpen(false);
-    setCreateOpen(true);
-    toast({
-      title: "Dados importados do MakerWorld",
-      description: selectedProfile?.name
-        ? `${selectedProfile.name} · preencha peso/tempo manualmente`
-        : plates > 0
-          ? `${plates} placas`
-          : "Preencha peso/tempo manualmente",
-    });
+    setMakerOptionOpen(false); setMakerModelToImport(null); setBambuImportOpen(false);
+    if (!updating) setCreateOpen(true);
+    toast({ title: updating ? "Referência atualizada para revisão" : "Modelo importado para revisão", description: `${images.length} fotos e ${profiles.length} perfis. Salve o cadastro para guardar os detalhes e o link.` });
   };
 
-  const fetchMakerWorld = async () => {
-    if (!makerWorldUrl.trim()) return;
+  const loadMakerWorld = async (url: string, applyToEditor = false) => {
+    makerRequest.current?.abort();
+    const request = new AbortController(); makerRequest.current = request;
     setMakerWorldLoading(true);
-    setMakerWorldModels([]);
+    if (!applyToEditor) setMakerWorldModels([]);
     try {
-      const { data, error } = await supabase.functions.invoke("bambu-cloud-sync", {
-        body: { action: "makerworld", url: makerWorldUrl.trim() },
-      });
-      if (error) throw error;
-      if (data.error) throw new Error(data.error);
-      setMakerWorldModels(data.models || []);
-      if ((data.models || []).length === 0) {
-        toast({ title: "Nenhum modelo encontrado", description: "Verifique a URL e tente novamente.", variant: "destructive" });
-      }
-    } catch (e: any) {
-      toast({ title: "Erro ao buscar", description: e.message, variant: "destructive" });
+      const model = await fetchMakerWorldModel(url, request.signal);
+      if (request.signal.aborted) return;
+      if (applyToEditor) importFromMakerWorld(model);
+      else setMakerWorldModels([model]);
+    } catch (error) {
+      if (!request.signal.aborted) toast({ title: "Não foi possível consultar o modelo", description: (error as Error).message, variant: "destructive" });
     } finally {
-      setMakerWorldLoading(false);
+      if (makerRequest.current === request) setMakerWorldLoading(false);
     }
+  };
+  const fetchMakerWorld = () => {
+    makerImportTarget.current = null;
+    return loadMakerWorld(makerWorldUrl.trim());
+  };
+  const selectMakerWorld = (model: any) => {
+    makerImportTarget.current = null;
+    if (model.schema_version === 1) importFromMakerWorld(model);
+    else void loadMakerWorld(`https://makerworld.com/pt/models/${model.id}`, true);
+  };
+  const refreshMakerWorld = () => {
+    const url = externalImport?.source_url || legacyMakerWorldUrl(notes);
+    if (url) { makerImportTarget.current = editItem.id; void loadMakerWorld(url, true); }
   };
 
   const fetchMyCollections = async () => {
@@ -621,7 +598,8 @@ export default function Produtos() {
   const saveProduct = async (productId: string | null) => {
     if (!profile) throw new Error("Sua sessão expirou. Entre novamente.");
     if (!name.trim()) throw new Error("Informe o nome do produto.");
-    if (uploadingPhoto || photosLoading || printSourceBusy) throw new Error("Aguarde o carregamento das fotos e fontes de impressão antes de salvar.");
+    if (hasProductionDraft) throw new Error("Salve ou cancele a composição, fonte ou placa em edição antes de salvar o cadastro.");
+    if (uploadingPhoto || photosLoading || printSourceBusy || makerWorldLoading) throw new Error("Aguarde o carregamento das fotos e fontes de impressão antes de salvar.");
     const cost = costEstimate.trim() ? nonNegative(costEstimate, "Custo estimado") : null;
     const price = salePrice.trim() ? nonNegative(salePrice, "Preço de venda") : null;
     const grams = nonNegative(estGrams, "Peso por placa");
@@ -656,6 +634,7 @@ export default function Produtos() {
         num_colors: positiveInteger(numColors, "Número de cores", 16),
         prints_per_plate: positiveInteger(printsPerPlate, "Peças por placa", 10000),
         extras: buildExtrasPayload(),
+        ...(externalImport ? { external_import: externalImport } : {}),
       },
       p_photos: photos,
     };
@@ -673,6 +652,15 @@ export default function Produtos() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["products"] }); setEditItem(null); resetForm(); toast({ title: "Produto atualizado" }); },
     onError: (error: Error) => toast({ title: "Não foi possível salvar", description: error.message, variant: "destructive" }),
   });
+  const editWritePending = updateMut.isPending || uploadingPhoto || printSourceBusy;
+  const closeEditProduct = () => {
+    if (editWritePending) return;
+    setEditItem(null); resetForm();
+  };
+  const closeCreateProduct = () => {
+    if (createMut.isPending || uploadingPhoto) return;
+    setCreateOpen(false); resetForm();
+  };
   const deleteMut = useMutation({
     mutationFn: async ({ id, active }: { id: string; active: boolean }) => {
       const { data, error } = await supabase.from("products").update({ is_active: active }).eq("tenant_id", profile!.tenant_id).eq("id", id).select("id").single();
@@ -693,6 +681,16 @@ export default function Produtos() {
 
   const formFields = (
     <div className="grid min-w-0 grid-cols-1 gap-4 max-h-[60dvh] overflow-y-auto pr-1 [&>*]:min-w-0">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="sm:col-span-2"><Label htmlFor="product-name">Nome *</Label><Input id="product-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Vaso Geométrico P" /></div>
+        <div><Label>Categoria</Label>
+          <Select value={category} onValueChange={setCategory}><SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>{Object.entries(categoryLabels).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
+          </Select>
+        </div>
+        <div><Label>SKU</Label><Input value={sku} onChange={(e) => setSku(e.target.value)} placeholder="VASO-GEO-P" /></div>
+        <div className="sm:col-span-2"><Label htmlFor="product-description">Descrição</Label><Textarea id="product-description" value={description} onChange={(e) => setDescription(e.target.value)} rows={2} /></div>
+      </div>
       {productionReference && (
         <section aria-label="Referência da produção" className="rounded-xl border border-primary/20 bg-primary/5 p-4 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -709,12 +707,16 @@ export default function Produtos() {
           {productionReference.updatedLabel && <p className="text-xs text-muted-foreground">Atualizada em {productionReference.updatedLabel}</p>}
         </section>
       )}
-      {editItem?.id && profile?.tenant_id && <ProductPrintSources key={editItem.id} productId={editItem.id} tenantId={profile.tenant_id} onBusyChange={setPrintSourceBusy} />}
+      {editItem?.id && profile?.tenant_id && <ProductPrintSources key={editItem.id} productId={editItem.id} tenantId={profile.tenant_id} onBusyChange={setPrintSourceBusy} onDraftChange={setSourceDraft} />}
       {editItem?.id && profile?.tenant_id && category !== "kit" && (products.find(product => product.id === editItem.id)?.recipe_plate_count ?? 0) === 0 &&
-        <ProductMaterialRecipe key={`recipe-${editItem.id}`} productId={editItem.id} tenantId={profile.tenant_id} onBusyChange={setRecipeBusy}
+        <ProductMaterialRecipe key={`recipe-${editItem.id}`} productId={editItem.id} tenantId={profile.tenant_id} onBusyChange={setRecipeBusy} onDraftChange={setRecipeDraft}
           suggestedNonMaterialCost={!costBreakdown.error ? Math.max(0, costBreakdown.total - costBreakdown.materialCost) : null} />}
       {!editItem && category !== "kit" && <p className="rounded-lg border bg-muted/30 p-3 text-sm">Salve o produto para cadastrar a composição exata de materiais, cores e arquivos. Produtos com várias placas terão uma composição por placa.</p>}
       {(materialsError || printersError || tenantError) && <p role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm">Não foi possível carregar todos os parâmetros de custo. Atualize a página antes de aplicar o cálculo.</p>}
+      {(externalImport || legacyMakerWorldUrl(notes)) && <div className="space-y-3">
+        {editItem && <Button type="button" variant="outline" className="min-h-11 w-full whitespace-normal" disabled={makerWorldLoading || photosLoading} onClick={refreshMakerWorld}>{makerWorldLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CloudDownload className="mr-2 h-4 w-4" />}Atualizar fotos e detalhes do link</Button>}
+        {externalImport && <MakerWorldReference value={externalImport} />}
+      </div>}
       {/* Photos gallery */}
       <div>
         <Label className="mb-2 block">Fotos do Produto</Label>
@@ -762,16 +764,6 @@ export default function Produtos() {
             />
           </div>
         )}
-      </div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div className="sm:col-span-2"><Label htmlFor="product-name">Nome *</Label><Input id="product-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Vaso Geométrico P" /></div>
-        <div><Label>Categoria</Label>
-          <Select value={category} onValueChange={setCategory}><SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>{Object.entries(categoryLabels).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
-          </Select>
-        </div>
-        <div><Label>SKU</Label><Input value={sku} onChange={(e) => setSku(e.target.value)} placeholder="VASO-GEO-P" /></div>
-        <div className="sm:col-span-2"><Label htmlFor="product-description">Descrição</Label><Textarea id="product-description" value={description} onChange={(e) => setDescription(e.target.value)} rows={2} /></div>
       </div>
       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Referência geral de produção</p>
       <p className="-mt-2 text-xs leading-relaxed text-muted-foreground">Para produtos sem placas separadas, informe peso, impressão e acabamento da placa inteira. O cálculo divide esses custos pelas peças da placa; extras são cobrados por unidade. Em produtos com várias placas, cadastre cada uma em Arquivos e links de impressão; as referências por unidade se somam para formar o produto completo.</p>
@@ -1226,18 +1218,20 @@ export default function Produtos() {
       </div>
 
       {/* Create dialog */}
-      <Dialog open={createOpen} onOpenChange={open => { if (!createMut.isPending && !uploadingPhoto) setCreateOpen(open); }}>
-        <DialogContent className="max-w-2xl"><DialogHeader><DialogTitle>Novo Produto</DialogTitle><DialogDescription>Cadastro e custo unitário do produto ou serviço.</DialogDescription></DialogHeader>
+      <Dialog open={createOpen} onOpenChange={open => { if (open) setCreateOpen(true); else closeCreateProduct(); }}>
+        <DialogContent className="max-w-2xl" closeDisabled={createMut.isPending || uploadingPhoto}><DialogHeader className="pr-10"><DialogTitle>Novo Produto</DialogTitle><DialogDescription>Cadastro e custo unitário do produto ou serviço.</DialogDescription></DialogHeader>
           {formFields}
-          <DialogFooter><Button variant="outline" disabled={createMut.isPending || uploadingPhoto} onClick={() => setCreateOpen(false)}>Cancelar</Button><Button onClick={() => createMut.mutate()} disabled={!name.trim() || createMut.isPending || uploadingPhoto || photosLoading}>{createMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Criar</Button></DialogFooter>
+          <DialogFooter className="gap-2"><Button type="button" className="min-h-11" variant="outline" disabled={createMut.isPending || uploadingPhoto} onClick={closeCreateProduct}>Cancelar</Button><Button type="button" className="min-h-11" onClick={() => createMut.mutate()} disabled={!name.trim() || createMut.isPending || uploadingPhoto || photosLoading || makerWorldLoading}>{createMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Criar</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
       {/* Edit dialog */}
-      <Dialog open={!!editItem} onOpenChange={(o) => { if (!o && !updateMut.isPending && !uploadingPhoto && !printSourceBusy) { setEditItem(null); resetForm(); } }}>
-        <DialogContent className="max-w-2xl"><DialogHeader><DialogTitle>Editar Produto</DialogTitle><DialogDescription>Atualize o cadastro, a receita e a precificação.</DialogDescription></DialogHeader>
+      <Dialog open={!!editItem} onOpenChange={open => { if (!open) closeEditProduct(); }}>
+        <DialogContent className="max-w-2xl" closeDisabled={editWritePending} aria-busy={editWritePending}><DialogHeader className="pr-10"><DialogTitle>Editar Produto</DialogTitle><DialogDescription>Atualize o cadastro, a receita e a precificação.</DialogDescription></DialogHeader>
           {formFields}
-          <DialogFooter><Button variant="outline" disabled={updateMut.isPending || uploadingPhoto || printSourceBusy} onClick={() => { setEditItem(null); resetForm(); }}>Cancelar</Button><Button onClick={() => updateMut.mutate()} disabled={!name.trim() || updateMut.isPending || uploadingPhoto || photosLoading || printSourceBusy}>{updateMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} {photosLoading ? "Carregando fotos..." : "Salvar"}</Button></DialogFooter>
+          {printSourceBusy && <p role="status" className="text-xs text-muted-foreground">Salvando composição ou fonte de impressão. Aguarde a confirmação.</p>}
+          {hasProductionDraft && !printSourceBusy && <p role="status" className="text-xs text-amber-800 dark:text-amber-300">Salve ou cancele a composição, fonte ou placa em edição antes de salvar o cadastro. Fechar ou cancelar o produto descarta esses rascunhos.</p>}
+          <DialogFooter className="gap-2"><Button type="button" className="min-h-11" variant="outline" disabled={editWritePending} onClick={closeEditProduct}>Cancelar</Button><Button type="button" className="min-h-11" onClick={() => updateMut.mutate()} disabled={!name.trim() || editWritePending || hasProductionDraft || photosLoading || makerWorldLoading}>{updateMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} {photosLoading ? "Carregando fotos..." : "Salvar"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -1341,7 +1335,7 @@ export default function Produtos() {
       <Dialog open={bambuImportOpen} onOpenChange={setBambuImportOpen}>
         <DialogContent className="max-w-2xl max-h-[80vh]">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><CloudDownload className="h-5 w-5 text-primary" /> Importar da Bambu Lab</DialogTitle>
+            <DialogTitle className="flex items-center gap-2 pr-10"><CloudDownload className="h-5 w-5 text-primary" /> Importar da Bambu Lab</DialogTitle>
             <DialogDescription>Selecione um modelo salvo ou impressão concluída para importar</DialogDescription>
           </DialogHeader>
 
@@ -1440,19 +1434,20 @@ export default function Produtos() {
             ) : (
               /* MakerWorld tab */
               <div className="space-y-4">
+
                 <div className="flex flex-col sm:flex-row gap-2">
                   <div className="relative flex-1">
                     <Link className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input
                       className="pl-9"
-                      placeholder="https://makerworld.com/pt/@user/collections/models ou URL de modelo"
+                      placeholder="https://makerworld.com/pt/models/..." aria-label="Link do modelo MakerWorld"
                       value={makerWorldUrl}
                       onChange={(e) => setMakerWorldUrl(e.target.value)}
                       onKeyDown={(e) => e.key === "Enter" && fetchMakerWorld()}
                     />
                   </div>
                   <div className="flex gap-2">
-                    <Button onClick={fetchMakerWorld} disabled={makerWorldLoading || myCollectionsLoading || !makerWorldUrl.trim()}>
+                    <Button aria-label="Buscar modelo do MakerWorld" onClick={fetchMakerWorld} disabled={makerWorldLoading || myCollectionsLoading || !makerWorldUrl.trim()}>
                       {makerWorldLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
                     </Button>
                     <Button variant="outline" onClick={fetchMyCollections} disabled={myCollectionsLoading || makerWorldLoading}>
@@ -1466,13 +1461,13 @@ export default function Produtos() {
                 ) : makerWorldModels.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                     <Globe className="h-8 w-8 mb-2 opacity-40" />
-                    <p className="text-sm">Clique em “Minhas coleções” ou cole a URL de uma coleção/modelo</p>
-                    <p className="text-xs mt-1 text-center max-w-sm">Ex: https://makerworld.com/pt/@usuario/collections/models</p>
+                    <p className="text-sm">Cole o link público do modelo MakerWorld</p>
+                    <p className="text-xs mt-1 text-center max-w-sm">Para um projeto privado do MakerLab, publique o modelo no MakerWorld ou vincule o arquivo 3MF ao produto.</p>
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     {makerWorldModels.map((m: any) => (
-                      <button key={m.id} onClick={() => importFromMakerWorld(m)}
+                      <button key={m.id} onClick={() => selectMakerWorld(m)}
                         className="flex items-start gap-3 p-3 rounded-lg border bg-card hover:bg-muted/50 transition-colors text-left">
                         {m.thumbnail ? <img src={m.thumbnail} alt="" className="w-14 h-14 rounded object-cover flex-shrink-0" /> :
                           <div className="w-14 h-14 rounded bg-muted flex items-center justify-center flex-shrink-0"><Image className="h-5 w-5 text-muted-foreground" /></div>}
@@ -1507,10 +1502,10 @@ export default function Produtos() {
         }
       }}>
         <DialogContent className="max-w-lg">
-          <DialogHeader>
+          <DialogHeader className="pr-10">
             <DialogTitle>Escolha a opção de impressão</DialogTitle>
             <DialogDescription>
-              Esse modelo tem múltiplos perfis. Selecione qual opção você quer importar para calcular gramatura e tempo corretamente.
+              Escolha o perfil e a impressora. Todas as fotos, placas e opções ficam guardadas no cadastro; as previsões variam conforme esta escolha.
             </DialogDescription>
           </DialogHeader>
 
@@ -1521,7 +1516,7 @@ export default function Produtos() {
                 <button
                   key={`${makerModelToImport?.id || "model"}-${idx}`}
                   type="button"
-                  onClick={() => setMakerOptionIndex(String(idx))}
+                  onClick={() => { setMakerOptionIndex(String(idx)); setMakerVariantIndex("0"); }}
                   className={cn(
                     "w-full rounded-lg border p-3 text-left transition-colors",
                     isActive ? "border-primary bg-primary/5" : "hover:bg-muted/40"
@@ -1539,8 +1534,9 @@ export default function Produtos() {
             })}
           </div>
 
-          <DialogFooter>
-            <Button variant="outline" onClick={() => {
+          <MakerWorldPrinterOption profile={makerModelToImport?.profiles?.[Number(makerOptionIndex)]} value={makerVariantIndex} onChange={setMakerVariantIndex} />
+          <DialogFooter className="gap-2">
+            <Button className="min-h-11" variant="outline" onClick={() => {
               setMakerOptionOpen(false);
               setMakerModelToImport(null);
               setMakerOptionIndex("0");
@@ -1550,7 +1546,7 @@ export default function Produtos() {
             <Button
               onClick={() => {
                 if (!makerModelToImport) return;
-                importFromMakerWorld(makerModelToImport, Number(makerOptionIndex));
+                importFromMakerWorld(makerModelToImport, Number(makerOptionIndex), Number(makerVariantIndex));
               }}
               disabled={!makerModelToImport}
             >
