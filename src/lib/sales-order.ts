@@ -1,4 +1,5 @@
 import { nonNegative, positiveInteger } from "./production";
+import { readMaterialOverrides, type MaterialOverride } from "./product-material-variant";
 
 export const salesOrderTransitions: Record<string, string[]> = {
   draft: ["approved", "cancelled"], approved: ["in_production", "cancelled"],
@@ -8,14 +9,16 @@ export const salesOrderTransitions: Record<string, string[]> = {
 
 export function roundMoney(value: number): number { return Math.round((value + Number.EPSILON) * 100) / 100; }
 
-export function prepareOrder(lines: { product_id: string; description: string; quantity: number | string; unit_price: number | string; notes?: string }[], freight: string | number, discount: string | number) {
+export function prepareOrder(lines: { product_id: string; description: string; quantity: number | string; unit_price: number | string; notes?: string; material_overrides?: MaterialOverride[] }[], freight: string | number, discount: string | number) {
   const populated = lines.filter(line => line.product_id || line.description.trim() || Number(line.unit_price) !== 0);
   if (!populated.length) throw new Error("Adicione pelo menos um item.");
   const items = populated.map((line, index) => {
     if (!line.description.trim()) throw new Error(`Informe a descrição do item ${index + 1}.`);
     const quantity = positiveInteger(line.quantity, `Quantidade do item ${index + 1}`, 10000);
     const unitPrice = roundMoney(nonNegative(line.unit_price, `Preço do item ${index + 1}`));
-    return { product_id: line.product_id || null, description: line.description.trim(), quantity, unit_price: unitPrice, total: roundMoney(quantity * unitPrice), notes: line.notes?.trim() || null };
+    const material_overrides = readMaterialOverrides(line.material_overrides);
+    if (!line.product_id && material_overrides.length) throw new Error(`Selecione o produto antes das cores do item ${index + 1}.`);
+    return { product_id: line.product_id || null, description: line.description.trim(), quantity, unit_price: unitPrice, total: roundMoney(quantity * unitPrice), notes: line.notes?.trim() || null, material_overrides };
   });
   const shipping = roundMoney(nonNegative(freight, "Frete"));
   const discountValue = roundMoney(nonNegative(discount, "Desconto"));

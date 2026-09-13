@@ -11,7 +11,9 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useNavigate, Link, useSearchParams } from "react-router-dom";
-import { QuoteSnapshotSummary } from "@/components/comercial/QuoteSnapshotSummary";
+import { QuoteSnapshotSummary, quoteSnapshotMaterials } from "@/components/comercial/QuoteSnapshotSummary";
+import { ProductMaterialChoice } from "@/components/comercial/ProductMaterialChoice";
+import { readMaterialOverrides, type MaterialOverride } from "@/lib/product-material-variant";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -50,6 +52,7 @@ interface OrderLineItem {
   unit_price: number;
   total: number;
   notes: string;
+  material_overrides: MaterialOverride[];
 }
 
 let lineCounter = 0;
@@ -61,6 +64,7 @@ const newLine = (): OrderLineItem => ({
   unit_price: 0,
   total: 0,
   notes: "",
+  material_overrides: [],
 });
 
 export default function Pedidos() {
@@ -98,6 +102,9 @@ export default function Pedidos() {
   // Populate form from existing order for editing
   const startEdit = () => {
     if (!viewOrder || viewOrder.source_quote_id || viewOrder.status !== "draft" || itemsLoading || itemsError || linkedLoading || linkedError || linkedJobs.length) return;
+    let loadedLines: OrderLineItem[];
+    try { loadedLines = viewItems.map((item: any) => ({ id: item.id, product_id: item.product_id || "", description: item.description, quantity: item.quantity, unit_price: item.unit_price, total: item.total, notes: item.notes || "", material_overrides: readMaterialOverrides(item.material_overrides) })); }
+    catch (error) { toast({ title: "Não foi possível editar o pedido", description: (error as Error).message, variant: "destructive" }); return; }
     saveRequest.current = null;
     setCustomerId(viewOrder.customer_id || "");
     setDueDate(viewOrder.due_date || "");
@@ -116,15 +123,7 @@ export default function Pedidos() {
     setShipping(String((viewOrder as unknown as { shipping?: number }).shipping ?? 0));
     // Load existing items into lines
     if (viewItems.length > 0) {
-      setLines(viewItems.map((item: any) => ({
-        id: item.id,
-        product_id: item.product_id || "",
-        description: item.description,
-        quantity: item.quantity,
-        unit_price: item.unit_price,
-        total: item.total,
-        notes: item.notes || "",
-      })));
+      setLines(loadedLines);
     } else {
       setLines([newLine()]);
     }
@@ -219,6 +218,7 @@ export default function Pedidos() {
       prev.map((l) => {
         if (l.id !== id) return l;
         const updated = { ...l, [field]: value };
+        if (field === "product_id" && value !== l.product_id) updated.material_overrides = [];
         if (field === "product_id" && value) {
           const prod = products.find((p) => p.id === value);
           if (prod) {
@@ -313,13 +313,14 @@ export default function Pedidos() {
     }));
 
     const itemsHtml = viewItems.map((item: any) => {
+      const chosenMaterials = [...new Set(quoteSnapshotMaterials(item.product_snapshot).map(material => `${material.material} · ${material.color}`))].join("; ");
       const imgB64 = printableImageUrl(itemImageMap.get(item.id) ?? "");
       return `
       <tr>
         <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">
           <div style="display:flex;align-items:center;gap:10px;">
             ${imgB64 ? `<img src="${imgB64}" style="width:48px;height:48px;object-fit:cover;border-radius:6px;flex-shrink:0;" />` : ""}
-            <span>${escapePrintHtml(item.description)}</span>
+            <span>${escapePrintHtml(item.description)}${chosenMaterials ? `<br><small>${escapePrintHtml(chosenMaterials)}</small>` : ""}</span>
           </div>
         </td>
         <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:center;">${escapePrintHtml(item.quantity)}</td>
@@ -459,6 +460,31 @@ export default function Pedidos() {
 
   const viewOrder = viewOrderId ? orders.find((o: any) => o.id === viewOrderId) : null;
 
+  const renderLineItems = (pending: boolean) => <div className="min-w-0 sm:overflow-hidden sm:rounded-lg sm:border">
+    <Table aria-label="Itens editáveis do pedido" className="block min-w-0 sm:table">
+      <TableHeader className="hidden sm:table-header-group"><TableRow className="bg-muted/50">
+        <TableHead className="w-[40%]">Produto / Descrição</TableHead><TableHead className="w-[80px] text-center">Qtd</TableHead><TableHead className="w-[120px] text-right">Unitário</TableHead><TableHead className="w-[120px] text-right">Total</TableHead><TableHead className="w-10" />
+      </TableRow></TableHeader>
+      {lines.map((line, index) => <TableBody key={line.id} aria-label={`Item ${index + 1} do pedido`} className="mb-3 block min-w-0 rounded-lg border bg-card p-3 last:mb-0 sm:mb-0 sm:table-row-group sm:rounded-none sm:border-0 sm:bg-transparent sm:p-0">
+        <TableRow className="grid min-w-0 grid-cols-2 gap-x-3 gap-y-2 border-0 hover:bg-transparent sm:table-row sm:border-b sm:hover:bg-muted/50">
+          <TableCell className="col-span-2 block min-w-0 p-0 sm:table-cell sm:p-1.5">
+            <span className="mb-1.5 block text-xs font-medium sm:hidden">Item {index + 1} · Produto</span>
+            <Select value={line.product_id || "custom"} disabled={pending} onValueChange={value => updateLine(line.id, "product_id", value === "custom" ? "" : value)}>
+              <SelectTrigger aria-label={`Produto do item ${index + 1}`} className="h-11 min-w-0 text-sm sm:h-10"><SelectValue placeholder="Selecione" /></SelectTrigger>
+              <SelectContent className="max-w-[calc(100vw-2rem)]"><SelectItem value="custom">Personalizado</SelectItem>{products.map(product => <SelectItem key={product.id} value={product.id} className="min-h-11 whitespace-normal sm:min-h-0">{product.name} {product.sale_price ? `(${fmtCurrency(product.sale_price)})` : ""}</SelectItem>)}</SelectContent>
+            </Select>
+            {!line.product_id && <Input aria-label={`Descrição do item ${index + 1}`} className="mt-1 h-11 min-w-0 text-sm sm:h-10" value={line.description} disabled={pending} onChange={event => updateLine(line.id, "description", event.target.value)} placeholder="Descrição do item" />}
+          </TableCell>
+          <TableCell className="block min-w-0 p-0 sm:table-cell sm:p-1.5"><label className="block"><span className="mb-1.5 block text-xs font-medium sm:hidden">Quantidade</span><Input aria-label={`Quantidade do item ${index + 1}`} type="number" inputMode="numeric" min={1} className="h-11 min-w-0 text-sm sm:h-10 sm:text-center" value={line.quantity} disabled={pending} onChange={event => updateLine(line.id, "quantity", event.target.value)} /></label></TableCell>
+          <TableCell className="block min-w-0 p-0 sm:table-cell sm:p-1.5"><label className="block"><span className="mb-1.5 block text-xs font-medium sm:hidden">Preço unitário (R$)</span><Input aria-label={`Preço unitário do item ${index + 1}`} type="number" inputMode="decimal" step="0.01" className="h-11 min-w-0 text-sm sm:h-10 sm:text-right" value={line.unit_price} disabled={pending} onChange={event => updateLine(line.id, "unit_price", event.target.value)} /></label></TableCell>
+          <TableCell className="flex min-w-0 flex-col justify-center p-0 text-sm font-medium sm:table-cell sm:p-1.5 sm:text-right sm:text-xs"><span className="text-xs text-muted-foreground sm:hidden">Total do item</span><output aria-label={`Total do item ${index + 1}`} className="break-words font-mono">{fmtCurrency(line.total)}</output></TableCell>
+          <TableCell className="block min-w-0 p-0 text-right sm:table-cell sm:p-1.5"><Button type="button" variant="ghost" className="h-11 gap-1 px-2 sm:h-10 sm:w-10 sm:p-0" aria-label={`Remover item ${index + 1}`} disabled={pending || lines.length <= 1} onClick={() => removeLine(line.id)}><X className="h-3.5 w-3.5 text-muted-foreground" /><span className="text-xs sm:hidden">Remover</span></Button></TableCell>
+        </TableRow>
+        {line.product_id && <TableRow className="mt-3 block min-w-0 border-0 hover:bg-transparent sm:mt-0 sm:table-row sm:hover:bg-muted/50"><TableCell colSpan={5} className="block min-w-0 border-t p-0 pt-3 sm:table-cell sm:border-0 sm:p-3"><ProductMaterialChoice key={line.product_id} productId={line.product_id} tenantId={profile?.tenant_id} quantity={Number(line.quantity)} unitPrice={Number.isFinite(Number(line.unit_price)) ? Number(line.unit_price) : null} overrides={line.material_overrides} onChange={value => updateLine(line.id, "material_overrides", value)} onUnitPriceChange={value => updateLine(line.id, "unit_price", value)} disabled={pending} /></TableCell></TableRow>}
+      </TableBody>)}
+    </Table>
+  </div>;
+
   if (ordersError) return <div className="space-y-4 rounded-xl border bg-card p-6"><p role="alert">Não foi possível carregar os pedidos. {ordersError.message}</p><Button variant="outline" onClick={() => refetch()}>Tentar novamente</Button></div>;
 
   return (
@@ -581,50 +607,12 @@ export default function Pedidos() {
             <div>
               <div className="flex items-center justify-between mb-2">
                 <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Itens do pedido</Label>
-                <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setLines((prev) => [...prev, newLine()])}>
+                <Button type="button" variant="outline" size="sm" className="h-11 text-xs sm:h-7" aria-label="Adicionar item ao pedido" onClick={() => setLines((prev) => [...prev, newLine()])}>
                   <Plus className="h-3.5 w-3.5 mr-1" /> Item
                 </Button>
               </div>
 
-              <div className="rounded-lg border overflow-hidden">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="bg-muted/50">
-                      <TableHead className="w-[40%]">Produto / Descrição</TableHead>
-                      <TableHead className="w-[80px] text-center">Qtd</TableHead>
-                      <TableHead className="w-[120px] text-right">Unitário</TableHead>
-                      <TableHead className="w-[120px] text-right">Total</TableHead>
-                      <TableHead className="w-10" />
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {lines.map((line) => (
-                      <TableRow key={line.id}>
-                        <TableCell className="p-1.5">
-                          <Select value={line.product_id || "custom"} onValueChange={(v) => updateLine(line.id, "product_id", v === "custom" ? "" : v)}>
-                            <SelectTrigger className="h-10 text-sm"><SelectValue placeholder="Selecione" /></SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="custom">Personalizado</SelectItem>
-                              {products.map((p) => <SelectItem key={p.id} value={p.id}>{p.name} {p.sale_price ? `(${fmtCurrency(p.sale_price)})` : ""}</SelectItem>)}
-                            </SelectContent>
-                          </Select>
-                          {!line.product_id && (
-                            <Input className="mt-1 h-10 text-sm" value={line.description} onChange={(e) => updateLine(line.id, "description", e.target.value)} placeholder="Descrição do item" />
-                          )}
-                        </TableCell>
-                        <TableCell className="p-1.5"><Input type="number" min={1} className="h-10 text-sm text-center" value={line.quantity} onChange={(e) => updateLine(line.id, "quantity", e.target.value)} /></TableCell>
-                        <TableCell className="p-1.5"><Input type="number" step="0.01" className="h-10 text-sm text-right" value={line.unit_price} onChange={(e) => updateLine(line.id, "unit_price", e.target.value)} /></TableCell>
-                        <TableCell className="p-1.5 text-right font-mono text-xs font-medium">{fmtCurrency(line.total)}</TableCell>
-                        <TableCell className="p-1.5">
-                          <Button variant="ghost" size="icon" className="h-10 w-10" aria-label="Ações" onClick={() => removeLine(line.id)}>
-                            <X className="h-3.5 w-3.5 text-muted-foreground" />
-                          </Button>
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
+              {renderLineItems(createMut.isPending)}
             </div>
 
             {/* Totals */}
@@ -679,6 +667,7 @@ export default function Pedidos() {
               {viewOrder?.code || "Pedido"}
               {editMode && <span className="text-xs font-normal text-muted-foreground ml-1">— Editando</span>}
             </DialogTitle>
+            <DialogDescription>{editMode ? "Edite os produtos, as cores e os valores deste rascunho." : "Confira os itens, a composição escolhida e o andamento da venda."}</DialogDescription>
           </DialogHeader>
 
           {viewOrder && !editMode && (
@@ -871,49 +860,11 @@ export default function Pedidos() {
               <div>
                 <div className="flex items-center justify-between mb-2">
                   <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Itens do pedido</Label>
-                  <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setLines((prev) => [...prev, newLine()])}>
+                  <Button type="button" variant="outline" size="sm" className="h-11 text-xs sm:h-7" aria-label="Adicionar item ao pedido" onClick={() => setLines((prev) => [...prev, newLine()])}>
                     <Plus className="h-3.5 w-3.5 mr-1" /> Item
                   </Button>
                 </div>
-                <div className="rounded-lg border overflow-hidden">
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="bg-muted/50">
-                        <TableHead className="w-[40%]">Produto / Descrição</TableHead>
-                        <TableHead className="w-[80px] text-center">Qtd</TableHead>
-                        <TableHead className="w-[120px] text-right">Unitário</TableHead>
-                        <TableHead className="w-[120px] text-right">Total</TableHead>
-                        <TableHead className="w-10" />
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {lines.map((line) => (
-                        <TableRow key={line.id}>
-                          <TableCell className="p-1.5">
-                            <Select value={line.product_id || "custom"} onValueChange={(v) => updateLine(line.id, "product_id", v === "custom" ? "" : v)}>
-                              <SelectTrigger className="h-10 text-sm"><SelectValue placeholder="Selecione" /></SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="custom">Personalizado</SelectItem>
-                                {products.map((p) => <SelectItem key={p.id} value={p.id}>{p.name} {p.sale_price ? `(${fmtCurrency(p.sale_price)})` : ""}</SelectItem>)}
-                              </SelectContent>
-                            </Select>
-                            {!line.product_id && (
-                              <Input className="mt-1 h-10 text-sm" value={line.description} onChange={(e) => updateLine(line.id, "description", e.target.value)} placeholder="Descrição do item" />
-                            )}
-                          </TableCell>
-                          <TableCell className="p-1.5"><Input type="number" min={1} className="h-10 text-sm text-center" value={line.quantity} onChange={(e) => updateLine(line.id, "quantity", e.target.value)} /></TableCell>
-                          <TableCell className="p-1.5"><Input type="number" step="0.01" className="h-10 text-sm text-right" value={line.unit_price} onChange={(e) => updateLine(line.id, "unit_price", e.target.value)} /></TableCell>
-                          <TableCell className="p-1.5 text-right font-mono text-xs font-medium">{fmtCurrency(line.total)}</TableCell>
-                          <TableCell className="p-1.5">
-                            <Button variant="ghost" size="icon" className="h-10 w-10" aria-label="Ações" onClick={() => removeLine(line.id)}>
-                              <X className="h-3.5 w-3.5 text-muted-foreground" />
-                            </Button>
-                          </TableCell>
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </div>
+                {renderLineItems(updateOrderMut.isPending)}
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

@@ -1,5 +1,6 @@
 import { supabase } from "@/integrations/supabase/client";
 import { readProductionRows } from "./production-read";
+import type { BambuExpectedMaterial, BambuMaterialOverride, BambuMaterialPolicy, BambuSelectionFilament } from "./bambu-material-selection";
 
 export interface BambuMaterialBinding { source_key: string; item_id: string }
 export interface BambuJobAllocation { job_id: string; quantity: number }
@@ -9,12 +10,14 @@ export interface BambuProductionConfiguration {
   materials?: BambuMaterialBinding[]; allocations?: BambuJobAllocation[];
   auto_enabled?: boolean; use_slicer?: boolean;
   labor_cost?: number | null; overhead?: number | null; extras_cost?: number | null;
+  material_overrides?: BambuMaterialOverride[];
 }
 export interface BambuProductionPreview {
   task_id: string; project_key: string | null; can_auto: boolean;
   outcome: "printing" | "completed" | "failed" | "unknown";
   elapsed_seconds: number | null; planned_grams: number | null;
-  filaments: { source_key: string; label: string; planned_grams: number | null; item_id?: string | null }[];
+  filaments: BambuSelectionFilament[];
+  material_policy?: BambuMaterialPolicy; expected_materials?: BambuExpectedMaterial[];
   record: BambuProductionConfiguration | null; profile: BambuProductionConfiguration | null;
   candidate_product_id?: string | null; candidate_source?: "verified_identifiers" | "legacy_note" | "ambiguous" | null;
   candidate_plate_id?: string | null;

@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -56,6 +57,9 @@ const categoryFilter: string[] = ["all", ...Object.keys(categoryLabels)];
 type ExtraItem = { name: string; cost: number; costInput?: string };
 
 export default function Produtos() {
+  const [searchParams] = useSearchParams();
+  const requestedProductId = searchParams.get("produto");
+  const openedFromLink = useRef<string | null>(null);
   const { profile } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -329,6 +333,12 @@ export default function Produtos() {
       setExtraPhotos([]);
     }
   };
+
+  useEffect(() => {
+    if (!requestedProductId || openedFromLink.current === requestedProductId) return;
+    const product = products.find(product => product.id === requestedProductId);
+    if (product) { openedFromLink.current = requestedProductId; openEdit(product); }
+  }, [requestedProductId, products]);
 
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;

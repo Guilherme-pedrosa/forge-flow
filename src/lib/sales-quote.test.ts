@@ -4,6 +4,13 @@ import { quoteSnapshotMaterials } from "@/components/comercial/QuoteSnapshotSumm
 const line: QuoteDraftLine = { key: "a", product_id: "p1", description: "Base", quantity: "2", unit_price: "10", notes: "" };
 const item = (cost: number | null, complete = true): QuoteItem => ({ id: "i1", tenant_id: "t1", quote_id: "q1", line_index: 1, product_id: "p1", description: "Base", quantity: 2, unit_price: 10, total: 20, notes: null, estimated_unit_cost: cost, estimated_total_cost: cost == null ? null : cost * 2, product_snapshot: { complete } });
 describe("sales quotations", () => {
+  it("envia escolhas de cor por componente/placa sem substituir a receita do catálogo", () => {
+    const selection = [{ product_id: "component-1", plate_id: "plate-2", base_item_id: "red", item_id: "blue" }];
+    const quote = prepareQuote([{ ...line, material_overrides: selection }], "", "");
+    expect(quote.items[0].material_overrides).toEqual(selection);
+    expect(quote.items[0]).not.toHaveProperty("product_snapshot"); expect(quote.items[0]).not.toHaveProperty("cost_per_unit");
+    expect(prepareQuote([line], "", "").items[0].material_overrides).toEqual([]);
+  });
   it("requires time recursively without conflating it with the material cost", () => {
     expect(quoteSnapshotTimeIssues({ product: { name: "Base", est_time_minutes: 10 } })).toEqual([]);
     expect(quoteSnapshotTimeIssues({ product: { name: "Base", est_time_minutes: 0 } })).toEqual(["Informe o tempo por impressão de Base."]);

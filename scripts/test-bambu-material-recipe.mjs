@@ -91,13 +91,14 @@ await test('Every material in a multicolor failed attempt is debited once as los
   assert.equal(movements.length,2);assert.ok(movements.every(m=>m.movement_type==='loss'));
   assert.equal(await scalar('SELECT produced_quantity FROM jobs WHERE id=$1',[r.job_ids[0]]),0);
 });
-await test('A previously automatic profile is blocked when its mapped material conflicts with the revised recipe',async()=>{
+await test('A configured execution preserves its confirmed color when the catalog recipe changes later',async()=>{
   const p=await product(),t=await task('1');await recipe(p,[{item_id:material,grams:100}]);await configure(t,p,{auto:true});
   await owner(()=>db.query("UPDATE bambu_production_profiles SET auto_from='2026-09-13T07:00:00Z' WHERE product_id=$1",[p]));
   await recipe(p,[{item_id:red,grams:100}]);
   await owner(()=>db.query("UPDATE bambu_tasks SET status='2',raw_data=jsonb_set(raw_data,'{status}','2') WHERE id=$1",[t]));
-  const v=await preview(t);assert.equal(v.record.posted_at,null);assert.match(v.record.problem,/materiais e cores/);
-  assert.equal(await scalar('SELECT count(*)::int FROM inventory_movements WHERE reference_id=$1',[t]),0);
+  const v=await preview(t);assert.equal(v.record.state,'posted');assert.equal(v.record.material_snapshot.requirements[0].item_id,material);
+  assert.equal(await scalar('SELECT item_id FROM inventory_movements WHERE reference_id=$1',[t]),material);
+  assert.equal(await scalar('SELECT count(*)::int FROM inventory_movements WHERE reference_id=$1',[t]),1);
 });
 await test('A sale-derived unplated batch accepts its full two-piece Bambu allocation',async()=>{
   const p=await product();await recipe(p,[{item_id:material,grams:100}]);

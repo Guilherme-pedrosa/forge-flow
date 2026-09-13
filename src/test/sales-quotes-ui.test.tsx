@@ -30,7 +30,7 @@ describe("quotation workflow", () => {
     mount(); fireEvent.click(await screen.findByRole("button", { name: /ORC-001/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Imprimir" }));
     expect(write).toHaveBeenCalledOnce(); const html = write.mock.calls[0][0];
-    expect(html).toContain("&lt;script&gt;"); expect(html).not.toContain("<script>"); expect(html).not.toContain("Previsão interna"); expect(html).not.toContain("estimated_total_cost"); expect(html).toContain("Ana Cliente"); expect(print).toHaveBeenCalledOnce();
+    expect(html).toContain("&lt;script&gt;"); expect(html).not.toContain("<script>"); expect(html).not.toContain("Previsão interna"); expect(html).not.toContain("estimated_total_cost"); expect(html).toContain("Ana Cliente"); expect(html).toContain("PLA · Preto"); expect(print).toHaveBeenCalledOnce();
   });
   it("saves a draft from catalogue products without accepting a client-forged cost snapshot", async () => {
     mount(); fireEvent.click(screen.getByRole("button", { name: "Novo orçamento" }));
@@ -41,8 +41,8 @@ describe("quotation workflow", () => {
     fireEvent.change(screen.getByLabelText("Desconto (R$)"), { target: { value: "1" } });
     fireEvent.change(screen.getByLabelText("Frete cobrado (R$)"), { target: { value: "3" } });
     fireEvent.click(screen.getByRole("button", { name: "Salvar rascunho" }));
-    await waitFor(() => expect(mock.rpc).toHaveBeenCalled());
-    const [name, payload] = mock.rpc.mock.calls[0]; expect(name).toBe("save_sales_quote"); expect(payload.p_quote.total).toBe(22); expect(payload.p_items[0]).toMatchObject({ product_id: "product-1", quantity: 2, unit_price: 10, total: 20 });
+    await waitFor(() => expect(mock.rpc.mock.calls.some(call => call[0] === "save_sales_quote")).toBe(true));
+    const [name, payload] = mock.rpc.mock.calls.find(call => call[0] === "save_sales_quote")!; expect(name).toBe("save_sales_quote"); expect(payload.p_quote.total).toBe(22); expect(payload.p_items[0]).toMatchObject({ product_id: "product-1", quantity: 2, unit_price: 10, total: 20, material_overrides: [] });
     expect(payload.p_items[0]).not.toHaveProperty("product_snapshot"); expect(payload.p_items[0]).not.toHaveProperty("estimated_unit_cost"); expect(mock.rpc.mock.contexts[0]).toBe(supabase);
   });
   it("withholds emission and margin for an incomplete material recipe", async () => {

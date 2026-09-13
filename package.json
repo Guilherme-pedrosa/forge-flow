@@ -16,7 +16,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
     "test:watch": "vitest",
     "test:makerworld": "node scripts/test-makerworld-import.mjs",
-    "test:print-import": "node scripts/test-operational-print-import.mjs"
+    "test:print-import": "node scripts/test-operational-print-import.mjs",
+    "test:variants": "node scripts/test-material-variants.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

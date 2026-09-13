@@ -389,9 +389,9 @@ export default function Itens() {
           <Input value={sku} onChange={(e) => setSku(e.target.value)} placeholder="PLA-WH-1KG" />
         </div>
         <div>
-          <Label>Unidade</Label>
+          <Label>Unidade do saldo no estoque</Label>
           <Select value={unit} onValueChange={setUnit} disabled={!!editItem}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectTrigger aria-label="Unidade do saldo no estoque"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="g">Gramas (g)</SelectItem>
               <SelectItem value="kg">Quilos (kg)</SelectItem>
@@ -399,6 +399,7 @@ export default function Itens() {
               <SelectItem value="un">Unidade (un)</SelectItem>
             </SelectContent>
           </Select>
+          <p className="mt-1 text-xs text-muted-foreground">{["g", "kg"].includes(unit) ? `O rolo é a embalagem da compra. Um rolo com 1 kg de material entra como ${unit === "g" ? "1.000 g" : "1 kg"}; o consumo da produção usa este mesmo saldo.` : "Use a unidade física que será contada nas entradas e saídas."}</p>
         </div>
         <div>
           <Label>Estoque Mínimo</Label>
@@ -421,7 +422,7 @@ export default function Itens() {
           <Input type="number" min="0" max="100" step="0.01" value={lossCoefficient} onChange={(e) => setLossCoefficient(e.target.value)} placeholder="5" />
         </div>
       </div>
-      <p className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">O saldo e o custo médio são calculados pelas movimentações. Após cadastrar o item, registre a entrada em <Link className="font-medium text-primary underline" to="/estoque/movimentacoes">Movimentações</Link> ou em Compras.</p>
+      <p className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">O saldo e o custo médio são calculados pelas entradas. Após cadastrar o material e a cor, registre a compra em <Link className="font-medium text-primary underline" to="/estoque/compras">Compras</Link> ou um ajuste em <Link className="font-medium text-primary underline" to="/estoque/movimentacoes">Movimentações</Link>. O total recebido inclui o frete rateado da compra.</p>
       <div>
         <Label>Observações</Label>
         <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} />

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, CheckCircle2, ChevronDown, Loader2, RefreshCw, Settings2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
@@ -17,6 +17,8 @@ import { bambuRpc, readBambuProductionReview, readBambuSyncState, type BambuJobA
 import { productionQueryKeys } from "@/lib/production-api";
 import { orderRequest } from "@/lib/sales-order";
 import { readProductPlates, type ProductionPlate } from "@/lib/production-plates";
+import BambuMaterialSelection, { type BambuSelectionState } from "./BambuMaterialSelection";
+import { bambuPlannedMaterialCost, type BambuStockMaterial } from "@/lib/bambu-material-selection";
 
 const money = (value: number | null) => value == null ? "Pendente" : value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const dateTime = (value: string | null) => value ? new Date(value).toLocaleString("pt-BR") : "Não informado";
@@ -46,7 +48,7 @@ export function BambuProductionPanel() {
     if (error) throw error; return data;
   } });
   const materials = useQuery({ queryKey: ["bambu_production_materials", profile?.tenant_id], enabled: !!profile && !!selected, queryFn: async () => {
-    const { data, error } = await supabase.from("inventory_items").select("id,name,unit,current_stock,is_active").eq("is_active", true).order("name");
+    const { data, error } = await supabase.from("inventory_items").select("id,name,unit,current_stock,is_active,material_code,color,color_code,color_hex,avg_cost").eq("is_active", true).order("name");
     if (error) throw error; return data.filter(item => ["g", "kg"].includes(item.unit.trim().toLowerCase()));
   } });
   const plates = useQuery({ queryKey: ["product_print_plates", profile?.tenant_id], enabled: !!profile && !!selected, queryFn: () => readProductPlates() });
@@ -62,7 +64,7 @@ export function BambuProductionPanel() {
   const failures = sync.data?.filter(row => row.status === "error") ?? [];
   const processing = sync.data?.some(row => ["queued", "syncing"].includes(row.status));
   const changed = () => {
-    [...productionQueryKeys, "bambu_production_review", "bambu_production_preview", "bambu_production_jobs", "bambu_production_materials", "bambu_tasks", "products", "products_list"].forEach(key => qc.invalidateQueries({ queryKey: [key] }));
+    [...productionQueryKeys, "bambu_production_review", "bambu_production_preview", "bambu_material_selection_preview", "bambu_production_jobs", "bambu_production_materials", "bambu_tasks", "products", "products_list"].forEach(key => qc.invalidateQueries({ queryKey: [key] }));
     setSelected(null);
   };
 
@@ -120,14 +122,16 @@ export function BambuQualitySummary({ row }: { row: BambuProductionReview }) {
   </div>;
 }
 type Product = { id: string; name: string; sku: string | null; category: string; is_active: boolean };
-type Material = { id: string; name: string; unit: string; current_stock: number; is_active: boolean };
+type Material = { id: string; name: string; unit: string; current_stock: number; is_active: boolean } & Partial<BambuStockMaterial>;
+const materialAsStock = (item: Material): BambuStockMaterial => ({ ...item, material_code: item.material_code ?? null,
+  color: item.color ?? null, color_code: item.color_code ?? null, color_hex: item.color_hex ?? null, avg_cost: item.avg_cost ?? null });
 type Job = { id: string; code: string; name: string; status: string; product_id: string | null; print_plate_id: string | null; planned_quantity: number; order_item_id: string | null; inventory_posted_at: string | null };
 type DialogProps = { task: BambuProductionReview; mode: "configure" | "account"; preview?: BambuProductionPreview; loading: boolean; error?: string; products: Product[]; materials: Material[]; jobs: Job[]; plates: ProductionPlate[]; onClose: () => void; onSaved: () => void };
 
 function ProductionDialog(props: DialogProps) {
   const [busy, setBusy] = useState(false);
-  return <Dialog open onOpenChange={open => { if (!open && !busy) props.onClose(); }}><DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-2xl"><DialogHeader><DialogTitle>{props.mode === "configure" ? "Vincular impressão ao ERP" : "Apurar impressão"}</DialogTitle><DialogDescription>{props.task.design_title || "Impressão sem título"} · tarefa {props.task.bambu_task_id}</DialogDescription></DialogHeader>
-    {props.loading ? <div className="flex items-center gap-2 p-8"><Loader2 className="h-4 w-4 animate-spin" />Consultando vínculos…</div> : props.error ? <p role="alert" className="text-sm text-destructive">{props.error}</p> : props.preview ? props.mode === "configure" ? <BambuConfigurationForm key={props.task.task_id} {...props} preview={props.preview} onBusy={setBusy} /> : <BambuAccountingForm key={props.task.task_id} {...props} preview={props.preview} onBusy={setBusy} /> : <p role="alert">Não foi possível consultar esta impressão.</p>}
+  return <Dialog open onOpenChange={open => { if (!open && !busy) props.onClose(); }}><DialogContent closeDisabled={busy} aria-busy={busy} className="flex max-h-[92dvh] flex-col gap-0 overflow-hidden p-0 sm:max-w-2xl sm:p-0"><DialogHeader className="shrink-0 border-b px-5 pb-4 pt-5 pr-16 text-left"><DialogTitle>{props.mode === "configure" ? "Vincular impressão ao ERP" : "Apurar impressão"}</DialogTitle><DialogDescription className="break-words">{props.task.design_title || "Impressão sem título"} · tarefa {props.task.bambu_task_id}</DialogDescription></DialogHeader>
+    {props.loading ? <div className="flex items-center gap-2 p-8"><Loader2 className="h-4 w-4 animate-spin" />Consultando vínculos…</div> : props.error ? <p role="alert" className="overflow-y-auto p-5 text-sm text-destructive">{props.error}</p> : props.preview ? props.mode === "configure" ? <BambuConfigurationForm key={props.task.task_id} {...props} preview={props.preview} onBusy={setBusy} /> : <BambuAccountingForm key={props.task.task_id} {...props} preview={props.preview} onBusy={setBusy} /> : <p role="alert" className="p-5">Não foi possível consultar esta impressão.</p>}
   </DialogContent></Dialog>;
 }
 
@@ -145,6 +149,11 @@ export function BambuConfigurationForm({ task, preview, products, materials, job
   const [overhead, setOverhead] = useState(String(config?.overhead ?? 0));
   const [extras, setExtras] = useState(String(config?.extras_cost ?? 0));
   const [allocations, setAllocations] = useState<Record<string, string>>(() => Object.fromEntries((config?.allocations ?? []).map(a => [a.job_id, String(a.quantity)])));
+  const [materialSelection, setMaterialSelection] = useState<BambuSelectionState>({ overrides: config?.material_overrides ?? [], ready: false, error: null });
+  const changeMaterialSelection = useCallback((next: BambuSelectionState) => setMaterialSelection(previous => JSON.stringify(previous) === JSON.stringify(next) ? previous : next), []);
+  const resetMaterialSelection = () => { setMaterialSelection({ overrides: [], ready: false, error: null }); if (preview.material_policy) setBindings({}); };
+  const selectedAllocations = useMemo(() => Object.entries(allocations).map(([job_id, quantity]) => ({ job_id, quantity: Number(quantity) })), [allocations]);
+  const stockMaterials = useMemo(() => materials.map(materialAsStock), [materials]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const productPlates = plates.filter(plate => plate.product_id === productId && plate.is_active);
@@ -156,6 +165,7 @@ export function BambuConfigurationForm({ task, preview, products, materials, job
       if (!productId) throw new Error("Selecione o produto desta impressão.");
       if (productPlates.length && !productPlates.some(plate => plate.id === plateId)) throw new Error("Selecione a placa que foi impressa nesta execução.");
       if (!preview.filaments.length) throw new Error("A fonte ainda não identifica os filamentos desta impressão.");
+      if (preview.material_policy && !materialSelection.ready) throw new Error(materialSelection.error || "Confira os materiais desta execução antes de salvar.");
       const selectedMaterials: BambuMaterialBinding[] = preview.filaments.map(f => {
         if (!bindings[f.source_key]) throw new Error(`Selecione o item de estoque para ${f.label}.`);
         return { source_key: f.source_key, item_id: bindings[f.source_key] };
@@ -165,23 +175,25 @@ export function BambuConfigurationForm({ task, preview, products, materials, job
       if (selectedJobs.some(a => !availableJobs.some(job => job.id === a.job_id))) throw new Error("As ordens selecionadas devem pertencer ao produto escolhido.");
       if (selectedJobs.length && selectedJobs.reduce((sum, a) => sum + a.quantity, 0) !== count) throw new Error("A soma das peças nas ordens deve ser igual à quantidade desta impressão.");
       await bambuRpc("configure_bambu_production", { p_task_id: task.task_id, p_product_id: productId, p_units: count, p_materials: selectedMaterials, p_auto: automatic, p_use_slicer: useSlicer,
-        p_labor_cost: requiredBambuNumber(labor, "o custo de mão de obra"), p_overhead: requiredBambuNumber(overhead, "os custos indiretos"), p_extras_cost: requiredBambuNumber(extras, "o custo de acessórios e embalagem"), p_allocations: selectedJobs, p_plate_id: plateId || null });
+        p_labor_cost: requiredBambuNumber(labor, "o custo de mão de obra"), p_overhead: requiredBambuNumber(overhead, "os custos indiretos"), p_extras_cost: requiredBambuNumber(extras, "o custo de acessórios e embalagem"), p_allocations: selectedJobs, p_plate_id: plateId || null,
+        ...(preview.material_policy ? { p_material_overrides: materialSelection.overrides } : {}) });
       toast({ title: "Vínculo salvo", description: "Esta impressão pode ser apurada quando seus dados estiverem completos." }); onSaved();
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Não foi possível salvar o vínculo."); }
     finally { setBusy(false); onBusy(false); }
   };
-  return <div className="space-y-5">
-    <div className="space-y-2"><Label>Produto fabricado</Label><Select value={productId} onValueChange={value => { setProductId(value); setPlateId(""); setAllocations({}); }}><SelectTrigger aria-label="Produto fabricado"><SelectValue placeholder="Selecione o produto" /></SelectTrigger><SelectContent>{products.filter(p => p.category !== "kit").map(product => <SelectItem key={product.id} value={product.id}>{product.name}{product.sku ? ` · ${product.sku}` : ""}</SelectItem>)}</SelectContent></Select>
-      {candidate && !productId && <div className="rounded-lg border bg-muted/30 p-3 text-sm"><p>{preview.candidate_source === "verified_identifiers" ? "Produto identificado pelo arquivo/perfil:" : "Sugestão encontrada na nota de importação:"} <strong>{candidate.name}</strong></p><Button variant="outline" size="sm" className="mt-2" onClick={() => { setProductId(candidate.id); setPlateId(preview.candidate_source === "verified_identifiers" ? preview.candidate_plate_id ?? "" : ""); }}>Usar este produto</Button></div>}
+  return <div className="flex min-h-0 flex-1 flex-col overflow-hidden"><div className="min-h-0 space-y-5 overflow-y-auto overscroll-contain p-5">
+    <div className="space-y-2"><Label>Produto fabricado</Label><Select value={productId} onValueChange={value => { setProductId(value); setPlateId(""); setAllocations({}); resetMaterialSelection(); }}><SelectTrigger aria-label="Produto fabricado"><SelectValue placeholder="Selecione o produto" /></SelectTrigger><SelectContent>{products.filter(p => p.category !== "kit").map(product => <SelectItem key={product.id} value={product.id}>{product.name}{product.sku ? ` · ${product.sku}` : ""}</SelectItem>)}</SelectContent></Select>
+      {candidate && !productId && <div className="rounded-lg border bg-muted/30 p-3 text-sm"><p>{preview.candidate_source === "verified_identifiers" ? "Produto identificado pelo arquivo/perfil:" : "Sugestão encontrada na nota de importação:"} <strong>{candidate.name}</strong></p><Button variant="outline" size="sm" className="mt-2" onClick={() => { setProductId(candidate.id); setPlateId(preview.candidate_source === "verified_identifiers" ? preview.candidate_plate_id ?? "" : ""); resetMaterialSelection(); }}>Usar este produto</Button></div>}
     </div>
-    {productPlates.length > 0 && <div className="space-y-2"><Label>Placa executada</Label><Select value={plateId} onValueChange={value => { setPlateId(value); setAllocations({}); }}><SelectTrigger aria-label="Placa executada"><SelectValue placeholder="Selecione a placa desta impressão" /></SelectTrigger><SelectContent>{productPlates.map(plate => <SelectItem key={plate.id} value={plate.id}>Placa {plate.plate_index} · {plate.label}</SelectItem>)}</SelectContent></Select><p className="text-xs text-muted-foreground">Esta tentativa fabrica apenas a placa selecionada. O custo do produto completo reúne suas placas.</p></div>}
+    {productPlates.length > 0 && <div className="space-y-2"><Label>Placa executada</Label><Select value={plateId} onValueChange={value => { setPlateId(value); setAllocations({}); resetMaterialSelection(); }}><SelectTrigger aria-label="Placa executada"><SelectValue placeholder="Selecione a placa desta impressão" /></SelectTrigger><SelectContent>{productPlates.map(plate => <SelectItem key={plate.id} value={plate.id}>Placa {plate.plate_index} · {plate.label}</SelectItem>)}</SelectContent></Select><p className="text-xs text-muted-foreground">Esta tentativa fabrica apenas a placa selecionada. O custo do produto completo reúne suas placas.</p></div>}
     <Field label="Peças nesta impressão" id="bambu-units" value={units} onChange={setUnits} min="1" integer />
-    <div className="space-y-3"><h3 className="font-medium">Material de cada filamento</h3><p className="text-xs text-muted-foreground">Escolha o item físico do estoque. Tipo e cor exibidos servem como referência; nenhum vínculo é feito pelo nome.</p>{preview.filaments.map(f => <div key={f.source_key} className="space-y-2 rounded-lg border p-3"><Label>{f.label}</Label><p className="text-xs text-muted-foreground">Identificador: {f.source_key} · plano: {grams(f.planned_grams)}</p><Select value={bindings[f.source_key] || ""} onValueChange={value => setBindings(old => ({ ...old, [f.source_key]: value }))}><SelectTrigger aria-label={`Material de ${f.label}`}><SelectValue placeholder="Selecione o material do estoque" /></SelectTrigger><SelectContent>{materials.map(item => <SelectItem key={item.id} value={item.id}>{item.name} · {item.current_stock.toLocaleString("pt-BR")} {item.unit}</SelectItem>)}</SelectContent></Select></div>)}{!preview.filaments.length && <p role="alert" className="text-sm text-destructive">Filamentos não identificados na fonte. A impressão precisa de revisão.</p>}</div>
+    {preview.material_policy ? <BambuMaterialSelection key={JSON.stringify([productId, plateId, selectedAllocations])} taskId={task.task_id} productId={productId} plateId={plateId} allocations={selectedAllocations} bindings={bindings} setBindings={setBindings} materials={stockMaterials} overrides={materialSelection.overrides} onChange={changeMaterialSelection} /> : <div className="space-y-3"><h3 className="font-medium">Material de cada filamento</h3><p className="text-xs text-muted-foreground">Escolha o item físico do estoque. Tipo e cor exibidos servem como referência; nenhum vínculo é feito pelo nome.</p>{preview.filaments.map(f => <div key={f.source_key} className="space-y-2 rounded-lg border p-3"><Label>{f.label}</Label><p className="text-xs text-muted-foreground">Identificador: {f.source_key} · plano: {grams(f.planned_grams)}</p><Select value={bindings[f.source_key] || ""} onValueChange={value => setBindings(old => ({ ...old, [f.source_key]: value }))}><SelectTrigger aria-label={`Material de ${f.label}`}><SelectValue placeholder="Selecione o material do estoque" /></SelectTrigger><SelectContent>{materials.map(item => <SelectItem key={item.id} value={item.id}>{item.name} · {item.current_stock.toLocaleString("pt-BR")} {item.unit}</SelectItem>)}</SelectContent></Select></div>)}{!preview.filaments.length && <p role="alert" className="text-sm text-destructive">Filamentos não identificados na fonte. A impressão precisa de revisão.</p>}</div>}
     <Costs labor={labor} setLabor={setLabor} overhead={overhead} setOverhead={setOverhead} extras={extras} setExtras={setExtras} />
     <div className="space-y-3 rounded-lg border p-4"><Check id="bambu-slicer" checked={useSlicer} setChecked={setUseSlicer} label="Usar consumo do fatiador após conclusão completa" /><p className="text-xs text-muted-foreground">Esse consumo é uma referência do fatiador, não uma pesagem. Falhas e impressão com objetos ignorados sempre exigem medição.</p><Check id="bambu-auto" checked={automatic} setChecked={setAutomatic} disabled={!preview.can_auto} label="Apurar automaticamente as próximas impressões deste perfil" /><p className="text-xs text-muted-foreground">Vale somente para execuções iniciadas após esta configuração, com os mesmos identificadores e materiais. As impressões antigas continuam pendentes de apuração. Sem a referência do fatiador habilitada, as novas execuções aguardam pesagem.</p>{!preview.can_auto && <p className="text-xs text-muted-foreground">A fonte não oferece identificação suficiente para automatizar este perfil.</p>}</div>
-    <details className="rounded-lg border p-4"><summary className="flex cursor-pointer items-center justify-between font-medium">Vincular ordens existentes <ChevronDown className="h-4 w-4" /></summary><p className="my-3 text-xs text-muted-foreground">Opcional. Sem seleção, será criada uma ordem para esta impressão, sem receita de venda. Somente ordens do produto escolhido aparecem aqui.</p>{!availableJobs.length ? <p className="text-sm text-muted-foreground">Nenhuma ordem disponível para este produto.</p> : <div className="space-y-3">{availableJobs.map(job => <div key={job.id} className="flex flex-wrap items-center gap-3"><Check id={`bambu-job-${job.id}`} checked={job.id in allocations} setChecked={checked => setAllocations(old => { const next = { ...old }; if (checked) next[job.id] = String(job.print_plate_id ? job.planned_quantity : 1); else delete next[job.id]; return next; })} label={`${job.code} · ${job.name}`} />{job.id in allocations && <Input className="w-24" aria-label={`Peças na ordem ${job.code}`} type="number" min="1" step="1" disabled={!!job.order_item_id} value={allocations[job.id]} onChange={event => setAllocations(old => ({ ...old, [job.id]: event.target.value }))} />}</div>)}</div>}</details>
-    {error && <p role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
-    <DialogFooter><Button variant="outline" disabled={busy} onClick={onClose}>Cancelar</Button><Button disabled={busy} onClick={save}>{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Salvar vínculo</Button></DialogFooter>
+    <details className="rounded-lg border p-4"><summary className="flex cursor-pointer items-center justify-between font-medium">Vincular ordens existentes <ChevronDown className="h-4 w-4" /></summary><p className="my-3 text-xs text-muted-foreground">Opcional. Sem seleção, será criada uma ordem para esta impressão, sem receita de venda. Somente ordens do produto escolhido aparecem aqui.</p>{!availableJobs.length ? <p className="text-sm text-muted-foreground">Nenhuma ordem disponível para este produto.</p> : <div className="space-y-3">{availableJobs.map(job => <div key={job.id} className="flex flex-wrap items-center gap-3"><Check id={`bambu-job-${job.id}`} checked={job.id in allocations} setChecked={checked => { resetMaterialSelection(); setAllocations(old => { const next = { ...old }; if (checked) next[job.id] = String(job.planned_quantity); else delete next[job.id]; return next; }); }} label={`${job.code} · ${job.name}`} />{job.id in allocations && <Input className="w-24" aria-label={`Peças na ordem ${job.code}`} type="number" min="1" step="1" disabled={!!job.order_item_id} value={allocations[job.id]} onChange={event => setAllocations(old => ({ ...old, [job.id]: event.target.value }))} />}</div>)}</div>}</details>
+    </div><div className="shrink-0 space-y-3 border-t bg-card p-4">
+    {error && <p role="alert" className="max-h-24 overflow-y-auto rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
+    <DialogFooter className="gap-2"><Button className="min-h-11" variant="outline" disabled={busy} onClick={onClose}>Cancelar</Button><Button className="min-h-11" disabled={busy || (!!preview.material_policy && !materialSelection.ready)} onClick={save}>{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Salvar vínculo</Button></DialogFooter></div>
   </div>;
 }
 
@@ -223,21 +235,28 @@ export function BambuAccountingForm({ task, preview, materials, onClose, onSaved
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Não foi possível apurar esta impressão."); }
     finally { setBusy(false); onBusy(false); }
   };
-  return <div className="space-y-5">
+  return <div className="flex min-h-0 flex-1 flex-col overflow-hidden"><div className="min-h-0 space-y-5 overflow-y-auto overscroll-contain p-5">
     <div className="rounded-lg border bg-muted/30 p-4 text-sm"><p className="font-medium">{task.product_name || "Produto vinculado"}</p><p className="mt-1">{failed ? "0 peças concluídas. O consumo desta tentativa será registrado como perda." : "Confirme as peças concluídas e o consumo desta execução."}</p><p className="mt-2 text-xs text-muted-foreground">Material valorizado pelo custo médio no lançamento. Custos de tentativas anteriores permanecem no histórico.</p></div>
     {slicerAllowed && <Check id="bambu-measured" checked={measured} setChecked={setMeasured} label="Informar consumo por pesagem" />}
     {!measured ? <div className="rounded-lg border border-amber-300 bg-amber-50/40 p-4 text-sm"><p className="font-medium">Fonte do consumo: referência do fatiador</p><p className="mt-1">{grams(preview.planned_grams)} planejados para a conclusão completa. Este valor não representa uma pesagem.</p></div> : <div className="space-y-3"><h3 className="font-medium">Consumo por pesagem (g)</h3><p className="text-xs text-muted-foreground">Informe tudo que saiu de cada filamento, incluindo purga, suporte e descarte. Zero é válido quando confirmado. Nenhum peso planejado será usado para preencher uma falha.</p>{preview.filaments.map(f => {
       const itemId = config?.materials?.find(m => m.source_key === f.source_key)?.item_id ?? f.item_id;
       return <div key={f.source_key} className="space-y-2 rounded-lg border p-3"><Field id={`bambu-weight-${f.source_key}`} label={`${f.label} · ${materials.find(m => m.id === itemId)?.name || "Material não configurado"}`} value={weights[f.source_key] ?? ""} onChange={value => setWeights(old => ({ ...old, [f.source_key]: value }))} /><p className="text-xs text-muted-foreground">Plano do fatiador, apenas para referência: {grams(f.planned_grams)}</p></div>;
     })}</div>}
+    {!measured && <div className="space-y-2 rounded-lg border p-3 text-sm"><p className="font-medium">Materiais que serão baixados</p>{preview.filaments.map(filament => {
+      const itemId = config?.materials?.find(binding => binding.source_key === filament.source_key)?.item_id ?? filament.item_id;
+      const item = materials.find(material => material.id === itemId);
+      return <p key={filament.source_key} className="break-words">{item?.name || "Material não disponível no estoque"}{item?.color ? ` · ${item.color}` : ""} · {grams(filament.planned_grams)} · {money(bambuPlannedMaterialCost(item ? materialAsStock(item) : undefined, filament.planned_grams))} previstos.</p>;
+    })}<p className="text-xs text-muted-foreground">Confira o item físico e sua cor. O custo médio usado na baixa é o vigente no lançamento.</p></div>}
+    {!!config?.material_overrides?.length && <p className="text-xs text-muted-foreground">Os materiais personalizados pertencem a esta execução. A composição base do produto permanece preservada.</p>}
     <div className="space-y-2"><Field id="bambu-seconds" label="Tempo decorrido (segundos)" value={seconds} onChange={setSeconds} min="0.001" /><p className="text-xs text-muted-foreground">Início ao fim: {formatBambuSeconds(preview.elapsed_seconds)}. O intervalo pode incluir pausas. O tempo previsto pelo fatiador não é usado como duração da tentativa.</p></div>
     {!failed && <Field id="bambu-completed-units" label="Peças efetivamente concluídas" value={units} onChange={setUnits} min="1" integer />}
     {skippedObjects && <p className="flex gap-2 rounded-lg bg-amber-50 p-3 text-sm"><AlertCircle className="h-4 w-4 shrink-0" />Houve objetos ignorados. Confirme a pesagem e a quantidade de peças boas.</p>}
     <Costs labor={labor} setLabor={setLabor} overhead={overhead} setOverhead={setOverhead} extras={extras} setExtras={setExtras} />
     <div className="space-y-2"><Label htmlFor="bambu-reason">{failed ? "Motivo da interrupção ou falha" : "Observação da apuração"}</Label><Textarea id="bambu-reason" value={reason} onChange={event => setReason(event.target.value)} /></div>
     <p className="text-xs text-muted-foreground">Ao apurar, os materiais serão baixados do estoque e o custo será associado às ordens vinculadas. A conclusão física ainda pode exigir acabamento e conferência.</p>
-    {error && <p role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
-    <DialogFooter><Button variant="outline" disabled={busy} onClick={onClose}>Cancelar</Button><Button disabled={busy} onClick={save}>{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Apurar e registrar consumo</Button></DialogFooter>
+    </div><div className="shrink-0 space-y-3 border-t bg-card p-4">
+    {error && <p role="alert" className="max-h-24 overflow-y-auto rounded-lg bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
+    <DialogFooter className="gap-2"><Button className="min-h-11" variant="outline" disabled={busy} onClick={onClose}>Cancelar</Button><Button className="min-h-11 whitespace-normal" disabled={busy} onClick={save}>{busy && <Loader2 className="mr-2 h-4 w-4 shrink-0 animate-spin" />}Apurar e registrar consumo</Button></DialogFooter></div>
   </div>;
 }
 

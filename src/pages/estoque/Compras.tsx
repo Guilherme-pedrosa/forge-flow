@@ -32,6 +32,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
+import { PurchaseStockQuantity } from "@/components/estoque/PurchaseStockQuantity";
+import { purchaseMaterialLabel, purchaseStockQuantity } from "@/lib/purchase-stock";
 
 const fmtCurrency = (v: number | null) =>
   v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
@@ -56,6 +58,7 @@ interface NfeItem {
   ncm: string;
   inventoryItemId: string;
   stockQuantity?: string;
+  purchaseUnit: string;
 }
 
 interface NfeData {
@@ -72,7 +75,7 @@ interface NfeData {
   total: number;
 }
 
-function parseNfeXml(xmlText: string): NfeData | null {
+export function parseNfeXml(xmlText: string): NfeData | null {
   try {
     const parser = new DOMParser();
     const doc = parser.parseFromString(xmlText, "text/xml");
@@ -106,6 +109,7 @@ function parseNfeXml(xmlText: string): NfeData | null {
       items.push({
         description: getTag(prod, "xProd"),
         quantity: parseFloat(getTag(prod, "qCom") || "0"),
+        purchaseUnit: getTag(prod, "uCom").trim(),
         unitPrice: parseFloat(getTag(prod, "vUnCom") || "0"),
         total: parseFloat(getTag(prod, "vProd") || "0"),
         cfop: getTag(prod, "CFOP"),
@@ -158,7 +162,7 @@ export default function Compras() {
   const [paymentMethodId, setPaymentMethodId] = useState("");
   const [installments, setInstallments] = useState("1");
   const [dueDate, setDueDate] = useState("");
-  const [manualItems, setManualItems] = useState<{ description: string; quantity: string; unitPrice: string; inventoryItemId: string }[]>([
+  const [manualItems, setManualItems] = useState<{ description: string; quantity: string; unitPrice: string; inventoryItemId: string; stockQuantity?: string }[]>([
     { description: "", quantity: "1", unitPrice: "0", inventoryItemId: "" },
   ]);
 
@@ -221,10 +225,10 @@ export default function Compras() {
     enabled: !!profile,
   });
 
-  const { data: inventoryItems = [] } = useQuery({
-    queryKey: ["inventory_items"],
+  const { data: inventoryItems = [], error: inventoryError, refetch: refetchInventory } = useQuery({
+    queryKey: ["inventory_items", profile?.tenant_id, "purchase-selection"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("inventory_items").select("id, name, sku, unit").eq("is_active", true).order("name");
+      const { data, error } = await (supabase.from("inventory_items") as any).select("id, name, sku, unit, category, material_code, color, color_code").eq("is_active", true).order("name");
       if (error) throw error;
       return data;
     },
@@ -274,7 +278,7 @@ export default function Compras() {
 
   const createMut = useMutation({
     mutationFn: async () => {
-      const items = manualItems.map(i => ({ description: i.description.trim(), quantity: Number(i.quantity.replace(",", ".")), unit_price: Number(i.unitPrice.replace(",", ".")), total: money(Number(i.quantity.replace(",", ".")) * Number(i.unitPrice.replace(",", "."))), inventory_item_id: i.inventoryItemId || null, stock_quantity: null }));
+      const items = manualItems.map(i => ({ description: i.description.trim(), quantity: Number(i.quantity.replace(",", ".")), unit_price: Number(i.unitPrice.replace(",", ".")), total: money(Number(i.quantity.replace(",", ".")) * Number(i.unitPrice.replace(",", "."))), inventory_item_id: i.inventoryItemId || null, stock_quantity: i.inventoryItemId ? purchaseStockQuantity(i.stockQuantity || "") : null }));
       const subtotal = money(items.reduce((sum, i) => sum + i.total, 0));
       return persistPurchase("manual", { vendor_id: vendorId || null, order_date: orderDate, expected_date: expectedDate || null, subtotal, discount: 0, shipping: 0, total: subtotal, notes: notes.trim() || null }, items, Number(installments), dueDate || expectedDate || orderDate, paymentMethodId || null);
     },
@@ -304,7 +308,7 @@ export default function Compras() {
           vid = data.id;
         }
       }
-      const items = nfeData.items.map(i => ({ description: i.description, quantity: i.quantity, unit_price: i.unitPrice, total: i.total, cfop: i.cfop || null, ncm: i.ncm || null, inventory_item_id: i.inventoryItemId || null, stock_quantity: i.inventoryItemId && i.stockQuantity ? Number(i.stockQuantity.replace(",", ".")) : null }));
+      const items = nfeData.items.map(i => ({ description: i.description, quantity: i.quantity, unit_price: i.unitPrice, total: i.total, cfop: i.cfop || null, ncm: i.ncm || null, inventory_item_id: i.inventoryItemId || null, stock_quantity: i.inventoryItemId ? purchaseStockQuantity(i.stockQuantity || "") : null }));
       if (nfeMarkReceived && items.some(i => i.inventory_item_id && !(i.stock_quantity > 0))) throw new Error("Informe a quantidade na unidade do estoque de cada item vinculado antes de receber.");
       const id = await persistPurchase("xml", { vendor_id: vid, order_date: nfeData.issueDate, subtotal: nfeData.subtotal, discount: nfeData.discount, shipping: nfeData.shipping, additional_costs: nfeData.additionalCosts, total: nfeData.total, nfe_number: nfeData.nfeNumber, nfe_key: nfeData.nfeKey, nfe_xml: xmlRaw }, items, Number(nfeInstallments), nfeDueDate || nfeData.issueDate, null);
       let receiveError = "";
@@ -405,7 +409,7 @@ export default function Compras() {
   const removeManualItem = (idx: number) => setManualItems(manualItems.filter((_, i) => i !== idx));
   const updateManualItem = (idx: number, field: string, value: string) => {
     const updated = [...manualItems];
-    (updated[idx] as any)[field] = value;
+    updated[idx] = { ...updated[idx], [field]: value, ...(["quantity", "inventoryItemId"].includes(field) ? { stockQuantity: "" } : {}) };
     setManualItems(updated);
   };
 
@@ -580,6 +584,7 @@ export default function Compras() {
           </div>
         }
       />
+      {inventoryError && <div role="alert" className="rounded-lg border border-destructive/30 p-3 text-sm">Não foi possível carregar os materiais para vincular ao estoque. <Button variant="outline" size="sm" onClick={() => refetchInventory()}>Tentar novamente</Button></div>}
 
       {/* KPIs */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -739,31 +744,32 @@ export default function Compras() {
                   <div key={idx} className="grid grid-cols-2 sm:grid-cols-[minmax(0,1fr)_140px_80px_100px_32px] gap-2 items-end rounded-lg border p-3 sm:border-0 sm:p-0">
                     <div>
                       <Label className="text-xs">Descrição</Label>
-                      <Input value={item.description} onChange={(e) => updateManualItem(idx, "description", e.target.value)} placeholder="Material..." />
+                      <Input aria-label={`Descrição do item ${idx + 1}`} value={item.description} onChange={(e) => updateManualItem(idx, "description", e.target.value)} placeholder="Material..." />
                     </div>
                     <div>
                       <Label className="text-xs">Item de estoque</Label>
                       <Select value={item.inventoryItemId || "none"} onValueChange={(v) => updateManualItem(idx, "inventoryItemId", v === "none" ? "" : v)}>
-                        <SelectTrigger className="h-9 text-xs"><SelectValue placeholder="Vincular..." /></SelectTrigger>
-                        <SelectContent>
+                        <SelectTrigger aria-label={`Material de estoque do item ${idx + 1}`} className="h-11 text-xs"><SelectValue placeholder="Vincular..." /></SelectTrigger>
+                        <SelectContent className="max-w-[calc(100vw-2rem)]">
                           <SelectItem value="none">— Nenhum —</SelectItem>
                           {inventoryItems.map((inv: any) => (
-                            <SelectItem key={inv.id} value={inv.id}>{inv.name}</SelectItem>
+                            <SelectItem key={inv.id} value={inv.id} className="min-h-11 whitespace-normal break-words">{purchaseMaterialLabel(inv)}</SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
                     </div>
                     <div>
                       <Label className="text-xs">Quantidade comprada</Label>
-                      <Input type="number" value={item.quantity} onChange={(e) => updateManualItem(idx, "quantity", e.target.value)} />
+                      <Input aria-label={`Quantidade comprada do item ${idx + 1}`} type="number" value={item.quantity} onChange={(e) => updateManualItem(idx, "quantity", e.target.value)} />
                     </div>
                     <div>
                       <Label className="text-xs">Preço unitário</Label>
-                      <Input type="number" step="0.01" value={item.unitPrice} onChange={(e) => updateManualItem(idx, "unitPrice", e.target.value)} />
+                      <Input aria-label={`Preço unitário do item ${idx + 1}`} type="number" step="0.01" value={item.unitPrice} onChange={(e) => updateManualItem(idx, "unitPrice", e.target.value)} />
                     </div>
                     <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => removeManualItem(idx)} disabled={manualItems.length <= 1}>
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
+                    {item.inventoryItemId && <div className="col-span-full rounded-md bg-muted/30 p-3"><PurchaseStockQuantity key={item.inventoryItemId} label={item.description || `item ${idx + 1}`} value={item.stockQuantity || ""} purchasedQuantity={Number(item.quantity.replace(",", "."))} stockUnit={inventoryItems.find(inv => inv.id === item.inventoryItemId)?.unit || "un"} onChange={value => updateManualItem(idx, "stockQuantity", value)} disabled={createMut.isPending} /></div>}
                   </div>
                 ))}
               </div>
@@ -840,19 +846,19 @@ export default function Compras() {
                             value={item.inventoryItemId || "none"}
                             onValueChange={(val) => updateNfeItem(idx, val === "none" ? "" : val)}
                           >
-                            <SelectTrigger className="h-8 text-xs w-[180px]">
+                            <SelectTrigger aria-label={`Material de estoque de ${item.description}`} className="h-11 text-xs w-[240px] max-w-full">
                               <SelectValue placeholder="Vincular..." />
                             </SelectTrigger>
-                            <SelectContent>
+                            <SelectContent className="max-w-[calc(100vw-2rem)]">
                               <SelectItem value="none">— Não vincular —</SelectItem>
                               {inventoryItems.map((inv: any) => (
-                                <SelectItem key={inv.id} value={inv.id}>{inv.name}{inv.sku ? ` (${inv.sku})` : ""}</SelectItem>
+                                <SelectItem key={inv.id} value={inv.id} className="min-h-11 whitespace-normal break-words">{purchaseMaterialLabel(inv)}</SelectItem>
                               ))}
                             </SelectContent>
                           </Select>
-                          {item.inventoryItemId && <div className="mt-2"><Label className="text-xs">Entrada em {inventoryItems.find(inv => inv.id === item.inventoryItemId)?.unit}</Label><Input aria-label={`Quantidade de estoque de ${item.description}`} type="number" min="0.01" step="any" placeholder="Quantidade na unidade do estoque" value={item.stockQuantity || ""} onChange={e => setNfeData({ ...nfeData, items: nfeData.items.map((row, index) => index === idx ? { ...row, stockQuantity: e.target.value } : row) })} /></div>}
+                          {item.inventoryItemId && <div className="mt-2"><PurchaseStockQuantity key={item.inventoryItemId} label={item.description} value={item.stockQuantity || ""} purchasedQuantity={item.quantity} purchaseUnit={item.purchaseUnit} stockUnit={inventoryItems.find(inv => inv.id === item.inventoryItemId)?.unit || "un"} onChange={value => setNfeData({ ...nfeData, items: nfeData.items.map((row, index) => index === idx ? { ...row, stockQuantity: value } : row) })} disabled={importXmlMut.isPending} /></div>}
                         </TableCell>
-                        <TableCell className="text-right text-sm">{item.quantity}</TableCell>
+                        <TableCell className="text-right text-sm">{item.quantity} {item.purchaseUnit}</TableCell>
                         <TableCell className="text-right text-sm">{fmtCurrency(item.unitPrice)}</TableCell>
                         <TableCell className="text-right text-sm font-mono">{fmtCurrency(item.total)}</TableCell>
                       </TableRow>
@@ -978,24 +984,23 @@ export default function Compras() {
                                 disabled={updateStockMut.isPending}
                                 onValueChange={val => updateStockMut.mutate({ id: item.id, values: { inventory_item_id: val === "none" ? null : val, stock_quantity: null } })}
                               >
-                                <SelectTrigger className="h-8 text-xs w-[180px]"><SelectValue placeholder="Vincular..." /></SelectTrigger>
-                                <SelectContent>
+                                <SelectTrigger aria-label={`Material de estoque de ${item.description}`} className="h-11 text-xs w-[240px] max-w-full"><SelectValue placeholder="Vincular..." /></SelectTrigger>
+                                <SelectContent className="max-w-[calc(100vw-2rem)]">
                                   <SelectItem value="none">— Não vincular —</SelectItem>
                                   {inventoryItems.map((inv: any) => (
-                                    <SelectItem key={inv.id} value={inv.id}>{inv.name}{inv.sku ? ` (${inv.sku})` : ""}</SelectItem>
+                                    <SelectItem key={inv.id} value={inv.id} className="min-h-11 whitespace-normal break-words">{purchaseMaterialLabel(inv)}</SelectItem>
                                   ))}
                                 </SelectContent>
                               </Select>
                             ) : (
                               <span className="text-xs text-muted-foreground">
                                 {item.inventory_item_id
-                                  ? <span className="text-emerald-600 flex items-center gap-1"><CheckCircle2 className="h-3 w-3" />{inventoryItems.find((inv: any) => inv.id === item.inventory_item_id)?.name || "Vinculado"}</span>
+                                  ? <span className="text-emerald-600 flex items-center gap-1"><CheckCircle2 className="h-3 w-3" />{inventoryItems.find((inv: any) => inv.id === item.inventory_item_id) ? purchaseMaterialLabel(inventoryItems.find((inv: any) => inv.id === item.inventory_item_id)) : "Vinculado"}</span>
                                   : "— Não vinculado"}
                               </span>
                             )}
                             {item.inventory_item_id && <div className="mt-2 space-y-1">
-                              <Label className="text-xs">Entrada em {inventoryItems.find(inv => inv.id === item.inventory_item_id)?.unit || "unidade do estoque"}</Label>
-                              {!["received", "cancelled"].includes(detailOrder?.status) ? <Input key={`${item.id}-${item.stock_quantity}`} aria-label={`Quantidade de estoque de ${item.description}`} type="number" min="0.01" step="any" placeholder="Ex.: 1000 g por rolo" defaultValue={item.stock_quantity ?? ""} disabled={updateStockMut.isPending} onBlur={e => { const value = Number(e.target.value); if (value !== item.stock_quantity) updateStockMut.mutate({ id: item.id, values: { stock_quantity: value } }); }} /> : <p className="text-sm tabular-nums">{item.stock_quantity ?? "Não informada"}</p>}
+                              {!["received", "cancelled"].includes(detailOrder?.status) ? <PurchaseStockQuantity key={`${item.id}-${item.inventory_item_id}`} label={item.description} value={String(item.stock_quantity ?? "")} purchasedQuantity={item.quantity} stockUnit={inventoryItems.find(inv => inv.id === item.inventory_item_id)?.unit || "un"} disabled={updateStockMut.isPending} onCommit={raw => { try { const value = purchaseStockQuantity(raw); if (value !== item.stock_quantity) updateStockMut.mutate({ id: item.id, values: { stock_quantity: value } }); } catch (error) { toast({ title: "Quantidade não salva", description: (error as Error).message, variant: "destructive" }); } }} /> : <p className="text-sm tabular-nums">Entrada: {item.stock_quantity ?? "Não informada"} {inventoryItems.find(inv => inv.id === item.inventory_item_id)?.unit}</p>}
                             </div>}
                           </TableCell>
                           <TableCell className="text-right text-sm">{item.quantity}</TableCell>
@@ -1083,7 +1088,7 @@ export default function Compras() {
                           <div key={item.id} className="flex items-center justify-between rounded-lg border border-emerald-500/20 bg-emerald-500/5 px-3 py-2 text-sm">
                             <div>
                               <span className="font-medium">{item.description}</span>
-                              <span className="text-xs text-muted-foreground ml-2">→ {inv?.name || "Estoque"}</span>
+                              <span className="block text-xs text-muted-foreground">→ {inv ? purchaseMaterialLabel(inv) : "Estoque"}</span>
                             </div>
                             <span className="font-mono text-emerald-600 font-semibold">+{item.stock_quantity}{inv?.unit || ""}</span>
                           </div>

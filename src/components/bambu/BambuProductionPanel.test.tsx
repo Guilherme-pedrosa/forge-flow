@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { BambuAccountingForm, BambuConfigurationForm, BambuQualitySummary } from "./BambuProductionPanel";
 import type { BambuProductionPreview, BambuProductionReview } from "@/lib/bambu-production-api";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const { rpc } = vi.hoisted(() => ({ rpc: vi.fn() }));
 vi.mock("@/lib/bambu-production-api", () => ({ bambuRpc: rpc, readBambuProductionReview: vi.fn(), readBambuSyncState: vi.fn() }));
@@ -81,6 +82,51 @@ describe("apuração Bambu no formulário", () => {
 });
 
 describe("vínculos explícitos Bambu", () => {
+  it("a configuração por execução envia o item branco e override da base cinza, sem alterar o SKU", async () => {
+    const expected = { product_id: "product", plate_id: null, base_item_id: "gray", selected_item_id: "gray", material_code: "PLA", color_code: "GRAY", color_hex: "#A7A9AA" };
+    const gray = { ...materials[0], id: "gray", name: "PLA cinza", material_code: "PLA", color: "Cinza", color_code: "GRAY", color_hex: "#A7A9AA", avg_cost: 80 };
+    const white = { ...gray, id: "material", name: "PLA branco estoque", color: "Branco", color_code: "WHITE", color_hex: "#FFFFFF", avg_cost: 100 };
+    rpc.mockImplementation(async name => name === "bambu_material_selection_preview" ? { material_policy: "execution_variant", expected_materials: [expected],
+      material_options: [{ ...expected, options: [gray, white] }], filaments: [{ ...preview.filaments[0], base_item_id: "gray", source_type: "PLA", source_color: "A7A9AAFF", target_type: "PLA", target_color: "FFFFFFFF" }], complete: true, missing: [], cost_per_unit: 1 } : "configuration");
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><BambuConfigurationForm {...props({ ...preview, material_policy: "execution_variant" })} materials={[gray, white]} /></QueryClientProvider>);
+    await screen.findByText(/Material ou cor personalizados para esta execução/);
+    await waitFor(() => expect(screen.queryByText("Conferindo a seleção…")).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Salvar vínculo" }));
+    await waitFor(() => expect(rpc).toHaveBeenCalledWith("configure_bambu_production", expect.objectContaining({
+      p_product_id: "product", p_materials: [{ source_key: "tray0", item_id: "material" }],
+      p_material_overrides: [{ product_id: "product", plate_id: null, base_item_id: "gray", item_id: "material" }],
+    })));
+    expect(rpc.mock.calls.some(([name]) => name === "save_product_material_recipe" || name === "save_product_with_photos")).toBe(false);
+  });
+  it("uma OI de venda sem placa mantém todas as unidades do lote ao vincular", async () => {
+    rpc.mockResolvedValue("configuration");
+    render(<BambuConfigurationForm {...props()} jobs={[{ id: "job", code: "OI-003", name: "Lote duas peças", status: "queued", product_id: "product", print_plate_id: null, planned_quantity: 2, order_item_id: "order-item", inventory_posted_at: null }]} />);
+    fireEvent.click(screen.getByText("Vincular ordens existentes"));
+    fireEvent.click(screen.getByRole("checkbox", { name: "OI-003 · Lote duas peças" }));
+    expect(screen.getByLabelText("Peças na ordem OI-003")).toHaveValue(2);
+    expect(screen.getByLabelText("Peças na ordem OI-003")).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Salvar vínculo" }));
+    await waitFor(() => expect(rpc).toHaveBeenCalledWith("configure_bambu_production", expect.objectContaining({ p_units: 2, p_allocations: [{ job_id: "job", quantity: 2 }] })));
+  });
+  it("trocar para uma OI comercial limpa a cor anterior e exige a escolha permitida pelo pedido", async () => {
+    const gray = { ...materials[0], id: "gray", name: "PLA cinza aprovado", material_code: "PLA", color: "Cinza", color_code: "GRAY", color_hex: "#A7A9AA", avg_cost: 80 };
+    const white = { ...gray, id: "material", name: "PLA branco estoque", color: "Branco", color_code: "WHITE", color_hex: "#FFFFFF", avg_cost: 100 };
+    const expected = { product_id: "product", plate_id: null, base_item_id: "gray", selected_item_id: "gray", material_code: "PLA", color_code: "GRAY", color_hex: "#A7A9AA" };
+    rpc.mockImplementation(async (_name, args) => {
+      const approved = args.p_allocations.length > 0;
+      return { material_policy: approved ? "approved_order" : "execution_variant", expected_materials: [expected], material_options: [{ ...expected, options: [gray, white] }],
+        filaments: [{ ...preview.filaments[0], base_item_id: "gray", item_id: approved ? null : "material", suggested_item_id: null }], complete: true, missing: [], cost_per_unit: 1 };
+    });
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><BambuConfigurationForm {...props({ ...preview, material_policy: "execution_variant" })} materials={[gray, white]} jobs={[{ id: "job", code: "OI-004", name: "Pedido cinza", status: "queued", product_id: "product", print_plate_id: null, planned_quantity: 2, order_item_id: "order-item", inventory_posted_at: null }]} /></QueryClientProvider>);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Salvar vínculo" })).toBeEnabled());
+    expect(screen.getByRole("combobox", { name: "Material usado em PLA branco" })).toHaveValue("material");
+    fireEvent.click(screen.getByText("Vincular ordens existentes")); fireEvent.click(screen.getByRole("checkbox", { name: "OI-004 · Pedido cinza" }));
+    await screen.findByText(/Esta impressão atende uma venda/);
+    expect(screen.getByRole("combobox", { name: "Material usado em PLA branco" })).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Salvar vínculo" })).toBeDisabled();
+    expect(screen.queryByRole("option", { name: /PLA branco estoque/ })).not.toBeInTheDocument();
+    expect(rpc.mock.calls.some(([name]) => name === "configure_bambu_production")).toBe(false);
+  });
   it("uma nota de importação oferece sugestão sem escolher o produto sozinha", async () => {
     render(<BambuConfigurationForm {...props({ ...preview, record: null, candidate_product_id: "product", candidate_source: "legacy_note" })} />);
     expect(screen.getByText("Sugestão encontrada na nota de importação:")).toBeInTheDocument();

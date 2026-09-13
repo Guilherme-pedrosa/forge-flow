@@ -27,6 +27,28 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("edição da composição física", () => {
+  it("calcula subtotal de energia e máquina com rendimento recém-informado sem assumir trabalho ou custos ausentes", async () => {
+    mock.plates = [{ id: "plate-1", units_per_plate: null, imported_filaments: [{ type: "PLA", color: "#FF0000", grams: 100 }] }];
+    const base = mock.rpc.getMockImplementation()!;
+    mock.rpc.mockImplementation((name: string, args: Record<string, unknown>) => name === "product_print_plate_preparation" ? Promise.resolve({ data: { energy_cost_per_print: .25, machine_cost_per_print: .75, non_material_cost_per_unit_suggestion: null }, error: null }) : base(name, args));
+    mount(<ProductMaterialRecipe productId="product-1" tenantId="tenant-1" plateId="plate-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Definir composição" }));
+    expect(screen.queryByRole("button", { name: /Preencher energia e máquina/ })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Quantas unidades do produto esta impressão atende?"), { target: { value: "2" } });
+    fireEvent.click(await screen.findByRole("button", { name: /Preencher energia e máquina/ }));
+    expect(screen.getByLabelText(/Demais custos por unidade:/)).toHaveValue("0.5");
+    expect(screen.getByText(/Acrescente trabalho, acabamento/)).toBeInTheDocument();
+    expect(mock.rpc.mock.calls.some(call => call[0] === "prepare_product_plate_recipe")).toBe(false);
+  });
+  it("não sugere subtotal completo de energia e máquina quando a máquina não tem custo conhecido", async () => {
+    mock.plates = [{ id: "plate-1", units_per_plate: 2, imported_filaments: [{ type: "PLA", color: "#FF0000", grams: 100 }] }];
+    const base = mock.rpc.getMockImplementation()!;
+    mock.rpc.mockImplementation((name: string, args: Record<string, unknown>) => name === "product_print_plate_preparation" ? Promise.resolve({ data: { energy_cost_per_print: .25, machine_cost_per_print: null, non_material_cost_per_unit_suggestion: null }, error: null }) : base(name, args));
+    mount(<ProductMaterialRecipe productId="product-1" tenantId="tenant-1" plateId="plate-1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Definir composição" }));
+    expect(screen.queryByRole("button", { name: /Preencher energia e máquina/ })).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/Demais custos por unidade:/)).toHaveValue("");
+  });
   it("confirma rendimento e composição importada em uma gravação, preservando fechamento e reabertura", async () => {
     mock.plates = [{ id: "plate-1", source_id: "source-1", is_active: true, plate_index: 1, label: "Base", units_per_plate: null, imported_filaments: [{ type: "PLA", color: "#FF0000", grams: 100 }] }];
     let finish!: (result: unknown) => void; const base = mock.rpc.getMockImplementation()!;

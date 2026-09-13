@@ -1,5 +1,6 @@
 import { positiveInteger, nonNegative } from "./production";
 import { roundMoney } from "./sales-order";
+import { readMaterialOverrides, type MaterialOverride } from "./product-material-variant";
 
 export type QuoteStatus = "draft" | "issued" | "approved" | "rejected";
 export const quoteStatus: Record<QuoteStatus, string> = { draft: "Rascunho", issued: "Emitido", approved: "Aprovado", rejected: "Rejeitado" };
@@ -16,8 +17,9 @@ export interface QuoteItem extends Record<string, unknown> {
   id: string; tenant_id: string; quote_id: string; line_index: number; product_id: string; description: string;
   quantity: number; unit_price: number | null; total: number | null; notes: string | null;
   estimated_unit_cost: number | null; estimated_total_cost: number | null; product_snapshot: QuoteSnapshot;
+  material_overrides?: MaterialOverride[];
 }
-export interface QuoteDraftLine { key: string; product_id: string; description: string; quantity: string; unit_price: string; notes: string }
+export interface QuoteDraftLine { key: string; product_id: string; description: string; quantity: string; unit_price: string; notes: string; material_overrides?: MaterialOverride[] }
 export const quoteMoney = (value: number | null | undefined) => value == null ? "Pendente" : value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 export function prepareQuote(lines: QuoteDraftLine[], freight: string, discount: string) {
   if (!lines.length || lines.length > 500) throw new Error("Inclua entre 1 e 500 produtos.");
@@ -26,7 +28,7 @@ export function prepareQuote(lines: QuoteDraftLine[], freight: string, discount:
     if (!line.description.trim()) throw new Error(`Informe a descrição do item ${index + 1}.`);
     const quantity = positiveInteger(line.quantity, `Quantidade do item ${index + 1}`, 500);
     const unit_price = line.unit_price.trim() === "" ? null : roundMoney(nonNegative(line.unit_price, `Preço do item ${index + 1}`));
-    return { product_id: line.product_id, description: line.description.trim(), quantity, unit_price, total: unit_price == null ? null : roundMoney(quantity * unit_price), notes: line.notes.trim() || null };
+    return { product_id: line.product_id, description: line.description.trim(), quantity, unit_price, total: unit_price == null ? null : roundMoney(quantity * unit_price), notes: line.notes.trim() || null, material_overrides: readMaterialOverrides(line.material_overrides) };
   });
   const shipping = roundMoney(nonNegative(freight || "0", "Frete"));
   const discountValue = roundMoney(nonNegative(discount || "0", "Desconto"));

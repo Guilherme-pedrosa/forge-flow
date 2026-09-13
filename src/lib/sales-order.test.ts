@@ -4,6 +4,16 @@ import { escapePrintHtml, orderRequest, prepareOrder, printableImageUrl, salesOr
 const line = { product_id: "product-1", description: "Suporte 3D", quantity: 3, unit_price: 19.9, notes: "PLA azul" };
 
 describe("orçamentos consistentes", () => {
+  it("inclui a seleção física por placa no payload e na chave de retry, sem preço/custo inventado", () => {
+    const selection = [{ product_id: "product-1", plate_id: "plate-base", base_item_id: "red", item_id: "blue" }];
+    const order = prepareOrder([{ ...line, material_overrides: selection }], 0, 0);
+    expect(order.items[0].material_overrides).toEqual(selection);
+    expect(order.items[0]).not.toHaveProperty("product_snapshot"); expect(order.items[0]).not.toHaveProperty("estimated_unit_cost");
+    const first = orderRequest(null, JSON.stringify(order), () => "first");
+    const changed = prepareOrder([{ ...line, material_overrides: [{ ...selection[0], item_id: "green" }] }], 0, 0);
+    expect(orderRequest(first, JSON.stringify(changed), () => "second").id).toBe("second");
+    expect(() => prepareOrder([{ ...line, product_id: "", material_overrides: selection }], 0, 0)).toThrow("Selecione o produto");
+  });
   it("persiste frete separado e arredonda total em centavos", () => {
     const order = prepareOrder([line], "12.5", "5");
     expect(order).toMatchObject({ shipping: 12.5, discount: 5, subtotal: 59.7, total: 67.2 });
