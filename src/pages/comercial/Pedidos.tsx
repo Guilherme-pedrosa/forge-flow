@@ -10,7 +10,8 @@ import {
   ShoppingCart, MapPin, X, Package, Printer, DollarSign, ArrowRight, Pencil,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, Link, useSearchParams } from "react-router-dom";
+import { QuoteSnapshotSummary } from "@/components/comercial/QuoteSnapshotSummary";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -65,6 +66,7 @@ const newLine = (): OrderLineItem => ({
 export default function Pedidos() {
   const { profile } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { toast } = useToast();
   const qc = useQueryClient();
   const printRef = useRef<HTMLDivElement>(null);
@@ -73,7 +75,8 @@ export default function Pedidos() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
-  const [viewOrderId, setViewOrderId] = useState<string | null>(null);
+  const [viewOrderId, setViewOrderId] = useState<string | null>(searchParams.get("pedido"));
+  useEffect(() => { const id = searchParams.get("pedido"); if (id) setViewOrderId(id); }, [searchParams]);
   const [editMode, setEditMode] = useState(false);
 
   // Form state
@@ -94,7 +97,7 @@ export default function Pedidos() {
 
   // Populate form from existing order for editing
   const startEdit = () => {
-    if (!viewOrder || viewOrder.status !== "draft" || itemsLoading || itemsError || linkedLoading || linkedError || linkedJobs.length) return;
+    if (!viewOrder || viewOrder.source_quote_id || viewOrder.status !== "draft" || itemsLoading || itemsError || linkedLoading || linkedError || linkedJobs.length) return;
     saveRequest.current = null;
     setCustomerId(viewOrder.customer_id || "");
     setDueDate(viewOrder.due_date || "");
@@ -428,7 +431,7 @@ export default function Pedidos() {
     mutationFn: () => saveOrder(null),
     onSuccess: (id) => {
       invalidateOrder(); setCreateOpen(false); resetForm(); setViewOrderId(id);
-      toast({ title: "Orçamento criado", description: "Itens, frete e total foram salvos juntos." });
+      toast({ title: "Pedido criado", description: "Itens, frete e total foram salvos juntos." });
     },
     onError: (error: Error) => toast({ title: "Não foi possível salvar", description: error.message, variant: "destructive" }),
   });
@@ -442,7 +445,7 @@ export default function Pedidos() {
   });
   const updateOrderMut = useMutation({
     mutationFn: () => saveOrder(viewOrderId),
-    onSuccess: () => { invalidateOrder(); saveRequest.current = null; setEditMode(false); toast({ title: "Orçamento atualizado" }); },
+    onSuccess: () => { invalidateOrder(); saveRequest.current = null; setEditMode(false); toast({ title: "Pedido atualizado" }); },
     onError: (error: Error) => toast({ title: "Não foi possível salvar", description: error.message, variant: "destructive" }),
   });
   const requestStatus = (id: string, status: string) => {
@@ -460,9 +463,9 @@ export default function Pedidos() {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
-      <PageHeader title="Pedidos / Orçamentos" description="Gestão de orçamentos e pedidos de clientes"
+      <PageHeader title="Pedidos de venda" description="Vendas, recebimentos e produção vinculada"
         breadcrumbs={[{ label: "Comercial" }, { label: "Pedidos" }]}
-        actions={<Button size="sm" onClick={() => { resetForm(); setCreateOpen(true); }}><Plus className="h-4 w-4 mr-1" /> Novo Orçamento</Button>}
+        actions={<Button size="sm" onClick={() => { resetForm(); setCreateOpen(true); }}><Plus className="h-4 w-4 mr-1" /> Novo pedido</Button>}
       />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -541,7 +544,7 @@ export default function Pedidos() {
       <Dialog open={createOpen} onOpenChange={open => { if (!createMut.isPending) setCreateOpen(open); }}>
         <DialogContent className="max-w-3xl max-h-[90vh] overflow-hidden flex flex-col w-[95vw] sm:w-auto">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><ShoppingCart className="h-5 w-5 text-primary" /> Novo Orçamento</DialogTitle>
+            <DialogTitle className="flex items-center gap-2"><ShoppingCart className="h-5 w-5 text-primary" /> Novo pedido</DialogTitle>
             <DialogDescription>Preencha os dados do orçamento e adicione os itens</DialogDescription>
           </DialogHeader>
 
@@ -577,7 +580,7 @@ export default function Pedidos() {
             {/* Line Items */}
             <div>
               <div className="flex items-center justify-between mb-2">
-                <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Itens do Orçamento</Label>
+                <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Itens do pedido</Label>
                 <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setLines((prev) => [...prev, newLine()])}>
                   <Plus className="h-3.5 w-3.5 mr-1" /> Item
                 </Button>
@@ -661,7 +664,7 @@ export default function Pedidos() {
           <DialogFooter className="mt-4">
             <Button variant="outline" disabled={createMut.isPending} onClick={() => setCreateOpen(false)}>Cancelar</Button>
             <Button onClick={() => createMut.mutate()} disabled={createMut.isPending}>
-              {createMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Criar Orçamento
+              {createMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Criar pedido
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -680,6 +683,7 @@ export default function Pedidos() {
 
           {viewOrder && !editMode && (
             <div className="space-y-4" ref={printRef}>
+              {viewOrder.source_quote_id && <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm">Venda originada de orçamento aprovado. Os preços, materiais e cores combinados estão preservados. <Link className="text-primary underline" to="/comercial/orcamentos">Ver orçamentos</Link></div>}
               {/* ── Status editável ── */}
               {(() => {
                 const cfg = statusConfig[viewOrder.status] || statusConfig.draft;
@@ -757,6 +761,7 @@ export default function Pedidos() {
                       <TableRow key={item.id}>
                         <TableCell>
                           <p className="text-sm font-medium">{item.description}</p>
+                          {item.product_snapshot && <QuoteSnapshotSummary snapshot={item.product_snapshot} quantity={item.quantity} />}
                           {item.notes && <p className="text-xs text-muted-foreground">{item.notes}</p>}
                         </TableCell>
                         <TableCell className="text-center text-sm">{item.quantity}</TableCell>
@@ -815,7 +820,7 @@ export default function Pedidos() {
                   <Button variant="outline" size="sm" onClick={handlePrint} disabled={itemsLoading || !!itemsError}>
                     <Printer className="h-4 w-4 mr-1" /> Imprimir / PDF
                   </Button>
-                  {viewOrder.status === "draft" && linkedJobs.length === 0 && <Button variant="outline" size="sm" disabled={itemsLoading || !!itemsError || linkedLoading || !!linkedError} onClick={startEdit}>
+                  {viewOrder.status === "draft" && !viewOrder.source_quote_id && linkedJobs.length === 0 && <Button variant="outline" size="sm" disabled={itemsLoading || !!itemsError || linkedLoading || !!linkedError} onClick={startEdit}>
                     <Pencil className="h-4 w-4 mr-1" /> Editar rascunho
                   </Button>}
                 </div>
@@ -865,7 +870,7 @@ export default function Pedidos() {
 
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Itens do Orçamento</Label>
+                  <Label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Itens do pedido</Label>
                   <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setLines((prev) => [...prev, newLine()])}>
                     <Plus className="h-3.5 w-3.5 mr-1" /> Item
                   </Button>

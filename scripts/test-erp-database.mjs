@@ -34,7 +34,9 @@ await db.query(`INSERT INTO printers(id,tenant_id,name,model,status,power_watts,
 await db.query("INSERT INTO auth.users VALUES($1,'operator@example.test')",[id(4)]);
 await db.query("INSERT INTO profiles(user_id,tenant_id,display_name) VALUES($1,$2,'Operator')",[id(4),tenant]);
 await db.query("INSERT INTO user_roles(user_id,tenant_id,role) VALUES($1,$2,'operator')",[id(4),tenant]);
-await db.exec('SET ROLE authenticated;');
+// These regression fixtures represent orders predating the material-recipe rollout.
+// New-order recipe enforcement is exercised in test-sales-quotes.mjs.
+await db.exec('ALTER TABLE orders ALTER COLUMN requires_material_recipe SET DEFAULT false; SET ROLE authenticated;');
 await db.query(`SELECT set_config('request.jwt.claim.sub',$1,false)`,[uid]);
 let passed=0;
 const failures=[];

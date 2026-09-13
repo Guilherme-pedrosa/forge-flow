@@ -1,4 +1,6 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import ProductMaterialRecipe, { fetchProductMaterialRecipe } from "./ProductMaterialRecipe";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { Archive, Layers3, Loader2, Pencil, Plus, Printer, X } from "lucide-react";
@@ -27,6 +29,21 @@ const currency = (value: number | null) => value == null ? "Não informado" : va
 const grams = (value: number | null) => value == null ? "Não informado" : `${value.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} g`;
 const initialDraft = () => ({ plate_index: "1", label: "", units_per_plate: "1", material_id: "", printer_id: "", est_grams: "", est_time_minutes: "", est_cost_per_unit: "", model_id: "", profile_id: "" });
 
+function PlateRecipe({ productId, tenantId, plateId, onBusy }: { productId: string; tenantId: string; plateId: string; onBusy: (id: string, busy: boolean) => void }) {
+  const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  useEffect(() => { onBusy(plateId, open); return () => onBusy(plateId, false); }, [onBusy, plateId, open]);
+  return <>
+    <Button type="button" variant="outline" className="h-auto min-h-11 w-full whitespace-normal text-left" onClick={() => setOpen(true)}>Materiais e cores desta placa</Button>
+    <Dialog open={open} onOpenChange={next => { if (next || !editing) setOpen(next); }}>
+      <DialogContent className="max-w-2xl max-sm:p-3" onEscapeKeyDown={event => { if (editing) event.preventDefault(); }} onInteractOutside={event => { if (editing) event.preventDefault(); }}>
+        <DialogHeader><DialogTitle>Receita da placa</DialogTitle><DialogDescription>Confira a composição e salve uma nova versão quando necessário.</DialogDescription></DialogHeader>
+        <ProductMaterialRecipe productId={productId} tenantId={tenantId} plateId={plateId} onBusyChange={setEditing} />
+      </DialogContent>
+    </Dialog>
+  </>;
+}
+
 export default function ProductPrintPlates({ productId, tenantId, sourceId, showProductTotal = false, onBusyChange }: {
   productId: string; tenantId: string; sourceId: string; showProductTotal?: boolean;
   onBusyChange?: (sourceId: string, busy: boolean) => void;
@@ -39,6 +56,8 @@ export default function ProductPrintPlates({ productId, tenantId, sourceId, show
   const [bindingPlate, setBindingPlate] = useState<string | null>(null);
   const [taskId, setTaskId] = useState("");
   const [taskSearch, setTaskSearch] = useState("");
+  const [recipeBusy, setRecipeBusy] = useState<Record<string, boolean>>({});
+  const reportRecipeBusy = useCallback((id: string, busy: boolean) => setRecipeBusy(previous => previous[id] === busy ? previous : { ...previous, [id]: busy }), []);
   const key = ["product_print_plates", tenantId, productId, "reference"];
   const { data: allPlates = [], isLoading, error, refetch } = useQuery({
     queryKey: key,
@@ -46,6 +65,7 @@ export default function ProductPrintPlates({ productId, tenantId, sourceId, show
   });
   const plates = allPlates.filter(plate => plate.source_id === sourceId);
   const total = sumProductPlateReferences(allPlates);
+  const recipePreview = useQuery({ queryKey: ["product_material_recipe", tenantId, productId], queryFn: () => fetchProductMaterialRecipe(productId) });
   const { data: materials = [], error: materialError } = useQuery({
     queryKey: ["print_plate_materials", tenantId],
     queryFn: () => allRows((from, to) => supabase.from("inventory_items").select("id,name,unit").eq("tenant_id", tenantId).eq("is_active", true).in("unit", ["g", "kg"]).order("name").order("id").range(from, to)),
@@ -63,8 +83,11 @@ export default function ProductPrintPlates({ productId, tenantId, sourceId, show
   const filteredTasks = tasks.filter(task => !taskSearch.trim() || `${task.design_title || ""} ${task.bambu_task_id} ${task.bambu_devices?.name || ""}`.toLocaleLowerCase("pt-BR").includes(taskSearch.trim().toLocaleLowerCase("pt-BR")));
   const reset = () => { setFormOpen(false); setEditing(null); setDraft(initialDraft()); };
   const refresh = async () => {
-    await qc.invalidateQueries({ queryKey: ["product_print_plates", tenantId, productId] });
-    await qc.invalidateQueries({ queryKey: ["products"] });
+    await Promise.all([
+      qc.invalidateQueries({ queryKey: ["product_print_plates", tenantId, productId] }),
+      qc.invalidateQueries({ queryKey: ["product_material_recipe"] }),
+      qc.invalidateQueries({ queryKey: ["products"] }),
+    ]);
   };
   const save = useMutation({
     mutationFn: async () => {
@@ -108,7 +131,7 @@ export default function ProductPrintPlates({ productId, tenantId, sourceId, show
     onSuccess: async () => { await refresh(); setBindingPlate(null); setTaskId(""); toast({ title: "Impressão vinculada à placa" }); },
     onError: (err: Error) => toast({ title: "Não foi possível vincular esta placa", description: err.message, variant: "destructive" }),
   });
-  const busy = save.isPending || archive.isPending || bind.isPending;
+  const busy = save.isPending || archive.isPending || bind.isPending || Object.values(recipeBusy).some(Boolean);
   useEffect(() => { onBusyChange?.(sourceId, busy); return () => onBusyChange?.(sourceId, false); }, [busy, onBusyChange, sourceId]);
 
   const field = (name: keyof ReturnType<typeof initialDraft>, label: string, props: { type?: string; min?: number; step?: string } = {}) => <div>
@@ -128,13 +151,17 @@ export default function ProductPrintPlates({ productId, tenantId, sourceId, show
       <dl className="grid grid-cols-1 gap-2 sm:grid-cols-3 text-xs">
         <div><dt className="text-muted-foreground">Material por produto</dt><dd className="font-mono font-semibold">{grams(total.grams)}</dd></div>
         <div><dt className="text-muted-foreground">Tempo somado por produto</dt><dd className="font-mono font-semibold">{formatProductionSeconds(total.seconds)}</dd></div>
-        <div><dt className="text-muted-foreground">Custo somado por produto</dt><dd className="font-mono font-semibold">{currency(total.cost)}</dd></div>
+        <div><dt className="text-muted-foreground">Custo atual da composição por produto</dt><dd className="font-mono font-semibold">{currency(recipePreview.error ? null : recipePreview.data?.cost_per_unit ?? null)}</dd></div>
       </dl>
-      <p className="text-[11px] leading-relaxed text-muted-foreground">Soma por unidade de todas as placas ativas do produto, inclusive de outras fontes. O tempo somado é esforço de impressão; placas em paralelo podem terminar antes.</p>
+      <p className="text-xs text-muted-foreground">Referência de custo da produção e estimativas anteriores: <span className="font-mono">{currency(total.cost)}</span> por produto completo.</p>
+      <p className="text-[11px] leading-relaxed text-muted-foreground">O custo atual soma as receitas de todas as placas, com o custo médio dos materiais e os demais custos confirmados. Material e tempo acima são referências técnicas da produção e das estimativas cadastradas; placas em paralelo podem terminar antes.</p>
+      {!recipePreview.data?.complete && <p className="text-xs text-amber-800">Complete a composição de todas as placas para obter o custo atual do produto.</p>}
+      {recipePreview.error && <p role="alert" className="text-xs text-destructive">Não foi possível carregar o custo da composição. <button type="button" className="underline" onClick={() => recipePreview.refetch()}>Tentar novamente</button></p>}
       {total.incomplete ? <p className="text-xs text-amber-800">Referência incompleta: preencha ou apure as placas sem dados. Valores ausentes não são tratados como zero.</p> : total.usesEstimate && <p className="text-xs text-muted-foreground">Inclui estimativas das placas ainda sem referência contabilizada.</p>}
     </div>}
     {plates.map(plate => {
       const actual = productProductionReference({ actual_print_sample_units: plate.actual_sample_units, actual_print_grams_per_unit: plate.actual_grams_per_unit, actual_print_seconds_per_unit: plate.actual_seconds_per_unit, actual_print_cost_per_unit: plate.actual_cost_per_unit, actual_print_source: plate.actual_source, actual_print_updated_at: plate.actual_updated_at });
+      const recipe = recipePreview.data?.plates.find(value => value.id === plate.id)?.recipe;
       return <article key={plate.id} className="rounded-lg border bg-background p-3 space-y-2">
         <div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="text-sm font-medium break-words">Placa {plate.plate_index} · {plate.label || "Sem nome"}</p><p className="text-xs text-muted-foreground">Cada impressão atende {plate.units_per_plate} {plate.units_per_plate === 1 ? "unidade" : "unidades"} do produto.</p></div>
           <div className="flex shrink-0"><Button type="button" size="icon" variant="ghost" className="h-9 w-9" aria-label={`Editar placa ${plate.plate_index}`} disabled={busy} onClick={() => {
@@ -145,7 +172,7 @@ export default function ProductPrintPlates({ productId, tenantId, sourceId, show
         <dl className="grid grid-cols-1 gap-2 sm:grid-cols-3 text-xs">
           <div><dt className="text-muted-foreground">Peso estimado da impressão</dt><dd className="font-mono">{grams(plate.est_grams)}</dd></div>
           <div><dt className="text-muted-foreground">Tempo estimado da impressão</dt><dd className="font-mono">{formatProductionSeconds(plate.est_time_seconds)}</dd></div>
-          <div><dt className="text-muted-foreground">Custo estimado por unidade</dt><dd className="font-mono">{currency(plate.est_cost_per_unit)}</dd></div>
+          <div><dt className="text-muted-foreground">{recipe ? "Custo atual da composição / unidade" : "Estimativa anterior / unidade"}</dt><dd className="font-mono">{currency(recipe ? (recipePreview.error ? null : recipe.cost_per_unit) : plate.est_cost_per_unit)}</dd></div>
         </dl>
         {actual && <div className="rounded-md bg-muted/40 p-2.5 text-xs space-y-1"><p className="font-medium">Referência da produção desta placa · {actual.sampleUnits.toLocaleString("pt-BR")} unidades contabilizadas</p><p>{actual.gramsLabel} · {actual.durationLabel} de tempo decorrido · {actual.costLabel} por unidade do produto</p><p className="text-muted-foreground">{actual.materialSource}</p>{actual.updatedLabel && <p className="text-muted-foreground">Atualizada em {actual.updatedLabel}</p>}</div>}
         <Button type="button" size="sm" variant="outline" className="h-auto min-h-9 max-w-full whitespace-normal py-2 text-left" disabled={busy} onClick={() => { setBindingPlate(plate.id); setTaskId(""); setTaskSearch(""); }}><Printer className="mr-1 h-3.5 w-3.5 shrink-0" /> Vincular impressão desta placa</Button>
@@ -156,6 +183,7 @@ export default function ProductPrintPlates({ productId, tenantId, sourceId, show
           {selectedTask && <p className="text-xs leading-relaxed text-muted-foreground">{selectedTask.design_title || "Sem título"} · #{selectedTask.bambu_task_id}. Confirme que esta execução corresponde à placa {plate.plate_index}. O vínculo identifica a placa; consumo e quantidade continuam sujeitos à apuração.</p>}
           <Button type="button" size="sm" className="h-auto min-h-9 max-w-full whitespace-normal py-2 text-left" disabled={busy || !selectedTask || !!tasksError} onClick={() => bind.mutate()}>{bind.isPending && <Loader2 className="mr-1 h-4 w-4 shrink-0 animate-spin" />} Confirmar vínculo desta placa</Button>
         </div>}
+        <PlateRecipe productId={productId} tenantId={tenantId} plateId={plate.id} onBusy={reportRecipeBusy} />
       </article>;
     })}
     {formOpen && <div className="border-t pt-3 space-y-3">

@@ -38,8 +38,10 @@ describe("binding a product file to Bambu history", () => {
     fireEvent.change(select, { target: { value: "task-b" } });
     fireEvent.click(screen.getByRole("button", { name: "Confirmar vínculo com este produto" }));
     await waitFor(() => expect(mock.rpc).toHaveBeenCalledWith("bind_product_print_source", { p_source_id: "source-1", p_task_id: "task-b" }));
-    expect(mock.rpc).toHaveBeenCalledTimes(1);
-    expect(mock.rpc.mock.contexts[0]).toBe(supabase);
+    const bindings = mock.rpc.mock.calls.filter(([name]) => name === "bind_product_print_source");
+    expect(bindings).toHaveLength(1);
+    const bindingIndex = mock.rpc.mock.calls.findIndex(([name]) => name === "bind_product_print_source");
+    expect(mock.rpc.mock.contexts[bindingIndex]).toBe(supabase);
   });
 
   it("keeps the selection open and exposes a server-side ambiguity conflict", async () => {
@@ -60,7 +62,7 @@ describe("binding a product file to Bambu history", () => {
     fireEvent.change(screen.getByRole("combobox", { name: "Impressão do histórico" }), { target: { value: "task-a" } });
     fireEvent.change(screen.getByLabelText("Buscar por nome, impressora ou ID Bambu"), { target: { value: "Impressora B" } });
     expect(screen.getByRole("button", { name: "Confirmar vínculo com este produto" })).toBeDisabled();
-    expect(mock.rpc).not.toHaveBeenCalled();
+    expect(mock.rpc.mock.calls.filter(([name]) => name === "bind_product_print_source")).toHaveLength(0);
   });
 
   it("saves a MakerWorld link without inventing a cloud profile from the fragment", async () => {

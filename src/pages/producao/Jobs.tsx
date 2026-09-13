@@ -1,5 +1,8 @@
 import { useState, useMemo, useRef } from "react";
 import { ProductionTransitionDialog } from "@/components/production/ProductionTransitionDialog";
+import { ProductionFileDialog } from "@/components/production/ProductionFileDialog";
+import { ProductionRecipeSummary } from "@/components/production/ProductionRecipeSummary";
+import { readProductionRecipe, platesWithRecipe, jobRecipeMaterialCount } from "@/lib/production-files";
 import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -96,6 +99,7 @@ export default function Jobs() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [detailJob, setDetailJob] = useState<JobRow | null>(null);
+  const [fileJobId, setFileJobId] = useState<string | null>(null);
   const [transition, setTransition] = useState<{ job: JobRow; status: JobStatus } | null>(null);
 
   // ── Fetch jobs ──
@@ -172,6 +176,10 @@ export default function Jobs() {
   });
 
   const requestTransition = (job: JobRow, status: JobStatus) => {
+    if (requiresProductionMeasurement(status, job.inventory_posted_at) && jobRecipeMaterialCount(job) > 2) {
+      toast({ variant: "destructive", title: "Apuração completa de materiais necessária", description: "Esta receita tem três ou mais materiais. Use a apuração Bambu para registrar todos os consumos." });
+      setDetailJob(null); setFileJobId(job.id); return;
+    }
     if (["failed", "printing"].includes(status) || requiresProductionMeasurement(status, (job as unknown as { inventory_posted_at?: string }).inventory_posted_at)) setTransition({ job, status });
     else statusMutation.mutate({ id: job.id, status });
   };
@@ -308,6 +316,7 @@ export default function Jobs() {
                       {job.description && (
                         <p className="text-xs text-muted-foreground truncate max-w-[200px]">{job.description}</p>
                       )}
+                      <Button variant="link" size="sm" className="h-auto px-0 py-1 text-xs" onClick={event => { event.stopPropagation(); setFileJobId(job.id); }}><FileText className="mr-1 h-3.5 w-3.5" />Arquivo e receita</Button>
                     </div>
                   </TableCell>
                   <TableCell className="text-sm">{getMaterialName(job.material_id)}</TableCell>
@@ -360,6 +369,7 @@ export default function Jobs() {
       </div>
 
       {transition && <ProductionTransitionDialog key={`${transition.job.id}-${transition.status}`} value={transition} printers={printers} pending={statusMutation.isPending} onClose={() => setTransition(null)} onSave={value => statusMutation.mutate(value)} />}
+      {fileJobId && <ProductionFileDialog jobId={fileJobId} onClose={() => setFileJobId(null)} />}
       {/* Dialogs */}
       <CreateJobDialog
         open={createOpen}
@@ -403,6 +413,8 @@ function CreateJobDialog({
   const [setQuantity, setSetQuantity] = useState("1");
   const plateQuery = useQuery({ queryKey: ["product_print_plates", profile?.tenant_id, productId], enabled: !!profile && !!productId && open, queryFn: () => readProductPlates(productId) });
   const hasPlates = !!plateQuery.data?.length;
+  const recipeQuery = useQuery({ queryKey: ["product_material_recipe", profile?.tenant_id, productId], enabled: !!profile && !!productId && open, queryFn: () => readProductionRecipe(productId) });
+  const recipe = recipeQuery.data?.recipe;
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [materialId, setMaterialId] = useState("");
@@ -469,6 +481,9 @@ function CreateJobDialog({
     try {
       if (productId && plateQuery.isFetching) throw new Error("Aguarde a consulta das placas do produto.");
       if (productId && plateQuery.error) throw plateQuery.error;
+      if (productId && recipeQuery.isFetching) throw new Error("Aguarde a consulta da composição.");
+      if (recipeQuery.error) throw recipeQuery.error;
+      if (recipe && !recipe.complete) throw new Error("Complete a composição de materiais, cores e custos antes de criar a ordem.");
       if (hasPlates) {
         const quantity = Number(setQuantity);
         if (!Number.isInteger(quantity) || quantity < 1 || quantity > 10000) throw new Error("Informe entre 1 e 10.000 conjuntos inteiros.");
@@ -478,16 +493,16 @@ function CreateJobDialog({
         toast({ title: "Conjunto planejado", description: `${ids.length} ordens criadas com as receitas de cada placa.` });
         reset(); onOpenChange(false); return;
       }
-      const grams = estGrams === "" ? null : nonNegative(estGrams, "Peso estimado");
+      const grams = recipe ? recipe.lines.reduce((sum, line) => sum + line.grams_per_print, 0) : estGrams === "" ? null : nonNegative(estGrams, "Peso estimado");
       const minutes = estTimeMinutes === "" ? null : Math.round(nonNegative(estTimeMinutes, "Tempo estimado") * 60);
-      const colors = Number(numColors);
-      const purge = nonNegative(purgeWasteGrams, "Purga");
+      const colors = recipe ? recipe.lines.length : Number(numColors);
+      const purge = recipe ? 0 : nonNegative(purgeWasteGrams, "Purga");
       const { data: tenant, error: tenantError } = await supabase.from("tenants").select("settings").eq("id", profile.tenant_id).single();
       if (tenantError) throw tenantError;
       const settings = tenant.settings as Record<string, unknown> | null;
       const selectedProduct = products.find(product => product.id === productId);
       if (selectedProduct?.category === "kit") throw new Error("Crie um pedido para o kit. O planejamento do pedido separa os componentes para apurar cada impressão.");
-      const costs = estimateProductionCosts({
+      const costs = recipe ? { material: recipe.material_cost_per_unit! * recipe.units_per_print, machine: null, energy: null, total: recipe.cost_per_unit! * recipe.units_per_print, extras: null } : estimateProductionCosts({
         extras: productExtrasPerPiece(selectedProduct?.extras) * Math.max(1, selectedProduct?.prints_per_plate ?? 1),
         energyRate: nonNegative(settings?.energy_cost_kwh as number | undefined, "Tarifa de energia", 0.85),
         grams: grams ?? 0, minutes: minutes ?? 0, purgeGrams: purge,
@@ -500,8 +515,8 @@ function CreateJobDialog({
         description: description.trim() || null,
         product_id: productId || null,
         sale_price: salePrice === "" ? null : nonNegative(salePrice, "Receita atribuída"),
-        material_id: materialId || null,
-        secondary_material_id: secondaryMaterialId || null,
+        material_id: recipe ? recipe.lines[0]?.item_id ?? null : materialId || null,
+        secondary_material_id: recipe ? recipe.lines[1]?.item_id ?? null : secondaryMaterialId || null,
         printer_id: printerId || null,
         due_date: dueDate || null,
         priority: Number(priority),
@@ -530,7 +545,7 @@ function CreateJobDialog({
     }
   };
 
-  const isMultiColor = parseInt(numColors) > 1;
+  const isMultiColor = !recipe && parseInt(numColors) > 1;
 
   return (
     <Dialog open={open} onOpenChange={next => { if (!saving) onOpenChange(next); }}>
@@ -558,9 +573,12 @@ function CreateJobDialog({
 
           {plateQuery.isFetching && <p className="text-sm text-muted-foreground">Consultando as placas do produto…</p>}
           {plateQuery.error && <p role="alert" className="text-sm text-destructive">Não foi possível consultar as placas. {plateQuery.error.message}</p>}
+          {recipeQuery.isFetching && <p className="text-sm text-muted-foreground">Consultando materiais, cores e custos…</p>}
+          {recipeQuery.error && <p role="alert" className="text-sm text-destructive">{recipeQuery.error.message}</p>}
+          {recipe && <ProductionRecipeSummary recipe={recipe} />}
           {hasPlates ? <>
             <div className="grid gap-1.5"><Label htmlFor="job-set-quantity">Quantidade de conjuntos / SKUs</Label><Input id="job-set-quantity" type="number" min="1" max="10000" step="1" value={setQuantity} onChange={event => setSetQuantity(event.target.value)} /></div>
-            <ProductionPlatePlan plates={plateQuery.data!} quantity={setQuantity} materials={materials} printers={printers} />
+            <ProductionPlatePlan plates={platesWithRecipe(plateQuery.data!, recipeQuery.data)} quantity={setQuantity} materials={materials} printers={printers} />
           </> : <>
           <div className="grid gap-1.5">
             <Label>Peça / Nome *</Label>
@@ -572,7 +590,7 @@ function CreateJobDialog({
             <Textarea placeholder="Detalhes, observações do cliente..." value={description} onChange={e => setDescription(e.target.value)} rows={2} />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          {!recipe && <div className="grid grid-cols-2 gap-3">
             <div className="grid gap-1.5">
               <Label>Nº de Cores</Label>
               <Select value={numColors} onValueChange={handleColorsChange}>
@@ -591,10 +609,10 @@ function CreateJobDialog({
                 <Input type="number" placeholder="20" value={purgeWasteGrams} onChange={e => setPurgeWasteGrams(e.target.value)} />
               </div>
             )}
-          </div>
+          </div>}
 
           <div className={cn("grid gap-3", isMultiColor ? "grid-cols-1" : "grid-cols-2")}>
-            <div className="grid gap-1.5">
+            {!recipe && <div className="grid gap-1.5">
               <Label>{isMultiColor ? "Material principal (cor 1)" : "Material"}</Label>
               <Select value={materialId} onValueChange={setMaterialId}>
                 <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
@@ -606,7 +624,7 @@ function CreateJobDialog({
                   ))}
                 </SelectContent>
               </Select>
-            </div>
+            </div>}
             {isMultiColor && (
               <div className="grid gap-1.5">
                 <Label>Material secundário (cor 2+)</Label>
@@ -669,7 +687,7 @@ function CreateJobDialog({
             </div>
             <div className="grid gap-1.5">
               <Label>Gramas est.</Label>
-              <Input type="number" placeholder="85" value={estGrams} onChange={e => setEstGrams(e.target.value)} />
+              <Input type="number" placeholder="85" disabled={!!recipe} value={recipe ? recipe.lines.reduce((sum, line) => sum + line.grams_per_print, 0) : estGrams} onChange={e => setEstGrams(e.target.value)} />
             </div>
             <div className="grid gap-1.5">
               <Label>Prioridade</Label>
@@ -695,7 +713,7 @@ function CreateJobDialog({
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancelar</Button>
-          <Button onClick={handleSave} disabled={saving || plateQuery.isFetching || !!plateQuery.error}>
+          <Button onClick={handleSave} disabled={saving || plateQuery.isFetching || !!plateQuery.error || recipeQuery.isFetching || !!recipeQuery.error || !!recipe && !recipe.complete}>
             {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             {hasPlates ? "Planejar conjunto completo" : "Criar OI"}
           </Button>

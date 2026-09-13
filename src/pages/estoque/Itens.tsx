@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { Fragment, useState, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { nonNegative, gramsToStockUnit } from "@/lib/production";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -29,6 +29,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { allRows } from "@/lib/finance";
+import { MATERIAL_CODES, materialColorSwatch, normalizeMaterialIdentity } from "@/lib/material-identity";
 
 const fmtCurrency = (v: number | null) =>
   v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
@@ -60,6 +62,10 @@ export default function Itens() {
   const [category, setCategory] = useState("filament");
   const [materialType, setMaterialType] = useState("");
   const [color, setColor] = useState("");
+  const [materialCode, setMaterialCode] = useState("");
+  const [materialDescription, setMaterialDescription] = useState("");
+  const [colorCode, setColorCode] = useState("");
+  const [colorHex, setColorHex] = useState("");
   const [diameter, setDiameter] = useState("1.75");
   const [brand, setBrand] = useState("");
   const [sku, setSku] = useState("");
@@ -72,17 +78,13 @@ export default function Itens() {
   const [freightCost, setFreightCost] = useState("");
 
   const { data: items = [], isLoading, error: loadError, refetch } = useQuery({
-    queryKey: ["inventory_items"],
-    queryFn: async () => {
-      const { data, error } = await supabase
+    queryKey: ["inventory_items", profile?.tenant_id],
+    queryFn: () => allRows((from, to) => supabase
         .from("inventory_items")
         .select("*")
         .eq("is_active", true)
         .order("material_type")
-        .order("name");
-      if (error) throw error;
-      return data;
-    },
+        .order("name").order("id").range(from, to)),
     enabled: !!profile,
   });
 
@@ -118,7 +120,7 @@ export default function Itens() {
       item.name.toLowerCase().includes(s) ||
       item.sku?.toLowerCase().includes(s) ||
       item.material_type?.toLowerCase().includes(s) ||
-      item.color?.toLowerCase().includes(s);
+      item.color?.toLowerCase().includes(s) || item.material_code?.toLowerCase().includes(s) || item.color_code?.toLowerCase().includes(s);
 
     const filteredParents = parentItems.filter((p) => {
       if (categoryFilter !== "all" && p.category !== categoryFilter) return false;
@@ -146,6 +148,7 @@ export default function Itens() {
   const resetForm = () => {
     setFormMode("group"); setParentId(""); setName(""); setCategory("filament");
     setMaterialType(""); setColor(""); setDiameter("1.75"); setBrand(""); setSku("");
+    setMaterialCode(""); setMaterialDescription(""); setColorCode(""); setColorHex("");
     setUnit("g"); setMinStock(""); setAvgCost(""); setLossCoefficient("5");
     setNotes(""); setCurrentStock(""); setFreightCost("");
   };
@@ -159,6 +162,8 @@ export default function Itens() {
     setCategory(item.category);
     setMaterialType(item.material_type || "");
     setColor(item.color || "");
+    setMaterialCode(item.material_code || ""); setMaterialDescription(item.material_description || "");
+    setColorCode(item.color_code || ""); setColorHex(item.color_hex || "");
     setDiameter(item.diameter?.toString() || "1.75");
     setBrand(item.brand || "");
     setSku(item.sku || "");
@@ -177,6 +182,7 @@ export default function Itens() {
     setParentId(parent.id);
     setCategory(parent.category);
     setMaterialType(parent.material_type || "");
+    setMaterialCode(parent.material_code || ""); setMaterialDescription(parent.material_description || "");
     setDiameter(parent.diameter?.toString() || "1.75");
     setBrand(parent.brand || "");
     setUnit(parent.unit);
@@ -194,6 +200,11 @@ export default function Itens() {
     const parent = items.find(item => item.id === parentId);
     if (formMode === "color" && parent && parent.unit !== unit) throw new Error("A cor deve usar a mesma unidade de estoque do material de origem.");
     if (editItem && editItem.unit !== unit) throw new Error("A unidade de um item cadastrado não pode ser alterada. Cadastre um novo item para mudar a unidade.");
+    normalizeMaterialIdentity({ materialCode, description: materialDescription, color, colorCode, colorHex });
+  };
+
+  const refreshMaterialQueries = () => {
+    for (const key of ["inventory_items", "recipe_inventory_items", "product_material_recipe", "product_material_requirements", "products", "quote_products"]) qc.invalidateQueries({ queryKey: [key] });
   };
 
   const createMut = useMutation({
@@ -205,7 +216,7 @@ export default function Itens() {
         name: formMode === "color" ? `${materialType || name} ${color}`.trim() : name,
         category,
         material_type: materialType || null,
-        color: formMode === "color" ? (color || null) : null,
+        ...normalizeMaterialIdentity({ materialCode, description: materialDescription, color, colorCode, colorHex }),
         diameter: diameter ? parseFloat(diameter) : null,
         brand: brand || null,
         sku: sku || null,
@@ -222,7 +233,7 @@ export default function Itens() {
       if (error) throw error;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["inventory_items"] });
+      refreshMaterialQueries();
       setCreateOpen(false);
       resetForm();
       toast({ title: formMode === "color" ? "Cor adicionada ao material" : "Material criado com sucesso" });
@@ -238,7 +249,7 @@ export default function Itens() {
         name: formMode === "color" ? `${materialType || name} ${color}`.trim() : name,
         category,
         material_type: materialType || null,
-        color: formMode === "color" ? (color || null) : null,
+        ...normalizeMaterialIdentity({ materialCode, description: materialDescription, color, colorCode, colorHex }),
         diameter: diameter ? parseFloat(diameter) : null,
         brand: brand || null,
         sku: sku || null,
@@ -253,7 +264,7 @@ export default function Itens() {
       if (error) throw error;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["inventory_items"] });
+      refreshMaterialQueries();
       setEditItem(null);
       resetForm();
       toast({ title: "Item atualizado" });
@@ -270,7 +281,7 @@ export default function Itens() {
       if (error) throw error;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["inventory_items"] });
+      refreshMaterialQueries();
       toast({ title: "Item arquivado", description: "O histórico de estoque foi preservado." });
     },
     onError: (e: any) => toast({ title: "Erro ao remover", description: e.message, variant: "destructive" }),
@@ -318,7 +329,7 @@ export default function Itens() {
           <Select value={parentId} onValueChange={value => {
             setParentId(value);
             const parent = items.find(item => item.id === value);
-            if (parent) { setName(parent.name); setCategory(parent.category); setMaterialType(parent.material_type ?? ""); setUnit(parent.unit); setBrand(parent.brand ?? ""); setDiameter(String(parent.diameter ?? 1.75)); setLossCoefficient(String((parent.loss_coefficient ?? 0.05) * 100)); }
+            if (parent) { setName(parent.name); setCategory(parent.category); setMaterialType(parent.material_type ?? ""); setMaterialCode((parent as any).material_code ?? ""); setMaterialDescription((parent as any).material_description ?? ""); setUnit(parent.unit); setBrand(parent.brand ?? ""); setDiameter(String(parent.diameter ?? 1.75)); setLossCoefficient(String((parent.loss_coefficient ?? 0.05) * 100)); }
           }}>
             <SelectTrigger><SelectValue placeholder="Selecione o material..." /></SelectTrigger>
             <SelectContent>
@@ -338,18 +349,7 @@ export default function Itens() {
             <Label>Nome do Material *</Label>
             <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="PLA eSUN" />
           </div>
-        ) : (
-          <>
-            <div>
-              <Label>Tipo de Material</Label>
-              <Input value={materialType} onChange={(e) => setMaterialType(e.target.value)} placeholder="PLA" />
-            </div>
-            <div>
-              <Label>Cor *</Label>
-              <Input value={color} onChange={(e) => setColor(e.target.value)} placeholder="Vermelho" />
-            </div>
-          </>
-        )}
+        ) : <p className="col-span-full text-sm text-muted-foreground">O item terá saldo próprio. Outra cor não substituirá este material nas composições.</p>}
 
         <div>
           <Label>Categoria</Label>
@@ -363,12 +363,18 @@ export default function Itens() {
           </Select>
         </div>
 
-        {formMode === "group" && (
-          <div>
-            <Label>Tipo de Material</Label>
-            <Input value={materialType} onChange={(e) => setMaterialType(e.target.value)} placeholder="PLA / PETG / ABS" />
-          </div>
-        )}
+        <div>
+          <Label>Material identificado</Label>
+          <Select value={materialCode || "unidentified"} onValueChange={value => { setMaterialCode(value === "unidentified" ? "" : value); if (value !== "unidentified") setMaterialType(MATERIAL_CODES.find(([code]) => code === value)?.[1] ?? ""); }}>
+            <SelectTrigger aria-label="Material identificado"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectItem value="unidentified">Ainda não identificado</SelectItem>{MATERIAL_CODES.map(([code, label]) => <SelectItem key={code} value={code}>{label}</SelectItem>)}</SelectContent>
+          </Select>
+        </div>
+        {materialCode === "OTHER" && <div className="col-span-full"><Label>Composição / variante do material</Label><Input value={materialDescription} onChange={event => setMaterialDescription(event.target.value)} placeholder="Informe a composição exata" /></div>}
+        <div><Label>Nome da cor</Label><Input value={color} onChange={event => setColor(event.target.value)} placeholder="Vermelho / natural / transparente" /></div>
+        <div><Label>Código estável da cor</Label><Input value={colorCode} onChange={event => setColorCode(event.target.value.toUpperCase())} placeholder="RED / NATURAL / código do fabricante" maxLength={64} /></div>
+        <div><Label>Cor visual (opcional)</Label><div className="flex items-center gap-2"><span className="h-8 w-8 shrink-0 rounded-md border" style={{ backgroundColor: materialColorSwatch(colorHex) }} /><Input value={colorHex} onChange={event => setColorHex(event.target.value.toUpperCase())} placeholder="#RRGGBB" maxLength={7} /></div></div>
+        <p className="col-span-full rounded-md bg-muted p-3 text-xs text-muted-foreground">{!materialCode ? `Identificação pendente${materialType ? `; descrição legada: ${materialType}` : ""}. O nome não será usado para adivinhar o material.` : "Confira material e código de cor na embalagem."} Para usar uma composição, informe material, nome e código da cor. Depois de referenciado em uma receita, outro material ou cor exige um novo item de estoque.</p>
 
         <div>
           <Label>Diâmetro (mm)</Label>
@@ -431,12 +437,13 @@ export default function Itens() {
           <div className={cn("flex items-center gap-2", indent && "pl-8")}>
             {belowMin && <AlertTriangle className="h-3.5 w-3.5 text-destructive flex-shrink-0" />}
             {indent && item.color && (
-              <span className="h-4 w-4 rounded-full border flex-shrink-0" style={{ backgroundColor: item.color.toLowerCase() }} />
+              <span className="h-4 w-4 rounded-full border flex-shrink-0" style={{ backgroundColor: materialColorSwatch(item.color_hex) }} />
             )}
             <div>
               <p className="font-medium text-sm">{indent ? (item.color || item.name) : item.name}</p>
               {item.brand && !indent && <p className="text-xs text-muted-foreground">{item.brand}</p>}
               {indent && item.sku && <p className="text-xs text-muted-foreground">{item.sku}</p>}
+              {!item.material_identified_at && ["filament", "resin"].includes(item.category) && <p className="text-xs text-amber-700">Material/cor pendente de identificação</p>}
             </div>
           </div>
         </TableCell>
@@ -444,8 +451,8 @@ export default function Itens() {
         <TableCell>
           {item.color && !indent && (
             <span className="inline-flex items-center gap-1.5 text-sm">
-              <span className="h-3 w-3 rounded-full border" style={{ backgroundColor: item.color.toLowerCase() }} />
-              {item.color}
+              <span className="h-3 w-3 rounded-full border" style={{ backgroundColor: materialColorSwatch(item.color_hex) }} />
+              {item.color}{item.color_code ? ` · ${item.color_code}` : ""}
             </span>
           )}
         </TableCell>
@@ -552,7 +559,7 @@ export default function Itens() {
                 <TableHead>Cor</TableHead>
                 <TableHead className="text-right">Estoque</TableHead>
                 <TableHead className="text-right">Mínimo</TableHead>
-                <TableHead className="text-right">Custo/g</TableHead>
+                <TableHead className="text-right">Custo/un. estoque</TableHead>
                 <TableHead className="text-right">Valor</TableHead>
                 <TableHead className="w-10" />
               </TableRow>
@@ -565,7 +572,7 @@ export default function Itens() {
                 const kids = childrenMap.get(parent.id) || [];
 
                 return (
-                  <>
+                  <Fragment key={parent.id}>
                     {/* Parent row */}
                     <TableRow
                       key={parent.id}
@@ -589,7 +596,7 @@ export default function Itens() {
                             <span
                               key={k.id}
                               className="h-4 w-4 rounded-full border-2 border-card"
-                              style={{ backgroundColor: k.color?.toLowerCase() || "#ccc" }}
+                              style={{ backgroundColor: materialColorSwatch(k.color_hex) }}
                               title={k.color || ""}
                             />
                           ))}
@@ -627,7 +634,7 @@ export default function Itens() {
 
                     {/* Child rows */}
                     {expanded && kids.map((kid: any) => renderItemRow(kid, true))}
-                  </>
+                  </Fragment>
                 );
               })}
 
@@ -696,6 +703,8 @@ export default function Itens() {
             <div className="grid grid-cols-2 gap-3 text-sm">
               <div><span className="text-muted-foreground">Material:</span> {detailItem.material_type || "—"}</div>
               <div><span className="text-muted-foreground">Cor:</span> {detailItem.color || "—"}</div>
+              <div><span className="text-muted-foreground">Código do material:</span> {detailItem.material_code || "Pendente"}</div>
+              <div><span className="text-muted-foreground">Código da cor:</span> {detailItem.color_code || "Pendente"}</div>
               <div><span className="text-muted-foreground">Diâmetro:</span> {detailItem.diameter ? `${detailItem.diameter}mm` : "—"}</div>
               <div><span className="text-muted-foreground">SKU:</span> {detailItem.sku || "—"}</div>
               <div><span className="text-muted-foreground">Estoque:</span> <span className="font-semibold">{detailItem.current_stock}{detailItem.unit}</span></div>

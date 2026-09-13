@@ -5,9 +5,13 @@ const columns={
   jobs:{ inventory_posted_at:'string | null', secondary_actual_grams:'number | null',order_item_id:'string | null',order_unit_index:'number | null',est_extras_cost:'number | null',actual_extras_cost:'number | null',creation_request_id:'string | null',actual_time_seconds:'number | null',actual_material_usage:'Json | null',produced_quantity:'number | null',print_plate_id:'string | null',planned_quantity:'number' },
   products:{actual_print_grams_per_unit:'number | null',actual_print_seconds_per_unit:'number | null',actual_print_cost_per_unit:'number | null',actual_print_sample_units:'number | null',actual_print_updated_at:'string | null',actual_print_source:'string | null'},
   accounts_payable:{origin_id:'string | null',origin_type:'string | null'},
-  orders:{shipping:'number'}, purchase_orders:{additional_costs:'number'},
+  orders:{shipping:'number',source_quote_id:'string | null'}, order_items:{source_quote_item_id:'string | null',product_snapshot:'Json | null'}, purchase_orders:{additional_costs:'number'},
   purchase_order_items:{stock_quantity:'number | null'},consignment_locations:{commission_percent:'number'},
 };
+Object.assign(columns.jobs, { production_snapshot: 'Json | null', production_snapshot_origin: 'string | null', production_snapshot_at: 'string | null', print_file_snapshot: 'Json | null' });
+Object.assign(columns.orders, { requires_material_recipe: 'boolean' });
+Object.assign(columns.order_items, { quoted_estimated_cost: 'number | null' });
+columns.inventory_items = { material_code: 'string | null', material_description: 'string | null', color_code: 'string | null', color_hex: 'string | null', material_identified_at: 'string | null', material_identified_by: 'string | null' };
 for(const [table, fields] of Object.entries(columns)) {
   const start=source.indexOf(`      ${table}: {`);
   if(start<0) throw Error(`Missing table ${table}`);
@@ -24,6 +28,7 @@ for(const [table, fields] of Object.entries(columns)) {
   source=source.slice(0,start)+block+source.slice(end);
 }
 const rpcs={
+  product_material_recipe_catalog:'',
   register_bank_transaction:'p_bank_account_id: string; p_type: string; p_amount: number; p_date: string; p_description: string; p_request_id: string',
   settle_financial_title:'p_kind: string; p_title_id: string; p_amount: number; p_date: string; p_bank_account_id: string; p_request_id: string',
   create_purchase_order:'p_order: Json; p_items: Json; p_installments: Json; p_request_id: string',
@@ -46,6 +51,6 @@ const rpcs={
   configure_bambu_production:'p_task_id: string; p_product_id: string; p_units: number; p_materials: Json; p_auto: boolean; p_use_slicer: boolean; p_labor_cost: number; p_overhead: number; p_extras_cost: number; p_allocations: Json; p_plate_id?: string | null',
   account_bambu_production:'p_task_id: string; p_materials: Json | null; p_seconds: number | null; p_units: number | null; p_labor_cost: number | null; p_overhead: number | null; p_extras_cost: number | null; p_reason: string | null; p_request_id: string',
 };
-const entries=Object.entries(rpcs).filter(([name])=>!source.includes(`      ${name}:`)).map(([name,args])=>`      ${name}: { Args: { ${args} }; Returns: ${['create_jobs','plan_product_plates'].includes(name)?'string[]':['request_bambu_sync','bambu_production_preview','account_bambu_production'].includes(name)?'Json':['disconnect_bambu_connection','archive_product_print_source','archive_product_print_plate'].includes(name)?'undefined':'string'} }`).join('\n');
+const entries=Object.entries(rpcs).filter(([name])=>!source.includes(`      ${name}:`)).map(([name,args])=>`      ${name}: { Args: { ${args} }; Returns: ${['create_jobs','plan_product_plates'].includes(name)?'string[]':['request_bambu_sync','bambu_production_preview','account_bambu_production','product_material_recipe_catalog'].includes(name)?'Json':['disconnect_bambu_connection','archive_product_print_source','archive_product_print_plate'].includes(name)?'undefined':'string'} }`).join('\n');
 source=source.replace('    Functions: {',`    Functions: {\n${entries}`);
 await writeFile(target,source);

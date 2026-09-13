@@ -6,6 +6,9 @@ import { orderRequest } from "@/lib/sales-order";
 import { planProductPlates, readProductPlates } from "@/lib/production-plates";
 import { ProductionPlatePlan } from "@/components/production/ProductionPlatePlan";
 import { ProductionTransitionDialog } from "@/components/production/ProductionTransitionDialog";
+import { ProductionFileDialog } from "@/components/production/ProductionFileDialog";
+import { ProductionRecipeSummary } from "@/components/production/ProductionRecipeSummary";
+import { readProductionRecipe, platesWithRecipe, jobRecipeMaterialCount } from "@/lib/production-files";
 import type { Tables } from "@/integrations/supabase/types";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -56,6 +59,7 @@ export default function Fila() {
   const { profile } = useAuth();
   const qc = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
+  const [fileJobId, setFileJobId] = useState<string | null>(null);
   const [transition, setTransition] = useState<{ job: Tables<"jobs">; status: JobStatus } | null>(null);
   const [selProductId, setSelProductId] = useState<string>("");
   const [selPrinterId, setSelPrinterId] = useState<string>("");
@@ -64,6 +68,7 @@ export default function Fila() {
   const creationRequest = useRef<ReturnType<typeof orderRequest> | null>(null);
   const plateQuery = useQuery({ queryKey: ["product_print_plates", profile?.tenant_id, selProductId], enabled: !!profile && !!selProductId && createOpen, queryFn: () => readProductPlates(selProductId) });
   const hasPlates = !!plateQuery.data?.length;
+  const recipeQuery = useQuery({ queryKey: ["product_material_recipe", profile?.tenant_id, selProductId], enabled: !!profile && !!selProductId && createOpen, queryFn: () => readProductionRecipe(selProductId) });
 
   const { data: printers = [] } = useQuery({
     queryKey: ["fila_printers"],
@@ -143,7 +148,10 @@ export default function Fila() {
       if (!profile?.tenant_id) throw new Error("Sem tenant");
       const product = products.find(p => p.id === selProductId);
       const printer = printers.find(p => p.id === selPrinterId);
-      if (!product) throw new Error("Selecione um produto");
+        if (!product) throw new Error("Selecione um produto");
+        if (recipeQuery.isFetching) throw new Error("Aguarde a consulta da composição.");
+        if (recipeQuery.error) throw recipeQuery.error;
+        if (recipeQuery.data?.recipe && !recipeQuery.data.recipe.complete) throw new Error("Complete a composição de materiais, cores e custos antes de criar a ordem.");
       if (product.category === "kit") throw new Error("Use Pedidos para planejar o kit; os componentes serão separados automaticamente.");
       if (plateQuery.isFetching) throw new Error("Aguarde a consulta das placas deste produto.");
       if (plateQuery.error) throw plateQuery.error;
@@ -161,10 +169,11 @@ export default function Fila() {
         name: product.name,
         product_id: product.id,
         printer_id: printer.id,
-        material_id: product.material_id,
+        material_id: recipeQuery.data?.recipe?.lines[0]?.item_id ?? product.material_id,
+        secondary_material_id: recipeQuery.data?.recipe?.lines[1]?.item_id ?? null,
         status: "queued" as const,
         priority,
-        num_colors: product.num_colors || 1,
+        num_colors: recipeQuery.data?.recipe?.lines.length || product.num_colors || 1,
         est_grams: product.est_grams || 0,
         est_time_minutes: product.est_time_minutes || 0,
         est_total_cost: product.cost_estimate == null ? null : product.cost_estimate * Math.max(1, product.prints_per_plate ?? 1),
@@ -195,6 +204,13 @@ export default function Fila() {
     },
     onError: (e: Error) => toast.error(e.message || "Não foi possível atualizar a produção"),
   });
+  const showTransition = (job: Tables<"jobs">, status: JobStatus) => {
+    if (requiresProductionMeasurement(status, job.inventory_posted_at) && jobRecipeMaterialCount(job) > 2) {
+      toast.error("Esta receita tem três ou mais materiais. Use a apuração Bambu para registrar todos os consumos.");
+      setFileJobId(job.id); return;
+    }
+    setTransition({ job, status });
+  };
 
   const jobsByPrinter = useMemo(() => {
     const map = new Map<string | null, any[]>();
@@ -237,7 +253,7 @@ export default function Fila() {
                   <Plus className="h-4 w-4 mr-2" /> Adicionar à fila
                 </Button>
               </DialogTrigger>
-              <DialogContent>
+              <DialogContent className="max-h-[92dvh] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle>Adicionar produto à fila</DialogTitle>
                   <DialogDescription>Selecione o produto e a quantidade. Produtos com várias placas geram o conjunto completo.</DialogDescription>
@@ -281,8 +297,11 @@ export default function Fila() {
                   </div>
                   {plateQuery.isFetching && <p className="text-xs text-muted-foreground">Consultando as placas do produto…</p>}
                   {plateQuery.error && <p role="alert" className="text-sm text-destructive">Não foi possível consultar as placas. {plateQuery.error.message}</p>}
-                  {hasPlates && <ProductionPlatePlan plates={plateQuery.data!} quantity={selQty} printers={printers} />}
-                  {selProductId && !hasPlates && !plateQuery.isFetching && !plateQuery.error && (
+                  {recipeQuery.isFetching && <p className="text-sm text-muted-foreground">Consultando materiais, cores e custos…</p>}
+                  {recipeQuery.error && <p role="alert" className="text-sm text-destructive">{recipeQuery.error.message}</p>}
+                  {hasPlates && <ProductionPlatePlan plates={platesWithRecipe(plateQuery.data!, recipeQuery.data)} quantity={selQty} printers={printers} />}
+                  {recipeQuery.data?.recipe && <ProductionRecipeSummary recipe={recipeQuery.data.recipe} />}
+                  {selProductId && !hasPlates && !recipeQuery.data?.recipe && !recipeQuery.isFetching && !plateQuery.isFetching && !plateQuery.error && (
                     <div className="text-xs text-muted-foreground bg-muted rounded p-2">
                       {(() => {
                         const p = products.find(x => x.id === selProductId);
@@ -294,7 +313,7 @@ export default function Fila() {
                 </div>
                 <DialogFooter>
                   <Button variant="outline" disabled={createJobsMut.isPending} onClick={() => setCreateOpen(false)}>Cancelar</Button>
-                  <Button onClick={() => createJobsMut.mutate()} disabled={createJobsMut.isPending || plateQuery.isFetching || !!plateQuery.error}>
+                  <Button onClick={() => createJobsMut.mutate()} disabled={createJobsMut.isPending || plateQuery.isFetching || !!plateQuery.error || recipeQuery.isFetching || !!recipeQuery.error || !!recipeQuery.data?.recipe && !recipeQuery.data.recipe.complete}>
                     {createJobsMut.isPending ? "Criando..." : hasPlates ? "Planejar conjunto completo" : "Adicionar à fila"}
                   </Button>
                 </DialogFooter>
@@ -386,6 +405,7 @@ export default function Fila() {
                             </div>
                             <div className="text-xs text-muted-foreground font-mono">{j.code}</div>
                             {j.description && <p className="mt-1 text-xs text-muted-foreground">{j.description}</p>}
+                            <Button variant="link" size="sm" className="h-auto px-0 py-1 text-xs" onClick={() => setFileJobId(j.id)}>Arquivo e receita da placa</Button>
                             <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                               <Badge variant="outline" className={cn("text-xs py-0 px-1.5 gap-1 border", cfg.color)}>
                                 <Icon className="h-2.5 w-2.5" /> {cfg.label}
@@ -410,7 +430,7 @@ export default function Fila() {
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             {j.status === "queued" && (
-                              <DropdownMenuItem disabled={updateStatusMut.isPending} onClick={() => setTransition({ job: j, status: "printing" })}>
+                              <DropdownMenuItem disabled={updateStatusMut.isPending} onClick={() => showTransition(j, "printing")}>
                                 <Play className="h-3.5 w-3.5 mr-2" /> Iniciar manualmente
                               </DropdownMenuItem>
                             )}
@@ -419,10 +439,10 @@ export default function Fila() {
                                 <DropdownMenuItem onClick={() => updateStatusMut.mutate({ id: j.id, status: "paused" })}>
                                   <Pause className="h-3.5 w-3.5 mr-2" /> Pausar
                                 </DropdownMenuItem>
-                                <DropdownMenuItem disabled={updateStatusMut.isPending} onClick={() => { if (requiresProductionMeasurement("quality_check", j.inventory_posted_at)) setTransition({ job: j, status: "quality_check" }); else updateStatusMut.mutate({ id: j.id, status: "quality_check" }); }}>
+                                <DropdownMenuItem disabled={updateStatusMut.isPending} onClick={() => { if (requiresProductionMeasurement("quality_check", j.inventory_posted_at)) showTransition(j, "quality_check"); else updateStatusMut.mutate({ id: j.id, status: "quality_check" }); }}>
                                   <CheckCircle2 className="h-3.5 w-3.5 mr-2" /> Enviar para qualidade
                                 </DropdownMenuItem>
-                                <DropdownMenuItem disabled={updateStatusMut.isPending} onClick={() => setTransition({ job: j, status: "failed" })}>
+                                <DropdownMenuItem disabled={updateStatusMut.isPending} onClick={() => showTransition(j, "failed")}>
                                   <XCircle className="h-3.5 w-3.5 mr-2" /> Marcar falha
                                 </DropdownMenuItem>
                               </>
@@ -460,6 +480,7 @@ export default function Fila() {
                   <div className="text-xs font-semibold">{j.name || j.products?.name}</div>
                   <div className="text-xs text-muted-foreground font-mono mb-3">{j.code}</div>
                   {j.description && <p className="mb-3 text-xs text-muted-foreground">{j.description}</p>}
+                  <Button variant="link" size="sm" className="mb-2 h-auto px-0 text-xs" onClick={() => setFileJobId(j.id)}>Arquivo e receita da placa</Button>
                   <Select onValueChange={printerId => updateStatusMut.mutate({ id: j.id, status: j.status, printerId })} disabled={updateStatusMut.isPending}>
                     <SelectTrigger aria-label={`Atribuir impressora para ${j.code}`}><SelectValue placeholder="Atribuir impressora" /></SelectTrigger>
                     <SelectContent>{printers.map(printer => <SelectItem key={printer.id} value={printer.id}>{printer.name}</SelectItem>)}</SelectContent>
@@ -477,6 +498,7 @@ export default function Fila() {
           </Card>
         )}
       </div>
+      {fileJobId && <ProductionFileDialog jobId={fileJobId} onClose={() => setFileJobId(null)} />}
     </div>
   );
 }

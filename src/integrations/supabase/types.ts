@@ -1048,6 +1048,12 @@ export type Database = {
       }
       inventory_items: {
         Row: {
+          material_code: string | null
+          material_description: string | null
+          color_code: string | null
+          color_hex: string | null
+          material_identified_at: string | null
+          material_identified_by: string | null
           avg_cost: number
           brand: string | null
           category: string
@@ -1072,6 +1078,12 @@ export type Database = {
           vendor_id: string | null
         }
         Insert: {
+          material_code?: string | null
+          material_description?: string | null
+          color_code?: string | null
+          color_hex?: string | null
+          material_identified_at?: string | null
+          material_identified_by?: string | null
           avg_cost?: number
           brand?: string | null
           category?: string
@@ -1096,6 +1108,12 @@ export type Database = {
           vendor_id?: string | null
         }
         Update: {
+          material_code?: string | null
+          material_description?: string | null
+          color_code?: string | null
+          color_hex?: string | null
+          material_identified_at?: string | null
+          material_identified_by?: string | null
           avg_cost?: number
           brand?: string | null
           category?: string
@@ -1253,6 +1271,10 @@ export type Database = {
       }
       jobs: {
         Row: {
+          production_snapshot: Json | null
+          production_snapshot_origin: string | null
+          production_snapshot_at: string | null
+          print_file_snapshot: Json | null
           actual_time_seconds: number | null
           actual_material_usage: Json | null
           produced_quantity: number | null
@@ -1313,6 +1335,10 @@ export type Database = {
           waste_grams: number | null
         }
         Insert: {
+          production_snapshot?: Json | null
+          production_snapshot_origin?: string | null
+          production_snapshot_at?: string | null
+          print_file_snapshot?: Json | null
           actual_time_seconds?: number | null
           actual_material_usage?: Json | null
           produced_quantity?: number | null
@@ -1373,6 +1399,10 @@ export type Database = {
           waste_grams?: number | null
         }
         Update: {
+          production_snapshot?: Json | null
+          production_snapshot_origin?: string | null
+          production_snapshot_at?: string | null
+          print_file_snapshot?: Json | null
           actual_time_seconds?: number | null
           actual_material_usage?: Json | null
           produced_quantity?: number | null
@@ -1486,6 +1516,9 @@ export type Database = {
       }
       order_items: {
         Row: {
+          quoted_estimated_cost: number | null
+          source_quote_item_id: string | null
+          product_snapshot: Json | null
           created_at: string
           description: string
           id: string
@@ -1498,6 +1531,9 @@ export type Database = {
           unit_price: number
         }
         Insert: {
+          quoted_estimated_cost?: number | null
+          source_quote_item_id?: string | null
+          product_snapshot?: Json | null
           created_at?: string
           description: string
           id?: string
@@ -1510,6 +1546,9 @@ export type Database = {
           unit_price?: number
         }
         Update: {
+          quoted_estimated_cost?: number | null
+          source_quote_item_id?: string | null
+          product_snapshot?: Json | null
           created_at?: string
           description?: string
           id?: string
@@ -1547,6 +1586,8 @@ export type Database = {
       }
       orders: {
         Row: {
+          requires_material_recipe: boolean
+          source_quote_id: string | null
           shipping: number
           approved_at: string | null
           code: string
@@ -1564,6 +1605,8 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          requires_material_recipe?: boolean
+          source_quote_id?: string | null
           shipping?: number
           approved_at?: string | null
           code: string
@@ -1581,6 +1624,8 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          requires_material_recipe?: boolean
+          source_quote_id?: string | null
           shipping?: number
           approved_at?: string | null
           code?: string
@@ -2203,6 +2248,8 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+
+      product_material_recipe_catalog: { Args: {  }; Returns: Json }
       save_product_print_source: { Args: { p_source_id: string | null; p_product_id: string; p_source: Json }; Returns: string }
       archive_product_print_source: { Args: { p_source_id: string }; Returns: undefined }
       bind_product_print_source: { Args: { p_source_id: string; p_task_id: string }; Returns: string }

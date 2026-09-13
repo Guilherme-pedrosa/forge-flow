@@ -10,7 +10,7 @@ export function roundMoney(value: number): number { return Math.round((value + N
 
 export function prepareOrder(lines: { product_id: string; description: string; quantity: number | string; unit_price: number | string; notes?: string }[], freight: string | number, discount: string | number) {
   const populated = lines.filter(line => line.product_id || line.description.trim() || Number(line.unit_price) !== 0);
-  if (!populated.length) throw new Error("Adicione pelo menos um item ao orçamento.");
+  if (!populated.length) throw new Error("Adicione pelo menos um item.");
   const items = populated.map((line, index) => {
     if (!line.description.trim()) throw new Error(`Informe a descrição do item ${index + 1}.`);
     const quantity = positiveInteger(line.quantity, `Quantidade do item ${index + 1}`, 10000);

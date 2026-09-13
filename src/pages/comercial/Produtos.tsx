@@ -31,6 +31,7 @@ import { allRows } from "@/lib/finance";
 import { orderRequest } from "@/lib/sales-order";
 import { productProductionReference } from "@/lib/product-production-reference";
 import ProductPrintSources from "./ProductPrintSources";
+import ProductMaterialRecipe from "./ProductMaterialRecipe";
 
 const fmtCurrency = (v: number | null) => v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
 const fmtDuration = (s: number | null) => {
@@ -88,7 +89,9 @@ export default function Produtos() {
   const [extraPhotos, setExtraPhotos] = useState<string[]>([]);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [photosLoading, setPhotosLoading] = useState(false);
-  const [printSourceBusy, setPrintSourceBusy] = useState(false);
+  const [sourceBusy, setPrintSourceBusy] = useState(false);
+  const [recipeBusy, setRecipeBusy] = useState(false);
+  const printSourceBusy = sourceBusy || recipeBusy;
   const photoLoadVersion = useRef(0);
   const [notes, setNotes] = useState("");
   const [printerId, setPrinterId] = useState("");
@@ -117,10 +120,24 @@ export default function Produtos() {
   const { data: products = [], isLoading, error: productsError, refetch: refetchProducts } = useQuery({
     queryKey: ["products", profile?.tenant_id],
     queryFn: async () => {
-      return allRows((from, to) => supabase.from("products").select("*, inventory_items(name)").eq("tenant_id", profile!.tenant_id).order("name").order("id").range(from, to));
+      const [rows, recipes] = await Promise.all([
+        allRows((from, to) => supabase.from("products").select("*, inventory_items(name)").eq("tenant_id", profile!.tenant_id).order("name").order("id").range(from, to)),
+        supabase.rpc("product_material_recipe_catalog"),
+      ]);
+      if (recipes.error) throw recipes.error;
+      const summary = recipes.data as unknown as {id: string; configured: boolean; complete: boolean; cost_per_unit: number | null; plate_count: number}[];
+      return rows.map(row => { const recipe = summary.find(value => value.id === row.id); return { ...row,
+        cost_estimate: recipe?.configured ? recipe.cost_per_unit : row.cost_estimate,
+        recipe_configured: recipe?.configured ?? false, recipe_complete: recipe?.complete ?? false, recipe_plate_count: recipe?.plate_count ?? 0,
+      }; });
     },
     enabled: !!profile,
   });
+
+  const editedRecipeProduct = products.find(product => product.id === editItem?.id);
+  useEffect(() => {
+    if (editedRecipeProduct?.recipe_configured) setCostEstimate(editedRecipeProduct.cost_estimate == null ? "" : String(editedRecipeProduct.cost_estimate));
+  }, [editedRecipeProduct?.id, editedRecipeProduct?.recipe_configured, editedRecipeProduct?.cost_estimate]);
 
   const { data: materials = [], error: materialsError } = useQuery({
     queryKey: ["inventory_items", "product-costs", profile?.tenant_id],
@@ -693,6 +710,10 @@ export default function Produtos() {
         </section>
       )}
       {editItem?.id && profile?.tenant_id && <ProductPrintSources key={editItem.id} productId={editItem.id} tenantId={profile.tenant_id} onBusyChange={setPrintSourceBusy} />}
+      {editItem?.id && profile?.tenant_id && category !== "kit" && (products.find(product => product.id === editItem.id)?.recipe_plate_count ?? 0) === 0 &&
+        <ProductMaterialRecipe key={`recipe-${editItem.id}`} productId={editItem.id} tenantId={profile.tenant_id} onBusyChange={setRecipeBusy}
+          suggestedNonMaterialCost={!costBreakdown.error ? Math.max(0, costBreakdown.total - costBreakdown.materialCost) : null} />}
+      {!editItem && category !== "kit" && <p className="rounded-lg border bg-muted/30 p-3 text-sm">Salve o produto para cadastrar a composição exata de materiais, cores e arquivos. Produtos com várias placas terão uma composição por placa.</p>}
       {(materialsError || printersError || tenantError) && <p role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm">Não foi possível carregar todos os parâmetros de custo. Atualize a página antes de aplicar o cálculo.</p>}
       {/* Photos gallery */}
       <div>
@@ -935,7 +956,7 @@ export default function Produtos() {
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
               <Calculator className="h-3.5 w-3.5" /> Composição de Custo Total
             </p>
-            <Button type="button" variant="outline" size="sm" className="h-9 text-xs" onClick={applyCalculatedCost} disabled={!!costBreakdown.error}>
+            <Button type="button" variant="outline" size="sm" className="h-9 text-xs" onClick={applyCalculatedCost} disabled={!!costBreakdown.error || products.find(product => product.id === editItem?.id)?.recipe_configured}>
               Aplicar Custo Calculado
             </Button>
           </div>
@@ -980,7 +1001,7 @@ export default function Produtos() {
 
       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Precificação</p>
       <div className="grid grid-cols-2 gap-3">
-        <div><Label htmlFor="product-cost">Custo unitário (R$)</Label><Input id="product-cost" type="number" min="0" step="0.01" value={costEstimate} onChange={(e) => setCostEstimate(e.target.value)} placeholder="12.50" /></div>
+        <div><Label htmlFor="product-cost">Custo unitário de referência (R$)</Label><Input id="product-cost" type="number" min="0" step="0.01" value={costEstimate} onChange={(e) => setCostEstimate(e.target.value)} placeholder="12.50" disabled={products.find(product => product.id === editItem?.id)?.recipe_configured} />{products.find(product => product.id === editItem?.id)?.recipe_configured && <p className="mt-1 text-xs text-muted-foreground">O catálogo e os novos orçamentos usam o custo médio atual dos materiais da composição, somado aos demais custos confirmados. Edite a composição para atualizar.</p>}</div>
         <div><Label htmlFor="product-price">Preço unitário (R$)</Label><Input id="product-price" type="number" min="0" step="0.01" value={salePrice} onChange={(e) => setSalePrice(e.target.value)} placeholder="39.90" /></div>
       </div>
 

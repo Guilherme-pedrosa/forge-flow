@@ -76,4 +76,4 @@ export async function transitionJob(input: JobTransition) {
   if (error) throw new Error(error.message);
 }
 
-export const productionQueryKeys = ["jobs", "fila_jobs", "orders", "inventory_items", "inventory_movements", "margin_sku_jobs", "production_losses", "printers", "fila_printers", "products", "products_list", "fila_products", "product_print_plates", "bambu_production_review", "bambu_production_preview", "dre_jobs"];
+export const productionQueryKeys = ["jobs", "fila_jobs", "orders", "inventory_items", "inventory_movements", "margin_sku_jobs", "production_losses", "printers", "fila_printers", "products", "products_list", "fila_products", "product_print_plates", "bambu_production_review", "bambu_production_preview", "job_production_review", "dre_jobs"];

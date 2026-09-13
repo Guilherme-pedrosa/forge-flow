@@ -72,9 +72,10 @@ describe("product plate configuration", () => {
     expect(screen.queryByRole("textbox", { name: "Model ID da placa" })).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Profile ID da placa" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Salvar placa" }));
-    await waitFor(() => expect(mock.rpc).toHaveBeenCalled());
-    const payload = mock.rpc.mock.calls[0][1].p_plate;
-    expect(mock.rpc.mock.contexts[0]).toBe(supabase);
+    await waitFor(() => expect(mock.rpc.mock.calls.some(([name]) => name === "save_product_print_plate")).toBe(true));
+    const callIndex = mock.rpc.mock.calls.findIndex(([name]) => name === "save_product_print_plate");
+    const payload = mock.rpc.mock.calls[callIndex][1].p_plate;
+    expect(mock.rpc.mock.contexts[callIndex]).toBe(supabase);
     expect(Object.keys(payload).sort()).toEqual(["plate_index", "label", "units_per_plate", "material_id", "printer_id", "est_grams", "est_time_seconds", "est_cost_per_unit"].sort());
   });
   it("binds the selected execution to the lid plate, not just to its source or product", async () => {

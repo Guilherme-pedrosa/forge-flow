@@ -24,6 +24,7 @@ export const navigationGroups = [
     { title: "Alertas de estoque", icon: AlertTriangle, href: "/estoque/alertas" },
   ] },
   { label: "Comercial", items: [
+    { title: "Orçamentos", icon: FileText, href: "/comercial/orcamentos" },
     { title: "Clientes", icon: Users, href: "/comercial/clientes" },
     { title: "Catálogo de produtos", icon: Package, href: "/comercial/produtos" },
     { title: "Consignação", icon: Handshake, href: "/comercial/consignado" },

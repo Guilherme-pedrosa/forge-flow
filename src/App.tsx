@@ -28,6 +28,7 @@ const Perdas = lazy(() => import("./pages/producao/Perdas"));
 const Fila = lazy(() => import("./pages/planejamento/Fila"));
 const Produtos = lazy(() => import("./pages/comercial/Produtos"));
 const Pedidos = lazy(() => import("./pages/comercial/Pedidos"));
+const Orcamentos = lazy(() => import("./pages/comercial/Orcamentos"));
 const Clientes = lazy(() => import("./pages/comercial/Clientes"));
 const Consignado = lazy(() => import("./pages/comercial/Consignado"));
 const Empresa = lazy(() => import("./pages/configuracoes/Empresa"));
@@ -83,6 +84,7 @@ function AuthenticatedRoutes() {
         <Route path="/planejamento/gantt" element={<Fila />} />
         {/* Comercial */}
         <Route path="/comercial/produtos" element={<Produtos />} />
+        <Route path="/comercial/orcamentos" element={<Orcamentos />} />
         <Route path="/comercial/pedidos" element={<Pedidos />} />
         <Route path="/comercial/clientes" element={<Clientes />} />
         <Route path="/comercial/consignado" element={<Consignado />} />
