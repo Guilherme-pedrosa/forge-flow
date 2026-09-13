@@ -131,6 +131,11 @@ export default function UsuariosPage() {
                   ))}</div>
                 </TableCell>
                 <TableCell className="text-sm text-muted-foreground">{new Date(p.created_at).toLocaleDateString("pt-BR")}</TableCell>
+                <TableCell className="text-right">
+                  <Button variant="outline" size="sm" onClick={() => { setPwTarget({ user_id: p.user_id, display_name: p.display_name }); setNewPassword(""); }}>
+                    <KeyRound className="h-3.5 w-3.5 sm:mr-1.5" /><span className="hidden sm:inline">Nova senha</span>
+                  </Button>
+                </TableCell>
               </TableRow>
             ))}</TableBody>
           </Table>
