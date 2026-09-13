@@ -18,6 +18,7 @@ describe("criação de ordens após falha de conexão", () => {
     rpc.mockResolvedValueOnce({ data: ["saved-job"], error: null });
     await expect(createJobs(batch, retry.id)).resolves.toEqual(["saved-job"]);
     expect(rpc.mock.calls.map(call => call[1].p_request_id)).toEqual(["request-1", "request-1"]);
+    expect(rpc.mock.contexts[0]).toMatchObject({ rpc });
   });
 
   it.each([NaN, Infinity, -Infinity])("rejeita %s antes que o JSON transforme o valor em nulo", async value => {

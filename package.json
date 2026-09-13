@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:database": "node scripts/test-erp-database.mjs",
+    "test:bambu": "node scripts/test-bambu-accounting.mjs && node scripts/test-bambu-direct-sync.mjs && node scripts/test-product-plates.mjs && node scripts/test-bambu-quality.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
     "test:watch": "vitest"
   },

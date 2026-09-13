@@ -29,6 +29,8 @@ import { calculateProductCost, suggestedProductPrice } from "@/lib/product-costs
 import { nonNegative, positiveInteger } from "@/lib/production";
 import { allRows } from "@/lib/finance";
 import { orderRequest } from "@/lib/sales-order";
+import { productProductionReference } from "@/lib/product-production-reference";
+import ProductPrintSources from "./ProductPrintSources";
 
 const fmtCurrency = (v: number | null) => v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
 const fmtDuration = (s: number | null) => {
@@ -86,6 +88,7 @@ export default function Produtos() {
   const [extraPhotos, setExtraPhotos] = useState<string[]>([]);
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
   const [photosLoading, setPhotosLoading] = useState(false);
+  const [printSourceBusy, setPrintSourceBusy] = useState(false);
   const photoLoadVersion = useRef(0);
   const [notes, setNotes] = useState("");
   const [printerId, setPrinterId] = useState("");
@@ -340,7 +343,7 @@ export default function Produtos() {
     setEstTime(task.cost_time_seconds ? (task.cost_time_seconds / 3600).toFixed(2) : "");
     setPhotoUrl(task.cover_url || "");
     setCategory("printed_part");
-    setNotes(`Importado da Bambu Lab — Task ID: ${task.bambu_task_id}`);
+    setNotes(`Importado da Bambu Lab — Task ID: ${task.bambu_task_id}\nPeso e tempo previstos pelo fatiador para a placa; consumo realizado é apurado na produção.`);
     setBambuImportOpen(false);
     setCreateOpen(true);
     toast({ title: "Dados importados", description: "Preencha custo e preço para finalizar o cadastro." });
@@ -573,7 +576,7 @@ export default function Produtos() {
           _kit_qty: ki.qty,
         };
       });
-      const rpc = supabase.rpc as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ error: { message: string } | null }>;
+      const rpc = supabase.rpc.bind(supabase) as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ error: { message: string } | null }>;
       const payload = { p_product_id: null, p_product: {
         name: kitName.trim(),
         description: kitDescription || null,
@@ -601,7 +604,7 @@ export default function Produtos() {
   const saveProduct = async (productId: string | null) => {
     if (!profile) throw new Error("Sua sessão expirou. Entre novamente.");
     if (!name.trim()) throw new Error("Informe o nome do produto.");
-    if (uploadingPhoto || photosLoading) throw new Error("Aguarde o carregamento das fotos antes de salvar.");
+    if (uploadingPhoto || photosLoading || printSourceBusy) throw new Error("Aguarde o carregamento das fotos e fontes de impressão antes de salvar.");
     const cost = costEstimate.trim() ? nonNegative(costEstimate, "Custo estimado") : null;
     const price = salePrice.trim() ? nonNegative(salePrice, "Preço de venda") : null;
     const grams = nonNegative(estGrams, "Peso por placa");
@@ -622,7 +625,7 @@ export default function Produtos() {
       try { valid = ["https:", "http:"].includes(new URL(url).protocol); } catch { /* invalid address */ }
       if (!valid) throw new Error("Informe uma URL válida para as fotos do produto.");
     }
-    const rpc = supabase.rpc as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ data: string | null; error: { message: string } | null }>;
+    const rpc = supabase.rpc.bind(supabase) as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ data: string | null; error: { message: string } | null }>;
     const payload = {
       p_product_id: productId,
       p_product: {
@@ -669,9 +672,27 @@ export default function Produtos() {
   const marginProducts = activeProducts.filter(product => product.sale_price != null && product.sale_price > 0 && product.cost_estimate != null);
   const catalogRevenue = marginProducts.reduce((sum, product) => sum + product.sale_price!, 0);
   const catalogCost = marginProducts.reduce((sum, product) => sum + product.cost_estimate!, 0);
+  const productionReference = productProductionReference(editItem);
 
   const formFields = (
-    <div className="grid gap-4 max-h-[60vh] overflow-y-auto pr-1">
+    <div className="grid min-w-0 grid-cols-1 gap-4 max-h-[60dvh] overflow-y-auto pr-1 [&>*]:min-w-0">
+      {productionReference && (
+        <section aria-label="Referência da produção" className="rounded-xl border border-primary/20 bg-primary/5 p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold">Base na produção</h3>
+            <span className="rounded-full bg-background px-2.5 py-1 text-xs font-medium">{productionReference.sampleLabel}</span>
+          </div>
+          <dl className="grid grid-cols-1 gap-3 sm:grid-cols-3 text-sm">
+            <div><dt className="text-xs text-muted-foreground">Material por peça</dt><dd className="mt-1 font-mono font-semibold">{productionReference.gramsLabel}</dd></div>
+            <div><dt className="text-xs text-muted-foreground">Tempo decorrido por peça</dt><dd className="mt-1 font-mono font-semibold">{productionReference.durationLabel}</dd></div>
+            <div><dt className="text-xs text-muted-foreground">Custo médio por peça</dt><dd className="mt-1 font-mono font-semibold">{productionReference.costLabel}</dd></div>
+          </dl>
+          <p className="text-xs leading-relaxed">{productionReference.materialSource}</p>
+          <p className="text-xs leading-relaxed text-muted-foreground">Referência das execuções concluídas e contabilizadas. Em produtos com várias placas, soma a base por unidade de cada placa. Usa o custo de estoque registrado, energia e máquina pelo tempo decorrido, além de mão de obra, indiretos e extras confirmados na apuração. O tempo pode incluir pausas. A produção atualiza esta referência; o preço de venda continua definido no cadastro.</p>
+          {productionReference.updatedLabel && <p className="text-xs text-muted-foreground">Atualizada em {productionReference.updatedLabel}</p>}
+        </section>
+      )}
+      {editItem?.id && profile?.tenant_id && <ProductPrintSources key={editItem.id} productId={editItem.id} tenantId={profile.tenant_id} onBusyChange={setPrintSourceBusy} />}
       {(materialsError || printersError || tenantError) && <p role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm">Não foi possível carregar todos os parâmetros de custo. Atualize a página antes de aplicar o cálculo.</p>}
       {/* Photos gallery */}
       <div>
@@ -731,8 +752,8 @@ export default function Produtos() {
         <div><Label>SKU</Label><Input value={sku} onChange={(e) => setSku(e.target.value)} placeholder="VASO-GEO-P" /></div>
         <div className="sm:col-span-2"><Label htmlFor="product-description">Descrição</Label><Textarea id="product-description" value={description} onChange={(e) => setDescription(e.target.value)} rows={2} /></div>
       </div>
-      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Receita de Produção</p>
-      <p className="-mt-2 text-xs leading-relaxed text-muted-foreground">Informe peso, impressão e acabamento da placa inteira. O cálculo divide esses custos pelas peças da placa; extras são cobrados por unidade.</p>
+      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Referência geral de produção</p>
+      <p className="-mt-2 text-xs leading-relaxed text-muted-foreground">Para produtos sem placas separadas, informe peso, impressão e acabamento da placa inteira. O cálculo divide esses custos pelas peças da placa; extras são cobrados por unidade. Em produtos com várias placas, cadastre cada uma em Arquivos e links de impressão; as referências por unidade se somam para formar o produto completo.</p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div><Label>Material</Label>
           <Select value={materialId || "none"} onValueChange={(v) => setMaterialId(v === "none" ? "" : v)}>
@@ -776,7 +797,7 @@ export default function Produtos() {
       {/* Kit Components */}
       {category === "kit" && (
         <div className="space-y-2">
-          <div className="flex items-center justify-between">
+          <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">🧩 Produtos do Kit</p>
             <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setKitComponents([...kitComponents, { productId: "", qty: 1 }])}>
               <Plus className="h-3 w-3 mr-1" /> Adicionar Produto
@@ -789,13 +810,13 @@ export default function Produtos() {
             const prod = products.find((p: any) => p.id === kc.productId);
             const unitCost = (prod as any)?.cost_estimate || 0;
             return (
-              <div key={idx} className="grid grid-cols-[1fr_70px_90px_auto] gap-2 items-center">
+              <div key={idx} className="grid min-w-0 grid-cols-[minmax(0,1fr)_60px_auto] gap-2 items-center sm:grid-cols-[minmax(0,1fr)_70px_90px_auto] [&>*]:min-w-0">
                 <Select value={kc.productId || "none"} onValueChange={(v) => {
                   const updated = [...kitComponents];
                   updated[idx] = { ...updated[idx], productId: v === "none" ? "" : v };
                   setKitComponents(updated);
                 }}>
-                  <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Selecione" /></SelectTrigger>
+                <SelectTrigger className="col-span-3 h-8 min-w-0 text-xs sm:col-span-1"><SelectValue placeholder="Selecione" /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">Selecione...</SelectItem>
                     {products.filter((p: any) => p.is_active && p.category !== "kit").map((p: any) => (
@@ -844,7 +865,7 @@ export default function Produtos() {
 
 
       <div className="space-y-2">
-        <div className="flex items-center justify-between">
+        <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
           <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">🎁 Itens Extras / Acompanhamentos</p>
           <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setExtras([...extras, { name: "", cost: 0, costInput: "" }])}>
             <Plus className="h-3 w-3 mr-1" /> Adicionar Item
@@ -854,7 +875,7 @@ export default function Produtos() {
           <p className="text-xs text-muted-foreground italic">Nenhum item extra. Adicione chocolates, embalagens, laços, chaveiros, etc.</p>
         )}
         {extras.map((extra, idx) => (
-          <div key={idx} className="grid grid-cols-[1fr_100px_auto] gap-2 items-center">
+          <div key={idx} className="grid min-w-0 grid-cols-[minmax(0,1fr)_80px_auto] gap-2 items-center sm:grid-cols-[minmax(0,1fr)_100px_auto] [&>*]:min-w-0">
             <Input
               placeholder="Ex: Chocolate, Embalagem, Laço..."
               value={extra.name}
@@ -910,7 +931,7 @@ export default function Produtos() {
       {/* Cost breakdown */}
       {(parseFloat(estGrams) > 0 || parseFloat(estTime) > 0 || extras.length > 0) && (
         <div className="rounded-lg border border-dashed bg-muted/30 p-3 space-y-2">
-          <div className="flex items-center justify-between">
+          <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
               <Calculator className="h-3.5 w-3.5" /> Composição de Custo Total
             </p>
@@ -972,7 +993,7 @@ export default function Produtos() {
         };
         return (
           <div className="rounded-lg border bg-muted/30 p-3 space-y-3">
-            <div className="flex items-center justify-between">
+            <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
               <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Simulação por Canal de Venda</p>
               <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => setShowChannelConfig(!showChannelConfig)}>
                 <Settings2 className="h-3 w-3 mr-1" /> {showChannelConfig ? "Fechar" : "Taxas"}
@@ -1155,7 +1176,15 @@ export default function Produtos() {
                     )}
                   </TableCell>
                   <TableCell className="text-sm">{p.inventory_items?.name || "—"}</TableCell>
-                  <TableCell className="text-right font-mono text-sm">{fmtCurrency(p.cost_estimate)}</TableCell>
+                  <TableCell className="text-right text-sm">
+                    <span className="font-mono">{fmtCurrency(p.cost_estimate)}</span>
+                    {(() => { const reference = productProductionReference(p); return reference && (
+                      <span className="mt-1 block text-xs leading-relaxed text-muted-foreground" title={`${reference.sampleLabel}; ${reference.durationLabel}/peça; ${reference.costLabel}/peça. ${reference.materialSource}`}>
+                        <span className="inline-flex rounded-full border border-primary/20 bg-primary/5 px-2 py-0.5 text-[10px] font-medium text-primary">Base na produção</span>
+                        <span className="mt-0.5 block">{reference.sampleLabel}</span>
+                      </span>
+                    ); })()}
+                  </TableCell>
                   <TableCell className="text-right font-mono text-sm">{fmtCurrency(p.sale_price)}</TableCell>
                   <TableCell className="text-right font-mono text-sm">{p.margin_percent != null ? `${p.margin_percent.toFixed(1)}%` : "—"}</TableCell>
                   <TableCell>
@@ -1184,10 +1213,10 @@ export default function Produtos() {
       </Dialog>
 
       {/* Edit dialog */}
-      <Dialog open={!!editItem} onOpenChange={(o) => { if (!o && !updateMut.isPending && !uploadingPhoto) { setEditItem(null); resetForm(); } }}>
+      <Dialog open={!!editItem} onOpenChange={(o) => { if (!o && !updateMut.isPending && !uploadingPhoto && !printSourceBusy) { setEditItem(null); resetForm(); } }}>
         <DialogContent className="max-w-2xl"><DialogHeader><DialogTitle>Editar Produto</DialogTitle><DialogDescription>Atualize o cadastro, a receita e a precificação.</DialogDescription></DialogHeader>
           {formFields}
-          <DialogFooter><Button variant="outline" disabled={updateMut.isPending || uploadingPhoto} onClick={() => { setEditItem(null); resetForm(); }}>Cancelar</Button><Button onClick={() => updateMut.mutate()} disabled={!name.trim() || updateMut.isPending || uploadingPhoto || photosLoading}>{updateMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} {photosLoading ? "Carregando fotos..." : "Salvar"}</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" disabled={updateMut.isPending || uploadingPhoto || printSourceBusy} onClick={() => { setEditItem(null); resetForm(); }}>Cancelar</Button><Button onClick={() => updateMut.mutate()} disabled={!name.trim() || updateMut.isPending || uploadingPhoto || photosLoading || printSourceBusy}>{updateMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} {photosLoading ? "Carregando fotos..." : "Salvar"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -1207,7 +1236,7 @@ export default function Produtos() {
             </div>
 
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
+              <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">🧩 Produtos do Kit</p>
                 <Button type="button" variant="outline" size="sm" className="h-7 text-xs" onClick={() => setKitItems([...kitItems, { productId: "", qty: 1 }])}>
                   <Plus className="h-3 w-3 mr-1" /> Adicionar Produto
@@ -1378,9 +1407,9 @@ export default function Produtos() {
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium text-foreground truncate">{t.design_title || "Sem título"}</p>
                         <p className="text-xs text-muted-foreground">{t.bambu_devices?.name || "—"}</p>
-                        <div className="flex items-center gap-3 mt-1 text-[11px] text-muted-foreground">
-                          {t.weight_grams != null && <span>{t.weight_grams}g</span>}
-                          {t.cost_time_seconds != null && <span>{fmtDuration(t.cost_time_seconds)}</span>}
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-[11px] text-muted-foreground">
+                          {t.weight_grams != null && <span>{t.weight_grams}g previstos</span>}
+                          {t.cost_time_seconds != null && <span>{fmtDuration(t.cost_time_seconds)} previstas</span>}
                         </div>
                       </div>
                     </button>

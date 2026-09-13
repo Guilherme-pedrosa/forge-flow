@@ -408,7 +408,7 @@ export default function Pedidos() {
   const invalidateOrder = () => {
     ["orders", "order_items", "order_jobs", "jobs", "fila_jobs", "accounts_receivable", "financial_ledger", "dashboard"].forEach(key => qc.invalidateQueries({ queryKey: [key] }));
   };
-  const rpc = supabase.rpc as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
+  const rpc = supabase.rpc.bind(supabase) as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
   const saveOrder = async (id: string | null) => {
     if (!profile) throw new Error("Sua sessão expirou. Entre novamente.");
     const values = prepareOrder(lines, shipping, discountVal);

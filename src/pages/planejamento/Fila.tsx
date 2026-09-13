@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import { positiveInteger, productExtrasPerPiece, requiresProductionMeasurement } from "@/lib/production";
 import { createJobs, transitionJob, productionQueryKeys, type CreateJobInput } from "@/lib/production-api";
 import { orderRequest } from "@/lib/sales-order";
+import { planProductPlates, readProductPlates } from "@/lib/production-plates";
+import { ProductionPlatePlan } from "@/components/production/ProductionPlatePlan";
 import { ProductionTransitionDialog } from "@/components/production/ProductionTransitionDialog";
 import type { Tables } from "@/integrations/supabase/types";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -15,7 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogTrigger,
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter, DialogTrigger,
 } from "@/components/ui/dialog";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -60,6 +62,8 @@ export default function Fila() {
   const [selQty, setSelQty] = useState<string>("1");
   const [selPriority, setSelPriority] = useState<string>("5");
   const creationRequest = useRef<ReturnType<typeof orderRequest> | null>(null);
+  const plateQuery = useQuery({ queryKey: ["product_print_plates", profile?.tenant_id, selProductId], enabled: !!profile && !!selProductId && createOpen, queryFn: () => readProductPlates(selProductId) });
+  const hasPlates = !!plateQuery.data?.length;
 
   const { data: printers = [] } = useQuery({
     queryKey: ["fila_printers"],
@@ -141,6 +145,13 @@ export default function Fila() {
       const printer = printers.find(p => p.id === selPrinterId);
       if (!product) throw new Error("Selecione um produto");
       if (product.category === "kit") throw new Error("Use Pedidos para planejar o kit; os componentes serão separados automaticamente.");
+      if (plateQuery.isFetching) throw new Error("Aguarde a consulta das placas deste produto.");
+      if (plateQuery.error) throw plateQuery.error;
+      if (hasPlates) {
+        const quantity = positiveInteger(selQty, "Quantidade de conjuntos", 10000);
+        creationRequest.current = orderRequest(creationRequest.current, JSON.stringify({ product_id: product.id, quantity, mode: "product_plates" }));
+        return planProductPlates(product.id, quantity, creationRequest.current.id);
+      }
       if (!printer) throw new Error("Selecione uma impressora");
       const qty = positiveInteger(selQty, "Quantidade de placas", 100);
       const priority = positiveInteger(selPriority, "Prioridade", 10);
@@ -229,12 +240,13 @@ export default function Fila() {
               <DialogContent>
                 <DialogHeader>
                   <DialogTitle>Adicionar produto à fila</DialogTitle>
+                  <DialogDescription>Selecione o produto e a quantidade. Produtos com várias placas geram o conjunto completo.</DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4">
                   <div>
-                    <Label>Produto</Label>
+                    <Label htmlFor="queue-product">Produto</Label>
                     <Select value={selProductId} onValueChange={setSelProductId}>
-                      <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                      <SelectTrigger id="queue-product"><SelectValue placeholder="Selecione..." /></SelectTrigger>
                       <SelectContent>
                         {products.map(p => (
                           <SelectItem key={p.id} value={p.id}>
@@ -244,10 +256,10 @@ export default function Fila() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div>
-                    <Label>Impressora</Label>
+                  {!hasPlates && <div>
+                    <Label htmlFor="queue-printer">Impressora</Label>
                     <Select value={selPrinterId} onValueChange={setSelPrinterId}>
-                      <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                      <SelectTrigger id="queue-printer"><SelectValue placeholder="Selecione..." /></SelectTrigger>
                       <SelectContent>
                         {printers.map(p => (
                           <SelectItem key={p.id} value={p.id}>
@@ -256,18 +268,21 @@ export default function Fila() {
                         ))}
                       </SelectContent>
                     </Select>
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
+                  </div>}
+                  <div className={cn("grid gap-3", !hasPlates && "sm:grid-cols-2")}>
                     <div>
-                      <Label>Quantidade (placas)</Label>
-                      <Input type="number" min={1} value={selQty} onChange={e => setSelQty(e.target.value)} />
+                      <Label htmlFor="queue-quantity">{hasPlates ? "Quantidade de conjuntos / SKUs" : "Quantidade (placas)"}</Label>
+                      <Input id="queue-quantity" type="number" min={1} value={selQty} onChange={e => setSelQty(e.target.value)} />
                     </div>
-                    <div>
-                      <Label>Prioridade (1=alta, 10=baixa)</Label>
-                      <Input type="number" min={1} max={10} value={selPriority} onChange={e => setSelPriority(e.target.value)} />
-                    </div>
+                    {!hasPlates && <div>
+                      <Label htmlFor="queue-priority">Prioridade (1=alta, 10=baixa)</Label>
+                      <Input id="queue-priority" type="number" min={1} max={10} value={selPriority} onChange={e => setSelPriority(e.target.value)} />
+                    </div>}
                   </div>
-                  {selProductId && (
+                  {plateQuery.isFetching && <p className="text-xs text-muted-foreground">Consultando as placas do produto…</p>}
+                  {plateQuery.error && <p role="alert" className="text-sm text-destructive">Não foi possível consultar as placas. {plateQuery.error.message}</p>}
+                  {hasPlates && <ProductionPlatePlan plates={plateQuery.data!} quantity={selQty} printers={printers} />}
+                  {selProductId && !hasPlates && !plateQuery.isFetching && !plateQuery.error && (
                     <div className="text-xs text-muted-foreground bg-muted rounded p-2">
                       {(() => {
                         const p = products.find(x => x.id === selProductId);
@@ -278,9 +293,9 @@ export default function Fila() {
                   )}
                 </div>
                 <DialogFooter>
-                  <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancelar</Button>
-                  <Button onClick={() => createJobsMut.mutate()} disabled={createJobsMut.isPending}>
-                    {createJobsMut.isPending ? "Criando..." : "Adicionar à fila"}
+                  <Button variant="outline" disabled={createJobsMut.isPending} onClick={() => setCreateOpen(false)}>Cancelar</Button>
+                  <Button onClick={() => createJobsMut.mutate()} disabled={createJobsMut.isPending || plateQuery.isFetching || !!plateQuery.error}>
+                    {createJobsMut.isPending ? "Criando..." : hasPlates ? "Planejar conjunto completo" : "Adicionar à fila"}
                   </Button>
                 </DialogFooter>
               </DialogContent>
@@ -293,7 +308,7 @@ export default function Fila() {
       {jobsLoading && <p role="status" className="text-sm text-muted-foreground">Carregando fila de produção...</p>}
       {transition && <ProductionTransitionDialog key={`${transition.job.id}-${transition.status}`} value={transition} printers={printers} pending={updateStatusMut.isPending} onClose={() => setTransition(null)} onSave={value => updateStatusMut.mutate(value)} />}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4 text-sm">
-        <div className="space-y-1"><p className="text-muted-foreground">A fila acompanha a produção. Confirme o controle de qualidade e os consumos reais antes de concluir cada ordem.</p>{bambuTasks.some(task => !task.job_id) && <p className="text-xs text-muted-foreground">Há {bambuTasks.filter(task => !task.job_id).length} tarefas recentes da Bambu sem vínculo com uma ordem. Elas não alteram a produção automaticamente.</p>}</div>
+        <div className="space-y-1"><p className="text-muted-foreground">A fila acompanha a produção. Confirme o controle de qualidade e os consumos reais antes de concluir cada ordem.</p><p className="text-xs text-muted-foreground"><Link to="/integracoes/bambu" className="text-primary underline-offset-4 hover:underline">Confira os vínculos e a apuração das tentativas Bambu</Link>. As execuções seguem as regras configuradas para cada produto e placa.</p></div>
         <Button variant="outline" asChild><Link to="/producao/jobs">Abrir ordens e apurar custos</Link></Button>
       </div>
       {/* KPI strip */}
@@ -367,9 +382,10 @@ export default function Fila() {
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-1.5 mb-0.5">
                               <span className="text-xs font-mono text-muted-foreground">#{idx + 1}</span>
-                              <span className="text-xs font-semibold truncate">{j.products?.name || j.name}</span>
+                              <span className="text-xs font-semibold whitespace-normal">{j.name || j.products?.name}</span>
                             </div>
                             <div className="text-xs text-muted-foreground font-mono">{j.code}</div>
+                            {j.description && <p className="mt-1 text-xs text-muted-foreground">{j.description}</p>}
                             <div className="flex items-center gap-2 mt-1.5 flex-wrap">
                               <Badge variant="outline" className={cn("text-xs py-0 px-1.5 gap-1 border", cfg.color)}>
                                 <Icon className="h-2.5 w-2.5" /> {cfg.label}
@@ -441,8 +457,9 @@ export default function Fila() {
             <div className="p-2 space-y-2">
               {jobsByPrinter.get(null)!.map(j => (
                 <div key={j.id} className="border rounded-md p-2.5">
-                  <div className="text-xs font-semibold">{j.products?.name || j.name}</div>
+                  <div className="text-xs font-semibold">{j.name || j.products?.name}</div>
                   <div className="text-xs text-muted-foreground font-mono mb-3">{j.code}</div>
+                  {j.description && <p className="mb-3 text-xs text-muted-foreground">{j.description}</p>}
                   <Select onValueChange={printerId => updateStatusMut.mutate({ id: j.id, status: j.status, printerId })} disabled={updateStatusMut.isPending}>
                     <SelectTrigger aria-label={`Atribuir impressora para ${j.code}`}><SelectValue placeholder="Atribuir impressora" /></SelectTrigger>
                     <SelectContent>{printers.map(printer => <SelectItem key={printer.id} value={printer.id}>{printer.name}</SelectItem>)}</SelectContent>

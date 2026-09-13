@@ -186,7 +186,7 @@ export default function Consignado() {
     const signature = JSON.stringify({ name, payload });
     const request = orderRequest(operations.current[operation] ?? null, signature);
     operations.current[operation] = request;
-    const rpc = supabase.rpc as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
+    const rpc = supabase.rpc.bind(supabase) as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
     const { data, error } = await rpc(name, { ...payload, p_request_id: request.id });
     if (error) throw new Error(error.message);
     delete operations.current[operation];

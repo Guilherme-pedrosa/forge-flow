@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { readBambuQualityRejections } from "@/lib/bambu-production-api";
+import { productionLossTotals } from "@/lib/production-losses";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { readProductionRows } from "@/lib/production-read";
@@ -25,19 +27,15 @@ export default function Perdas() {
     queryFn: async () => {
       const from = new Date(`${start}T00:00:00`).toISOString();
       const until = new Date(`${end}T23:59:59.999`).toISOString();
-      const [movements, failed] = await Promise.all([
+      const [movements, failed, quality] = await Promise.all([
         readProductionRows((a, b) => supabase.from("inventory_movements").select("*, inventory_items(name, unit)").eq("movement_type", "loss").gte("created_at", from).lte("created_at", until).order("created_at", { ascending: false }).order("id").range(a, b)),
         readProductionRows((a, b) => supabase.from("jobs").select("id, code, name, failure_reason, actual_total_cost, actual_grams, updated_at, product_id, printers(name)").eq("status", "failed").gte("updated_at", from).lte("updated_at", until).order("updated_at", { ascending: false }).order("id").range(a, b)),
+        readBambuQualityRejections(from, until),
       ]);
-      return { movements, failed };
+      return { movements, failed, quality };
     },
   });
-  const totals = useMemo(() => ({
-    material: data?.movements.reduce((sum, movement) => sum + (movement.total_cost ?? 0), 0) ?? 0,
-    uncosted: data?.movements.filter(movement => movement.total_cost == null).length ?? 0,
-    failedCost: data?.failed.reduce((sum, job) => sum + (job.actual_total_cost ?? 0), 0) ?? 0,
-    unmeasured: data?.failed.filter(job => job.actual_total_cost == null).length ?? 0,
-  }), [data]);
+  const totals = useMemo(() => productionLossTotals(data?.movements ?? [], data?.failed ?? [], data?.quality ?? []), [data]);
 
   return <div className="space-y-6">
     <PageHeader title="Perdas e reimpressões" description="Rastreie material perdido, causas de falha e custo das ordens que precisam ser refeitas." breadcrumbs={[{ label: "Produção", href: "/producao/jobs" }, { label: "Perdas" }]} actions={<Button asChild><Link to="/producao/jobs">Registrar falha na ordem<ArrowRight className="ml-2 h-4 w-4" /></Link></Button>} />
@@ -50,11 +48,18 @@ export default function Perdas() {
     {error && <p role="alert" className="rounded-lg bg-destructive/10 p-4 text-sm text-destructive">Não foi possível carregar as perdas. {error.message}</p>}
     {isLoading ? <div className="flex items-center justify-center gap-3 p-16 text-muted-foreground"><Loader2 className="h-5 w-5 animate-spin" />Carregando apuração...</div> : validRange && !error && <>
       <div className="grid gap-4 sm:grid-cols-3">
-        <div className="rounded-xl border bg-card p-5"><p className="text-sm text-muted-foreground">Material perdido</p><p className="mt-2 text-3xl font-semibold">{currency(totals.material)}</p><p className="mt-2 text-xs text-muted-foreground">{data?.movements.length ?? 0} movimentações {totals.uncosted ? `· ${totals.uncosted} sem custo` : ""}</p></div>
+        <div className="rounded-xl border bg-card p-5"><p className="text-sm text-muted-foreground">Material perdido</p><p className="mt-2 text-3xl font-semibold">{currency(totals.material)}</p><p className="mt-2 text-xs text-muted-foreground">{data?.movements.length ?? 0} baixas por perda · {data?.quality.length ?? 0} rejeições de qualidade {totals.uncosted ? `· ${totals.uncosted} sem custo` : ""}</p></div>
         <div className="rounded-xl border bg-card p-5"><p className="text-sm text-muted-foreground">Ordens com falha</p><p className="mt-2 text-3xl font-semibold">{data?.failed.length ?? 0}</p><p className="mt-2 text-xs text-muted-foreground">Histórico preservado ao reimprimir</p></div>
         <div className="rounded-xl border bg-card p-5"><p className="text-sm text-muted-foreground">Custo apurado das falhas</p><p className="mt-2 text-3xl font-semibold">{currency(totals.failedCost)}</p><p className="mt-2 text-xs text-muted-foreground">{totals.unmeasured ? `${totals.unmeasured} ordens ainda sem apuração` : "Inclui material, máquina, energia e custos informados"}</p></div>
       </div>
       <p className="text-sm text-muted-foreground">O custo das falhas já inclui o material consumido nessas ordens. Os indicadores acima se sobrepõem e não devem ser somados.</p>
+      {!!data?.quality.length && <section className="overflow-hidden rounded-xl border bg-card">
+        <div className="border-b p-4"><h2 className="font-semibold">Material reprovado na qualidade</h2><p className="mt-1 text-xs text-muted-foreground">Este material já saiu do estoque na impressão. A rejeição registra o prejuízo sem fazer uma segunda baixa.</p></div>
+        <Table><TableHeader><TableRow><TableHead>Data</TableHead><TableHead>Ordem</TableHead><TableHead>Motivo</TableHead><TableHead className="text-right">Material</TableHead><TableHead className="text-right">Custo do material</TableHead></TableRow></TableHeader><TableBody>{data.quality.map(rejection => <TableRow key={rejection.job_id}>
+          <TableCell>{new Date(rejection.created_at).toLocaleDateString("pt-BR")}</TableCell><TableCell><Link className="text-primary" to="/producao/jobs">{rejection.jobs?.code ?? "Ver ordens"}</Link><p className="text-xs text-muted-foreground">{rejection.quantity} peça(s)</p></TableCell>
+          <TableCell className="max-w-sm whitespace-normal">{rejection.reason}</TableCell><TableCell className="text-right tabular-nums">{rejection.grams.toLocaleString("pt-BR")} g</TableCell><TableCell className="text-right tabular-nums">{currency(rejection.material_cost)}</TableCell>
+        </TableRow>)}</TableBody></Table>
+      </section>}
       <section className="rounded-xl border bg-card overflow-hidden">
         <div className="border-b p-4"><h2 className="flex items-center gap-2 font-semibold"><AlertTriangle className="h-4 w-4 text-amber-600" />Ordens que falharam</h2></div>
         {!data?.failed.length ? <p className="p-8 text-center text-sm text-muted-foreground">Nenhuma falha registrada no período.</p> : <Table><TableHeader><TableRow><TableHead>Ordem</TableHead><TableHead>Impressora</TableHead><TableHead>Causa registrada</TableHead><TableHead className="text-right">Custo apurado</TableHead></TableRow></TableHeader><TableBody>{data.failed.map(job => <TableRow key={job.id}><TableCell><Link to="/producao/jobs" className="font-medium text-primary">{job.code}</Link><p className="text-xs text-muted-foreground">{job.name}</p></TableCell><TableCell>{job.printers?.name ?? "Não atribuída"}</TableCell><TableCell className="max-w-sm whitespace-normal">{job.failure_reason || "Motivo não registrado"}</TableCell><TableCell className="text-right tabular-nums">{job.actual_total_cost == null ? "Pendente" : currency(job.actual_total_cost)}</TableCell></TableRow>)}</TableBody></Table>}

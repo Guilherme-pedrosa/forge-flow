@@ -8,7 +8,6 @@ import {
   Printer, Clock, AlertTriangle, Wifi, WifiOff, CloudDownload,
   LogOut, ShieldCheck, Image,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,26 +15,11 @@ import { Card } from "@/components/ui/card";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
-} from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
+import { BambuProductionPanel } from "@/components/bambu/BambuProductionPanel";
+import { bambuRpc } from "@/lib/bambu-production-api";
 
 const fmtDate = (d: string | null) => d ? new Date(d).toLocaleString("pt-BR") : "—";
-const fmtDuration = (s: number | null) => {
-  if (!s) return "—";
-  const h = Math.floor(s / 3600);
-  const m = Math.floor((s % 3600) / 60);
-  return h > 0 ? `${h}h${m}m` : `${m}m`;
-};
-
-const taskStatusLabels: Record<string, { label: string; color: string }> = {
-  "0": { label: "Imprimindo", color: "text-blue-400" },
-  "1": { label: "Pausada", color: "text-yellow-400" },
-  "2": { label: "Concluída", color: "text-emerald-400" },
-  "3": { label: "Falha", color: "text-red-400" },
-};
-
 export default function BambuLab() {
   const { profile } = useAuth();
   const { toast } = useToast();
@@ -78,7 +62,7 @@ export default function BambuLab() {
   });
 
   // Fetch task history
-  const { data: tasks = [], isLoading: tasksLoading } = useQuery({
+  const { data: tasks = [] } = useQuery({
     queryKey: ["bambu_tasks"],
     queryFn: async () => {
       const { data, error } = await supabase
@@ -145,18 +129,17 @@ export default function BambuLab() {
   // Sync mutation
   const syncMut = useMutation({
     mutationFn: async () => {
-      const { data, error } = await supabase.functions.invoke("bambu-cloud-sync", {
-        body: { action: "sync" },
-      });
-      if (error) throw error;
-      if (data.error) throw new Error(data.error);
-      return data;
+      return bambuRpc<{ status: "queued" | "syncing" | "cooldown" | "unavailable"; next_attempt_at: string | null }>("request_bambu_sync");
     },
     onSuccess: (data) => {
       qc.invalidateQueries({ queryKey: ["bambu_devices"] });
       qc.invalidateQueries({ queryKey: ["bambu_tasks"] });
       qc.invalidateQueries({ queryKey: ["bambu_connection"] });
-      toast({ title: "Sincronizado!", description: data.message });
+      qc.invalidateQueries({ queryKey: ["bambu_sync_state"] });
+      qc.invalidateQueries({ queryKey: ["bambu_production_review"] });
+      if (data.status === "unavailable") toast({ title: "Sincronização indisponível", description: "Confira a conexão e o estado da integração no painel.", variant: "destructive" });
+      else if (data.status === "cooldown") toast({ title: "Aguarde a próxima atualização", description: data.next_attempt_at ? `Nova tentativa disponível em ${fmtDate(data.next_attempt_at)}.` : "O intervalo mínimo entre solicitações ainda não terminou." });
+      else toast({ title: data.status === "syncing" ? "Sincronização em andamento" : "Atualização solicitada", description: "Acompanhe o resultado no painel. A confirmação aparece quando os dados forem recebidos." });
     },
     onError: (e: any) => toast({ title: "Erro ao sincronizar", description: e.message, variant: "destructive" }),
   });
@@ -273,7 +256,7 @@ export default function BambuLab() {
               <p className="text-[10px] text-muted-foreground">{totalPrints > 0 ? ((failedPrints / totalPrints) * 100).toFixed(1) : 0}% taxa</p>
             </Card>
             <Card className="p-4">
-              <p className="text-xs text-muted-foreground">Tempo Total</p>
+              <p className="text-xs text-muted-foreground">Tempo planejado no fatiador</p>
               <p className="text-2xl font-bold text-foreground">{Math.round(totalTimeSeconds / 3600)}h</p>
               <p className="text-[10px] text-muted-foreground">Última sincronização: {fmtDate(connection.last_sync_at)}</p>
             </Card>
@@ -323,59 +306,10 @@ export default function BambuLab() {
             )}
           </div>
 
-          {/* Task History */}
-          <div>
-            <h3 className="text-sm font-semibold text-foreground mb-3">Histórico de Impressões</h3>
-            {tasksLoading ? (
-              <div className="flex items-center justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
-            ) : tasks.length === 0 ? (
-              <Card className="flex items-center justify-center py-8 text-muted-foreground text-sm">Nenhuma tarefa sincronizada</Card>
-            ) : (
-              <div className="rounded-xl border bg-card overflow-hidden">
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead></TableHead>
-                      <TableHead>Modelo</TableHead>
-                      <TableHead>Impressora</TableHead>
-                      <TableHead>Status</TableHead>
-                      <TableHead>Duração</TableHead>
-                      <TableHead className="text-right">Gramas</TableHead>
-                      <TableHead>Início</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {tasks.map((t: any) => {
-                      const statusCfg = taskStatusLabels[t.status] || { label: t.status || "—", color: "text-muted-foreground" };
-                      return (
-                        <TableRow key={t.id}>
-                          <TableCell className="w-12">
-                            {t.cover_url ? (
-                              <img src={t.cover_url} alt="" className="w-10 h-10 rounded object-cover" />
-                            ) : (
-                              <div className="w-10 h-10 rounded bg-muted flex items-center justify-center">
-                                <Image className="h-4 w-4 text-muted-foreground" />
-                              </div>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            <p className="text-sm font-medium text-foreground truncate max-w-[200px]">{t.design_title || "Sem título"}</p>
-                          </TableCell>
-                          <TableCell className="text-sm text-muted-foreground">{t.bambu_devices?.name || "—"}</TableCell>
-                          <TableCell><span className={cn("text-sm font-medium", statusCfg.color)}>{statusCfg.label}</span></TableCell>
-                          <TableCell className="text-sm text-muted-foreground">{fmtDuration(t.cost_time_seconds)}</TableCell>
-                          <TableCell className="text-right text-sm font-mono">{t.weight_grams != null ? `${t.weight_grams}g` : "—"}</TableCell>
-                          <TableCell className="text-sm text-muted-foreground">{fmtDate(t.start_time)}</TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
-            )}
-          </div>
         </>
       )}
+
+      <BambuProductionPanel />
 
       {/* Login Dialog */}
       <Dialog open={loginOpen} onOpenChange={(o) => { if (!o) { setLoginOpen(false); setStep("login"); resetLoginForm(); } }}>

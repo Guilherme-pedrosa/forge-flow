@@ -6,6 +6,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { estimateProductionCosts, productExtrasPerPiece, requiresProductionMeasurement, jobTransitions as nextStatuses, nonNegative } from "@/lib/production";
 import { createJobs, transitionJob, productionQueryKeys, type CreateJobInput } from "@/lib/production-api";
 import { orderRequest } from "@/lib/sales-order";
+import { planProductPlates, readProductPlates } from "@/lib/production-plates";
+import { ProductionPlatePlan } from "@/components/production/ProductionPlatePlan";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageHeader } from "@/components/shared/PageHeader";
 import {
@@ -398,6 +400,9 @@ function CreateJobDialog({
   const queryClient = useQueryClient();
 
   const [productId, setProductId] = useState("");
+  const [setQuantity, setSetQuantity] = useState("1");
+  const plateQuery = useQuery({ queryKey: ["product_print_plates", profile?.tenant_id, productId], enabled: !!profile && !!productId && open, queryFn: () => readProductPlates(productId) });
+  const hasPlates = !!plateQuery.data?.length;
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [materialId, setMaterialId] = useState("");
@@ -417,6 +422,7 @@ function CreateJobDialog({
 
   const reset = () => {
     creationRequest.current = null;
+    setSetQuantity("1");
     setProductId(""); setName(""); setDescription(""); setMaterialId(""); setSecondaryMaterialId("");
     setPrinterId(""); setDueDate(""); setPriority("5"); setEstTimeMinutes(""); setEstGrams("");
     setNumColors("1"); setPurgeWasteGrams(""); setSalePrice("");
@@ -461,6 +467,17 @@ function CreateJobDialog({
     if (!profile?.tenant_id) return;
     setSaving(true);
     try {
+      if (productId && plateQuery.isFetching) throw new Error("Aguarde a consulta das placas do produto.");
+      if (productId && plateQuery.error) throw plateQuery.error;
+      if (hasPlates) {
+        const quantity = Number(setQuantity);
+        if (!Number.isInteger(quantity) || quantity < 1 || quantity > 10000) throw new Error("Informe entre 1 e 10.000 conjuntos inteiros.");
+        creationRequest.current = orderRequest(creationRequest.current, JSON.stringify({ product_id: productId, quantity, mode: "product_plates" }));
+        const ids = await planProductPlates(productId, quantity, creationRequest.current.id);
+        productionQueryKeys.forEach(key => queryClient.invalidateQueries({ queryKey: [key] }));
+        toast({ title: "Conjunto planejado", description: `${ids.length} ordens criadas com as receitas de cada placa.` });
+        reset(); onOpenChange(false); return;
+      }
       const grams = estGrams === "" ? null : nonNegative(estGrams, "Peso estimado");
       const minutes = estTimeMinutes === "" ? null : Math.round(nonNegative(estTimeMinutes, "Tempo estimado") * 60);
       const colors = Number(numColors);
@@ -520,14 +537,14 @@ function CreateJobDialog({
       <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Nova Ordem de Impressão</DialogTitle>
-          <DialogDescription>Uma ordem representa uma placa de impressão. Peso e tempo são totais da placa. Os custos usam a tarifa da empresa; se não configurada, a referência é R$ 0,85/kWh.</DialogDescription>
+          <DialogDescription>{hasPlates ? "O conjunto cria ordens para todas as placas cadastradas no SKU, com material, impressora, tempo e custo próprios." : "Uma ordem representa uma placa de impressão. Peso e tempo são totais da placa. Os custos usam a tarifa da empresa; se não configurada, a referência é R$ 0,85/kWh."}</DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-4 py-2">
           <div className="grid gap-1.5">
-            <Label>Produto cadastrado</Label>
+            <Label htmlFor="job-product">Produto cadastrado</Label>
             <Select value={productId || "none"} onValueChange={(v) => handleProductSelect(v === "none" ? "" : v)}>
-              <SelectTrigger><SelectValue placeholder="Selecionar produto..." /></SelectTrigger>
+              <SelectTrigger id="job-product"><SelectValue placeholder="Selecionar produto..." /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="none">— Nenhum (manual) —</SelectItem>
                 {products.map(p => (
@@ -539,6 +556,12 @@ function CreateJobDialog({
             </Select>
           </div>
 
+          {plateQuery.isFetching && <p className="text-sm text-muted-foreground">Consultando as placas do produto…</p>}
+          {plateQuery.error && <p role="alert" className="text-sm text-destructive">Não foi possível consultar as placas. {plateQuery.error.message}</p>}
+          {hasPlates ? <>
+            <div className="grid gap-1.5"><Label htmlFor="job-set-quantity">Quantidade de conjuntos / SKUs</Label><Input id="job-set-quantity" type="number" min="1" max="10000" step="1" value={setQuantity} onChange={event => setSetQuantity(event.target.value)} /></div>
+            <ProductionPlatePlan plates={plateQuery.data!} quantity={setQuantity} materials={materials} printers={printers} />
+          </> : <>
           <div className="grid gap-1.5">
             <Label>Peça / Nome *</Label>
             <Input placeholder="Ex: Suporte GoPro v2" value={name} onChange={e => setName(e.target.value)} />
@@ -667,13 +690,14 @@ function CreateJobDialog({
             <Label>Data prometida</Label>
             <Input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} />
           </div>
+          </>}
         </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={saving}>Cancelar</Button>
-          <Button onClick={handleSave} disabled={saving}>
+          <Button onClick={handleSave} disabled={saving || plateQuery.isFetching || !!plateQuery.error}>
             {saving && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-            Criar OI
+            {hasPlates ? "Planejar conjunto completo" : "Criar OI"}
           </Button>
         </DialogFooter>
       </DialogContent>

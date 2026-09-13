@@ -1253,6 +1253,11 @@ export type Database = {
       }
       jobs: {
         Row: {
+          actual_time_seconds: number | null
+          actual_material_usage: Json | null
+          produced_quantity: number | null
+          print_plate_id: string | null
+          planned_quantity: number
           inventory_posted_at: string | null
           secondary_actual_grams: number | null
           order_item_id: string | null
@@ -1308,6 +1313,11 @@ export type Database = {
           waste_grams: number | null
         }
         Insert: {
+          actual_time_seconds?: number | null
+          actual_material_usage?: Json | null
+          produced_quantity?: number | null
+          print_plate_id?: string | null
+          planned_quantity?: number
           inventory_posted_at?: string | null
           secondary_actual_grams?: number | null
           order_item_id?: string | null
@@ -1363,6 +1373,11 @@ export type Database = {
           waste_grams?: number | null
         }
         Update: {
+          actual_time_seconds?: number | null
+          actual_material_usage?: Json | null
+          produced_quantity?: number | null
+          print_plate_id?: string | null
+          planned_quantity?: number
           inventory_posted_at?: string | null
           secondary_actual_grams?: number | null
           order_item_id?: string | null
@@ -1767,6 +1782,12 @@ export type Database = {
       }
       products: {
         Row: {
+          actual_print_grams_per_unit: number | null
+          actual_print_seconds_per_unit: number | null
+          actual_print_cost_per_unit: number | null
+          actual_print_sample_units: number | null
+          actual_print_updated_at: string | null
+          actual_print_source: string | null
           category: string
           cost_estimate: number | null
           created_at: string
@@ -1790,6 +1811,12 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          actual_print_grams_per_unit?: number | null
+          actual_print_seconds_per_unit?: number | null
+          actual_print_cost_per_unit?: number | null
+          actual_print_sample_units?: number | null
+          actual_print_updated_at?: string | null
+          actual_print_source?: string | null
           category?: string
           cost_estimate?: number | null
           created_at?: string
@@ -1813,6 +1840,12 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          actual_print_grams_per_unit?: number | null
+          actual_print_seconds_per_unit?: number | null
+          actual_print_cost_per_unit?: number | null
+          actual_print_sample_units?: number | null
+          actual_print_updated_at?: string | null
+          actual_print_source?: string | null
           category?: string
           cost_estimate?: number | null
           created_at?: string
@@ -2170,6 +2203,17 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      save_product_print_source: { Args: { p_source_id: string | null; p_product_id: string; p_source: Json }; Returns: string }
+      archive_product_print_source: { Args: { p_source_id: string }; Returns: undefined }
+      bind_product_print_source: { Args: { p_source_id: string; p_task_id: string }; Returns: string }
+      save_product_print_plate: { Args: { p_plate_id: string | null; p_product_id: string; p_source_id: string | null; p_plate: Json }; Returns: string }
+      archive_product_print_plate: { Args: { p_plate_id: string }; Returns: undefined }
+      bind_product_print_plate: { Args: { p_plate_id: string; p_task_id: string }; Returns: string }
+      plan_product_plates: { Args: { p_product_id: string; p_quantity: number; p_request_id: string }; Returns: string[] }
+      request_bambu_sync: { Args: {  }; Returns: Json }
+      bambu_production_preview: { Args: { p_task_id: string }; Returns: Json }
+      configure_bambu_production: { Args: { p_task_id: string; p_product_id: string; p_units: number; p_materials: Json; p_auto: boolean; p_use_slicer: boolean; p_labor_cost: number; p_overhead: number; p_extras_cost: number; p_allocations: Json; p_plate_id?: string | null }; Returns: string }
+      account_bambu_production: { Args: { p_task_id: string; p_materials: Json | null; p_seconds: number | null; p_units: number | null; p_labor_cost: number | null; p_overhead: number | null; p_extras_cost: number | null; p_reason: string | null; p_request_id: string }; Returns: Json }
       register_bank_transaction: { Args: { p_bank_account_id: string; p_type: string; p_amount: number; p_date: string; p_description: string; p_request_id: string }; Returns: string }
       settle_financial_title: { Args: { p_kind: string; p_title_id: string; p_amount: number; p_date: string; p_bank_account_id: string; p_request_id: string }; Returns: string }
       create_purchase_order: { Args: { p_order: Json; p_items: Json; p_installments: Json; p_request_id: string }; Returns: string }

@@ -111,7 +111,7 @@ export default function Movimentacoes() {
       const movement = { item_id: itemId, movement_type: movementType, quantity: amount,
         unit_cost: movementType === "purchase_in" ? cost : null, lot_number: lotNumber.trim() || null, notes: notes.trim() || null };
       request.current = orderRequest(request.current, JSON.stringify(movement));
-      const rpc = supabase.rpc as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ error: { message: string } | null }>;
+      const rpc = supabase.rpc.bind(supabase) as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ error: { message: string } | null }>;
       const { error } = await rpc("post_inventory_movement", { p_movement: movement, p_request_id: request.current.id });
       if (error) throw new Error(error.message);
     },

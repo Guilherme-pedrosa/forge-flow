@@ -34,7 +34,7 @@ export async function createJobs(jobs: CreateJobInput[], requestId: string): Pro
       if (typeof value === "number" && !Number.isFinite(value)) throw new Error("Revise os custos e as estimativas: há um número inválido.");
     }
   }
-  const rpc = supabase.rpc as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{
+  const rpc = supabase.rpc.bind(supabase) as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{
     data: unknown; error: { message: string } | null;
   }>;
   const { data, error } = await rpc("create_jobs", { p_jobs: jobs, p_request_id: requestId });
@@ -60,7 +60,7 @@ export interface JobTransition {
 
 /** One database transaction owns status, cost and stock. Never retry as client-side writes. */
 export async function transitionJob(input: JobTransition) {
-  const rpc = supabase.rpc as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ error: { message: string } | null }>;
+  const rpc = supabase.rpc.bind(supabase) as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ error: { message: string } | null }>;
   const { error } = await rpc("transition_job", {
     p_job_id: input.id, p_status: input.status,
     p_actual_grams: input.actualGrams ?? null,
@@ -76,4 +76,4 @@ export async function transitionJob(input: JobTransition) {
   if (error) throw new Error(error.message);
 }
 
-export const productionQueryKeys = ["jobs", "fila_jobs", "orders", "inventory_items", "inventory_movements", "margin_sku_jobs", "production_losses", "printers", "fila_printers"];
+export const productionQueryKeys = ["jobs", "fila_jobs", "orders", "inventory_items", "inventory_movements", "margin_sku_jobs", "production_losses", "printers", "fila_printers", "products", "products_list", "fila_products", "product_print_plates", "bambu_production_review", "bambu_production_preview", "dre_jobs"];
