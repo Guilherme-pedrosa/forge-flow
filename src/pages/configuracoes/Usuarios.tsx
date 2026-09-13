@@ -33,6 +33,24 @@ export default function UsuariosPage() {
   const [open, setOpen] = useState(false);
   const [showPw, setShowPw] = useState(false);
   const [form, setForm] = useState({ display_name: "", email: "", password: "", role: "operator" });
+  const [pwTarget, setPwTarget] = useState<{ user_id: string; display_name: string } | null>(null);
+  const [newPassword, setNewPassword] = useState("");
+  const [showNewPw, setShowNewPw] = useState(false);
+
+  const resetPassword = useMutation({
+    mutationFn: async ({ user_id, password }: { user_id: string; password: string }) => {
+      const res = await supabase.functions.invoke("set-user-password", { body: { user_id, password } });
+      if (res.error) throw new Error(res.error.message || "Erro ao alterar senha");
+      if (res.data?.error) throw new Error(res.data.error);
+      return res.data;
+    },
+    onSuccess: () => {
+      toast({ title: "Senha alterada com sucesso" });
+      setPwTarget(null);
+      setNewPassword("");
+    },
+    onError: (err: any) => toast({ title: "Erro", description: err.message, variant: "destructive" }),
+  });
 
   const { data: profiles = [], isLoading } = useQuery({
     queryKey: ["profiles_with_roles"],
