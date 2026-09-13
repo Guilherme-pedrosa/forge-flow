@@ -118,7 +118,7 @@ export default function UsuariosPage() {
         ) : profiles.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-muted-foreground"><Users className="h-10 w-10 mb-3 opacity-40" /><p className="font-medium">Nenhum usuário</p></div>
         ) : (
-          <Table><TableHeader><TableRow><TableHead>Nome</TableHead><TableHead>E-mail</TableHead><TableHead>Perfis</TableHead><TableHead>Desde</TableHead></TableRow></TableHeader>
+          <Table><TableHeader><TableRow><TableHead>Nome</TableHead><TableHead>E-mail</TableHead><TableHead>Perfis</TableHead><TableHead>Desde</TableHead><TableHead className="text-right">Ações</TableHead></TableRow></TableHeader>
             <TableBody>{profiles.map((p: any) => (
               <TableRow key={p.id}>
                 <TableCell className="font-medium text-sm">{p.display_name}</TableCell>
