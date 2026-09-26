@@ -38,8 +38,8 @@ const mount = (page: "order" | "quote", existing = false) => render(<QueryClient
 const savedPayload = (name: string) => mock.rpc.mock.calls.find(call => call[0] === name)?.[1];
 const selectOrderProduct = async (line: number, sku: "BASE" | "TAMPA") => {
   await waitFor(() => expect(document.activeElement?.closest('[role="dialog"]')).not.toBeNull());
-  fireEvent.click(screen.getByRole("combobox", { name: `Produto do item ${line}`, exact: true }));
-  fireEvent.change(await screen.findByRole("combobox", { name: `Buscar produto do item ${line}`, exact: true }), { target: { value: sku } });
+  fireEvent.click(screen.getByRole("combobox", { name: `Produto do item ${line}` }));
+  fireEvent.change(await screen.findByRole("combobox", { name: `Buscar produto do item ${line}` }), { target: { value: sku } });
   fireEvent.click(await screen.findByRole("option", { name: new RegExp(sku) }));
 };
 beforeEach(() => { mock.saved = []; mock.rpc.mockReset(); mock.toast.mockClear(); mock.rpc.mockImplementation(async (name: string) => ({ data: name === "save_sales_order" ? "order-1" : "quote-1", error: null })); });
