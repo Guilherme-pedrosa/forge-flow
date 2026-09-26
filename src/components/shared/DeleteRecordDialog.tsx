@@ -12,7 +12,7 @@ export function DeleteRecordDialog({ target, onClose, onDeleted }: { target: Del
     mutationFn: async () => {
       setError("");
       if (!target) return;
-      const rpc = supabase.rpc as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ error: { message: string } | null }>;
+      const rpc = supabase.rpc.bind(supabase) as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ error: { message: string } | null }>;
       const result = await rpc("delete_unused_record", { p_kind: target.kind, p_id: target.id });
       if (result.error) throw new Error(result.error.message);
     },
