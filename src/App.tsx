@@ -17,6 +17,7 @@ const ContasReceber = lazy(() => import("./pages/financeiro/ContasReceber"));
 const CaixaBancos = lazy(() => import("./pages/financeiro/CaixaBancos"));
 const Conciliacao = lazy(() => import("./pages/financeiro/Conciliacao"));
 const DRE = lazy(() => import("./pages/financeiro/DRE"));
+const CadastrosFinanceiros = lazy(() => import("./pages/financeiro/Cadastros"));
 const Itens = lazy(() => import("./pages/estoque/Itens"));
 const Movimentacoes = lazy(() => import("./pages/estoque/Movimentacoes"));
 const Alertas = lazy(() => import("./pages/estoque/Alertas"));
@@ -72,6 +73,7 @@ function AuthenticatedRoutes() {
         <Route path="/financeiro/caixa" element={<CaixaBancos />} />
         <Route path="/financeiro/conciliacao" element={<Conciliacao />} />
         <Route path="/financeiro/dre" element={<DRE />} />
+        <Route path="/financeiro/cadastros" element={<CadastrosFinanceiros />} />
         {/* Estoque */}
         <Route path="/estoque/itens" element={<Itens />} />
         <Route path="/estoque/movimentacoes" element={<Movimentacoes />} />

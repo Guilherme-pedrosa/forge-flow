@@ -29,6 +29,7 @@ export const navigationGroups = [
     { title: "Caixa e bancos", icon: Wallet, href: "/financeiro/caixa" },
     { title: "Conciliação", icon: PiggyBank, href: "/financeiro/conciliacao" },
     { title: "Demonstrativo de resultado", icon: BookOpen, href: "/financeiro/dre" },
+    { title: "Cadastros financeiros", icon: ClipboardList, href: "/financeiro/cadastros" },
   ] },
   { label: "Estoque e compras", items: [
     { title: "Materiais e insumos", icon: Package, href: "/estoque/itens" },

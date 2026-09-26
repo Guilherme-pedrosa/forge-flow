@@ -138,3 +138,12 @@ it("inclui venda do estoque no custo uma vez, sem duplicar no ajuste da produÃ§Ã
   expect(result.costAdjustment).toBe(0);
   expect(result.grossProfit).toBe(50);
 });
+
+it("soma montagem comercial e perdas de componentes separadas do custo dos produtos vendidos", () => {
+  const result = calculateFinancialResult([{amount:100,status:"open",competence_date:"2026-09-26"}], [], [], [], 30, 35, 4);
+  expect(result.totalCMV).toBe(69);
+  expect(result.assemblyCost).toBe(35);
+  expect(result.componentLossCost).toBe(4);
+  expect(result.costAdjustment).toBe(0);
+  expect(result.grossProfit).toBe(31);
+});

@@ -94,13 +94,11 @@ export default function Consignado() {
   const { data: locations = [], isLoading, error: locationsError, refetch: refetchLocations } = useQuery({
     queryKey: ["consignment_locations"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      return readProductionRows((from, to) => supabase
         .from("consignment_locations")
         .select("*, customers(name)")
         .eq("is_active", true)
-        .order("name");
-      if (error) throw error;
-      return data;
+        .order("name").order("id").range(from, to));
     },
     enabled: !!profile,
   });
@@ -108,9 +106,7 @@ export default function Consignado() {
   const { data: customers = [] } = useQuery({
     queryKey: ["customers_consignment"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("customers").select("id, name, phone, address").eq("is_active", true).order("name");
-      if (error) throw error;
-      return data;
+      return readProductionRows((from, to) => supabase.from("customers").select("id, name, phone, address").eq("is_active", true).order("name").order("id").range(from, to));
     },
     enabled: !!profile,
   });
@@ -129,13 +125,11 @@ export default function Consignado() {
   const { data: products = [] } = useQuery({
     queryKey: ["products_active"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      return readProductionRows((from, to) => supabase
         .from("products")
         .select("id, name, sku, sale_price, cost_estimate, photo_url")
         .eq("is_active", true)
-        .order("name");
-      if (error) throw error;
-      return data;
+        .order("name").order("id").range(from, to));
     },
     enabled: !!profile,
   });
@@ -588,13 +582,7 @@ export default function Consignado() {
             {locMode === "existing" ? (
               <div>
                 <Label>Cliente *</Label>
-                <Select value={locCustomerId || "none"} onValueChange={(v) => setLocCustomerId(v === "none" ? "" : v)}>
-                  <SelectTrigger><SelectValue placeholder="Selecione o cliente" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Selecione…</SelectItem>
-                    {customers.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <SearchableItemSelect label="Cliente da consignação" value={locCustomerId} onChange={setLocCustomerId} emptyLabel="Selecionar cliente" options={customers.map(c => ({ id: c.id, label: c.name }))} />
               </div>
             ) : (
               <>
@@ -689,19 +677,13 @@ export default function Consignado() {
               {!(viewLoc as any).customer_id && (
                 <div className="flex flex-wrap items-center gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm">
                   <span className="text-destructive">⚠ Vincule um cliente a este ponto para registrar vendas.</span>
-                  <Select value="" onValueChange={async (val) => {
+                  <SearchableItemSelect label="Cliente do ponto" value="" emptyLabel="Selecionar cliente" options={customers.map(c => ({ id: c.id, label: c.name }))} onChange={async (val) => {
+                    if (!val) return;
                     const { error } = await supabase.from("consignment_locations").update({ customer_id: val } as any).eq("id", viewLocId!);
                     if (error) { toast({ title: "Erro", description: error.message, variant: "destructive" }); return; }
                     qc.invalidateQueries({ queryKey: ["consignment_locations"] });
                     toast({ title: "Cliente vinculado!" });
-                  }}>
-                    <SelectTrigger className="w-[200px] h-8">
-                      <SelectValue placeholder="Selecionar cliente" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {customers.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
+                  }} />
                 </div>
               )}
 

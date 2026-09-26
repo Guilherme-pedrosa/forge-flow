@@ -147,9 +147,7 @@ export default function Pedidos() {
   const { data: customers = [] } = useQuery({
     queryKey: ["customers", "order-select"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("customers").select("id, name, address, phone, email").eq("is_active", true).order("name");
-      if (error) throw error;
-      return data;
+      return readProductionRows((from, to) => supabase.from("customers").select("id, name, address, phone, email").eq("is_active", true).order("name").order("id").range(from, to));
     },
     enabled: !!profile,
   });
@@ -157,9 +155,7 @@ export default function Pedidos() {
   const { data: products = [] } = useQuery({
     queryKey: ["products_for_orders"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("products").select("id, name, sku, sale_price, cost_estimate, stock_item_id").eq("is_active", true).order("name");
-      if (error) throw error;
-      return data;
+      return readProductionRows((from, to) => supabase.from("products").select("id, name, sku, sale_price, cost_estimate, stock_item_id").eq("is_active", true).order("name").order("id").range(from, to));
     },
     enabled: !!profile,
   });

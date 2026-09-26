@@ -25,7 +25,7 @@ beforeEach(() => { network.fetch.mockReset(); network.fetch.mockImplementation(a
 afterEach(cleanup);
 
 describe("exclusão confirmada com o cliente Supabase real", () => {
-  it.each<DeleteTarget["kind"]>(["product", "inventory", "order", "purchase", "payable", "receivable"])("envia %s ao servidor e atualiza a lista somente após confirmar", async kind => {
+  it.each<DeleteTarget["kind"]>(["product", "inventory", "order", "quote", "purchase", "payable", "receivable"])("envia %s ao servidor e atualiza a lista somente após confirmar", async kind => {
     const { onClose, onDeleted, invalidate } = mount(kind);
     expect(network.fetch).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Excluir definitivamente" }));

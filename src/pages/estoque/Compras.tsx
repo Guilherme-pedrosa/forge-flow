@@ -3,6 +3,7 @@ import { InstallmentEditor, generateParts, validateParts, type PaymentPart } fro
 import { Link, useSearchParams } from "react-router-dom";
 import { DeleteRecordDialog, type DeleteTarget } from "@/components/shared/DeleteRecordDialog";
 import { QuickInventoryItem } from "@/components/estoque/QuickInventoryItem";
+import { FinancialCatalogDialog } from "@/components/shared/FinancialCatalogDialog";
 import { SearchableItemSelect } from "@/components/shared/SearchableItemSelect";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { allRows, localDate, money, positiveMoney, validDate, monthlyInstallments } from "@/lib/finance";
@@ -137,6 +138,7 @@ export function parseNfeXml(xmlText: string): NfeData | null {
 }
 
 export default function Compras() {
+  const [newMethod, setNewMethod] = useState<"manual" | "marketplace" | null>(null);
   const { profile } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -239,9 +241,7 @@ export default function Compras() {
   const { data: vendors = [] } = useQuery({
     queryKey: ["vendors"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("vendors").select("id, name").eq("is_active", true).order("name");
-      if (error) throw error;
-      return data;
+      return allRows((from, to) => supabase.from("vendors").select("id, name").eq("is_active", true).order("name").order("id").range(from, to));
     },
     enabled: !!profile,
   });
@@ -249,9 +249,7 @@ export default function Compras() {
   const { data: inventoryItems = [], error: inventoryError, refetch: refetchInventory } = useQuery({
     queryKey: ["inventory_items", profile?.tenant_id, "purchase-selection"],
     queryFn: async () => {
-      const { data, error } = await (supabase.from("inventory_items") as any).select("id, name, sku, unit, category, material_code, color, color_code, avg_cost, current_stock").eq("is_active", true).order("name");
-      if (error) throw error;
-      return data;
+      return allRows<{ id: string; name: string; sku: string | null; unit: string; category: string | null; material_code: string | null; color: string | null; color_code: string | null; avg_cost: number; current_stock: number }>((from, to) => supabase.from("inventory_items").select("id, name, sku, unit, category, material_code, color, color_code, avg_cost, current_stock").eq("is_active", true).order("name").order("id").range(from, to));
     },
     enabled: !!profile,
   });
@@ -259,9 +257,7 @@ export default function Compras() {
   const { data: paymentMethods = [] } = useQuery({
     queryKey: ["payment_methods"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("payment_methods").select("id, name, type").eq("is_active", true).order("name");
-      if (error) throw error;
-      return data;
+      return allRows((from, to) => supabase.from("payment_methods").select("id, name, type").eq("is_active", true).order("name").order("id").range(from, to));
     },
     enabled: !!profile,
   });
@@ -730,9 +726,7 @@ export default function Compras() {
           </DialogHeader>
           <div className="grid min-h-0 flex-1 gap-6 overflow-y-auto pr-1">
             <h3 className="font-semibold">Dados da compra</h3>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <div className="flex items-center justify-between"><Label>Fornecedor</Label><Button type="button" size="sm" variant="link" onClick={() => setVendorOpen(true)}>Cadastrar fornecedor</Button></div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><div><div className="flex flex-wrap items-center justify-between"><Label>Fornecedor</Label><Button type="button" size="sm" variant="link" onClick={() => setVendorOpen(true)}>Cadastrar fornecedor</Button></div>
                 <SearchableItemSelect label="Fornecedor da compra" value={vendorId} onChange={setVendorId} emptyLabel="Selecionar fornecedor" searchPlaceholder="Digite o nome do fornecedor…" disabled={createMut.isPending} options={vendors.map(v => ({ id: v.id, label: v.name }))} />
               </div>
               <div>
@@ -787,12 +781,7 @@ export default function Compras() {
             <div><Label htmlFor="purchase-taxes">Impostos e outras despesas (R$)</Label><Input id="purchase-taxes" inputMode="decimal" value={taxes} onChange={e => setTaxes(e.target.value)}/></div>
             <section className="space-y-3"><h3 className="font-semibold">Condição de pagamento</h3>              <div>
                 <Label>Forma de Pagamento</Label>
-                <Select value={paymentMethodId} onValueChange={setPaymentMethodId}>
-                  <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                  <SelectContent>
-                    {paymentMethods.map((pm: any) => <SelectItem key={pm.id} value={pm.id}>{pm.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <SearchableItemSelect label="Forma de pagamento da compra" value={paymentMethodId} onChange={setPaymentMethodId} emptyLabel="Selecionar forma de pagamento" options={paymentMethods.map(pm => ({ id: pm.id, label: pm.name }))} /><Button type="button" variant="link" size="sm" className="px-0" onClick={() => setNewMethod("manual")}>Cadastrar forma de pagamento</Button>
               </div>
 <InstallmentEditor total={manualTotal} firstDate={dueDate || expectedDate || orderDate} count={installments} days={paymentDays} parts={paymentParts} onFirstDate={setDueDate} onCount={setInstallments} onDays={setPaymentDays} onParts={setPaymentParts} disabled={createMut.isPending}/></section>
             <div className="flex items-center justify-between gap-3 rounded-lg border p-4"><div><Label htmlFor="purchase-receive-now">Receber os itens agora</Label><p className="text-xs text-muted-foreground">Ative se a mercadoria já chegou. Salva a compra, as parcelas e a entrada no estoque juntas.</p></div><Switch id="purchase-receive-now" checked={receiveNow} onCheckedChange={setReceiveNow} disabled={createMut.isPending} /></div>
@@ -860,20 +849,7 @@ export default function Compras() {
                       <TableRow key={idx}>
                         <TableCell className="text-sm max-w-[160px] truncate">{item.description}</TableCell>
                         <TableCell>
-                          <Select
-                            value={item.inventoryItemId || "none"}
-                            onValueChange={(val) => updateNfeItem(idx, val === "none" ? "" : val)}
-                          >
-                            <SelectTrigger aria-label={`Material de estoque de ${item.description}`} className="h-11 text-xs w-[240px] max-w-full">
-                              <SelectValue placeholder="Vincular..." />
-                            </SelectTrigger>
-                            <SelectContent className="max-w-[calc(100vw-2rem)]">
-                              <SelectItem value="none">— Não vincular —</SelectItem>
-                              {inventoryItems.map((inv: any) => (
-                                <SelectItem key={inv.id} value={inv.id} className="min-h-11 whitespace-normal break-words">{purchaseMaterialLabel(inv)}</SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
+                          <SearchableItemSelect label={`Material de estoque de ${item.description}`} value={item.inventoryItemId || ""} onChange={val => updateNfeItem(idx, val)} emptyLabel="Não vincular" options={inventoryItems.map(inv => ({ id: inv.id, label: purchaseMaterialLabel(inv) }))} disabled={importXmlMut.isPending} />
                           {item.inventoryItemId && <div className="mt-2"><PurchaseStockQuantity key={item.inventoryItemId} label={item.description} value={item.stockQuantity || ""} purchasedQuantity={item.quantity} purchaseUnit={item.purchaseUnit} stockUnit={inventoryItems.find(inv => inv.id === item.inventoryItemId)?.unit || "un"} onChange={value => setNfeData({ ...nfeData, items: nfeData.items.map((row, index) => index === idx ? { ...row, stockQuantity: value } : row) })} disabled={importXmlMut.isPending} /></div>}
                         </TableCell>
                         <TableCell className="text-right text-sm">{item.quantity} {item.purchaseUnit}</TableCell>
@@ -997,19 +973,7 @@ export default function Compras() {
                           <TableCell className="text-sm max-w-[160px] truncate">{item.description}</TableCell>
                           <TableCell>
                             {!["received", "cancelled"].includes(detailOrder?.status) ? (
-                              <Select
-                                value={item.inventory_item_id || "none"}
-                                disabled={updateStockMut.isPending}
-                                onValueChange={val => updateStockMut.mutate({ id: item.id, values: { inventory_item_id: val === "none" ? null : val, stock_quantity: null } })}
-                              >
-                                <SelectTrigger aria-label={`Material de estoque de ${item.description}`} className="h-11 text-xs w-[240px] max-w-full"><SelectValue placeholder="Vincular..." /></SelectTrigger>
-                                <SelectContent className="max-w-[calc(100vw-2rem)]">
-                                  <SelectItem value="none">— Não vincular —</SelectItem>
-                                  {inventoryItems.map((inv: any) => (
-                                    <SelectItem key={inv.id} value={inv.id} className="min-h-11 whitespace-normal break-words">{purchaseMaterialLabel(inv)}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
+                              <SearchableItemSelect label={`Material de estoque de ${item.description}`} value={item.inventory_item_id || ""} disabled={updateStockMut.isPending} onChange={val => updateStockMut.mutate({ id: item.id, values: { inventory_item_id: val || null, stock_quantity: null } })} emptyLabel="Não vincular" options={inventoryItems.map(inv => ({ id: inv.id, label: purchaseMaterialLabel(inv) }))} />
                             ) : (
                               <span className="text-xs text-muted-foreground">
                                 {item.inventory_item_id
@@ -1259,12 +1223,7 @@ export default function Compras() {
                     </div>
                     <div>
                       <Label className="mb-2 block">Forma de Pagamento</Label>
-                      <Select value={marketplacePaymentMethodId} onValueChange={setMarketplacePaymentMethodId}>
-                        <SelectTrigger><SelectValue placeholder="Selecione a forma de pagamento..." /></SelectTrigger>
-                        <SelectContent>
-                          {paymentMethods.map((pm: any) => <SelectItem key={pm.id} value={pm.id}>{pm.name}</SelectItem>)}
-                        </SelectContent>
-                      </Select>
+                      <SearchableItemSelect label="Forma de pagamento da importação" value={marketplacePaymentMethodId} onChange={setMarketplacePaymentMethodId} emptyLabel="Selecionar forma de pagamento" options={paymentMethods.map(pm => ({ id: pm.id, label: pm.name }))} /><Button type="button" variant="link" size="sm" className="px-0" onClick={() => setNewMethod("marketplace")}>Cadastrar forma de pagamento</Button>
                     </div>
 
                     <div className="grid grid-cols-2 gap-3">
@@ -1334,6 +1293,7 @@ export default function Compras() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {newMethod && <FinancialCatalogDialog kind="payment_method" onClose={() => setNewMethod(null)} onSaved={id => newMethod === "manual" ? setPaymentMethodId(id) : setMarketplacePaymentMethodId(id)} />}
       <PartnerDialog kind="vendor" open={vendorOpen} onClose={() => setVendorOpen(false)} onSaved={id => setVendorId(id)} />
     </div>
   );

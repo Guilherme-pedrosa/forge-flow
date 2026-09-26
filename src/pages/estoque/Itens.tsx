@@ -1,3 +1,4 @@
+import { SearchableItemSelect } from "@/components/shared/SearchableItemSelect";
 import { orderRequest } from "@/lib/sales-order";
 import { DeleteRecordDialog, type DeleteTarget } from "@/components/shared/DeleteRecordDialog";
 import { Fragment, useState, useMemo, useRef } from "react";
@@ -335,20 +336,11 @@ export default function Itens() {
       {formMode === "color" && !editItem && (
         <div>
           <Label>Material Pai *</Label>
-          <Select value={parentId} onValueChange={value => {
+          <SearchableItemSelect label="Material pai" value={parentId} emptyLabel="Buscar material" options={[...parentItems, ...orphanItems].filter(p => p.category === "filament" || p.category === "resin").map(p => ({ id: p.id, label: p.name, description: p.material_type || p.category }))} onChange={value => {
             setParentId(value);
             const parent = items.find(item => item.id === value);
             if (parent) { setName(parent.name); setCategory(parent.category); setMaterialType(parent.material_type ?? ""); setMaterialCode((parent as any).material_code ?? ""); setMaterialDescription((parent as any).material_description ?? ""); setUnit(parent.unit); setBrand(parent.brand ?? ""); setDiameter(String(parent.diameter ?? 1.75)); setLossCoefficient(String((parent.loss_coefficient ?? 0.05) * 100)); }
-          }}>
-            <SelectTrigger><SelectValue placeholder="Selecione o material..." /></SelectTrigger>
-            <SelectContent>
-              {[...parentItems, ...orphanItems]
-                .filter((p) => p.category === "filament" || p.category === "resin")
-                .map((p) => (
-                  <SelectItem key={p.id} value={p.id}>{p.name} ({p.material_type || p.category})</SelectItem>
-                ))}
-            </SelectContent>
-          </Select>
+          }} />
         </div>
       )}
 

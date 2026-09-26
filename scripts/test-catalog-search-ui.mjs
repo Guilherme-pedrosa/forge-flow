@@ -4,7 +4,7 @@ import { mkdir } from 'node:fs/promises';
 const output = 'artifacts/catalog-search';
 await mkdir(output, { recursive: true });
 const products = [
-  ...Array.from({ length: 120 }, (_, i) => ({ id: `product-${i}`, name: `Chaveiro personalizado modelo ${i + 1}`, sku: `CH-${String(i).padStart(3, '0')}`, sale_price: 12, is_active: true })),
+  ...Array.from({ length: 1120 }, (_, i) => ({ id: `product-${i}`, name: `Chaveiro personalizado modelo ${i + 1}`, sku: `CH-${String(i).padStart(3, '0')}`, sale_price: 12, is_active: true })),
   { id: 'apple-red', name: 'Maçã termoformável vermelha para presente de professores', sku: 'MA-01', sale_price: 30, is_active: true },
   { id: 'apple-green', name: 'Maçã termoformável verde', sku: 'MA-02', sale_price: 35, is_active: true },
 ];
@@ -23,6 +23,8 @@ try {
           if (name === 'product_material_variant_preview') data = { complete: false, material_options: [], missing: ['Composição a preparar'] };
           else mutations.push(name);
         } else data = ({ products, customers: [{ id: 'customer', name: 'José da Silva' }], vendors: [{ id: 'vendor', name: 'Filamentos São Paulo' }], tenants: { name: 'Teste', settings: {} } })[name] || [];
+        // Match the server's 1,000-row cap: both apples require a second page.
+        if (name === 'products') { const offset=Number(url.searchParams.get('offset') || 0);data=data.slice(offset,offset+Math.min(1000,Number(url.searchParams.get('limit') || 1000))); }
         return route.fulfill({ contentType: 'application/json', body: JSON.stringify(data) });
       }
       if (url.hostname !== '127.0.0.1') return route.fulfill({ contentType: 'application/json', body: '{}' });
@@ -48,7 +50,7 @@ try {
     await expect(page.getByRole('option')).toHaveCount(1);
     await expect(page.getByRole('option')).toContainText('MA-01');
     await search.press('Enter');
-    await expect(page.getByLabel('Descrição para o cliente', { exact: true })).toHaveValue(products[120].name);
+    await expect(page.getByLabel('Descrição para o cliente', { exact: true })).toHaveValue(products.find(p => p.id === "apple-red").name);
     await expect(page.getByLabel('Preço unitário (R$)', { exact: true })).toHaveValue('30');
     await expect(page.getByRole('combobox', { name: 'Produto 1', exact: true })).toBeFocused();
     await page.getByRole('combobox', { name: 'Produto 1', exact: true }).click();
@@ -84,7 +86,7 @@ try {
     await expect(page.getByRole('combobox', { name: 'Produto do item 1', exact: true })).toContainText('verde');
     await expect(page.getByLabel('Preço unitário do item 1', { exact: true })).toHaveValue('35');
     expect(errors).toEqual([]); expect(mutations).toEqual([]);
-    console.log(`PASS ${viewport.width}x${viewport.height}: 122 produtos, busca sem acentos, SKU, teclado, fechamento seguro, dois itens e venda.`);
+    console.log(`PASS ${viewport.width}x${viewport.height}: 1122 produtos (paginação real), busca sem acentos, SKU, teclado, fechamento seguro, dois itens e venda.`);
     await context.close();
   }
 } finally { await browser.close(); }

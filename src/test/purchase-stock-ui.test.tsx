@@ -8,6 +8,9 @@ import { PurchaseStockQuantity } from "@/components/estoque/PurchaseStockQuantit
 const mock = vi.hoisted(() => ({ rpc: vi.fn(), toast: vi.fn() }));
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ profile: { tenant_id: "tenant-1" } }) }));
 vi.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: mock.toast }) }));
+// These tests verify financial/material payloads. Real dropdown focus, search,
+// keyboard and responsive bounds are exercised by test-catalog-search-ui.mjs.
+vi.mock("@/components/shared/SearchableItemSelect", () => ({ SearchableItemSelect: ({ label, value, options, onChange, disabled }: { label: string; value: string; options: { id: string; label: string }[]; onChange: (id: string) => void; disabled?: boolean }) => <select aria-label={label} value={value} disabled={disabled} onChange={event => onChange(event.target.value)}><option value="">Selecionar</option>{options.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select> }));
 vi.mock("@/components/ui/select", async () => {
   const { Children, isValidElement } = await import("react");
   return {
@@ -35,8 +38,8 @@ describe("recebimento com material/cor e massa explícitos", () => {
 
     fireEvent.change(screen.getByLabelText("Descrição do item 1"), { target: { value: "Rolo vermelho" } });
     fireEvent.change(screen.getByLabelText("Preço unitário do item 1"), { target: { value: "100" } });
-    fireEvent.click(screen.getByRole("combobox", { name: "Material de estoque do item 1" }));
-    fireEvent.click(await screen.findByRole("option", { name: /Filamento · PLA/ }));
+    await screen.findByRole("option", { name: /Filamento · PLA/ });
+    fireEvent.change(screen.getByRole("combobox", { name: "Material de estoque do item 1" }), { target: { value: "red" } });
     expect(screen.getByLabelText("Quantidade de estoque de Rolo vermelho")).toHaveValue("");
     fireEvent.click(screen.getByText("Calcular por rolo ou embalagem"));
     fireEvent.change(screen.getByLabelText("Peso de material por embalagem de Rolo vermelho"), { target: { value: "1" } });
@@ -49,14 +52,13 @@ describe("recebimento com material/cor e massa explícitos", () => {
   it("limpa a conversão ao mudar a quantidade comercial ou selecionar outro material/unidade", async () => {
     mount(); fireEvent.click(screen.getByRole("button", { name: "Nova Compra" }));
 
-    fireEvent.click(screen.getByRole("combobox", { name: "Material de estoque do item 1" }));
-    fireEvent.click(await screen.findByRole("option", { name: /Filamento · PLA/ }));
+    await screen.findByRole("option", { name: /Filamento · PLA/ });
+    fireEvent.change(screen.getByRole("combobox", { name: "Material de estoque do item 1" }), { target: { value: "red" } });
     fireEvent.change(screen.getByLabelText("Quantidade de estoque de Filamento"), { target: { value: "1000" } });
     fireEvent.change(screen.getByLabelText("Quantidade comprada do item 1"), { target: { value: "2" } });
     expect(screen.getByLabelText("Quantidade de estoque de Filamento")).toHaveValue("");
     fireEvent.change(screen.getByLabelText("Quantidade de estoque de Filamento"), { target: { value: "2000" } });
-    fireEvent.click(screen.getByRole("combobox", { name: "Material de estoque do item 1" }));
-    fireEvent.click(await screen.findByRole("option", { name: /Filamento · PETG/ }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Material de estoque do item 1" }), { target: { value: "blue" } });
     expect(screen.getByLabelText("Quantidade de estoque de Filamento")).toHaveValue("");
     expect(screen.getByText("Total de entrada no estoque (kg)")).toBeInTheDocument();
   });

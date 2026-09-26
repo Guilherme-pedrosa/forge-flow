@@ -46,14 +46,15 @@ export default function DRE() {
     enabled: !!profile && periodValid,
   });
 
-  const { data: jobs = [], isLoading: loadingJobs, error: errorJobs } = useQuery({
+  const { data: production, isLoading: loadingJobs, error: errorJobs } = useQuery({
     queryKey: ["dre_jobs", profile?.tenant_id, startDate, endDate],
     queryFn: async () => {
-      const data = await allRows<any>((from, to) => supabase.from("jobs").select("*").in("status", ["completed", "shipped", "failed"]).order("id").range(from, to));
-      return data.filter(j => { const date = j.completed_at?.slice(0, 10) || (j.status === "failed" ? j.updated_at?.slice(0, 10) : null) || j.created_at?.slice(0, 10); return date >= startDate && date <= endDate; });
-    },
-    enabled: !!profile && periodValid,
+      const rpc = supabase.rpc.bind(supabase) as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ data: { jobs: Record<string, unknown>[]; assembly_cost: number; component_loss_cost: number }; error: { message: string } | null }>;
+      const result = await rpc("production_financial_result", { p_start: startDate, p_end: endDate });
+      if (result.error) throw new Error(result.error.message); return result.data;
+    }, enabled: !!profile && periodValid,
   });
+  const jobs = production?.jobs || [];
 
   const { data: purchaseItems = [], isLoading: loadingItems, error: errorItems } = useQuery({
     queryKey: ["dre_purchase_items", profile?.tenant_id],
@@ -71,7 +72,7 @@ export default function DRE() {
   const isLoading = loadingAR || loadingAP || loadingJobs || loadingItems || loadingStock;
 
   const hasError = errorAR || errorAP || errorJobs || errorItems || errorStock;
-  const dre = useMemo(() => calculateFinancialResult(receivables, payables, jobs, purchaseItems, stockCost), [receivables, payables, jobs, purchaseItems, stockCost]);
+  const dre = useMemo(() => calculateFinancialResult(receivables, payables, jobs, purchaseItems, stockCost, production?.assembly_cost || 0, production?.component_loss_cost || 0), [receivables, payables, jobs, purchaseItems, stockCost, production]);
 
   const lines = [
     { label: "RECEITA OPERACIONAL", value: dre.totalRevenue, bold: true, section: true },
@@ -79,6 +80,8 @@ export default function DRE() {
     { label: "", value: 0, separator: true },
     { label: "(-) CUSTO DAS VENDAS, PRODUÇÃO E PERDAS", value: -dre.totalCMV, bold: true, section: true, negative: true },
     { label: "Produtos vendidos do estoque", value: dre.stockCost, indent: true },
+    { label: "Componentes e montagem das encomendas concluídas", value: dre.assemblyCost, indent: true },
+    { label: "Perdas de componentes em estoque", value: dre.componentLossCost, indent: true },
     { label: "Material / Filamento", value: dre.materialCost, indent: true },
     { label: "Máquina (depreciação + manutenção)", value: dre.machineCost, indent: true },
     { label: "Energia", value: dre.energyCost, indent: true },
@@ -122,6 +125,7 @@ export default function DRE() {
       {!periodValid && <p role="alert" className="rounded-lg border border-destructive/30 p-4 text-sm text-destructive">Informe um período válido: a data inicial deve ser anterior ou igual à final.</p>}
       {hasError && <p role="alert" className="rounded-lg border border-destructive/30 p-4 text-sm text-destructive">Não foi possível carregar todas as fontes. O resultado está indisponível para evitar totais incompletos.</p>}
       <div className="rounded-xl border bg-card p-4 text-sm text-muted-foreground space-y-2">
+        <p>Produção para estoque permanece no custo dos produtos e entra no resultado quando houver venda. Componentes aproveitados na montagem são contabilizados uma vez; perdas de componentes aparecem separadamente.</p>
         <p>Receitas vêm dos títulos financeiros. O preço dos jobs não é somado novamente. Aquisições vinculadas ao estoque ou classificadas fora de despesas ({fmtCurrency(dre.excludedPurchases)}) não são descontadas novamente.</p>
         <p>Custos incluem produção concluída e falhas apuradas ({fmtCurrency(dre.failedCost)} em perdas). Produção em andamento permanece fora desta apuração; diferenças entre produção, entrega e receita devem ser conciliadas no fechamento.</p>
         {dre.isPartial && <p className="font-semibold text-amber-800">Apuração parcial. As margens ficam indisponíveis até a revisão das pendências abaixo.</p>}

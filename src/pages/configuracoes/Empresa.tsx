@@ -3,11 +3,13 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageHeader } from "@/components/shared/PageHeader";
-import { Loader2, Save, Upload, Building2, Search } from "lucide-react";
+import { Loader2, Save, Upload, Building2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
+import { RegistrationLookupInput } from "@/components/comercial/RegistrationLookupInput";
+import { cleanDocument, cleanCep, formatDocument, formatCep, lookupCnpjRegistration, lookupCepAddress, type RegistrationAddress, type CnpjRegistration } from "@/lib/brazil-registration";
 import { productionSetting, validateCompanyLogo } from "@/lib/company-settings";
 
 export default function Empresa() {
@@ -38,6 +40,7 @@ export default function Empresa() {
   const [logoPreview, setLogoPreview] = useState<string | null>(null);
   const [logoFile, setLogoFile] = useState<File | null>(null);
   const [lookingUpCnpj, setLookingUpCnpj] = useState(false);
+  const [lookingUpCep, setLookingUpCep] = useState(false);
 
   const { data: tenant, isLoading, error: loadError } = useQuery({
     queryKey: ["tenant", profile?.tenant_id],
@@ -85,33 +88,26 @@ export default function Empresa() {
   }, [tenant]);
   useEffect(() => () => { if (logoPreview?.startsWith("blob:")) URL.revokeObjectURL(logoPreview); }, [logoPreview]);
 
-  const lookupCnpj = async () => {
-    const clean = cnpj.replace(/\D/g, "");
-    if (clean.length !== 14) {
-      toast({ title: "CNPJ inválido", description: "Informe 14 dígitos", variant: "destructive" });
-      return;
-    }
-    setLookingUpCnpj(true);
-    try {
-      const res = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${clean}`);
-      if (!res.ok) throw new Error("CNPJ não encontrado");
-      const d = await res.json();
-      if (d.razao_social) setName(d.razao_social);
-      if (d.email) setEmail(d.email);
-      if (d.ddd_telefone_1) setPhone(d.ddd_telefone_1);
-      if (d.logradouro) setStreet(d.logradouro);
-      if (d.numero) setNumber(d.numero);
-      if (d.complemento) setComplement(d.complemento);
-      if (d.bairro) setNeighborhood(d.bairro);
-      if (d.municipio) setCity(d.municipio);
-      if (d.uf) setState(d.uf);
-      if (d.cep) setZip(d.cep);
-      toast({ title: "CNPJ encontrado", description: d.razao_social });
-    } catch (e: any) {
-      toast({ title: "Erro na consulta", description: e.message, variant: "destructive" });
-    } finally {
-      setLookingUpCnpj(false);
-    }
+  const captureAddress = () => {
+    const captured = { street, number, complement, neighborhood, city, state, zip };
+    return (address: Partial<RegistrationAddress>) => {
+      if (address.street) setStreet(current => current === captured.street ? address.street! : current);
+      if (address.number) setNumber(current => current === captured.number ? address.number! : current);
+      if (address.complement) setComplement(current => current === captured.complement ? address.complement! : current);
+      if (address.neighborhood) setNeighborhood(current => current === captured.neighborhood ? address.neighborhood! : current);
+      if (address.city) setCity(current => current === captured.city ? address.city! : current);
+      if (address.state) setState(current => current === captured.state ? address.state! : current);
+      if (address.cep) setZip(current => current === captured.zip ? address.cep! : current);
+    };
+  };
+  const captureCompany = () => {
+    const captured = { name, email, phone }; const applyAddress = captureAddress();
+    return (data: CnpjRegistration) => {
+      if (data.name) setName(current => current === captured.name ? data.name : current);
+      if (data.email) setEmail(current => current === captured.email ? data.email : current);
+      if (data.phone) setPhone(current => current === captured.phone ? data.phone : current);
+      applyAddress(data.address);
+    };
   };
 
   const handleLogoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -185,7 +181,7 @@ export default function Empresa() {
     <div className="space-y-6 animate-in fade-in duration-300">
       <PageHeader title="Configurações da Empresa" description="Parâmetros gerais do ERP"
         breadcrumbs={[{ label: "Configurações" }, { label: "Empresa" }]}
-        actions={<Button size="sm" onClick={() => saveMut.mutate()} disabled={saveMut.isPending}>{saveMut.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Save className="h-4 w-4 mr-1" />} Salvar</Button>}
+        actions={<Button size="sm" onClick={() => saveMut.mutate()} disabled={saveMut.isPending || lookingUpCnpj || lookingUpCep}>{saveMut.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Save className="h-4 w-4 mr-1" />} Salvar</Button>}
       />
 
       <div className="grid gap-6 max-w-2xl">
@@ -215,13 +211,7 @@ export default function Empresa() {
           <h3 className="text-sm font-semibold text-foreground">Dados da Empresa</h3>
           <div className="grid grid-cols-2 gap-4">
             <div className="col-span-2 sm:col-span-1">
-              <Label>CNPJ</Label>
-              <div className="flex gap-2">
-                <Input value={cnpj} onChange={(e) => setCnpj(e.target.value)} placeholder="00.000.000/0000-00" />
-                <Button variant="outline" size="icon" onClick={lookupCnpj} disabled={lookingUpCnpj} title="Consultar CNPJ">
-                  {lookingUpCnpj ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-                </Button>
-              </div>
+              <Label htmlFor="company-cnpj">CNPJ</Label><RegistrationLookupInput id="company-cnpj" value={cnpj} onChange={setCnpj} format={value => formatDocument(value, true)} complete={value => cleanDocument(value).length === 14} lookup={lookupCnpjRegistration} capture={captureCompany} success={data => `${data.name} · ${data.source}`} buttonLabel="Consultar CNPJ" hint="Ao completar o CNPJ, os dados públicos são preenchidos automaticamente." placeholder="00.000.000/0000-00" disabled={saveMut.isPending} onBusy={setLookingUpCnpj} maxLength={18} />
             </div>
             <div><Label>Nome / Razão Social</Label><Input value={name} onChange={(e) => setName(e.target.value)} /></div>
             <div><Label>E-mail</Label><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="contato@empresa.com" /></div>
@@ -235,7 +225,7 @@ export default function Empresa() {
         <div className="rounded-xl border bg-card p-6 space-y-4">
           <h3 className="text-sm font-semibold text-foreground">Endereço</h3>
           <div className="grid grid-cols-2 gap-4">
-            <div className="col-span-1"><Label>CEP</Label><Input value={zip} onChange={(e) => setZip(e.target.value)} placeholder="00000-000" /></div>
+            <div className="col-span-2"><Label htmlFor="company-cep">CEP</Label><RegistrationLookupInput id="company-cep" value={zip} onChange={setZip} format={formatCep} complete={value => cleanCep(value).length === 8} lookup={lookupCepAddress} capture={captureAddress} success={data => `${data.city} / ${data.state}`} buttonLabel="Consultar CEP" hint="Ao completar o CEP, rua, bairro, cidade e UF são preenchidos." placeholder="00000-000" disabled={saveMut.isPending} onBusy={setLookingUpCep} maxLength={9} inputMode="numeric" /></div>
             <div className="col-span-1"><Label>UF</Label><Input value={state} onChange={(e) => setState(e.target.value)} placeholder="SP" maxLength={2} /></div>
             <div className="col-span-2"><Label>Rua</Label><Input value={street} onChange={(e) => setStreet(e.target.value)} /></div>
             <div><Label>Número</Label><Input value={number} onChange={(e) => setNumber(e.target.value)} /></div>

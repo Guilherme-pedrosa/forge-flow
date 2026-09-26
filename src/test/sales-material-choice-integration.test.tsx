@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +12,9 @@ vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ profile: { tenant_i
 vi.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: mock.toast }) }));
 // This suite tests the page-to-item contract; the choice component has its own RPC/price tests.
 vi.mock("@/components/comercial/ProductMaterialChoice", () => ({ ProductMaterialChoice: ({ productId, overrides, onChange, onUnitPriceChange, disabled }: { productId: string; overrides: MaterialOverride[]; onChange: (value: MaterialOverride[]) => void; onUnitPriceChange: (value: number) => void; disabled: boolean }) => <section><output aria-label="Escolha preservada">{JSON.stringify(overrides)}</output><button disabled={disabled} onClick={() => onChange([{ product_id: productId, plate_id: "plate-1", base_item_id: "red", item_id: "blue" }])}>Selecionar azul</button><button disabled={disabled} onClick={() => onUnitPriceChange(25)}>Usar preço 25</button></section> }));
+// These tests verify financial/material payloads. Real dropdown focus, search,
+// keyboard and responsive bounds are exercised by test-catalog-search-ui.mjs.
+vi.mock("@/components/shared/SearchableItemSelect", () => ({ SearchableItemSelect: ({ label, value, options, onChange, disabled }: { label: string; value: string; options: { id: string; label: string }[]; onChange: (id: string) => void; disabled?: boolean }) => <select aria-label={label} value={value} disabled={disabled} onChange={event => onChange(event.target.value)}><option value="">Selecionar</option>{options.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select> }));
 vi.mock("@/components/ui/select", async () => {
   const { Children, isValidElement } = await import("react");
   return {
@@ -38,9 +41,9 @@ const mount = (page: "order" | "quote", existing = false) => render(<QueryClient
 const savedPayload = (name: string) => mock.rpc.mock.calls.find(call => call[0] === name)?.[1];
 const selectOrderProduct = async (line: number, sku: "BASE" | "TAMPA") => {
   await waitFor(() => expect(document.activeElement?.closest('[role="dialog"]')).not.toBeNull());
-  fireEvent.click(screen.getByRole("combobox", { name: `Produto do item ${line}` }));
-  fireEvent.change(await screen.findByRole("combobox", { name: `Buscar produto do item ${line}` }), { target: { value: sku } });
-  fireEvent.click(await screen.findByRole("option", { name: new RegExp(sku) }));
+  const selector = screen.getByRole("combobox", { name: `Produto do item ${line}` });
+  await within(selector).findByRole("option", { name: new RegExp(sku, "i") });
+  fireEvent.change(selector, { target: { value: sku === "BASE" ? "product-1" : "product-2" } });
 };
 beforeEach(() => { mock.saved = []; mock.rpc.mockReset(); mock.toast.mockClear(); mock.rpc.mockImplementation(async (name: string) => ({ data: name === "save_sales_order" ? "order-1" : "quote-1", error: null })); });
 afterEach(cleanup);
@@ -83,16 +86,14 @@ describe("cores preservadas nos itens comerciais", () => {
   });
   it("seleciona cor e preço no orçamento, envia apenas overrides e limpa a escolha ao trocar produto", async () => {
     mount("quote"); fireEvent.click(screen.getByRole("button", { name: "Novo orçamento" }));
-    fireEvent.click(screen.getByRole("combobox", { name: "Produto 1" }));
-    fireEvent.click(await screen.findByRole("option", { name: /BASE · Base/ }));
+    await screen.findByRole("option", { name: /BASE · Base/ });
+    fireEvent.change(screen.getByRole("combobox", { name: "Produto 1" }), { target: { value: "product-1" } });
     fireEvent.click(screen.getByText("Personalização 3D: material, cor e estimativa"));
     fireEvent.click(screen.getByRole("button", { name: "Selecionar azul" }));
     expect(screen.getByLabelText("Escolha preservada")).toHaveTextContent('"item_id":"blue"');
-    fireEvent.click(screen.getByRole("combobox", { name: "Produto 1" }));
-    fireEvent.click(await screen.findByRole("option", { name: /TAMPA · Tampa/ }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Produto 1" }), { target: { value: "product-2" } });
     expect(screen.getByLabelText("Escolha preservada")).toHaveTextContent("[]");
-    fireEvent.click(screen.getByRole("combobox", { name: "Produto 1" }));
-    fireEvent.click(await screen.findByRole("option", { name: /BASE · Base/ }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Produto 1" }), { target: { value: "product-1" } });
     fireEvent.click(screen.getByRole("button", { name: "Selecionar azul" })); fireEvent.click(screen.getByRole("button", { name: "Usar preço 25" }));
     fireEvent.click(screen.getByRole("button", { name: "Salvar rascunho" }));
     await waitFor(() => expect(savedPayload("save_sales_quote")).toBeDefined());

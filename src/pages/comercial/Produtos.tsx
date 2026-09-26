@@ -41,6 +41,7 @@ import ProductMaterialRecipe from "./ProductMaterialRecipe";
 import MakerWorldReference, { MakerWorldPrinterOption } from "./MakerWorldReference";
 import { fetchMakerWorldModel, externalImportReference, legacyMakerWorldUrl, readProductExternalImport, type ProductExternalImport } from "@/lib/makerworld-import";
 import { makerWorldImageUrl } from "../../../supabase/functions/_shared/makerworld";
+import { MakerWorldDescriptionTranslation } from "@/components/comercial/MakerWorldDescriptionTranslation";
 import { MakerWorldImageImport } from "@/components/comercial/MakerWorldImageImport";
 import { normalizePrintSourceUrl } from "@/lib/product-print-source";
 
@@ -103,6 +104,7 @@ export default function Produtos() {
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [translatingDescription, setTranslatingDescription] = useState(false);
   const [sku, setSku] = useState("");
   const [category, setCategory] = useState("printed_part");
   const [materialId, setMaterialId] = useState("");
@@ -477,7 +479,7 @@ export default function Produtos() {
     const imported = externalImportReference(model, model.source_url, index);
     imported.selected_variant_profile_id = variant?.profile_id || null;
     setExternalImport(imported);
-    setDescription(model.description || (updating ? description : ""));
+    setDescription(previous => updating && previous.trim() ? previous : model.description || "");
     const images = [...new Set([model.thumbnail, ...(model.gallery || [])].filter(Boolean))] as string[];
     if (updating) {
       if (!photoUrl && images[0]) setPhotoUrl(images[0]);
@@ -658,7 +660,7 @@ ${selected?.name ? `Perfil: ${selected.name}
     if (!profile) throw new Error("Sua sessão expirou. Entre novamente.");
     if (!name.trim()) throw new Error("Informe o nome do produto.");
     if (hasProductionDraft) throw new Error("Salve ou cancele a composição, fonte ou placa em edição antes de salvar o cadastro.");
-    if (uploadingPhoto || photosLoading || printSourceBusy || makerWorldLoading) throw new Error("Aguarde o carregamento das fotos e fontes de impressão antes de salvar.");
+    if (uploadingPhoto || photosLoading || printSourceBusy || makerWorldLoading || translatingDescription) throw new Error("Aguarde o carregamento das fotos, fontes e descrição antes de salvar.");
     const baseCost = costEstimate.trim() ? nonNegative(costEstimate, "Preço de custo") : null;
     const expenses = nonNegative(accessoryCost, "Despesas acessórias") + nonNegative(otherCost, "Outras despesas");
     if (baseCost == null && expenses > 0) throw new Error("Informe o custo de compra antes de adicionar despesas.");
@@ -778,7 +780,7 @@ ${selected?.name ? `Perfil: ${selected.name}
           </Select>
         </div>
         <div><Label>SKU</Label><Input value={sku} onChange={(e) => setSku(e.target.value)} placeholder="VASO-GEO-P" /></div>
-        <div className="sm:col-span-2"><Label htmlFor="product-description">Descrição</Label><Textarea id="product-description" value={description} onChange={(e) => setDescription(e.target.value)} rows={2} /></div>
+        <div className="sm:col-span-2"><Label htmlFor="product-description">Descrição</Label><Textarea id="product-description" value={description} onChange={(e) => setDescription(e.target.value)} rows={4} />{externalImport?.description && <MakerWorldDescriptionTranslation key={externalImport.description} original={externalImport.description} value={description} onApply={(text, expected) => setDescription(current => current === expected ? text : current)} onBusy={setTranslatingDescription} />}</div>
       </div>
 
         <div><Label htmlFor="product-barcode">Código de barras</Label><Input id="product-barcode" value={barcode} onChange={e => setBarcode(e.target.value)} /></div>
@@ -882,17 +884,11 @@ ${selected?.name ? `Perfil: ${selected.name}
       <p className="-mt-2 text-xs leading-relaxed text-muted-foreground">Para produtos sem placas separadas, informe peso, impressão e acabamento da placa inteira. O cálculo divide esses custos pelas peças da placa; extras são cobrados por unidade. Em produtos com várias placas, cadastre cada uma em Arquivos e links de impressão; as referências por unidade se somam para formar o produto completo.</p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div><Label>Material</Label>
-          <Select value={materialId || "none"} onValueChange={(v) => setMaterialId(v === "none" ? "" : v)}>
-            <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-            <SelectContent><SelectItem value="none">Nenhum</SelectItem>{materials.map((m) => <SelectItem key={m.id} value={m.id}>{m.name} ({fmtCurrency(m.avg_cost)}/{m.unit || 'un'})</SelectItem>)}</SelectContent>
-          </Select>
+          <SearchableItemSelect label="Material de referência do produto" value={materialId} onChange={setMaterialId} emptyLabel="Selecionar material" options={materials.map(m => ({ id: m.id, label: m.name, description: `${fmtCurrency(m.avg_cost)}/${m.unit || "un"}` }))} />
         </div>
         <div><Label htmlFor="product-grams">Peso por placa (g)</Label><Input id="product-grams" type="number" min="0" step="0.01" value={estGrams} onChange={(e) => setEstGrams(e.target.value)} placeholder="45" /></div>
         <div><Label>Impressora de referência</Label>
-          <Select value={printerId || "none"} onValueChange={(v) => setPrinterId(v === "none" ? "" : v)}>
-            <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-            <SelectContent><SelectItem value="none">Selecionar para calcular</SelectItem>{printers.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}</SelectContent>
-          </Select>
+          <SearchableItemSelect label="Impressora de referência do produto" value={printerId} onChange={setPrinterId} emptyLabel="Selecionar para calcular" options={printers.map(p => ({ id: p.id, label: p.name }))} />
           {!printerId && costBreakdown.selectedPrinterName && (
             <p className="mt-1 text-[11px] text-muted-foreground">Usando {costBreakdown.selectedPrinterName} como referência de custo de máquina.</p>
           )}
@@ -1324,7 +1320,7 @@ ${selected?.name ? `Perfil: ${selected.name}
       <Dialog open={createOpen} onOpenChange={open => { if (open) setCreateOpen(true); else closeCreateProduct(); }}>
         <DialogContent className="flex h-[94dvh] w-[96vw] max-w-6xl flex-col gap-4 p-4 sm:p-6" closeDisabled={createMut.isPending || uploadingPhoto}><DialogHeader className="pr-10"><DialogTitle>Novo Produto</DialogTitle><DialogDescription>Dados, valores, estoque e fotos em um único cadastro.</DialogDescription></DialogHeader>
           {formFields}
-          <DialogFooter className="gap-2"><Button type="button" className="min-h-11" variant="outline" disabled={createMut.isPending || uploadingPhoto} onClick={closeCreateProduct}>Cancelar</Button><Button type="button" className="min-h-11" onClick={() => { createAnother.current = false; createMut.mutate(); }} disabled={!name.trim() || createMut.isPending || uploadingPhoto || photosLoading || makerWorldLoading}>{createMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Criar</Button><Button type="button" variant="outline" disabled={!name.trim() || createMut.isPending || uploadingPhoto || photosLoading || makerWorldLoading} onClick={() => { createAnother.current = true; createMut.mutate(); }}>Salvar e cadastrar outro</Button></DialogFooter>
+          <DialogFooter className="gap-2"><Button type="button" className="min-h-11" variant="outline" disabled={createMut.isPending || uploadingPhoto} onClick={closeCreateProduct}>Cancelar</Button><Button type="button" className="min-h-11" onClick={() => { createAnother.current = false; createMut.mutate(); }} disabled={!name.trim() || createMut.isPending || uploadingPhoto || photosLoading || makerWorldLoading || translatingDescription}>{createMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Criar</Button><Button type="button" variant="outline" disabled={!name.trim() || createMut.isPending || uploadingPhoto || photosLoading || makerWorldLoading || translatingDescription} onClick={() => { createAnother.current = true; createMut.mutate(); }}>Salvar e cadastrar outro</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -1334,7 +1330,7 @@ ${selected?.name ? `Perfil: ${selected.name}
           {formFields}
           {printSourceBusy && <p role="status" className="text-xs text-muted-foreground">Salvando composição ou fonte de impressão. Aguarde a confirmação.</p>}
           {hasProductionDraft && !printSourceBusy && <p role="status" className="text-xs text-amber-800 dark:text-amber-300">Salve ou cancele a composição, fonte ou placa em edição antes de salvar o cadastro. Fechar ou cancelar o produto descarta esses rascunhos.</p>}
-          <DialogFooter className="gap-2"><Button type="button" className="min-h-11" variant="outline" disabled={editWritePending} onClick={closeEditProduct}>Cancelar</Button><Button type="button" className="min-h-11" onClick={() => updateMut.mutate()} disabled={!name.trim() || editWritePending || hasProductionDraft || photosLoading || makerWorldLoading}>{updateMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} {photosLoading ? "Carregando fotos..." : "Salvar"}</Button></DialogFooter>
+          <DialogFooter className="gap-2"><Button type="button" className="min-h-11" variant="outline" disabled={editWritePending} onClick={closeEditProduct}>Cancelar</Button><Button type="button" className="min-h-11" onClick={() => updateMut.mutate()} disabled={!name.trim() || editWritePending || hasProductionDraft || photosLoading || makerWorldLoading || translatingDescription}>{updateMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} {photosLoading ? "Carregando fotos..." : "Salvar"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 

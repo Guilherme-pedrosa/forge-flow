@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 
-type ItemOption = { id: string; label: string; description?: string; keywords?: string };
+type ItemOption = { id: string; label: string; description?: string; keywords?: string; disabled?: boolean };
 const normalize = (text: string) => text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pt-BR");
 
 export function SearchableItemSelect({ id, value, options, onChange, label, emptyLabel = "Sem vínculo", disabled = false, searchPlaceholder = "Digite nome ou código…" }: {
@@ -36,7 +36,7 @@ export function SearchableItemSelect({ id, value, options, onChange, label, empt
         <CommandInput ref={input} aria-label={`Buscar ${label.toLocaleLowerCase("pt-BR")}`} placeholder={searchPlaceholder} value={search} onValueChange={setSearch} />
         <CommandList className="min-h-0 max-h-64 flex-1 overscroll-contain" aria-label={`Resultados de ${label.toLocaleLowerCase("pt-BR")}`}>
           <CommandEmpty>Nenhum resultado. Tente outro nome ou código.</CommandEmpty>
-          <CommandGroup>{visible.map(option => <CommandItem key={option.id} value={option.id || "__empty__"}
+          <CommandGroup>{visible.map(option => <CommandItem key={option.id} value={option.id || "__empty__"} disabled={option.disabled}
             className="min-h-11 cursor-pointer items-start gap-2 py-2.5"
             onSelect={() => { onChange(option.id); changeOpen(false); }}>
             <Check aria-hidden="true" className={`mt-0.5 h-4 w-4 shrink-0 ${value === option.id ? "opacity-100" : "opacity-0"}`} />

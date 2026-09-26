@@ -3,6 +3,7 @@ import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { positiveInteger, productExtrasPerPiece, requiresProductionMeasurement } from "@/lib/production";
 import { createJobs, transitionJob, productionQueryKeys, type CreateJobInput } from "@/lib/production-api";
+import { readProductionRows } from "@/lib/production-read";
 import { orderRequest } from "@/lib/sales-order";
 import { planProductPlates, readProductPlates } from "@/lib/production-plates";
 import { ProductionPlatePlan } from "@/components/production/ProductionPlatePlan";
@@ -74,13 +75,11 @@ export default function Fila() {
   const { data: printers = [] } = useQuery({
     queryKey: ["fila_printers"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      return readProductionRows((from, to) => supabase
         .from("printers")
         .select("id, name, model, status, brand, bambu_device_id")
         .eq("is_active", true)
-        .order("name");
-      if (error) throw error;
-      return data;
+        .order("name").order("id").range(from, to));
     },
     enabled: !!profile,
   });
@@ -88,13 +87,11 @@ export default function Fila() {
   const { data: products = [] } = useQuery({
     queryKey: ["fila_products"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      return readProductionRows((from, to) => supabase
         .from("products")
         .select("id, name, sku, est_grams, est_time_minutes, cost_estimate, sale_price, material_id, num_colors, prints_per_plate, extras, category")
         .eq("is_active", true)
-        .order("name");
-      if (error) throw error;
-      return data;
+        .order("name").order("id").range(from, to));
     },
     enabled: !!profile,
   });
@@ -266,16 +263,7 @@ export default function Fila() {
                   </div>
                   {!hasPlates && <div>
                     <Label htmlFor="queue-printer">Impressora</Label>
-                    <Select value={selPrinterId} onValueChange={setSelPrinterId}>
-                      <SelectTrigger id="queue-printer"><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                      <SelectContent>
-                        {printers.map(p => (
-                          <SelectItem key={p.id} value={p.id}>
-                            {p.name} ({p.model})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <SearchableItemSelect id="queue-printer" label="Impressora da fila" value={selPrinterId} onChange={setSelPrinterId} emptyLabel="Selecione a impressora" options={printers.map(p => ({ id: p.id, label: p.name, description: p.model }))} />
                   </div>}
                   <div className={cn("grid gap-3", !hasPlates && "sm:grid-cols-2")}>
                     <div>
@@ -473,10 +461,7 @@ export default function Fila() {
                   <div className="text-xs text-muted-foreground font-mono mb-3">{j.code}</div>
                   {j.description && <p className="mb-3 text-xs text-muted-foreground">{j.description}</p>}
                   <Button variant="link" size="sm" className="mb-2 h-auto px-0 text-xs" onClick={() => setFileJobId(j.id)}>Arquivo e receita da placa</Button>
-                  <Select onValueChange={printerId => updateStatusMut.mutate({ id: j.id, status: j.status, printerId })} disabled={updateStatusMut.isPending}>
-                    <SelectTrigger aria-label={`Atribuir impressora para ${j.code}`}><SelectValue placeholder="Atribuir impressora" /></SelectTrigger>
-                    <SelectContent>{printers.map(printer => <SelectItem key={printer.id} value={printer.id}>{printer.name}</SelectItem>)}</SelectContent>
-                  </Select>
+                  <SearchableItemSelect label={`Atribuir impressora para ${j.code}`} value="" onChange={printerId => { if (printerId) updateStatusMut.mutate({ id: j.id, status: j.status, printerId }); }} disabled={updateStatusMut.isPending} emptyLabel="Atribuir impressora" options={printers.map(printer => ({ id: printer.id, label: printer.name }))} />
                 </div>
               ))}
             </div>

@@ -610,45 +610,18 @@ function CreateJobDialog({
           <div className={cn("grid gap-3", isMultiColor ? "grid-cols-1" : "grid-cols-2")}>
             {!recipe && <div className="grid gap-1.5">
               <Label>{isMultiColor ? "Material principal (cor 1)" : "Material"}</Label>
-              <Select value={materialId} onValueChange={setMaterialId}>
-                <SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-                <SelectContent>
-                  {materials.map(m => (
-                    <SelectItem key={m.id} value={m.id}>
-                      {m.name}{m.color ? ` (${m.color})` : ""}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableItemSelect label="Material da impressão" value={materialId} onChange={setMaterialId} emptyLabel="Buscar material ou cor" options={materials.map(m => ({ id: m.id, label: m.name, description: m.color || undefined }))} />
             </div>}
             {isMultiColor && (
               <div className="grid gap-1.5">
                 <Label>Material secundário (cor 2+)</Label>
-                <Select value={secondaryMaterialId || "same"} onValueChange={(v) => setSecondaryMaterialId(v === "same" ? "" : v)}>
-                  <SelectTrigger><SelectValue placeholder="Mesmo que principal" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="same">Mesmo que principal</SelectItem>
-                    {materials.map(m => (
-                      <SelectItem key={m.id} value={m.id}>
-                        {m.name}{m.color ? ` (${m.color})` : ""}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <SearchableItemSelect label="Material secundário da impressão" value={secondaryMaterialId} onChange={setSecondaryMaterialId} emptyLabel="Mesmo que principal" options={materials.map(m => ({ id: m.id, label: m.name, description: m.color || undefined }))} />
               </div>
             )}
             {!isMultiColor && (
               <div className="grid gap-1.5">
                 <Label>Impressora</Label>
-                <Select value={printerId || "pool"} onValueChange={(v) => setPrinterId(v === "pool" ? "" : v)}>
-                  <SelectTrigger><SelectValue placeholder="Sem impressora" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="pool">Sem impressora</SelectItem>
-                    {printers.map(p => (
-                      <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <SearchableItemSelect label="Impressora da impressão" value={printerId} onChange={setPrinterId} emptyLabel="Sem impressora" options={printers.map(p => ({ id: p.id, label: p.name }))} />
               </div>
             )}
           </div>
@@ -657,15 +630,7 @@ function CreateJobDialog({
             <>
               <div className="grid gap-1.5">
                 <Label>Impressora</Label>
-                <Select value={printerId || "pool"} onValueChange={(v) => setPrinterId(v === "pool" ? "" : v)}>
-                  <SelectTrigger><SelectValue placeholder="Sem impressora" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="pool">Sem impressora</SelectItem>
-                    {printers.map(p => (
-                      <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <SearchableItemSelect label="Impressora da impressão" value={printerId} onChange={setPrinterId} emptyLabel="Sem impressora" options={printers.map(p => ({ id: p.id, label: p.name }))} />
               </div>
               <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3">
                 <p className="text-xs text-amber-600 dark:text-amber-400">

@@ -4,7 +4,7 @@ const fields = ["material_cost", "machine_cost", "energy_cost", "labor_cost", "o
 const componentCost = (job: any, field: string) => job[`actual_${field}`] ?? (job.status === "failed" ? 0 : job[`est_${field}`]) ?? 0;
 
 /** Missing purchase mappings remain explicit pending amounts, never assumed profit. */
-export function calculateFinancialResult(receivables: any[], payables: any[], jobs: any[], purchaseItems: any[] = [], stockCost = 0) {
+export function calculateFinancialResult(receivables: any[], payables: any[], jobs: any[], purchaseItems: any[] = [], stockCost = 0, assemblyCost = 0, componentLossCost = 0) {
   const activeAR = receivables.filter(r => r.status !== "reversed");
   const activeAP = payables.filter(p => p.status !== "cancelled");
   let opExpenses = 0, excludedPurchases = 0, unknownPurchaseAmount = 0, unclassifiedCount = 0, unclassifiedExpenseAmount = 0;
@@ -38,7 +38,7 @@ export function calculateFinancialResult(receivables: any[], payables: any[], jo
   const cost = (field: string) => money(jobs.reduce((sum, job) => sum + componentCost(job, field), 0));
   const materialCost = cost("material_cost"), machineCost = cost("machine_cost"), energyCost = cost("energy_cost"), laborCost = cost("labor_cost"), overheadCost = cost("overhead"), extrasCost = cost("extras_cost");
   const productionCMV = money(jobs.reduce((sum, job) => sum + (job.actual_total_cost ?? fields.reduce((value, field) => value + componentCost(job, field), 0)), 0));
-  const totalCMV = money(productionCMV + stockCost);
+  const totalCMV = money(productionCMV + stockCost + assemblyCost + componentLossCost);
   const failedCost = money(jobs.filter(job => job.status === "failed").reduce((sum, job) => sum + (job.actual_total_cost ?? fields.reduce((value, field) => value + componentCost(job, field), 0)), 0));
   const unmeasuredFailedCount = jobs.filter(job => job.status === "failed" && job.actual_total_cost == null).length;
   const missingFailureDateCount = jobs.filter(job => job.status === "failed" && !job.completed_at).length;
@@ -49,7 +49,7 @@ export function calculateFinancialResult(receivables: any[], payables: any[], jo
   const missingCompetenceCount = [...activeAR, ...activeAP].filter(title => !title.competence_date).length;
   const isPartial = unknownPurchaseAmount > 0 || unclassifiedCount > 0 || missingCompetenceCount > 0 || estimatedCount > 0 || unmeasuredFailedCount > 0 || missingFailureDateCount > 0;
   return {
-    stockCost, totalRevenue, opExpenses, materialCost, machineCost, energyCost, laborCost, overheadCost, extrasCost, costAdjustment, totalCMV, grossProfit, netResult,
+    stockCost, assemblyCost, componentLossCost, totalRevenue, opExpenses, materialCost, machineCost, energyCost, laborCost, overheadCost, extrasCost, costAdjustment, totalCMV, grossProfit, netResult,
     grossMargin: !isPartial && totalRevenue > 0 ? grossProfit / totalRevenue * 100 : null,
     netMargin: !isPartial && totalRevenue > 0 ? netResult / totalRevenue * 100 : null,
     jobCount: jobs.length, titleCount: activeAR.length, unclassifiedCount, unclassifiedExpenseAmount,

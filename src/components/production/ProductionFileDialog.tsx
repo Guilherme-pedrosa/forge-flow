@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SearchableItemSelect } from "@/components/shared/SearchableItemSelect";
 import { readJobProduction, prepareJobPrintFile, downloadJobPrintFile, filePreparationHint, type JobProductionReview } from "@/lib/production-files";
 import { orderRequest } from "@/lib/sales-order";
 import { productionQueryKeys } from "@/lib/production-api";
@@ -88,8 +88,8 @@ export function ProductionFileForm({ review, printers, tenantId, onBusy, onRefre
     <div className="rounded-xl bg-muted/40 p-4 text-sm space-y-2"><p className="flex items-center gap-2 font-medium"><Printer className="h-4 w-4" />Envio pelo Bambu Studio ou Connect</p><p>Baixe o arquivo, confira a placa e os filamentos na máquina indicada e envie pelo software Bambu. O ERP não possui envio direto configurado.</p><p className="text-xs text-muted-foreground">A compatibilidade do fatiamento, do bico e do mapeamento AMS deve ser conferida no software Bambu. Preparar ou baixar aqui não inicia a impressora.</p></div>
     {review.can_prepare && review.file_options.length > 0 && <fieldset disabled={busy} className="min-w-0 space-y-3 rounded-xl border p-4">
       <legend className="px-1 text-sm font-semibold">Preparar arquivo e impressora</legend>
-      <div className="space-y-1.5"><Label htmlFor="prepare-print-source">Versão do arquivo</Label><Select value={sourceId} onValueChange={setSourceId} disabled={!!review.file || busy}><SelectTrigger id="prepare-print-source"><SelectValue placeholder="Selecione a versão" /></SelectTrigger><SelectContent>{review.file_options.map(file => <SelectItem key={file.id} value={file.id}>{file.file_name || file.label || "Arquivo de impressão"}</SelectItem>)}</SelectContent></Select></div>
-      <div className="space-y-1.5"><Label htmlFor="prepare-print-printer">Impressora</Label><Select value={printerId} onValueChange={setPrinterId} disabled={busy}><SelectTrigger id="prepare-print-printer"><SelectValue placeholder="Selecione a impressora" /></SelectTrigger><SelectContent>{printers.map(machine => <SelectItem key={machine.id} value={machine.id} disabled={["maintenance", "offline", "error"].includes(machine.status)}>{machine.name} · {machine.model}</SelectItem>)}</SelectContent></Select></div>
+      <div className="space-y-1.5"><Label htmlFor="prepare-print-source">Versão do arquivo</Label><SearchableItemSelect id="prepare-print-source" label="Versão do arquivo" value={sourceId} onChange={setSourceId} disabled={!!review.file || busy} emptyLabel="Selecione a versão" options={review.file_options.map(file => ({ id: file.id, label: file.file_name || file.label || "Arquivo de impressão" }))} /></div>
+      <div className="space-y-1.5"><Label htmlFor="prepare-print-printer">Impressora</Label><SearchableItemSelect id="prepare-print-printer" label="Impressora preparada" value={printerId} onChange={setPrinterId} disabled={busy} emptyLabel="Selecione a impressora" options={printers.map(machine => ({ id: machine.id, label: machine.name, description: `${machine.model}${["maintenance", "offline", "error"].includes(machine.status) ? " · indisponível" : ""}`, disabled: ["maintenance", "offline", "error"].includes(machine.status) }))} /></div>
       <div className="space-y-1.5"><Label htmlFor="prepare-print-reason">Justificativa da preparação</Label><Input id="prepare-print-reason" value={reason} onChange={event => setReason(event.target.value)} placeholder="Ex.: arquivo da placa conferido para esta máquina" /></div>
       <Button disabled={busy} onClick={save}>{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Salvar preparação</Button>
     </fieldset>}

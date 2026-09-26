@@ -1,3 +1,4 @@
+import { SearchableItemSelect } from "@/components/shared/SearchableItemSelect";
 import { useState } from "react";
 import type { Tables } from "@/integrations/supabase/types";
 import type { JobTransition } from "@/lib/production-api";
@@ -7,7 +8,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 export function ProductionTransitionDialog({ value, printers, pending, onClose, onSave }: {
   value: { job: Tables<"jobs">; status: JobStatus };
@@ -64,10 +64,7 @@ export function ProductionTransitionDialog({ value, printers, pending, onClose, 
           <DialogDescription>{job.code} · {job.name}. {measured ? "O lançamento registra custos e estoque na mesma operação, antes de avançar de etapa." : status === "failed" ? "Os custos já apurados serão preservados; registre a causa encontrada no controle de qualidade." : "Atualiza a fila do ERP. A impressão deve ser iniciada no equipamento ou no fatiador."}</DialogDescription>
         </DialogHeader>
         <div className="space-y-2"><Label htmlFor="transition-printer">Impressora utilizada</Label>
-          <Select value={printerId} onValueChange={setPrinterId} disabled={pending || (!!job.printer_id && !["draft", "queued", "reprint"].includes(job.status))}>
-            <SelectTrigger id="transition-printer"><SelectValue placeholder="Selecione a impressora" /></SelectTrigger>
-            <SelectContent>{printers.map(printer => <SelectItem key={printer.id} value={printer.id} disabled={!measured && ["maintenance", "offline", "error"].includes(printer.status)}>{printer.name}</SelectItem>)}</SelectContent>
-          </Select>
+          <SearchableItemSelect id="transition-printer" label="Impressora utilizada" value={printerId} onChange={setPrinterId} disabled={pending || (!!job.printer_id && !["draft", "queued", "reprint"].includes(job.status))} emptyLabel="Selecione a impressora" options={printers.map(printer => ({ id: printer.id, label: printer.name, disabled: !measured && ["maintenance", "offline", "error"].includes(printer.status) }))} />
         </div>
         {measured && <>
           <p className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">Consumo total = todo o material usado, incluindo purga, suportes e perdas. Informe a medição do fatiador ou da balança. Estimativa da ordem: {job.est_grams ?? "—"} g · {job.est_time_minutes ?? "—"} min.</p>

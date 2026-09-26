@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
-export type DeleteTarget = { id: string; name: string; kind: "product" | "inventory" | "order" | "purchase" | "payable" | "receivable" };
+export type DeleteTarget = { id: string; name: string; kind: "product" | "inventory" | "order" | "quote" | "purchase" | "payable" | "receivable" };
 export function DeleteRecordDialog({ target, onClose, onDeleted }: { target: DeleteTarget | null; onClose: () => void; onDeleted?: () => void }) {
   const qc = useQueryClient();
   const [error, setError] = useState("");

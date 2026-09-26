@@ -3,6 +3,7 @@ import { allRows, localDate, money, positiveMoney, validDate } from "@/lib/finan
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
+import { SearchableItemSelect } from "@/components/shared/SearchableItemSelect";
 import { PageHeader } from "@/components/shared/PageHeader";
 import {
   Plus, Search, Loader2, Landmark, ArrowUpCircle, ArrowDownCircle,
@@ -196,9 +197,7 @@ export default function CaixaBancos() {
         <DialogContent className="max-w-sm max-h-[90dvh] overflow-y-auto"><DialogHeader><DialogTitle>Novo Lançamento</DialogTitle></DialogHeader>
           <div className="grid gap-4">
             <div><Label>Conta *</Label>
-              <Select value={txAccountId} onValueChange={setTxAccountId}><SelectTrigger><SelectValue placeholder="Selecione" /></SelectTrigger>
-                <SelectContent>{accounts.filter(a => a.is_active).map(a => <SelectItem key={a.id} value={a.id}>{a.name}</SelectItem>)}</SelectContent>
-              </Select>
+              <SearchableItemSelect label="Conta do lançamento" value={txAccountId} onChange={setTxAccountId} emptyLabel="Selecione a conta" options={accounts.filter(a => a.is_active).map(a => ({ id: a.id, label: a.name }))} />
             </div>
             <div><Label>Tipo</Label>
               <Select value={txType} onValueChange={setTxType}><SelectTrigger><SelectValue /></SelectTrigger>
