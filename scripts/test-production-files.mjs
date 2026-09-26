@@ -127,7 +127,7 @@ await test('An issued quote preserves file version and recipe through conversion
   await scalar("SELECT transition_sales_quote($1,'issued')",[q]);await scalar("SELECT transition_sales_quote($1,'approved')",[q]);
   await recipe(p,[{item_id:blue,grams:100}]);await source(p,{sourceId:file.id});const order=await scalar('SELECT convert_sales_quote($1,$2)',[q,next()]);
   await scalar("SELECT transition_sales_order($1,'in_production')",[order]);const jobs=(await db.query('SELECT id FROM jobs WHERE order_id=$1',[order])).rows;assert.equal(jobs.length,2);
-  for(const j of jobs) {const r=await review(j.id);assert.equal(r.origin,'approved_order');assert.equal(r.file.file_path,file.path);assert.equal(r.requirements[0].item_id,red);assert.equal(Number(r.est_grams),40);assert.equal(Number(r.est_total_cost),4.8);}
+  for(const j of jobs) {const r=await review(j.id);assert.equal(r.origin,'production_order');assert.equal(r.file.file_path,file.path);assert.equal(r.requirements[0].item_id,red);assert.equal(Number(r.est_grams),40);assert.equal(Number(r.est_total_cost),4.8);}
   assert.equal(await scalar('SELECT erp_print_file_is_referenced($1)',[file.path]),true);
 });
 console.log(`\n${passed} production file PostgreSQL scenarios passed.`);

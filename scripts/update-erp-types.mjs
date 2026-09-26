@@ -2,8 +2,9 @@ import { readFile, writeFile } from 'node:fs/promises';
 const target=new URL('../src/integrations/supabase/types.ts',import.meta.url);
 let source=await readFile(target,'utf8');
 const columns={
-  jobs:{ inventory_posted_at:'string | null', secondary_actual_grams:'number | null',order_item_id:'string | null',order_unit_index:'number | null',est_extras_cost:'number | null',actual_extras_cost:'number | null',creation_request_id:'string | null',actual_time_seconds:'number | null',actual_material_usage:'Json | null',produced_quantity:'number | null',print_plate_id:'string | null',planned_quantity:'number' },
-  products:{manual_cost_override:"number | null",stock_item_id:"string | null",actual_print_grams_per_unit:'number | null',actual_print_seconds_per_unit:'number | null',actual_print_cost_per_unit:'number | null',actual_print_sample_units:'number | null',actual_print_updated_at:'string | null',actual_print_source:'string | null'},
+  customers:{registration_details:"Json"},vendors:{registration_details:"Json"},
+  jobs:{ production_order_id:"string | null",production_order_item_id:"string | null",inventory_posted_at:'string | null', secondary_actual_grams:'number | null',order_item_id:'string | null',order_unit_index:'number | null',est_extras_cost:'number | null',actual_extras_cost:'number | null',creation_request_id:'string | null',actual_time_seconds:'number | null',actual_material_usage:'Json | null',produced_quantity:'number | null',print_plate_id:'string | null',planned_quantity:'number' },
+  products:{catalog_details:"Json",manual_cost_override:"number | null",stock_item_id:"string | null",actual_print_grams_per_unit:'number | null',actual_print_seconds_per_unit:'number | null',actual_print_cost_per_unit:'number | null',actual_print_sample_units:'number | null',actual_print_updated_at:'string | null',actual_print_source:'string | null'},
   accounts_payable:{origin_id:'string | null',origin_type:'string | null'},
   orders:{shipping:'number',source_quote_id:'string | null'}, order_items:{source_quote_item_id:'string | null',product_snapshot:'Json | null'}, purchase_orders:{additional_costs:'number'},
   purchase_order_items:{stock_quantity:'number | null'},consignment_locations:{commission_percent:'number'},
@@ -11,7 +12,7 @@ const columns={
 Object.assign(columns.jobs, { production_snapshot: 'Json | null', production_snapshot_origin: 'string | null', production_snapshot_at: 'string | null', print_file_snapshot: 'Json | null' });
 Object.assign(columns.orders, { requires_material_recipe: 'boolean' });
 Object.assign(columns.order_items, { quoted_estimated_cost: 'number | null' });
-columns.inventory_items = { material_code: 'string | null', material_description: 'string | null', color_code: 'string | null', color_hex: 'string | null', material_identified_at: 'string | null', material_identified_by: 'string | null' };
+columns.inventory_items = { max_stock: "number", material_code: 'string | null', material_description: 'string | null', color_code: 'string | null', color_hex: 'string | null', material_identified_at: 'string | null', material_identified_by: 'string | null' };
 for(const [table, fields] of Object.entries(columns)) {
   const start=source.indexOf(`      ${table}: {`);
   if(start<0) throw Error(`Missing table ${table}`);
@@ -28,6 +29,8 @@ for(const [table, fields] of Object.entries(columns)) {
   source=source.slice(0,start)+block+source.slice(end);
 }
 const rpcs={
+  create_financial_installments:"p_kind:string;p_title:Json;p_parts:Json;p_request_id:string",
+  post_inventory_batch:"p_movements:Json;p_request_id:string",
   product_material_recipe_catalog:'',
   register_bank_transaction:'p_bank_account_id: string; p_type: string; p_amount: number; p_date: string; p_description: string; p_request_id: string',
   settle_financial_title:'p_kind: string; p_title_id: string; p_amount: number; p_date: string; p_bank_account_id: string; p_request_id: string',

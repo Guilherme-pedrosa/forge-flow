@@ -29,7 +29,9 @@ const Fila = lazy(() => import("./pages/planejamento/Fila"));
 const Produtos = lazy(() => import("./pages/comercial/Produtos"));
 const Pedidos = lazy(() => import("./pages/comercial/Pedidos"));
 const Orcamentos = lazy(() => import("./pages/comercial/Orcamentos"));
-const Clientes = lazy(() => import("./pages/comercial/Clientes"));
+const Clientes = lazy(() => import("./pages/comercial/Partners").then(m => ({ default: () => <m.default kind="customer" /> })));
+const Fornecedores = lazy(() => import("./pages/comercial/Partners").then(m => ({ default: () => <m.default kind="vendor" /> })));
+const OrdensProducao = lazy(() => import("./pages/producao/Ordens"));
 const Consignado = lazy(() => import("./pages/comercial/Consignado"));
 const Empresa = lazy(() => import("./pages/configuracoes/Empresa"));
 const Usuarios = lazy(() => import("./pages/configuracoes/Usuarios"));
@@ -75,6 +77,7 @@ function AuthenticatedRoutes() {
         <Route path="/estoque/alertas" element={<Alertas />} />
         <Route path="/estoque/compras" element={<Compras />} />
         {/* Produção */}
+        <Route path="/producao/ordens" element={<OrdensProducao />} />
         <Route path="/producao/jobs" element={<Jobs />} />
         <Route path="/producao/margem" element={<MargemSKU />} />
         <Route path="/producao/impressoras" element={<Impressoras />} />
@@ -86,6 +89,7 @@ function AuthenticatedRoutes() {
         <Route path="/comercial/produtos" element={<Produtos />} />
         <Route path="/comercial/orcamentos" element={<Orcamentos />} />
         <Route path="/comercial/pedidos" element={<Pedidos />} />
+        <Route path="/cadastros/fornecedores" element={<Fornecedores />} />
         <Route path="/comercial/clientes" element={<Clientes />} />
         <Route path="/comercial/consignado" element={<Consignado />} />
         <Route path="/comercial/marketplaces" element={<ModulePlaceholder />} />

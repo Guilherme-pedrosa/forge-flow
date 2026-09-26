@@ -18,20 +18,20 @@ afterEach(cleanup);
 function mount(){render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><MemoryRouter><Produtos/></MemoryRouter></QueryClientProvider>);}
 describe('Cadastro real de produto com custo e estoque',()=>{
  it('salva custo em reais com vírgula, venda e estoque no mesmo pedido sem receita',async()=>{
-  mount();fireEvent.click(screen.getByRole('button',{name:'Novo Produto',exact:true}));
+  mount();fireEvent.click(screen.getByRole('button',{name:'Novo Produto'}));
   fireEvent.change(screen.getByLabelText('Nome *'),{target:{value:'Produto completo'}});
   fireEvent.change(screen.getByLabelText('Preço de custo (R$)'),{target:{value:'12,50'}});
   fireEvent.change(screen.getByLabelText('Preço unitário (R$)'),{target:{value:'25,00'}});
   fireEvent.change(screen.getByLabelText('Estoque inicial'),{target:{value:'20'}});
-  fireEvent.click(screen.getByRole('button',{name:'Criar',exact:true}));
+  fireEvent.click(screen.getByRole('button',{name:'Criar'}));
   await waitFor(()=>expect(mock.rpc).toHaveBeenCalledWith('save_product_with_photos',expect.objectContaining({p_product:expect.objectContaining({name:'Produto completo',manual_cost:12.5,cost_estimate:12.5,sale_price:25,stock:expect.objectContaining({current_stock:20,avg_cost:12.5,unit:'un'})})})));
  });
  it('permite mudar custo e saldo mesmo com composição configurada, sem sobrescrever pelo cálculo',async()=>{
   mock.existing=true;mount();fireEvent.click(await screen.findByText('Produto com receita'));
   const cost=screen.getByLabelText('Preço de custo (R$)');expect(cost).toBeEnabled();expect(cost).toHaveValue('10');
   fireEvent.change(cost,{target:{value:'15,75'}});fireEvent.change(screen.getByLabelText('Quantidade em estoque'),{target:{value:'24'}});
-  await waitFor(()=>expect(screen.getByRole('button',{name:'Salvar',exact:true})).toBeEnabled());
-  fireEvent.click(screen.getByRole('button',{name:'Salvar',exact:true}));
+  await waitFor(()=>expect(screen.getByRole('button',{name:'Salvar'})).toBeEnabled());
+  fireEvent.click(screen.getByRole('button',{name:'Salvar'}));
   await waitFor(()=>expect(mock.rpc).toHaveBeenCalledWith('save_product_with_photos',expect.objectContaining({p_product_id:'product',p_product:expect.objectContaining({manual_cost:15.75,stock:expect.objectContaining({current_stock:24,expected_stock:20,avg_cost:15.75})})})));
  });
 });

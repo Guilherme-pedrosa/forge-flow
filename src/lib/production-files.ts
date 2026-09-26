@@ -16,7 +16,7 @@ export interface ProductionRequirement {
 }
 export interface JobProductionReview {
   job_id: string; code: string; status: string; product_id: string | null; planned_quantity: number;
-  origin: "approved_order" | "catalog" | "reprint" | null; captured_at: string | null;
+  origin: "approved_order" | "production_order" | "catalog" | "reprint" | null; captured_at: string | null;
   file: ProductionPrintFile | null; file_options: ProductionPrintFile[];
   plate: { id: string; label: string; plate_index: number; units_per_plate: number } | null;
   printer: { id: string; name: string; model: string; status: string } | null;

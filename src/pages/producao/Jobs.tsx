@@ -3,7 +3,7 @@ import { ProductionTransitionDialog } from "@/components/production/ProductionTr
 import { ProductionFileDialog } from "@/components/production/ProductionFileDialog";
 import { ProductionRecipeSummary } from "@/components/production/ProductionRecipeSummary";
 import { readProductionRecipe, platesWithRecipe, jobRecipeMaterialCount } from "@/lib/production-files";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { estimateProductionCosts, productExtrasPerPiece, requiresProductionMeasurement, jobTransitions as nextStatuses, nonNegative } from "@/lib/production";
@@ -92,6 +92,8 @@ function JobStatusBadge({ status }: { status: JobStatus }) {
 // ── Main Component ──
 export default function Jobs() {
   const { profile } = useAuth();
+  const [params] = useSearchParams();
+  const productionOrderId = params.get("op");
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -194,6 +196,7 @@ export default function Jobs() {
 
   const filtered = useMemo(() => {
     return jobs.filter((j) => {
+      if (productionOrderId && j.production_order_id !== productionOrderId) return false;
       if (statusFilter !== "all" && j.status !== statusFilter) return false;
       if (search) {
         const q = search.toLowerCase();
@@ -205,7 +208,7 @@ export default function Jobs() {
       }
       return true;
     });
-  }, [jobs, statusFilter, search]);
+  }, [jobs, statusFilter, search, productionOrderId]);
 
   // ── Active KPIs ──
   const activeFilters: { status: StatusFilter; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
@@ -406,6 +409,8 @@ function CreateJobDialog({
   products: ProductRow[];
 }) {
   const { profile } = useAuth();
+  const [params] = useSearchParams();
+  const productionOrderId = params.get("op");
   const { toast } = useToast();
   const queryClient = useQueryClient();
 

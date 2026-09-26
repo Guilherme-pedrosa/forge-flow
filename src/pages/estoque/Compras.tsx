@@ -1,3 +1,5 @@
+import { PartnerDialog } from "@/components/comercial/PartnerDialog";
+import { InstallmentEditor, generateParts, validateParts, type PaymentPart } from "@/components/shared/InstallmentEditor";
 import { Link, useSearchParams } from "react-router-dom";
 import { DeleteRecordDialog, type DeleteTarget } from "@/components/shared/DeleteRecordDialog";
 import { QuickInventoryItem } from "@/components/estoque/QuickInventoryItem";
@@ -147,6 +149,10 @@ export default function Compras() {
   const [receiveNow, setReceiveNow] = useState(false);
   const [shipping, setShipping] = useState("");
   const [discount, setDiscount] = useState("");
+  const [taxes, setTaxes] = useState("");
+  const [invoiceNumber, setInvoiceNumber] = useState("");
+  const [paymentDays, setPaymentDays] = useState("");
+  const [paymentParts, setPaymentParts] = useState<PaymentPart[]>([]);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
@@ -167,6 +173,7 @@ export default function Compras() {
 
   // Manual create form
   const [vendorId, setVendorId] = useState("");
+  const [vendorOpen, setVendorOpen] = useState(false);
   const [orderDate, setOrderDate] = useState(localDate());
   const [expectedDate, setExpectedDate] = useState("");
   const [notes, setNotes] = useState("");
@@ -204,10 +211,11 @@ export default function Compras() {
     order.total = positiveMoney(order.total);
     order.additional_costs = money(order.additional_costs ?? 0);
     for (const field of ["subtotal", "shipping", "discount"]) { order[field] = money(order[field] ?? 0); if (order[field] < 0) throw new Error("Totais, frete e desconto não podem ser negativos."); }
-    const installments = monthlyInstallments(order.total, count, firstDue).map((part, i) => ({ ...part,
+    const schedule = key === "manual" ? validateParts(paymentParts.length ? paymentParts : generateParts(order.total, count, firstDue, paymentDays), order.total) : monthlyInstallments(order.total, count, firstDue);
+    const installments = schedule.map((part, i) => ({ ...part,
       description: `Compra${order.nfe_number ? ` NFe ${order.nfe_number}` : ""}${count > 1 ? ` (${i + 1}/${count})` : ""}`,
       competence_date: order.order_date, vendor_id: order.vendor_id, payment_method_id: method,
-      installment_number: i + 1, installment_total: count, notes: order.notes || null,
+      installment_number: i + 1, installment_total: schedule.length, notes: order.notes || null,
     }));
     const payload = JSON.stringify([order, items, installments]);
     let request = purchaseRequests.current.get(key);
@@ -241,7 +249,7 @@ export default function Compras() {
   const { data: inventoryItems = [], error: inventoryError, refetch: refetchInventory } = useQuery({
     queryKey: ["inventory_items", profile?.tenant_id, "purchase-selection"],
     queryFn: async () => {
-      const { data, error } = await (supabase.from("inventory_items") as any).select("id, name, sku, unit, category, material_code, color, color_code").eq("is_active", true).order("name");
+      const { data, error } = await (supabase.from("inventory_items") as any).select("id, name, sku, unit, category, material_code, color, color_code, avg_cost, current_stock").eq("is_active", true).order("name");
       if (error) throw error;
       return data;
     },
@@ -293,12 +301,13 @@ export default function Compras() {
     if (found && openedPurchase.current !== id) { openedPurchase.current = id; setDetailOrder(found); }
   }, [params, orders]);
   const nextCode = "Gerado ao salvar";
+  const manualTotal = (() => { try { return money(manualItems.reduce((sum,i) => sum + money(Number(i.quantity.replace(",",".")) * Number(i.unitPrice.replace(",","."))),0) + money(shipping || 0) + money(taxes || 0) - money(discount || 0)); } catch { return 0; } })();
 
   const createMut = useMutation({
     mutationFn: async () => {
       const items = manualItems.filter(i => i.description.trim() || i.inventoryItemId).map(i => ({ description: i.description.trim(), quantity: Number(i.quantity.replace(",", ".")), unit_price: Number(i.unitPrice.replace(",", ".")), total: money(Number(i.quantity.replace(",", ".")) * Number(i.unitPrice.replace(",", "."))), inventory_item_id: i.inventoryItemId || null, stock_quantity: i.inventoryItemId ? purchaseStockQuantity(i.stockQuantity || "") : null }));
       const subtotal = money(items.reduce((sum, i) => sum + i.total, 0));
-      return persistPurchase("manual", { vendor_id: vendorId || null, order_date: orderDate, expected_date: expectedDate || null, subtotal, discount: money(discount || 0), shipping: money(shipping || 0), total: money(subtotal + money(shipping || 0) - money(discount || 0)), receive_now: receiveNow, notes: notes.trim() || null }, items, Number(installments), dueDate || expectedDate || orderDate, paymentMethodId || null);
+      return persistPurchase("manual", { vendor_id: vendorId || null, order_date: orderDate, expected_date: expectedDate || null, subtotal, discount: money(discount || 0), shipping: money(shipping || 0), additional_costs: money(taxes || 0), nfe_number: invoiceNumber.trim() || null, total: money(subtotal + money(shipping || 0) + money(taxes || 0) - money(discount || 0)), receive_now: receiveNow, notes: notes.trim() || null }, items, Number(installments), dueDate || expectedDate || orderDate, paymentMethodId || null);
     },
     onSuccess: () => {
       purchaseRequests.current.delete("manual");
@@ -308,7 +317,7 @@ export default function Compras() {
       qc.invalidateQueries({ queryKey: ["accounts_payable"] });
       setCreateOpen(false);
       resetForm();
-      toast({ title: "Pedido de compra criado", description: "Vincule os itens ao estoque e clique em 'Receber' quando o pedido chegar." });
+      toast({ title: "Pedido de compra criado", description: receiveNow ? "Estoque atualizado e parcelas lançadas no financeiro." : "Parcelas lançadas. Use Receber quando a mercadoria chegar." });
     },
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
   });
@@ -403,7 +412,7 @@ export default function Compras() {
     setExpectedDate("");
     setNotes("");
     setPaymentMethodId("");
-    setInstallments("1");
+    setInstallments("1"); setPaymentParts([]); setPaymentDays(""); setTaxes(""); setInvoiceNumber("");
     setDueDate("");
     setManualItems([{ description: "", quantity: "1", unitPrice: "0", inventoryItemId: "" }]);
   };
@@ -433,7 +442,7 @@ export default function Compras() {
     updated[idx] = { ...updated[idx], [field]: value, ...(["quantity", "inventoryItemId"].includes(field) ? { stockQuantity: "" } : {}) };
     if (field === "inventoryItemId") {
       const item = inventoryItems.find(inv => inv.id === value);
-      if (item) { if (!updated[idx].description.trim()) updated[idx].description = item.name; if (item.unit === "un") updated[idx].stockQuantity = updated[idx].quantity; }
+      if (item) { if (!updated[idx].description.trim() || updated[idx].description === inventoryItems.find(inv => inv.id === manualItems[idx].inventoryItemId)?.name) updated[idx].description = item.name; if (item.unit === "un" && Number(updated[idx].unitPrice) === 0) updated[idx].unitPrice = String(item.avg_cost ?? 0); if (item.unit === "un") updated[idx].stockQuantity = updated[idx].quantity; }
     }
     if (field === "quantity" && inventoryItems.find(inv => inv.id === updated[idx].inventoryItemId)?.unit === "un") updated[idx].stockQuantity = value;
     setManualItems(updated);
@@ -714,15 +723,16 @@ export default function Compras() {
 
       {/* Create Manual Dialog */}
       <Dialog open={createOpen} onOpenChange={v => !createMut.isPending && setCreateOpen(v)}>
-        <DialogContent className="max-w-4xl max-h-[90dvh] overflow-y-auto">
+        <DialogContent className="flex h-[94dvh] w-[96vw] max-w-6xl flex-col">
           <DialogHeader>
             <DialogTitle>Nova Compra</DialogTitle>
             <DialogDescription>Código: {nextCode}</DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4 max-h-[60vh] overflow-y-auto pr-1">
+          <div className="grid min-h-0 flex-1 gap-6 overflow-y-auto pr-1">
+            <h3 className="font-semibold">Dados da compra</h3>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label>Fornecedor</Label>
+                <div className="flex items-center justify-between"><Label>Fornecedor</Label><Button type="button" size="sm" variant="link" onClick={() => setVendorOpen(true)}>Cadastrar fornecedor</Button></div>
                 <Select value={vendorId} onValueChange={setVendorId}>
                   <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
                   <SelectContent>
@@ -738,29 +748,7 @@ export default function Compras() {
                 <Label>Previsão de Entrega</Label>
                 <Input type="date" value={expectedDate} onChange={(e) => setExpectedDate(e.target.value)} />
               </div>
-              <div>
-                <Label>Forma de Pagamento</Label>
-                <Select value={paymentMethodId} onValueChange={setPaymentMethodId}>
-                  <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                  <SelectContent>
-                    {paymentMethods.map((pm: any) => <SelectItem key={pm.id} value={pm.id}>{pm.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>Parcelas</Label>
-                <Select value={installments} onValueChange={setInstallments}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {[1,2,3,4,5,6,7,8,9,10,11,12].map(n => <SelectItem key={n} value={String(n)}>{n}x</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>Vencimento 1ª parcela</Label>
-                <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
-                <p className="text-xs text-muted-foreground mt-1">Parcelas mensais no mesmo dia, ajustado ao último dia do mês</p>
-              </div>
+              <div><Label htmlFor="purchase-invoice">Número da nota fiscal</Label><Input id="purchase-invoice" value={invoiceNumber} onChange={e => setInvoiceNumber(e.target.value)}/></div>
             </div>
 
             <div>
@@ -770,7 +758,7 @@ export default function Compras() {
               </div>
               <div className="space-y-2">
                 {manualItems.map((item, idx) => (
-                  <div key={idx} className="grid grid-cols-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_100px_120px_32px] gap-2 items-end rounded-lg border p-3 sm:border-0 sm:p-0">
+                  <div key={idx} className="grid grid-cols-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_90px_105px_105px_32px] gap-2 items-end rounded-lg border p-3 sm:border-0 sm:p-0">
                     <div>
                       <Label className="text-xs">Descrição</Label>
                       <Input aria-label={`Descrição do item ${idx + 1}`} value={item.description} onChange={(e) => updateManualItem(idx, "description", e.target.value)} placeholder="Material..." />
@@ -782,26 +770,36 @@ export default function Compras() {
                     </div>
                     <div>
                       <Label className="text-xs">Quantidade comprada</Label>
-                      <Input aria-label={`Quantidade comprada do item ${idx + 1}`} type="number" value={item.quantity} onChange={(e) => updateManualItem(idx, "quantity", e.target.value)} />
+                      <Input aria-label={`Quantidade comprada do item ${idx + 1}`} inputMode="decimal" value={item.quantity} onChange={(e) => updateManualItem(idx, "quantity", e.target.value)} />
                     </div>
                     <div>
                       <Label className="text-xs">Preço unitário</Label>
                       <Input aria-label={`Preço unitário do item ${idx + 1}`} type="number" step="0.01" value={item.unitPrice} onChange={(e) => updateManualItem(idx, "unitPrice", e.target.value)} />
                     </div>
+                    <div className="pb-2 text-right"><Label className="text-xs">Subtotal</Label><p className="font-medium">{fmtCurrency(Number(item.quantity.replace(",",".")) * Number(item.unitPrice.replace(",",".")))}</p><span className="text-xs text-muted-foreground">{inventoryItems.find(inv => inv.id === item.inventoryItemId)?.unit || "un"}</span></div>
                     <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => removeManualItem(idx)} disabled={manualItems.length <= 1}>
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                     <div className="col-span-full"><Button type="button" size="sm" variant="link" className="h-8 px-0" disabled={createMut.isPending} onClick={() => setQuickItemRow(idx)}>+ Cadastrar item</Button></div>
-                    {item.inventoryItemId && <div className="col-span-full rounded-md bg-muted/30 p-3"><PurchaseStockQuantity key={item.inventoryItemId} label={item.description || `item ${idx + 1}`} value={item.stockQuantity || ""} purchasedQuantity={Number(item.quantity.replace(",", "."))} stockUnit={inventoryItems.find(inv => inv.id === item.inventoryItemId)?.unit || "un"} onChange={value => updateManualItem(idx, "stockQuantity", value)} disabled={createMut.isPending} /></div>}
+                    {item.inventoryItemId && inventoryItems.find(inv => inv.id === item.inventoryItemId)?.unit !== "un" && <div className="col-span-full rounded-md bg-muted/30 p-3"><PurchaseStockQuantity key={item.inventoryItemId} label={item.description || `item ${idx + 1}`} value={item.stockQuantity || ""} purchasedQuantity={Number(item.quantity.replace(",", "."))} stockUnit={inventoryItems.find(inv => inv.id === item.inventoryItemId)?.unit || "un"} onChange={value => updateManualItem(idx, "stockQuantity", value)} disabled={createMut.isPending} /></div>}
                   </div>
                 ))}
               </div>
-              <p className="text-xs text-muted-foreground mt-2">
-                Total com frete e desconto: {fmtCurrency(manualItems.reduce((s, i) => s + Number((i.quantity || "0").replace(",", ".")) * Number((i.unitPrice || "0").replace(",", ".")), 0) + Number((shipping || "0").replace(",", ".")) - Number((discount || "0").replace(",", ".")))}
-              </p>
+              <p className="text-sm mt-2">Total da compra: <strong>{fmtCurrency(manualTotal)}</strong></p>
             </div>
 
             <div className="grid grid-cols-2 gap-3"><div><Label htmlFor="purchase-shipping">Frete (R$)</Label><Input id="purchase-shipping" inputMode="decimal" value={shipping} onChange={e => setShipping(e.target.value)} placeholder="0,00" /></div><div><Label htmlFor="purchase-discount">Desconto (R$)</Label><Input id="purchase-discount" inputMode="decimal" value={discount} onChange={e => setDiscount(e.target.value)} placeholder="0,00" /></div></div>
+            <div><Label htmlFor="purchase-taxes">Impostos e outras despesas (R$)</Label><Input id="purchase-taxes" inputMode="decimal" value={taxes} onChange={e => setTaxes(e.target.value)}/></div>
+            <section className="space-y-3"><h3 className="font-semibold">Condição de pagamento</h3>              <div>
+                <Label>Forma de Pagamento</Label>
+                <Select value={paymentMethodId} onValueChange={setPaymentMethodId}>
+                  <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
+                  <SelectContent>
+                    {paymentMethods.map((pm: any) => <SelectItem key={pm.id} value={pm.id}>{pm.name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+<InstallmentEditor total={manualTotal} firstDate={dueDate || expectedDate || orderDate} count={installments} days={paymentDays} parts={paymentParts} onFirstDate={setDueDate} onCount={setInstallments} onDays={setPaymentDays} onParts={setPaymentParts} disabled={createMut.isPending}/></section>
             <div className="flex items-center justify-between gap-3 rounded-lg border p-4"><div><Label htmlFor="purchase-receive-now">Receber os itens agora</Label><p className="text-xs text-muted-foreground">Ative se a mercadoria já chegou. Salva a compra, as parcelas e a entrada no estoque juntas.</p></div><Switch id="purchase-receive-now" checked={receiveNow} onCheckedChange={setReceiveNow} disabled={createMut.isPending} /></div>
             <div>
               <Label>Observações</Label>
@@ -1341,6 +1339,7 @@ export default function Compras() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <PartnerDialog kind="vendor" open={vendorOpen} onClose={() => setVendorOpen(false)} onSaved={id => setVendorId(id)} />
     </div>
   );
 }

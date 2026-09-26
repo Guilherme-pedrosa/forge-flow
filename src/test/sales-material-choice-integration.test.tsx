@@ -79,13 +79,16 @@ describe("cores preservadas nos itens comerciais", () => {
   });
   it("seleciona cor e preço no orçamento, envia apenas overrides e limpa a escolha ao trocar produto", async () => {
     mount("quote"); fireEvent.click(screen.getByRole("button", { name: "Novo orçamento" }));
-    await screen.findByRole("option", { name: "BASE · Base" });
-    fireEvent.change(screen.getByLabelText("Produto cadastrado"), { target: { value: "product-1" } });
+    fireEvent.click(screen.getByRole("combobox", { name: "Produto 1" }));
+    fireEvent.click(await screen.findByRole("option", { name: /BASE · Base/ }));
+    fireEvent.click(screen.getByText("Personalização 3D: material, cor e estimativa"));
     fireEvent.click(screen.getByRole("button", { name: "Selecionar azul" }));
     expect(screen.getByLabelText("Escolha preservada")).toHaveTextContent('"item_id":"blue"');
-    fireEvent.change(screen.getByLabelText("Produto cadastrado"), { target: { value: "product-2" } });
+    fireEvent.click(screen.getByRole("combobox", { name: "Produto 1" }));
+    fireEvent.click(await screen.findByRole("option", { name: /TAMPA · Tampa/ }));
     expect(screen.getByLabelText("Escolha preservada")).toHaveTextContent("[]");
-    fireEvent.change(screen.getByLabelText("Produto cadastrado"), { target: { value: "product-1" } });
+    fireEvent.click(screen.getByRole("combobox", { name: "Produto 1" }));
+    fireEvent.click(await screen.findByRole("option", { name: /BASE · Base/ }));
     fireEvent.click(screen.getByRole("button", { name: "Selecionar azul" })); fireEvent.click(screen.getByRole("button", { name: "Usar preço 25" }));
     fireEvent.click(screen.getByRole("button", { name: "Salvar rascunho" }));
     await waitFor(() => expect(savedPayload("save_sales_quote")).toBeDefined());

@@ -62,7 +62,7 @@ export function ProductionFileForm({ review, printers, tenantId, onBusy, onRefre
   };
   return <div className="space-y-5 min-w-0">
     <div className="rounded-xl border bg-muted/30 p-4 space-y-2 text-sm">
-      <p className="font-medium">{review.origin === "approved_order" ? "Receita preservada do pedido aprovado" : review.origin === "reprint" ? "Receita preservada da ordem original" : review.origin === "catalog" ? "Receita preservada na criação da ordem" : "Ordem sem receita congelada"}</p>
+      <p className="font-medium">{review.origin === "production_order" ? "Receita preservada na liberação da OP" : review.origin === "approved_order" ? "Receita preservada do pedido aprovado" : review.origin === "reprint" ? "Receita preservada da ordem original" : review.origin === "catalog" ? "Receita preservada na criação da ordem" : "Ordem sem receita congelada"}</p>
       {review.plate && <p>Placa {review.plate.plate_index} · {review.plate.label}</p>}
       <p>{quantity(review.planned_quantity)} unidade(s) planejada(s) · {currency(review.est_total_cost)} previsto.</p>
       <p className="text-xs text-muted-foreground">Alterar o catálogo depois não substitui os materiais, cores e custos desta ordem. O saldo abaixo é atual e ainda não está reservado.</p>

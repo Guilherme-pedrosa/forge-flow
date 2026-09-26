@@ -1409,6 +1409,7 @@ export type Database = {
       }
       customers: {
         Row: {
+          registration_details: Json
           address: Json | null
           birthday: string | null
           created_at: string
@@ -1423,6 +1424,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          registration_details?: Json
           address?: Json | null
           birthday?: string | null
           created_at?: string
@@ -1437,6 +1439,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          registration_details?: Json
           address?: Json | null
           birthday?: string | null
           created_at?: string
@@ -1462,6 +1465,7 @@ export type Database = {
       }
       inventory_items: {
         Row: {
+          max_stock: number
           avg_cost: number
           brand: string | null
           category: string
@@ -1492,6 +1496,7 @@ export type Database = {
           vendor_id: string | null
         }
         Insert: {
+          max_stock?: number
           avg_cost?: number
           brand?: string | null
           category?: string
@@ -1522,6 +1527,7 @@ export type Database = {
           vendor_id?: string | null
         }
         Update: {
+          max_stock?: number
           avg_cost?: number
           brand?: string | null
           category?: string
@@ -1692,6 +1698,8 @@ export type Database = {
       }
       jobs: {
         Row: {
+          production_order_id: string | null
+          production_order_item_id: string | null
           actual_energy_cost: number | null
           actual_extras_cost: number | null
           actual_grams: number | null
@@ -1756,6 +1764,8 @@ export type Database = {
           waste_grams: number | null
         }
         Insert: {
+          production_order_id?: string | null
+          production_order_item_id?: string | null
           actual_energy_cost?: number | null
           actual_extras_cost?: number | null
           actual_grams?: number | null
@@ -1820,6 +1830,8 @@ export type Database = {
           waste_grams?: number | null
         }
         Update: {
+          production_order_id?: string | null
+          production_order_item_id?: string | null
           actual_energy_cost?: number | null
           actual_extras_cost?: number | null
           actual_grams?: number | null
@@ -2650,6 +2662,7 @@ export type Database = {
       }
       products: {
         Row: {
+          catalog_details: Json
           manual_cost_override: number | null
           stock_item_id: string | null
           actual_print_cost_per_unit: number | null
@@ -2682,6 +2695,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          catalog_details?: Json
           manual_cost_override?: number | null
           stock_item_id?: string | null
           actual_print_cost_per_unit?: number | null
@@ -2714,6 +2728,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          catalog_details?: Json
           manual_cost_override?: number | null
           stock_item_id?: string | null
           actual_print_cost_per_unit?: number | null
@@ -3200,6 +3215,7 @@ export type Database = {
       }
       vendors: {
         Row: {
+          registration_details: Json
           address: Json | null
           created_at: string
           document: string | null
@@ -3213,6 +3229,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          registration_details?: Json
           address?: Json | null
           created_at?: string
           document?: string | null
@@ -3226,6 +3243,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          registration_details?: Json
           address?: Json | null
           created_at?: string
           document?: string | null
@@ -3375,6 +3393,9 @@ export type Database = {
       }
     }
     Functions: {
+
+      create_financial_installments: { Args: { p_kind:string;p_title:Json;p_parts:Json;p_request_id:string }; Returns: string }
+      post_inventory_batch: { Args: { p_movements:Json;p_request_id:string }; Returns: string }
 
       account_bambu_production: {
         Args: {

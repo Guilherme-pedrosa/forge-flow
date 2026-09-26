@@ -446,10 +446,16 @@ export default function Pedidos() {
   });
   const updateStatusMut = useMutation({
     mutationFn: async ({ id, status }: { id: string; status: string }) => {
+      if (status === "in_production") {
+        const result = await rpc("request_production_order", { p_order_id: id, p_quote_id: null, p_request_id: crypto.randomUUID() });
+        if (result.error) throw new Error(result.error.message);
+        if (!result.data) throw new Error("A ordem de produção não foi confirmada.");
+        return String(result.data);
+      }
       const { error } = await rpc("transition_sales_order", { p_order_id: id, p_status: status });
       if (error) throw new Error(error.message);
     },
-    onSuccess: () => { invalidateOrder(); toast({ title: "Pedido atualizado", description: "Produção e financeiro foram conferidos na mesma operação." }); },
+    onSuccess: (op) => { invalidateOrder(); if (op) { navigate(`/producao/ordens?op=${op}`); return; } toast({ title: "Venda atualizada" }); },
     onError: (error: Error) => toast({ title: "Não foi possível avançar", description: error.message, variant: "destructive" }),
   });
   const updateOrderMut = useMutation({

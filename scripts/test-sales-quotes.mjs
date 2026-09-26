@@ -58,10 +58,14 @@ await test('Drafts keep missing price and incomplete BOM unknown and cannot be i
   const i=await row('SELECT estimated_unit_cost,product_snapshot FROM sales_quote_items WHERE quote_id=$1',[q]);assert.equal(i.estimated_unit_cost,null);assert.equal(i.product_snapshot.complete,false);
   await assert.rejects(issue(q),/preços|total positivo/);assert.equal(await scalar('SELECT status FROM sales_quotes WHERE id=$1',[q]),'draft');
 });
-await test('Known sale price cannot hide missing material or unconfirmed nonmaterial cost',async()=>{
-  const {q,p}=await quoted({ready:false});await assert.rejects(issue(q),/Complete material/);
-  await makeRecipe(p,50,null);await assert.rejects(issue(q),/Complete material/);
+await test('A priced commercial quote can be issued without material or production cost and creates no finance',async()=>{
+  const {q}=await quoted({ready:false}); await issue(q); await approve(q);
+  assert.equal(await scalar('SELECT status FROM sales_quotes WHERE id=$1',[q]),'approved');
   assert.equal(await scalar('SELECT count(*)::integer FROM accounts_receivable'),0);
+  const op=await scalar('SELECT request_production_order($1,NULL,$2)',[q,next()]);
+  assert.equal((await scalar('SELECT production_order_preflight($1)',[op])).ready,false);
+  await assert.rejects(scalar('SELECT release_production_order($1)',[op]),/Prepare/);
+  assert.equal(await scalar('SELECT count(*)::integer FROM jobs WHERE production_order_id=$1',[op]),0);
 });
 await test('Saving and issuing a complete quote create neither order nor receivable',async()=>{
   const before=await scalar('SELECT count(*)::integer FROM orders');const {q,args}=await quoted();assert.equal(await scalar('SELECT save_sales_quote($1,$2::jsonb,$3::jsonb,$4)',args),q);
@@ -144,25 +148,31 @@ await test('Nested kit and multiple plates preserve full physical quantities, co
 });
 
 
-await test('A newly created direct sale cannot bypass the complete material recipe requirement',async()=>{
+await test('A direct sale can be approved without a recipe while physical production requires preparation',async()=>{
   const p=await product();
   const order=await scalar('SELECT save_sales_order(NULL,$1::jsonb,$2::jsonb,$3)',[JSON.stringify({customer_id:customer,payment_due_date:future,total:20,discount:0,shipping:0}),JSON.stringify([{product_id:p,description:'Unconfigured new sale',quantity:2,unit_price:10,total:20}]),next()]);
-  assert.equal(await scalar('SELECT requires_material_recipe FROM orders WHERE id=$1',[order]),true);
-  await assert.rejects(scalar("SELECT transition_sales_order($1,'approved')",[order]),/composição|receita/);
-  assert.equal(await scalar('SELECT status FROM orders WHERE id=$1',[order]),'draft');assert.equal(await scalar("SELECT count(*)::integer FROM accounts_receivable WHERE origin_type='order' AND origin_id=$1",[order]),0);
+  await scalar("SELECT transition_sales_order($1,'approved')",[order]);
+  assert.equal(await scalar('SELECT status FROM orders WHERE id=$1',[order]),'approved');
+  assert.equal(await scalar("SELECT count(*)::integer FROM accounts_receivable WHERE origin_type='order' AND origin_id=$1",[order]),1);
+  await assert.rejects(scalar("SELECT transition_sales_order($1,'in_production')",[order]),/Prepare/);
+  assert.equal(await scalar('SELECT count(*)::integer FROM jobs WHERE order_id=$1',[order]),0);
 });
-
-await test('Missing print duration preserves a draft and blocks emission without creating finance',async()=>{
-  const {q,p}=await quoted();await owner(()=>db.query('UPDATE products SET est_time_minutes=0 WHERE id=$1',[p]));
-  const before=await scalar('SELECT count(*)::integer FROM accounts_receivable');await assert.rejects(issue(q),/tempo por impressão/);
-  assert.equal(await scalar('SELECT status FROM sales_quotes WHERE id=$1',[q]),'draft');assert.equal(await scalar('SELECT count(*)::integer FROM accounts_receivable'),before);
-  await owner(()=>db.query('UPDATE products SET est_time_minutes=15 WHERE id=$1',[p]));await issue(q);
+await test('Missing print duration does not block a commercial offer and is completed in the OP',async()=>{
+  const p=await product(); await owner(()=>db.query('UPDATE products SET est_time_minutes=0 WHERE id=$1',[p]));
+  const {q}=await quoted({p}); const before=await scalar('SELECT count(*)::integer FROM accounts_receivable');
+  await issue(q);await approve(q);const op=await scalar('SELECT request_production_order($1,NULL,$2)',[q,next()]);
+  await assert.rejects(scalar('SELECT release_production_order($1)',[op]),/tempo por impressão/);
+  assert.equal(await scalar('SELECT count(*)::integer FROM accounts_receivable'),before);
+  await owner(()=>db.query('UPDATE products SET est_time_minutes=15 WHERE id=$1',[p]));
+  await scalar('SELECT refresh_production_preparation($1)',[op]);await scalar('SELECT release_production_order($1)',[op]);
+  assert.equal(await scalar('SELECT est_time_minutes FROM jobs WHERE production_order_id=$1 LIMIT 1',[op]),15);
+  assert.equal((await scalar('SELECT product_snapshot FROM sales_quote_items WHERE quote_id=$1',[q])).product.est_time_minutes,0);
 });
 await test('A missing duration in a nested plate is rejected recursively',async()=>{
   const p=await product();const plate=await scalar('SELECT save_product_print_plate(NULL,$1,NULL,$2::jsonb)',[p,JSON.stringify({plate_index:1,label:'Untimed base',units_per_plate:2,material_id:material,est_grams:100,est_time_seconds:null,est_cost_per_unit:3})]);
   await scalar("SELECT save_product_material_recipe($1,$2,'per_unit',$3::jsonb,NULL,$4,2)",[p,plate,JSON.stringify([{item_id:material,grams:50}]),next()]);
   const kit=await scalar("SELECT save_product_with_photos(NULL,$1::jsonb,'[]',$2)",[JSON.stringify({name:'Untimed kit',prints_per_plate:1,extras:[{_kit_product_id:p,_kit_qty:2}],sale_price:30}),next()]);
-  const {q}=await quoted({p:kit,ready:false});await assert.rejects(issue(q),/tempo por impressão da placa Untimed base/);assert.equal(await scalar('SELECT status FROM sales_quotes WHERE id=$1',[q]),'draft');
+  const {q}=await quoted({p:kit,ready:false});await issue(q);await approve(q);const op=await scalar('SELECT request_production_order($1,NULL,$2)',[q,next()]);await assert.rejects(scalar('SELECT release_production_order($1)',[op]),/tempo por impressão da placa Untimed base/);assert.equal(await scalar('SELECT status FROM sales_quotes WHERE id=$1',[q]),'approved');
 });
 
 await test('A null order transition never generates production or changes the approved sale',async()=>{
@@ -171,13 +181,80 @@ await test('A null order transition never generates production or changes the ap
   assert.equal(await scalar('SELECT status FROM orders WHERE id=$1',[order]),'approved');assert.equal(await scalar('SELECT count(*)::integer FROM jobs WHERE order_id=$1',[order]),0);
   assert.equal(await scalar("SELECT count(*)::integer FROM accounts_receivable WHERE origin_type='order' AND origin_id=$1",[order]),1);
 });
-await test('A mixed legacy draft cannot approve one configured item while leaving another without a frozen recipe',async()=>{
+await test('Legacy commercial drafts also approve with mixed preparation without manufacturing side effects',async()=>{
   const a=await product(),b=await product();await makeRecipe(a);
   const order=await scalar('SELECT save_sales_order(NULL,$1::jsonb,$2::jsonb,$3)',[JSON.stringify({customer_id:customer,payment_due_date:future,total:20,discount:0,shipping:0}),JSON.stringify([{product_id:a,description:'Configured item',quantity:1,unit_price:10,total:10},{product_id:b,description:'Unconfigured legacy item',quantity:1,unit_price:10,total:10}]),next()]);
   await owner(()=>db.query('UPDATE orders SET requires_material_recipe=false WHERE id=$1',[order]));
-  await assert.rejects(scalar("SELECT transition_sales_order($1,'approved')",[order]),/composição|receita/);
-  assert.equal(await scalar('SELECT status FROM orders WHERE id=$1',[order]),'draft');assert.equal(await scalar('SELECT count(*)::integer FROM order_items WHERE order_id=$1 AND product_snapshot IS NOT NULL',[order]),0);
-  assert.equal(await scalar("SELECT count(*)::integer FROM accounts_receivable WHERE origin_type='order' AND origin_id=$1",[order]),0);
+  await scalar("SELECT transition_sales_order($1,'approved')",[order]);
+  assert.equal(await scalar('SELECT status FROM orders WHERE id=$1',[order]),'approved');assert.equal(await scalar('SELECT count(*)::integer FROM order_items WHERE order_id=$1 AND product_snapshot IS NOT NULL',[order]),0);
+  assert.equal(await scalar("SELECT count(*)::integer FROM accounts_receivable WHERE origin_type='order' AND origin_id=$1",[order]),1);
+});
+
+await test('Quote to OP is financial-free, idempotent, releasable once and reuses jobs when later sold',async()=>{
+  const {q}=await quoted({quantity:3});await issue(q);await approve(q);
+  const before=await scalar('SELECT count(*)::integer FROM accounts_receivable'), request=next();
+  const op=await scalar('SELECT request_production_order($1,NULL,$2)',[q,request]);
+  assert.equal(await scalar('SELECT request_production_order($1,NULL,$2)',[q,request]),op);
+  assert.equal(await scalar('SELECT request_production_order($1,NULL,$2)',[q,next()]),op);
+  assert.equal(await scalar('SELECT count(*)::integer FROM accounts_receivable'),before);
+  await scalar('SELECT release_production_order($1)',[op]);await scalar('SELECT release_production_order($1)',[op]);
+  assert.equal(await scalar('SELECT count(*)::integer FROM jobs WHERE production_order_id=$1',[op]),2);
+  const order=await convert(q);assert.equal(await convert(q),order);
+  assert.equal(await scalar('SELECT source_order_id FROM production_orders WHERE id=$1',[op]),order);
+  assert.equal(await scalar('SELECT count(*)::integer FROM jobs WHERE order_id=$1',[order]),2);
+  assert.equal(await scalar('SELECT status FROM orders WHERE id=$1',[order]),'in_production');
+  assert.equal(await scalar("SELECT count(*)::integer FROM accounts_receivable WHERE origin_type='order' AND origin_id=$1",[order]),1);
+  assert.equal(await scalar('SELECT request_production_order(NULL,$1,$2)',[order,next()]),op);
+  await assert.rejects(scalar("SELECT transition_production_order($1,'completed')",[op]),/Conclua/);
+  await assert.rejects(db.query('UPDATE jobs SET production_order_id=NULL WHERE production_order_id=$1',[op]),/Vínculos|alterad/);
+  await db.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[otherUid]);
+  assert.equal(await scalar('SELECT count(*)::integer FROM production_orders WHERE id=$1',[op]),0);
+  await assert.rejects(scalar('SELECT release_production_order($1)',[op]),/não encontrada/);
+  await db.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[uid]);
+});
+await test('Commercial manual cost stays separate from recipe and remains available in a quote',async()=>{
+  const p=await scalar("SELECT save_product_with_photos(NULL,$1::jsonb,'[]',$2)",[JSON.stringify({name:'Stock item',sale_price:20,manual_cost:5,stock:{current_stock:4,unit:'un',min_stock:0,avg_cost:5}}),next()]);
+  const {q}=await quoted({p,ready:false,quantity:3,price:20});await issue(q);await approve(q);
+  const item=await row('SELECT estimated_unit_cost,estimated_total_cost,product_snapshot FROM sales_quote_items WHERE quote_id=$1',[q]);
+  assert.equal(Number(item.estimated_unit_cost),5);assert.equal(Number(item.estimated_total_cost),15);assert.equal(item.product_snapshot.complete,false);
+  const order=await convert(q);await scalar('SELECT fulfill_order_from_stock($1)',[order]);
+  assert.equal(await scalar('SELECT status FROM orders WHERE id=$1',[order]),'ready');assert.equal(await scalar('SELECT count(*)::integer FROM jobs WHERE order_id=$1',[order]),0);
+});
+await test('A failure midway through OP job generation rolls back jobs and technical snapshots',async()=>{
+  const {q}=await quoted({quantity:3});await issue(q);await approve(q);const op=await scalar('SELECT request_production_order($1,NULL,$2)',[q,next()]);
+  await owner(()=>db.exec("CREATE FUNCTION qa_fail_op_job() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.order_unit_index=2 THEN RAISE EXCEPTION 'QA second job failure'; END IF;RETURN NEW;END $$;CREATE TRIGGER qa_fail_op_job BEFORE INSERT ON jobs FOR EACH ROW EXECUTE FUNCTION qa_fail_op_job();"));
+  await assert.rejects(scalar('SELECT release_production_order($1)',[op]),/QA second job/);
+  assert.equal(await scalar('SELECT count(*)::integer FROM jobs WHERE production_order_id=$1',[op]),0);
+  assert.equal(await scalar('SELECT status FROM production_orders WHERE id=$1',[op]),'preparing');
+  assert.equal(await scalar('SELECT count(*)::integer FROM production_order_items WHERE production_order_id=$1 AND production_snapshot IS NOT NULL',[op]),0);
+  await owner(()=>db.exec('DROP TRIGGER qa_fail_op_job ON jobs;DROP FUNCTION qa_fail_op_job();'));
+  await scalar('SELECT release_production_order($1)',[op]);
+});
+await test('Negotiated installments reach receivables exactly once and reject a mismatched sum',async()=>{
+  const parts=[{amount:7.01,due_date:today},{amount:14.99,due_date:future}];
+  const {q}=await quoted({fields:{payment_schedule:parts}});await issue(q);await approve(q);
+  const order=await convert(q);await convert(q);
+  const titles=(await db.query("SELECT amount,due_date::text FROM accounts_receivable WHERE origin_type='order' AND origin_id=$1 ORDER BY due_date",[order])).rows;
+  assert.deepEqual(titles.map(p=>({amount:Number(p.amount),due_date:p.due_date})),parts);
+  await assert.rejects(quoted({fields:{payment_schedule:[{amount:1,due_date:future}]}}),/soma das parcelas/);
+  await scalar("SELECT transition_sales_order($1,'cancelled')",[order]);
+  assert.equal(await scalar("SELECT count(*)::integer FROM accounts_receivable WHERE origin_id=$1 AND status='reversed'",[order]),2);
+});
+await test('Production preparation can reopen before release and blocks inactive products',async()=>{
+ const {q,p}=await quoted();await issue(q);await approve(q);const op=await scalar('SELECT request_production_order($1,NULL,$2)',[q,next()]);
+ await scalar("SELECT transition_production_order($1,'cancelled')",[op]);await assert.rejects(scalar('SELECT release_production_order($1)',[op]),/cancelada/);
+ await scalar("SELECT transition_production_order($1,'preparing')",[op]);
+ await db.query('UPDATE products SET is_active=false WHERE id=$1',[p]);
+ assert.equal((await scalar('SELECT production_order_preflight($1)',[op])).ready,false);
+ await assert.rejects(scalar('SELECT release_production_order($1)',[op]),/Reative/);
+ await db.query('UPDATE products SET is_active=true WHERE id=$1',[p]);await scalar('SELECT release_production_order($1)',[op]);
+ await assert.rejects(scalar('SELECT refresh_production_preparation($1)',[op]),/Somente/);
+});
+await test('An OP conserves discount cents across multiple distinct quote lines',async()=>{
+ const p=await product();await makeRecipe(p);const items=Array.from({length:3},(_,i)=>({product_id:p,description:'Small line '+i,quantity:1,unit_price:1,total:1}));
+ const q=await scalar('SELECT save_sales_quote(NULL,$1::jsonb,$2::jsonb,$3)',[JSON.stringify({customer_id:customer,total:2.99,discount:0.01,shipping:0,payment_due_date:future}),JSON.stringify(items),next()]);
+ await issue(q);await approve(q);const op=await scalar('SELECT request_production_order($1,NULL,$2)',[q,next()]);await scalar('SELECT release_production_order($1)',[op]);
+ assert.equal(Number(await scalar('SELECT sum(sale_price) FROM jobs WHERE production_order_id=$1',[op])),2.99);
 });
 console.log(`Validated ${passed} sales quotation scenarios.`);
 }finally{await db.close();}

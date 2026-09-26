@@ -61,6 +61,8 @@ export default function Movimentacoes() {
   // Form
   const [itemId, setItemId] = useState(itemFromLink || "");
   const [movementType, setMovementType] = useState<MovementType>("purchase_in");
+  const [direction, setDirection] = useState("in");
+  const [extraRows, setExtraRows] = useState<{itemId:string;quantity:string;unitCost:string}[]>([]);
   const [page, setPage] = useState(0);
   const [quantity, setQuantity] = useState("");
   const [unitCost, setUnitCost] = useState("");
@@ -113,17 +115,24 @@ export default function Movimentacoes() {
   const createMut = useMutation({
     mutationFn: async () => {
       if (!profile) throw new Error("Sem perfil");
-      const item = items.find(value => value.id === itemId);
-      if (!item) throw new Error("Selecione um item ativo.");
-      const amount = Number(quantity);
-      validateMovement(movementType, amount, item.current_stock, notes);
-      if (movementType === "purchase_in" && !unitCost.trim()) throw new Error("Informe o custo por unidade da entrada.");
-      const cost = unitCost.trim() ? nonNegative(unitCost, "Custo unitário") : null;
-      const movement = { item_id: itemId, movement_type: movementType, quantity: amount,
-        unit_cost: movementType === "purchase_in" ? cost : null, lot_number: lotNumber.trim() || null, notes: notes.trim() || null };
-      request.current = orderRequest(request.current, JSON.stringify(movement));
-      const rpc = supabase.rpc.bind(supabase) as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ error: { message: string } | null }>;
-      const { error } = await rpc("post_inventory_movement", { p_movement: movement, p_request_id: request.current.id });
+      const rows = [{itemId,quantity,unitCost}, ...extraRows];
+      if (new Set(rows.map(row => row.itemId)).size !== rows.length) throw new Error("Inclua cada item uma vez e some suas quantidades.");
+      const movements = rows.map(row => {
+        const item = items.find(value => value.id === row.itemId);
+        if (!item) throw new Error("Selecione um item ativo em cada linha.");
+        const qty = nonNegative(row.quantity, "Quantidade");
+        const amount = direction === "out" ? -qty : direction === "count" ? qty - item.current_stock : qty;
+        const type = direction === "in" ? "purchase_in" : "adjustment";
+        const reason = notes.trim() || (direction === "out" ? "Saída avulsa de estoque" : direction === "count" ? "Conferência de estoque" : "Entrada avulsa de estoque");
+        validateMovement(type, amount, item.current_stock, reason);
+        const cost = direction === "in" ? nonNegative(row.unitCost, "Custo unitário") : null;
+        return {item_id:row.itemId,movement_type:type,quantity:amount,unit_cost:cost,lot_number:lotNumber.trim() || null,notes:reason};
+      });
+      request.current = orderRequest(request.current, JSON.stringify(movements));
+      const rpc = supabase.rpc.bind(supabase) as unknown as (name:string,args:Record<string,unknown>) => PromiseLike<{error:{message:string}|null}>;
+      const {error} = movements.length === 1
+        ? await rpc("post_inventory_movement", {p_movement:movements[0],p_request_id:request.current.id})
+        : await rpc("post_inventory_batch", {p_movements:movements,p_request_id:request.current.id});
       if (error) throw new Error(error.message);
     },
     onSuccess: () => {
@@ -132,7 +141,7 @@ export default function Movimentacoes() {
       qc.invalidateQueries({ queryKey: ["inventory_items"] });
       qc.invalidateQueries({ queryKey: ["products"] });
       setCreateOpen(false);
-      setItemId(""); setQuantity(""); setUnitCost(""); setLotNumber(""); setNotes("");
+      setExtraRows([]); setItemId(""); setQuantity(""); setUnitCost(""); setLotNumber(""); setNotes("");
       toast({ title: "Movimentação registrada" });
     },
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
@@ -232,39 +241,32 @@ export default function Movimentacoes() {
       </div>
       {/* Create Dialog */}
       <Dialog open={createOpen} onOpenChange={open => { if (!createMut.isPending) setCreateOpen(open); }}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="flex max-h-[94dvh] w-[96vw] max-w-4xl flex-col">
           <DialogHeader>
             <DialogTitle>Nova Movimentação</DialogTitle>
             <DialogDescription>Entrada ou saída avulsa, sem gerar contas a pagar. Para registrar também a despesa, use Compras.</DialogDescription>
           </DialogHeader>
-          <div className="grid gap-4">
+          <div className="grid min-h-0 gap-4 overflow-y-auto pr-1">
             <div>
               <Label>Item *</Label>
               <SearchableItemSelect value={itemId} label="Item de estoque" emptyLabel="Selecione o item" options={items.map(item => ({ id: item.id, label: `${item.name} (${item.unit})` }))} onChange={id => { setItemId(id); const item = items.find(i => i.id === id); setUnitCost(item ? String(item.avg_cost) : ""); }} />
               <Button type="button" variant="link" className="px-0" onClick={() => setQuickItemOpen(true)}>+ Cadastrar item sem sair da entrada</Button>
             </div>
-            <div>
-              <Label>Tipo *</Label>
-              <Select value={movementType} onValueChange={(v) => setMovementType(v as MovementType)}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {Object.entries(typeLabels).filter(([key]) => key !== "job_consumption").map(([k, v]) => (
-                    <SelectItem key={k} value={k}>{v.label}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            <div><Label htmlFor="stock-operation">Movimentação</Label><select id="stock-operation" className="h-11 w-full rounded-md border bg-background px-3" value={direction} onChange={e => setDirection(e.target.value)}><option value="in">Entrada</option><option value="out">Saída</option><option value="count">Conferência de saldo</option></select></div>
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <Label>{movementType === "adjustment" ? "Diferença de estoque" : "Quantidade"} ({items.find(item => item.id === itemId)?.unit ?? "unidade"}) *</Label>
-                <Input type="number" step="0.01" value={quantity} onChange={(e) => setQuantity(e.target.value)} placeholder="1000" />
+                <Label>{direction === "count" ? "Quantidade contada" : "Quantidade"} ({items.find(item => item.id === itemId)?.unit ?? "unidade"}) *</Label>
+                <Input aria-label="Quantidade da movimentação" inputMode="decimal" value={quantity} onChange={(e) => setQuantity(e.target.value)} placeholder="1000" />
               </div>
               <div>
                 <Label>Custo (R$/{items.find(item => item.id === itemId)?.unit ?? "unidade"})</Label>
-                <Input disabled={movementType !== "purchase_in"} type="number" min="0" step="0.0001" value={unitCost} onChange={(e) => setUnitCost(e.target.value)} placeholder="0.08" />
+                <Input aria-label="Custo unitário da movimentação" disabled={direction !== "in"} inputMode="decimal" value={unitCost} onChange={(e) => setUnitCost(e.target.value)} placeholder="0.08" />
               </div>
             </div>
-            <p className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">{movementType === "adjustment" ? "Informe a diferença: +2 acrescenta duas unidades; -2 retira duas. O ajuste exige justificativa." : "A quantidade e o custo devem usar a unidade do item. Ex.: 1 kg a R$ 80/kg, ou 1.000 g a R$ 0,08/g."}</p>
+            <p className="rounded-lg bg-muted p-3 text-sm">Saldo atual: <strong>{items.find(item => item.id === itemId)?.current_stock ?? 0}</strong> · Saldo após salvar: <strong>{(() => {const current=items.find(item => item.id === itemId)?.current_stock ?? 0;const qty=Number(quantity.replace(",",".")) || 0;return direction === "count" ? qty : current + (direction === "out" ? -qty : qty);})()}</strong></p>
+            {extraRows.map((row,idx) => <div key={idx} className="grid gap-3 rounded-lg border p-3 sm:grid-cols-[1fr_120px_120px_auto]"><SearchableItemSelect label={`Item adicional ${idx+1}`} value={row.itemId} emptyLabel="Selecione outro produto" options={items.map(i => ({id:i.id,label:`${i.name} (${i.unit}) · saldo ${i.current_stock}`}))} onChange={id => setExtraRows(rows => rows.map((r,i) => i===idx ? {...r,itemId:id,unitCost:String(items.find(x=>x.id===id)?.avg_cost ?? 0)} : r))}/><Input aria-label={`Quantidade adicional ${idx+1}`} inputMode="decimal" placeholder="Quantidade" value={row.quantity} onChange={e => setExtraRows(rows => rows.map((r,i) => i===idx ? {...r,quantity:e.target.value} : r))}/><Input aria-label={`Custo adicional ${idx+1}`} inputMode="decimal" disabled={direction!=="in"} value={row.unitCost} onChange={e => setExtraRows(rows => rows.map((r,i) => i===idx ? {...r,unitCost:e.target.value} : r))}/><Button variant="ghost" onClick={() => setExtraRows(rows => rows.filter((_,i)=>i!==idx))}>Remover</Button></div>)}
+            <Button type="button" variant="outline" onClick={() => setExtraRows(rows => [...rows,{itemId:"",quantity:"1",unitCost:"0"}])}>Adicionar outro produto</Button>
+
             <div>
               <Label>Lote</Label>
               <Input value={lotNumber} onChange={(e) => setLotNumber(e.target.value)} placeholder="LOT-2026-03" />

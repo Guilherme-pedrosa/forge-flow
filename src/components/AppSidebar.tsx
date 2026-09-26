@@ -12,7 +12,7 @@ interface AppSidebarProps { collapsed: boolean; onToggle: () => void; mobileOpen
 export function AppSidebar({ collapsed, onToggle, mobileOpen, onMobileClose }: AppSidebarProps) {
   const location = useLocation();
   const { profile, signOut } = useAuth();
-  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({ "Operação": true, "Financeiro": true });
+  const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({ "Início": true, "Cadastros": true, "Comercial": true, "Produção 3D": true });
   useEffect(() => {
     const active = navigationGroups.find(group => group.items.some(item => item.href === location.pathname));
     if (active) setOpenGroups(previous => ({ ...previous, [active.label]: true }));

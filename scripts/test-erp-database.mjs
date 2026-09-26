@@ -602,6 +602,58 @@ await test('Stock sale shortage rolls back all stock, allocations and financial 
  assert.equal(await scalar('SELECT count(*)::int FROM order_stock_allocations WHERE order_id=$1',[order.id]),0);
  assert.equal(await scalar('SELECT status FROM orders WHERE id=$1',[order.id]),'draft');
 });
+
+await test('Catalogue preserves purchase cost, expenses, final cost, barcode and stock limits',async()=>{
+ const payload={name:'Custos detalhados',manual_cost:115,cost_estimate:115,sale_price:172.5,catalog_details:{base_cost:100,accessory_cost:10,other_cost:5,barcode:'7891234567890'},stock:{current_stock:2,avg_cost:115,min_stock:1,max_stock:10}};
+ const req=requestId();const product=await saveProduct(payload,[],null,req);
+ const details=await scalar('SELECT catalog_details FROM products WHERE id=$1',[product]);assert.equal(details.base_cost,100);assert.equal(details.accessory_cost,10);
+ const item=await scalar('SELECT stock_item_id FROM products WHERE id=$1',[product]);assert.equal(Number(await scalar('SELECT max_stock FROM inventory_items WHERE id=$1',[item])),10);
+ await saveProduct({...payload,manual_cost:120,cost_estimate:120,catalog_details:{...payload.catalog_details,other_cost:10},stock:{max_stock:12}},[],product);
+ assert.equal(await saveProduct(payload,[],null,req),product);
+ assert.equal(Number(await scalar('SELECT cost_estimate FROM products WHERE id=$1',[product])),120);
+ assert.equal(Number(await scalar('SELECT max_stock FROM inventory_items WHERE id=$1',[item])),12);
+ await rejects("SELECT save_product_with_photos(NULL,$1::jsonb,'[]'::jsonb,$2)",[JSON.stringify({...payload,manual_cost:99}),requestId()],/custo final/);
+});
+await test('Batch inventory entry retries once and a later shortage rolls back earlier lines',async()=>{
+ const a=await makeMaterial('Lote A');const b=await makeMaterial('Lote B');
+ const rows=[{item_id:a,movement_type:'purchase_in',quantity:5,unit_cost:2},{item_id:b,movement_type:'purchase_in',quantity:3,unit_cost:4}];const req=requestId();
+ await scalar('SELECT post_inventory_batch($1::jsonb,$2)',[JSON.stringify(rows),req]);await scalar('SELECT post_inventory_batch($1::jsonb,$2)',[JSON.stringify(rows),req]);
+ assert.equal(Number(await scalar('SELECT current_stock FROM inventory_items WHERE id=$1',[a])),5);
+ await rejects('SELECT post_inventory_batch($1::jsonb,$2)',[JSON.stringify([{item_id:a,movement_type:'adjustment',quantity:-2,notes:'Saída'},{item_id:b,movement_type:'adjustment',quantity:-4,notes:'Saída'}]),requestId()],/saldo|estoque|insuficiente/i);
+ assert.equal(Number(await scalar('SELECT current_stock FROM inventory_items WHERE id=$1',[a])),5);
+ assert.equal(Number(await scalar('SELECT current_stock FROM inventory_items WHERE id=$1',[b])),3);
+});
+await test('Custom financial installments persist exact dates and amounts without duplication',async()=>{
+ const title={description:'Parcelas livres',amount:100,competence_date:today};const parts=[{amount:40,due_date:today},{amount:60,due_date:'2026-12-15'}];const req=requestId();
+ const args=['payable',JSON.stringify(title),JSON.stringify(parts),req];const first=await scalar('SELECT create_financial_installments($1,$2::jsonb,$3::jsonb,$4)',args);
+ assert.equal(await scalar('SELECT create_financial_installments($1,$2::jsonb,$3::jsonb,$4)',args),first);
+ assert.equal(await scalar("SELECT count(*)::int FROM accounts_payable WHERE description LIKE 'Parcelas livres%'"),2);
+ assert.equal(Number(await scalar("SELECT amount FROM accounts_payable WHERE description='Parcelas livres (2/2)'")),60);
+ await rejects('SELECT create_financial_installments($1,$2::jsonb,$3::jsonb,$4)',['payable',JSON.stringify({...title,description:'Total inválido',amount:99}),JSON.stringify(parts),requestId()],/soma/);
+ assert.equal(await scalar("SELECT count(*)::int FROM accounts_payable WHERE description LIKE 'Total inválido%'"),0);
+ await scalar('SELECT create_financial_installments($1,$2::jsonb,$3::jsonb,$4)',['receivable',JSON.stringify({...title,description:'Recebimento parcelado'}),JSON.stringify(parts),requestId()]);
+ assert.equal(await scalar("SELECT count(*)::int FROM accounts_receivable WHERE description LIKE 'Recebimento parcelado%'"),2);
+});
+await test('Complete customer and vendor registration preserves contacts, blocks stale edits and deletes only unused records',async()=>{
+ const details={person_type:'company',trade_name:'Filamentos',mobile:'11999990000',addresses:[{street:'Rua A',number:'12',city:'São Paulo',state:'SP'}],contacts:[{name:'Compras',email:'compras@example.test'}]};
+ const data={name:'Fornecedor completo',registration_details:details,address:details.addresses[0],is_active:true};
+ const request=requestId();const args=['vendor',null,JSON.stringify(data),request];
+ const vendor=await scalar('SELECT save_partner($1,$2,$3::jsonb,$4)',args);
+ assert.equal(await scalar('SELECT save_partner($1,$2,$3::jsonb,$4)',args),vendor);
+ assert.deepEqual(await scalar('SELECT registration_details FROM vendors WHERE id=$1',[vendor]),details);
+ const stamp=await scalar('SELECT updated_at::text FROM vendors WHERE id=$1',[vendor]);
+ await rejects('SELECT save_partner($1,$2,$3::jsonb,$4)',['vendor',vendor,JSON.stringify({...data,name:'Stale',expected_updated_at:'2000-01-01'}),requestId()],/alterado/);
+ await scalar('SELECT save_partner($1,$2,$3::jsonb,$4)',['vendor',vendor,JSON.stringify({...data,name:'Fornecedor editado',expected_updated_at:stamp}),requestId()]);
+ await db.query("INSERT INTO accounts_payable(tenant_id,vendor_id,description,amount,due_date) VALUES($1,$2,'Vendor invoice',10,CURRENT_DATE)",[tenant,vendor]);
+ await rejects("SELECT delete_partner('vendor',$1)",[vendor],/Inativar/);
+ const customer=await scalar('SELECT save_partner($1,NULL,$2::jsonb,$3)',['customer',JSON.stringify({...data,name:'Cliente sem histórico',birthday:'2000-02-20'}),requestId()]);
+ assert.equal(await scalar('SELECT birthday::text FROM customers WHERE id=$1',[customer]),'2000-02-20');
+ await scalar("SELECT delete_partner('customer',$1)",[customer]);assert.equal(await scalar('SELECT count(*)::int FROM customers WHERE id=$1',[customer]),0);
+ await db.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[otherUid]);
+ await rejects("SELECT delete_partner('vendor',$1)",[vendor],/não encontrado/);
+ await db.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[viewerUid]);
+ await rejects('SELECT save_partner($1,NULL,$2::jsonb,$3)',['vendor',JSON.stringify(data),requestId()],/permissão/);
+});
 console.log(`Validated ${passed} PostgreSQL ERP scenarios.`);
 await db.close();
 if(failures.length) { console.error(`${failures.length} scenario(s) failed.`); for(const {name,error} of failures) console.error(name+'\n'+(error.stack?.split('\n').slice(0,5).join('\n') ?? error)); process.exitCode=1; }

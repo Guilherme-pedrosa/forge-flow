@@ -11,6 +11,7 @@ export interface QuoteRow extends Record<string, unknown> {
   valid_until: string | null; due_date: string | null; payment_due_date: string | null;
   subtotal: number | null; discount: number; shipping: number; total: number | null;
   notes: string | null; rejection_reason: string | null; order_id: string | null;
+  payment_schedule?: { amount: number; due_date: string; payment_method_id?: string | null }[];
   issued_at: string | null; approved_at: string | null; rejected_at: string | null; converted_at: string | null; created_at: string; updated_at: string;
 }
 export interface QuoteItem extends Record<string, unknown> {
@@ -37,7 +38,7 @@ export function prepareQuote(lines: QuoteDraftLine[], freight: string, discount:
   return { items, shipping, discount: discountValue, subtotal, total: subtotal == null ? null : roundMoney(subtotal - discountValue + shipping) };
 }
 export function quoteCostSummary(items: QuoteItem[], quote: Pick<QuoteRow, "subtotal" | "discount">) {
-  const incomplete = !items.length || items.some(item => item.product_snapshot.complete !== true || item.estimated_total_cost == null || !Number.isFinite(Number(item.estimated_total_cost)) || Number(item.estimated_total_cost) < 0);
+  const incomplete = !items.length || items.some(item => (item.product_snapshot.complete !== true && item.product_snapshot.commercial_cost == null) || item.estimated_total_cost == null || !Number.isFinite(Number(item.estimated_total_cost)) || Number(item.estimated_total_cost) < 0);
   const cost = incomplete ? null : roundMoney(items.reduce((sum, item) => sum + Number(item.estimated_total_cost), 0));
   const revenue = quote.subtotal == null ? null : roundMoney(quote.subtotal - quote.discount);
   const result = cost == null || revenue == null ? null : roundMoney(revenue - cost);

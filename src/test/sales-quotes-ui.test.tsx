@@ -27,39 +27,45 @@ describe("quotation workflow", () => {
     mock.item.description = '<script>alert("unsafe")</script>';
     const write = vi.fn(); const print = vi.fn();
     vi.spyOn(window, "open").mockReturnValue({ document: { write, close: vi.fn() }, focus: vi.fn(), print } as unknown as Window);
-    mount(); fireEvent.click(await screen.findByRole("button", { name: /ORC-001/ }));
+    mount(); fireEvent.click(await screen.findByRole("button", { name: /Abrir ORC-001/ }));
     fireEvent.click(await screen.findByRole("button", { name: "Imprimir" }));
     expect(write).toHaveBeenCalledOnce(); const html = write.mock.calls[0][0];
     expect(html).toContain("&lt;script&gt;"); expect(html).not.toContain("<script>"); expect(html).not.toContain("Previsão interna"); expect(html).not.toContain("estimated_total_cost"); expect(html).toContain("Ana Cliente"); expect(html).toContain("PLA · Preto"); expect(print).toHaveBeenCalledOnce();
   });
   it("saves a draft from catalogue products without accepting a client-forged cost snapshot", async () => {
     mount(); fireEvent.click(screen.getByRole("button", { name: "Novo orçamento" }));
-    await screen.findByRole("option", { name: "BASE · Base" });
-    fireEvent.change(screen.getByLabelText("Cliente"), { target: { value: "customer-1" } });
-    fireEvent.change(screen.getByLabelText("Produto cadastrado"), { target: { value: "product-1" } });
+    fireEvent.click(screen.getByRole("combobox", { name: "Cliente do orçamento" }));
+    fireEvent.click(await screen.findByRole("option", { name: /Ana Cliente/ }));
+    await waitFor(() => expect(screen.getByRole("combobox", { name: "Cliente do orçamento" })).toHaveTextContent("Ana Cliente"));
+    fireEvent.click(screen.getByRole("combobox", { name: "Produto 1" }));
+    const option = await screen.findByRole("option", { name: /BASE · Base/ });
+    fireEvent.pointerMove(option); fireEvent.pointerDown(option); fireEvent.click(option);
+    await waitFor(() => expect(screen.getByLabelText("Descrição para o cliente")).toHaveValue("Base"));
     fireEvent.change(screen.getByLabelText("Quantidade"), { target: { value: "2" } });
     fireEvent.change(screen.getByLabelText("Desconto (R$)"), { target: { value: "1" } });
     fireEvent.change(screen.getByLabelText("Frete cobrado (R$)"), { target: { value: "3" } });
+    expect(screen.getByLabelText("Descrição para o cliente")).toHaveValue("Base");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Salvar rascunho" })).toBeEnabled());
     fireEvent.click(screen.getByRole("button", { name: "Salvar rascunho" }));
-    await waitFor(() => expect(mock.rpc.mock.calls.some(call => call[0] === "save_sales_quote")).toBe(true));
+    await waitFor(() => expect(mock.rpc.mock.calls.some(call => call[0] === "save_sales_quote"), JSON.stringify(mock.toast.mock.calls)).toBe(true));
     const [name, payload] = mock.rpc.mock.calls.find(call => call[0] === "save_sales_quote")!; expect(name).toBe("save_sales_quote"); expect(payload.p_quote.total).toBe(22); expect(payload.p_items[0]).toMatchObject({ product_id: "product-1", quantity: 2, unit_price: 10, total: 20, material_overrides: [] });
     expect(payload.p_items[0]).not.toHaveProperty("product_snapshot"); expect(payload.p_items[0]).not.toHaveProperty("estimated_unit_cost"); expect(mock.rpc.mock.contexts[0]).toBe(supabase);
   });
-  it("withholds emission and margin for an incomplete material recipe", async () => {
-    mock.item.product_snapshot = { complete: false, missing: ["Confirme o material"], requirements: [] }; mock.item.estimated_unit_cost = null;
-    mount(); fireEvent.click(await screen.findByRole("button", { name: /ORC-001/ }));
-    expect(await screen.findByText(/Previsão incompleta:/)).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Emitir proposta" })).toBeDisabled(); expect(screen.queryByText("100%")).not.toBeInTheDocument();
+  it("allows the commercial offer with unknown cost while keeping its margin unknown", async () => {
+    mock.item.product_snapshot = { complete: false, missing: ["Confirme o material"], requirements: [] }; mock.item.estimated_unit_cost = null; mock.item.estimated_total_cost = null;
+    mount(); fireEvent.click(await screen.findByRole("button", { name: /Abrir ORC-001/ }));
+    expect(await screen.findByText(/Custo ainda não informado/)).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Emitir proposta" })).toBeEnabled(); expect(screen.queryByText("100%")).not.toBeInTheDocument();
   });
   it("converts with explicit receivable details and reuses its key after an uncertain error", async () => {
     mock.quote.status = "approved"; mock.rpc.mockResolvedValueOnce({ data: null, error: { message: "Resposta interrompida" } }).mockResolvedValue({ data: "order-1", error: null });
-    mount(); fireEvent.click(await screen.findByRole("button", { name: /ORC-001/ }));
-    fireEvent.click(await screen.findByRole("button", { name: "Converter em venda" })); expect(screen.getByText(/conta a receber de/)).toBeInTheDocument();
+    mount(); fireEvent.click(await screen.findByRole("button", { name: /Abrir ORC-001/ }));
+    fireEvent.click(await screen.findByRole("button", { name: "Converter em venda" })); expect(screen.getByText(/financeiro a receber de/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Confirmar venda" })); await waitFor(() => expect(mock.toast).toHaveBeenCalledWith(expect.objectContaining({ description: "Resposta interrompida" })));
     fireEvent.click(screen.getByRole("button", { name: "Confirmar venda" })); await waitFor(() => expect(mock.rpc).toHaveBeenCalledTimes(2));
     expect(mock.rpc.mock.calls[0]).toEqual(mock.rpc.mock.calls[1]); expect(mock.rpc.mock.calls[0][0]).toBe("convert_sales_quote"); expect(mock.rpc.mock.contexts[0]).toBe(supabase);
   });
   it("shows the frozen color and consumption rather than consulting a new catalogue version", async () => {
-    mock.quote.status = "issued"; mount(); fireEvent.click(await screen.findByRole("button", { name: /ORC-001/ }));
+    mock.quote.status = "issued"; mount(); fireEvent.click(await screen.findByRole("button", { name: /Abrir ORC-001/ }));
     expect(await screen.findByText("PLA · Preto · BLACK")).toBeInTheDocument(); expect(screen.getByText("40 g na composição para 2 unidades")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Editar" })).not.toBeInTheDocument(); fireEvent.click(screen.getByRole("button", { name: "Registrar aprovação" }));
     await waitFor(() => expect(mock.rpc).toHaveBeenCalledWith("transition_sales_quote", { p_quote_id: "quote-1", p_status: "approved", p_reason: null }));

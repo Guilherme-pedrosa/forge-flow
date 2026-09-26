@@ -1,3 +1,4 @@
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DeleteRecordDialog, type DeleteTarget } from "@/components/shared/DeleteRecordDialog";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { Link as RouterLink, useSearchParams } from "react-router-dom";
@@ -101,6 +102,12 @@ export default function Produtos() {
   const [estTime, setEstTime] = useState("");
   const [postMinutes, setPostMinutes] = useState("");
   const [costEstimate, setCostEstimate] = useState("");
+  const [formTab, setFormTab] = useState("dados");
+  const [accessoryCost, setAccessoryCost] = useState("0");
+  const [otherCost, setOtherCost] = useState("0");
+  const [barcode, setBarcode] = useState("");
+  const [maxStock, setMaxStock] = useState("0");
+  const [markup, setMarkup] = useState("");
   const [stockQuantity, setStockQuantity] = useState("0");
   const [stockUnit, setStockUnit] = useState("un");
   const [minStock, setMinStock] = useState("0");
@@ -197,7 +204,7 @@ export default function Produtos() {
 
   const toNumber = (v: unknown) => {
     if (typeof v === "string") {
-      const n = Number(v.replace(",", "."));
+      const n = Number(v.includes(",") ? v.replace(/\./g, "").replace(",", ".") : v);
       return Number.isFinite(n) ? n : 0;
     }
     const n = Number(v);
@@ -289,7 +296,7 @@ export default function Produtos() {
     setPhotosLoading(false);
     setPrintSourceBusy(false); setRecipeBusy(false);
     setSourceDraft(false); setRecipeDraft(false);
-    setStockQuantity("0"); setStockUnit("un"); setMinStock("0"); setStockEnabled(true);
+    setFormTab("dados"); setAccessoryCost("0"); setOtherCost("0"); setBarcode(""); setMaxStock("0"); setMarkup(""); setStockQuantity("0"); setStockUnit("un"); setMinStock("0"); setStockEnabled(true);
     setName(""); setDescription(""); setSku(""); setCategory("printed_part"); setMaterialId("");
     setEstGrams(""); setEstTime(""); setPostMinutes(""); setCostEstimate(""); setSalePrice(""); setPhotoUrl(""); setExtraPhotos([]); setNotes(""); setPrinterId(""); setNumColors("1"); setPrintsPerPlate("1"); setExtras([]); setKitComponents([]);
   };
@@ -301,10 +308,11 @@ export default function Produtos() {
     setPrintSourceBusy(false); setRecipeBusy(false);
     setSourceDraft(false); setRecipeDraft(false);
     setStockQuantity(String(p.stock?.current_stock ?? 0)); setStockUnit(p.stock?.unit || "un"); setMinStock(String(p.stock?.min_stock ?? 0)); setStockEnabled(p.category !== "service" || !!p.stock_item_id);
+    setFormTab("dados"); setAccessoryCost(String(p.catalog_details?.accessory_cost ?? 0)); setOtherCost(String(p.catalog_details?.other_cost ?? 0)); setBarcode(p.catalog_details?.barcode || ""); setMaxStock(String(p.stock?.max_stock ?? 0)); setMarkup("");
     setEditItem(p); setName(p.name); setDescription(p.description || ""); setSku(p.sku || "");
     setCategory(p.category); setMaterialId(p.material_id || ""); setEstGrams(p.est_grams?.toString() || "");
     setEstTime(p.est_time_minutes ? (p.est_time_minutes / 60).toFixed(2) : ""); setPostMinutes(p.post_process_minutes?.toString() || "");
-    setCostEstimate(p.cost_estimate?.toString() || ""); setSalePrice(p.sale_price?.toString() || "");
+    setCostEstimate(String(p.catalog_details?.base_cost ?? p.cost_estimate ?? "")); setSalePrice(p.sale_price?.toString() || "");
     setPhotoUrl(p.photo_url || ""); setNotes(p.notes || ""); setPrinterId(""); setNumColors(String((p as any).num_colors || 1)); setPrintsPerPlate(String((p as any).prints_per_plate || 1));
     const rawExtras = Array.isArray((p as any).extras) ? (p as any).extras : [];
     // Separate kit components from regular extras
@@ -615,7 +623,10 @@ ${selected?.name ? `Perfil: ${selected.name}
     if (!name.trim()) throw new Error("Informe o nome do produto.");
     if (hasProductionDraft) throw new Error("Salve ou cancele a composição, fonte ou placa em edição antes de salvar o cadastro.");
     if (uploadingPhoto || photosLoading || printSourceBusy || makerWorldLoading) throw new Error("Aguarde o carregamento das fotos e fontes de impressão antes de salvar.");
-    const cost = costEstimate.trim() ? nonNegative(costEstimate, "Custo estimado") : null;
+    const baseCost = costEstimate.trim() ? nonNegative(costEstimate, "Preço de custo") : null;
+    const expenses = nonNegative(accessoryCost, "Despesas acessórias") + nonNegative(otherCost, "Outras despesas");
+    if (baseCost == null && expenses > 0) throw new Error("Informe o custo de compra antes de adicionar despesas.");
+    const cost = baseCost == null ? null : Math.round((baseCost + expenses) * 10000) / 10000;
     const price = salePrice.trim() ? nonNegative(salePrice, "Preço de venda") : null;
     const grams = nonNegative(estGrams, "Peso por placa");
     const selectedMaterial = materials.find(material => material.id === materialId);
@@ -644,8 +655,9 @@ ${selected?.name ? `Perfil: ${selected.name}
         est_time_minutes: Math.round(nonNegative(estTime, "Tempo por placa") * 60),
         post_process_minutes: nonNegative(postMinutes, "Pós-processo por placa"),
         cost_estimate: cost, manual_cost: cost, sale_price: price,
+        catalog_details: { base_cost: baseCost, accessory_cost: nonNegative(accessoryCost, "Despesas acessórias"), other_cost: nonNegative(otherCost, "Outras despesas"), barcode: barcode.trim() },
         ...(stockEnabled ? { stock: {
-          unit: stockUnit, min_stock: nonNegative(minStock, "Estoque mínimo"),
+          unit: stockUnit, min_stock: nonNegative(minStock, "Estoque mínimo"), max_stock: nonNegative(maxStock, "Estoque máximo"),
           ...(!editItem?.stock_item_id || cost !== editItem?.cost_estimate ? { avg_cost: cost ?? 0 } : {}),
           ...(!editItem?.stock_item_id || nonNegative(stockQuantity, "Estoque") !== Number(editItem?.stock?.current_stock ?? 0)
             ? { current_stock: nonNegative(stockQuantity, "Estoque"), expected_stock: Number(editItem?.stock?.current_stock ?? 0) } : {}),
@@ -712,22 +724,17 @@ ${selected?.name ? `Perfil: ${selected.name}
   const catalogCost = marginProducts.reduce((sum, product) => sum + product.cost_estimate!, 0);
   const productionReference = productProductionReference(editItem);
 
+  const finalProductCost = Math.round((toNumber(costEstimate) + toNumber(accessoryCost) + toNumber(otherCost)) * 10000) / 10000;
+  const tabClass = "m-0 space-y-5 data-[state=inactive]:hidden";
   const formFields = (
-    <div className="grid min-w-0 grid-cols-1 gap-4 max-h-[60dvh] overflow-y-auto pr-1 [&>*]:min-w-0">
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+    <Tabs value={formTab} onValueChange={setFormTab} className="flex min-h-0 flex-1 flex-col gap-4 md:flex-row">
+      <TabsList aria-label="Cadastro do produto" className="h-auto shrink-0 justify-start gap-1 overflow-x-auto bg-muted/40 p-2 md:w-44 md:flex-col md:items-stretch md:self-start">
+        {[['dados','Dados'],['valores','Valores'],['estoque','Estoque'],['fotos','Fotos'],['producao','Composição / produção']].map(([value,label]) => <TabsTrigger className="justify-start whitespace-nowrap px-4 py-3 md:whitespace-normal" key={value} value={value}>{label}</TabsTrigger>)}
+      </TabsList>
+      <div className="min-h-0 min-w-0 flex-1 overflow-y-auto px-1 pb-4">
+      <TabsContent forceMount value="dados" className={tabClass}>
+        <div><h3 className="text-lg font-semibold">Dados do produto</h3><p className="text-sm text-muted-foreground">Preencha o nome e complete os valores e o estoque nas abas ao lado.</p></div>
         <div className="sm:col-span-2"><Label htmlFor="product-name">Nome *</Label><Input autoFocus id="product-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Vaso Geométrico P" /></div>
-      </div>
-      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Precificação</p>
-      <div className="grid grid-cols-2 gap-3">
-        <div><Label htmlFor="product-cost">Preço de custo (R$)</Label><Input id="product-cost" inputMode="decimal" value={costEstimate} onChange={e => setCostEstimate(e.target.value)} placeholder="0,00" />{editItem?.recipe_cost != null && <p className="mt-1 text-xs text-muted-foreground">Custo calculado da composição: {fmtCurrency(editItem.recipe_cost)}. <button type="button" className="underline text-primary" onClick={() => setCostEstimate(String(editItem.recipe_cost))}>Usar este valor</button></p>}</div>
-        <div><Label htmlFor="product-price">Preço unitário (R$)</Label><Input id="product-price" inputMode="decimal" value={salePrice} onChange={(e) => setSalePrice(e.target.value)} placeholder="39.90" /></div>
-      </div>
-
-      <p className="text-xs text-muted-foreground">Informe custo, preço e estoque aqui. Composição e impressão são opcionais para o cadastro.</p>
-      <section className="rounded-lg border p-4 space-y-3" aria-label="Estoque do produto"><div className="flex items-center justify-between"><h3 className="font-medium">Estoque</h3><label className="flex items-center gap-2 text-sm"><Switch checked={stockEnabled} onCheckedChange={setStockEnabled} disabled={!!editItem?.stock_item_id} />Controlar estoque</label></div>
-        {stockEnabled && <><div className="grid grid-cols-2 sm:grid-cols-3 gap-3"><div><Label htmlFor="product-stock">{editItem?.stock_item_id ? "Quantidade em estoque" : "Estoque inicial"}</Label><Input id="product-stock" inputMode="decimal" value={stockQuantity} onChange={e => setStockQuantity(e.target.value)} /></div><div><Label htmlFor="product-unit">Unidade</Label><select id="product-unit" className="h-10 w-full rounded-md border bg-background px-3" value={stockUnit} onChange={e => setStockUnit(e.target.value)}>{["un", "kg", "g", "m", "l", "ml"].map(u => <option key={u} value={u}>{u}</option>)}</select></div><div><Label htmlFor="product-min-stock">Estoque mínimo</Label><Input id="product-min-stock" inputMode="decimal" value={minStock} onChange={e => setMinStock(e.target.value)} /></div></div><p className="text-xs text-muted-foreground">O saldo é salvo junto com o produto e fica disponível nas compras e nas movimentações. Alterações de quantidade ficam no histórico.</p>
-        {editItem?.stock_item_id && <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" size="sm" asChild><RouterLink to={`/estoque/movimentacoes?item=${editItem.stock_item_id}`}>Registrar entrada / saída</RouterLink></Button><Button type="button" variant="outline" size="sm" asChild><RouterLink to={`/estoque/movimentacoes?item=${editItem.stock_item_id}&historico=1`}>Ver movimentações</RouterLink></Button></div>}</>}
-      </section>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div><Label>Categoria</Label>
           <Select value={category} onValueChange={setCategory}><SelectTrigger><SelectValue /></SelectTrigger>
@@ -737,34 +744,29 @@ ${selected?.name ? `Perfil: ${selected.name}
         <div><Label>SKU</Label><Input value={sku} onChange={(e) => setSku(e.target.value)} placeholder="VASO-GEO-P" /></div>
         <div className="sm:col-span-2"><Label htmlFor="product-description">Descrição</Label><Textarea id="product-description" value={description} onChange={(e) => setDescription(e.target.value)} rows={2} /></div>
       </div>
-      <details className="rounded-lg border p-3"><summary className="cursor-pointer py-2 font-medium">Produção, fotos e detalhes avançados</summary><div className="grid gap-4 pt-4">
-      {productionReference && (
-        <section aria-label="Referência da produção" className="rounded-xl border border-primary/20 bg-primary/5 p-4 space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h3 className="text-sm font-semibold">Base na produção</h3>
-            <span className="rounded-full bg-background px-2.5 py-1 text-xs font-medium">{productionReference.sampleLabel}</span>
-          </div>
-          <dl className="grid grid-cols-1 gap-3 sm:grid-cols-3 text-sm">
-            <div><dt className="text-xs text-muted-foreground">Material por peça</dt><dd className="mt-1 font-mono font-semibold">{productionReference.gramsLabel}</dd></div>
-            <div><dt className="text-xs text-muted-foreground">Tempo decorrido por peça</dt><dd className="mt-1 font-mono font-semibold">{productionReference.durationLabel}</dd></div>
-            <div><dt className="text-xs text-muted-foreground">Custo médio por peça</dt><dd className="mt-1 font-mono font-semibold">{productionReference.costLabel}</dd></div>
-          </dl>
-          <p className="text-xs leading-relaxed">{productionReference.materialSource}</p>
-          <p className="text-xs leading-relaxed text-muted-foreground">Referência das execuções concluídas e contabilizadas. Em produtos com várias placas, soma a base por unidade de cada placa. Usa o custo de estoque registrado, energia e máquina pelo tempo decorrido, além de mão de obra, indiretos e extras confirmados na apuração. O tempo pode incluir pausas. A produção atualiza esta referência; o preço de venda continua definido no cadastro.</p>
-          {productionReference.updatedLabel && <p className="text-xs text-muted-foreground">Atualizada em {productionReference.updatedLabel}</p>}
-        </section>
-      )}
-      {editItem?.id && profile?.tenant_id && <ProductPrintSources key={editItem.id} productId={editItem.id} tenantId={profile.tenant_id} onBusyChange={setPrintSourceBusy} onDraftChange={setSourceDraft} />}
-      {editItem?.id && profile?.tenant_id && category !== "kit" && (products.find(product => product.id === editItem.id)?.recipe_plate_count ?? 0) === 0 &&
-        <ProductMaterialRecipe key={`recipe-${editItem.id}`} productId={editItem.id} tenantId={profile.tenant_id} onBusyChange={setRecipeBusy} onDraftChange={setRecipeDraft}
-          suggestedNonMaterialCost={!costBreakdown.error ? Math.max(0, costBreakdown.total - costBreakdown.materialCost) : null} />}
-      {!editItem && category !== "kit" && <p className="rounded-lg border bg-muted/30 p-3 text-sm">Salve o produto para cadastrar a composição exata de materiais, cores e arquivos. Produtos com várias placas terão uma composição por placa.</p>}
-      {(materialsError || printersError || tenantError) && <p role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm">Não foi possível carregar todos os parâmetros de custo. Atualize a página antes de aplicar o cálculo.</p>}
-      {(externalImport || legacyMakerWorldUrl(notes)) && <div className="space-y-3">
-        {editItem && <Button type="button" variant="outline" className="min-h-11 w-full whitespace-normal" disabled={makerWorldLoading || photosLoading} onClick={refreshMakerWorld}>{makerWorldLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CloudDownload className="mr-2 h-4 w-4" />}Atualizar fotos e detalhes do link</Button>}
-        {externalImport && <MakerWorldReference value={externalImport} />}
-      </div>}
-      {/* Photos gallery */}
+
+        <div><Label htmlFor="product-barcode">Código de barras</Label><Input id="product-barcode" value={barcode} onChange={e => setBarcode(e.target.value)} /></div>
+        <div><Label>Observações</Label><Textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3}/></div>
+      </TabsContent>
+      <TabsContent forceMount value="valores" className={tabClass}>
+        <div><h3 className="text-lg font-semibold">Custo e preço de venda</h3><p className="text-sm text-muted-foreground">Informe o custo pago, acrescente despesas e defina o valor de venda.</p></div>
+      <div className="grid grid-cols-2 gap-3">
+        <div><Label htmlFor="product-cost">Preço de custo (R$)</Label><Input id="product-cost" inputMode="decimal" value={costEstimate} onChange={e => setCostEstimate(e.target.value)} placeholder="0,00" />{editItem?.recipe_cost != null && <p className="mt-1 text-xs text-muted-foreground">Custo calculado da composição: {fmtCurrency(editItem.recipe_cost)}. <button type="button" className="underline text-primary" onClick={() => setCostEstimate(String(editItem.recipe_cost))}>Usar este valor</button></p>}</div>
+        <div><Label htmlFor="product-price">Preço unitário (R$)</Label><Input id="product-price" inputMode="decimal" value={salePrice} onChange={(e) => setSalePrice(e.target.value)} placeholder="39.90" /></div>
+      </div>
+
+
+        <div className="grid gap-3 sm:grid-cols-2"><div><Label htmlFor="product-accessory-cost">Despesas acessórias (R$)</Label><Input id="product-accessory-cost" inputMode="decimal" value={accessoryCost} onChange={e => setAccessoryCost(e.target.value)}/><p className="text-xs text-muted-foreground">Frete, seguro e gastos por unidade.</p></div><div><Label htmlFor="product-other-cost">Outras despesas (R$)</Label><Input id="product-other-cost" inputMode="decimal" value={otherCost} onChange={e => setOtherCost(e.target.value)}/></div></div>
+        <div className="rounded-lg bg-muted p-5"><span className="text-sm">Custo final por unidade</span><p className="text-2xl font-semibold" aria-label="Custo final">{fmtCurrency(finalProductCost)}</p><p className="text-xs text-muted-foreground">Custo de compra + despesas acessórias + outras despesas.</p></div>
+        <div className="grid gap-3 sm:grid-cols-2"><div><Label htmlFor="product-markup">Lucro sobre o custo (%)</Label><Input id="product-markup" inputMode="decimal" value={markup} onChange={e => setMarkup(e.target.value)} placeholder="Ex.: 50"/></div><Button type="button" variant="outline" className="self-end" onClick={() => { try { const percent = nonNegative(markup, "Lucro"); setSalePrice((finalProductCost * (1 + percent / 100)).toFixed(2)); } catch (e) { toast({title:(e as Error).message,variant:"destructive"}); } }}>Calcular preço de venda</Button></div>
+        <p className="text-sm">Lucro por unidade: <strong>{fmtCurrency(toNumber(salePrice) - finalProductCost)}</strong> · Margem sobre a venda: <strong>{toNumber(salePrice) > 0 ? ((toNumber(salePrice)-finalProductCost)/toNumber(salePrice)*100).toFixed(1) : '0'}%</strong></p>
+      </TabsContent>
+      <TabsContent forceMount value="estoque" className={tabClass}>      <section className="rounded-lg border p-4 space-y-3" aria-label="Estoque do produto"><div className="flex items-center justify-between"><h3 className="font-medium">Estoque</h3><label className="flex items-center gap-2 text-sm"><Switch checked={stockEnabled} onCheckedChange={setStockEnabled} disabled={!!editItem?.stock_item_id} />Controlar estoque</label></div>
+        {stockEnabled && <><div className="grid grid-cols-2 sm:grid-cols-3 gap-3"><div><Label htmlFor="product-stock">{editItem?.stock_item_id ? "Quantidade em estoque" : "Estoque inicial"}</Label><Input id="product-stock" inputMode="decimal" value={stockQuantity} onChange={e => setStockQuantity(e.target.value)} /></div><div><Label htmlFor="product-unit">Unidade</Label><select id="product-unit" className="h-10 w-full rounded-md border bg-background px-3" value={stockUnit} onChange={e => setStockUnit(e.target.value)}>{["un", "kg", "g", "m", "l", "ml"].map(u => <option key={u} value={u}>{u}</option>)}</select></div><div><Label htmlFor="product-min-stock">Estoque mínimo</Label><Input id="product-min-stock" inputMode="decimal" value={minStock} onChange={e => setMinStock(e.target.value)} /></div><div><Label htmlFor="product-max-stock">Estoque máximo</Label><Input id="product-max-stock" inputMode="decimal" value={maxStock} onChange={e => setMaxStock(e.target.value)} /></div></div><p className="text-xs text-muted-foreground">O saldo é salvo junto com o produto e fica disponível nas compras e nas movimentações. Alterações de quantidade ficam no histórico.</p>
+        {editItem?.stock_item_id && <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" size="sm" asChild><RouterLink to={`/estoque/movimentacoes?item=${editItem.stock_item_id}`}>Registrar entrada / saída</RouterLink></Button><Button type="button" variant="outline" size="sm" asChild><RouterLink to={`/estoque/movimentacoes?item=${editItem.stock_item_id}&historico=1`}>Ver movimentações</RouterLink></Button></div>}</>}
+      </section>
+</TabsContent>
+      <TabsContent forceMount value="fotos" className={tabClass}>      {/* Photos gallery */}
       <div>
         <Label className="mb-2 block">Fotos do Produto</Label>
         <div className="flex flex-wrap gap-2">
@@ -812,6 +814,33 @@ ${selected?.name ? `Perfil: ${selected.name}
           </div>
         )}
       </div>
+</TabsContent>
+      <TabsContent forceMount value="producao" className={tabClass}><p className="rounded-lg bg-muted p-3 text-sm">Configuração opcional para produtos fabricados. Custo, venda e estoque podem ser cadastrados sem composição.</p>      {productionReference && (
+        <section aria-label="Referência da produção" className="rounded-xl border border-primary/20 bg-primary/5 p-4 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold">Base na produção</h3>
+            <span className="rounded-full bg-background px-2.5 py-1 text-xs font-medium">{productionReference.sampleLabel}</span>
+          </div>
+          <dl className="grid grid-cols-1 gap-3 sm:grid-cols-3 text-sm">
+            <div><dt className="text-xs text-muted-foreground">Material por peça</dt><dd className="mt-1 font-mono font-semibold">{productionReference.gramsLabel}</dd></div>
+            <div><dt className="text-xs text-muted-foreground">Tempo decorrido por peça</dt><dd className="mt-1 font-mono font-semibold">{productionReference.durationLabel}</dd></div>
+            <div><dt className="text-xs text-muted-foreground">Custo médio por peça</dt><dd className="mt-1 font-mono font-semibold">{productionReference.costLabel}</dd></div>
+          </dl>
+          <p className="text-xs leading-relaxed">{productionReference.materialSource}</p>
+          <p className="text-xs leading-relaxed text-muted-foreground">Referência das execuções concluídas e contabilizadas. Em produtos com várias placas, soma a base por unidade de cada placa. Usa o custo de estoque registrado, energia e máquina pelo tempo decorrido, além de mão de obra, indiretos e extras confirmados na apuração. O tempo pode incluir pausas. A produção atualiza esta referência; o preço de venda continua definido no cadastro.</p>
+          {productionReference.updatedLabel && <p className="text-xs text-muted-foreground">Atualizada em {productionReference.updatedLabel}</p>}
+        </section>
+      )}
+      {editItem?.id && profile?.tenant_id && <ProductPrintSources key={editItem.id} productId={editItem.id} tenantId={profile.tenant_id} onBusyChange={setPrintSourceBusy} onDraftChange={setSourceDraft} />}
+      {editItem?.id && profile?.tenant_id && category !== "kit" && (products.find(product => product.id === editItem.id)?.recipe_plate_count ?? 0) === 0 &&
+        <ProductMaterialRecipe key={`recipe-${editItem.id}`} productId={editItem.id} tenantId={profile.tenant_id} onBusyChange={setRecipeBusy} onDraftChange={setRecipeDraft}
+          suggestedNonMaterialCost={!costBreakdown.error ? Math.max(0, costBreakdown.total - costBreakdown.materialCost) : null} />}
+      {!editItem && category !== "kit" && <p className="rounded-lg border bg-muted/30 p-3 text-sm">Salve o produto para cadastrar a composição exata de materiais, cores e arquivos. Produtos com várias placas terão uma composição por placa.</p>}
+      {(materialsError || printersError || tenantError) && <p role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm">Não foi possível carregar todos os parâmetros de custo. Atualize a página antes de aplicar o cálculo.</p>}
+      {(externalImport || legacyMakerWorldUrl(notes)) && <div className="space-y-3">
+        {editItem && <Button type="button" variant="outline" className="min-h-11 w-full whitespace-normal" disabled={makerWorldLoading || photosLoading} onClick={refreshMakerWorld}>{makerWorldLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CloudDownload className="mr-2 h-4 w-4" />}Atualizar fotos e detalhes do link</Button>}
+        {externalImport && <MakerWorldReference value={externalImport} />}
+      </div>}
       <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Referência geral de produção</p>
       <p className="-mt-2 text-xs leading-relaxed text-muted-foreground">Para produtos sem placas separadas, informe peso, impressão e acabamento da placa inteira. O cálculo divide esses custos pelas peças da placa; extras são cobrados por unidade. Em produtos com várias placas, cadastre cada uma em Arquivos e links de impressão; as referências por unidade se somam para formar o produto completo.</p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1039,9 +1068,9 @@ ${selected?.name ? `Perfil: ${selected.name}
       )}
 
       {/* Marketplace fee simulator */}
-      {toNumber(salePrice) > 0 && toNumber(costEstimate) > 0 && (() => {
+      {toNumber(salePrice) > 0 && finalProductCost > 0 && (() => {
         const price = toNumber(salePrice);
-        const cost = toNumber(costEstimate);
+        const cost = finalProductCost;
         const updateChannel = (idx: number, field: string, value: any) => {
           setChannelConfig(prev => prev.map((ch, i) => i === idx ? { ...ch, [field]: value } : ch));
         };
@@ -1156,9 +1185,9 @@ ${selected?.name ? `Perfil: ${selected.name}
           </div>
         );
       })()}
-      </div></details>
-      <div><Label>Observações</Label><Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} /></div>
-    </div>
+</TabsContent>
+      </div>
+    </Tabs>
   );
 
   return (
@@ -1245,6 +1274,10 @@ ${selected?.name ? `Perfil: ${selected.name}
                   <TableCell className="text-right font-mono text-sm">{fmtCurrency(p.sale_price)}</TableCell>
                   <TableCell className="text-right font-mono text-sm">{p.margin_percent != null ? `${p.margin_percent.toFixed(1)}%` : "—"}</TableCell>
                   <TableCell>
+                    <div className="flex items-center justify-end gap-1" onClick={e => e.stopPropagation()}>
+                      <Button variant="ghost" size="icon" title="Editar produto" aria-label={`Editar ${p.name}`} onClick={() => openEdit(p)}><Edit className="h-4 w-4"/></Button>
+                      {p.stock_item_id && <Button variant="ghost" size="icon" title="Movimentar estoque" aria-label={`Movimentar estoque de ${p.name}`} asChild><RouterLink to={`/estoque/movimentacoes?item=${p.stock_item_id}`}><Package className="h-4 w-4"/></RouterLink></Button>}
+                      <Button variant="ghost" size="icon" title="Excluir produto" aria-label={`Excluir ${p.name}`} onClick={() => setDeleteTarget({id:p.id,name:p.name,kind:"product"})}><Trash2 className="h-4 w-4 text-destructive"/></Button>
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}><Button variant="ghost" size="icon" className="h-7 w-7"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
@@ -1253,7 +1286,7 @@ ${selected?.name ? `Perfil: ${selected.name}
                         <DropdownMenuItem className="text-destructive" onClick={e => { e.stopPropagation(); setDeleteTarget({ id: p.id, name: p.name, kind: "product" }); }}><Trash2 className="mr-2 h-3.5 w-3.5" />Excluir produto</DropdownMenuItem>
                         <DropdownMenuItem disabled={deleteMut.isPending} onClick={(e) => { e.stopPropagation(); deleteMut.mutate({ id: p.id, active: !p.is_active }); }}><Package className="h-3.5 w-3.5 mr-2" /> {p.is_active ? "Arquivar" : "Reativar"}</DropdownMenuItem>
                       </DropdownMenuContent>
-                    </DropdownMenu>
+                    </DropdownMenu></div>
                   </TableCell>
                 </TableRow>
               ))}
@@ -1264,7 +1297,7 @@ ${selected?.name ? `Perfil: ${selected.name}
 
       {/* Create dialog */}
       <Dialog open={createOpen} onOpenChange={open => { if (open) setCreateOpen(true); else closeCreateProduct(); }}>
-        <DialogContent className="max-w-2xl" closeDisabled={createMut.isPending || uploadingPhoto}><DialogHeader className="pr-10"><DialogTitle>Novo Produto</DialogTitle><DialogDescription>Cadastro e custo unitário do produto ou serviço.</DialogDescription></DialogHeader>
+        <DialogContent className="flex h-[94dvh] w-[96vw] max-w-6xl flex-col gap-4 p-4 sm:p-6" closeDisabled={createMut.isPending || uploadingPhoto}><DialogHeader className="pr-10"><DialogTitle>Novo Produto</DialogTitle><DialogDescription>Dados, valores, estoque e fotos em um único cadastro.</DialogDescription></DialogHeader>
           {formFields}
           <DialogFooter className="gap-2"><Button type="button" className="min-h-11" variant="outline" disabled={createMut.isPending || uploadingPhoto} onClick={closeCreateProduct}>Cancelar</Button><Button type="button" className="min-h-11" onClick={() => { createAnother.current = false; createMut.mutate(); }} disabled={!name.trim() || createMut.isPending || uploadingPhoto || photosLoading || makerWorldLoading}>{createMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Criar</Button><Button type="button" variant="outline" disabled={!name.trim() || createMut.isPending || uploadingPhoto || photosLoading || makerWorldLoading} onClick={() => { createAnother.current = true; createMut.mutate(); }}>Salvar e cadastrar outro</Button></DialogFooter>
         </DialogContent>
@@ -1272,7 +1305,7 @@ ${selected?.name ? `Perfil: ${selected.name}
 
       {/* Edit dialog */}
       <Dialog open={!!editItem} onOpenChange={open => { if (!open) closeEditProduct(); }}>
-        <DialogContent className="max-w-2xl" closeDisabled={editWritePending} aria-busy={editWritePending}><DialogHeader className="pr-10"><DialogTitle>Editar Produto</DialogTitle><DialogDescription>Edite os dados, o custo, o preço e o estoque do produto.</DialogDescription></DialogHeader>
+        <DialogContent className="flex h-[94dvh] w-[96vw] max-w-6xl flex-col gap-4 p-4 sm:p-6" closeDisabled={editWritePending} aria-busy={editWritePending}><DialogHeader className="pr-10"><DialogTitle>Editar Produto</DialogTitle><DialogDescription>Edite os dados, o custo, o preço e o estoque do produto.</DialogDescription></DialogHeader>
           {formFields}
           {printSourceBusy && <p role="status" className="text-xs text-muted-foreground">Salvando composição ou fonte de impressão. Aguarde a confirmação.</p>}
           {hasProductionDraft && !printSourceBusy && <p role="status" className="text-xs text-amber-800 dark:text-amber-300">Salve ou cancele a composição, fonte ou placa em edição antes de salvar o cadastro. Fechar ou cancelar o produto descarta esses rascunhos.</p>}

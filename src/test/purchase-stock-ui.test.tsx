@@ -41,7 +41,7 @@ describe("recebimento com material/cor e massa explícitos", () => {
     fireEvent.click(screen.getByText("Calcular por rolo ou embalagem"));
     fireEvent.change(screen.getByLabelText("Peso de material por embalagem de Rolo vermelho"), { target: { value: "1" } });
     fireEvent.click(screen.getByRole("button", { name: "Aplicar total de 1.000 g" }));
-    expect(screen.getByLabelText("Quantidade comprada do item 1")).toHaveValue(1);
+    expect(screen.getByLabelText("Quantidade comprada do item 1")).toHaveValue("1");
     fireEvent.click(screen.getByRole("button", { name: "Salvar compra" }));
     await waitFor(() => expect(mock.rpc).toHaveBeenCalledWith("save_quick_purchase", expect.objectContaining({ p_items: [expect.objectContaining({ quantity: 1, unit_price: 100, total: 100, inventory_item_id: "red", stock_quantity: 1000 })] })));
     expect(mock.rpc.mock.calls.map(call => call[0])).toEqual(["save_quick_purchase"]);
