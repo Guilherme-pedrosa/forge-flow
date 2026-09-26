@@ -2650,6 +2650,8 @@ export type Database = {
       }
       products: {
         Row: {
+          manual_cost_override: number | null
+          stock_item_id: string | null
           actual_print_cost_per_unit: number | null
           actual_print_grams_per_unit: number | null
           actual_print_sample_units: number | null
@@ -2680,6 +2682,8 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          manual_cost_override?: number | null
+          stock_item_id?: string | null
           actual_print_cost_per_unit?: number | null
           actual_print_grams_per_unit?: number | null
           actual_print_sample_units?: number | null
@@ -2710,6 +2714,8 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          manual_cost_override?: number | null
+          stock_item_id?: string | null
           actual_print_cost_per_unit?: number | null
           actual_print_grams_per_unit?: number | null
           actual_print_sample_units?: number | null
@@ -3369,6 +3375,7 @@ export type Database = {
       }
     }
     Functions: {
+
       account_bambu_production: {
         Args: {
           p_extras_cost: number

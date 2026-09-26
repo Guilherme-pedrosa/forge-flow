@@ -3,7 +3,7 @@ const target=new URL('../src/integrations/supabase/types.ts',import.meta.url);
 let source=await readFile(target,'utf8');
 const columns={
   jobs:{ inventory_posted_at:'string | null', secondary_actual_grams:'number | null',order_item_id:'string | null',order_unit_index:'number | null',est_extras_cost:'number | null',actual_extras_cost:'number | null',creation_request_id:'string | null',actual_time_seconds:'number | null',actual_material_usage:'Json | null',produced_quantity:'number | null',print_plate_id:'string | null',planned_quantity:'number' },
-  products:{actual_print_grams_per_unit:'number | null',actual_print_seconds_per_unit:'number | null',actual_print_cost_per_unit:'number | null',actual_print_sample_units:'number | null',actual_print_updated_at:'string | null',actual_print_source:'string | null'},
+  products:{manual_cost_override:"number | null",stock_item_id:"string | null",actual_print_grams_per_unit:'number | null',actual_print_seconds_per_unit:'number | null',actual_print_cost_per_unit:'number | null',actual_print_sample_units:'number | null',actual_print_updated_at:'string | null',actual_print_source:'string | null'},
   accounts_payable:{origin_id:'string | null',origin_type:'string | null'},
   orders:{shipping:'number',source_quote_id:'string | null'}, order_items:{source_quote_item_id:'string | null',product_snapshot:'Json | null'}, purchase_orders:{additional_costs:'number'},
   purchase_order_items:{stock_quantity:'number | null'},consignment_locations:{commission_percent:'number'},

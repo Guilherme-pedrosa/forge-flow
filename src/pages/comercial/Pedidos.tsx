@@ -77,6 +77,7 @@ export default function Pedidos() {
   const printRef = useRef<HTMLDivElement>(null);
   const saveRequest = useRef<{ signature: string; id: string } | null>(null);
 
+  const [stockOrderId, setStockOrderId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -154,7 +155,7 @@ export default function Pedidos() {
   const { data: products = [] } = useQuery({
     queryKey: ["products_for_orders"],
     queryFn: async () => {
-      const { data, error } = await supabase.from("products").select("id, name, sku, sale_price, cost_estimate").eq("is_active", true).order("name");
+      const { data, error } = await supabase.from("products").select("id, name, sku, sale_price, cost_estimate, stock_item_id").eq("is_active", true).order("name");
       if (error) throw error;
       return data;
     },
@@ -412,7 +413,7 @@ export default function Pedidos() {
   };
 
   const invalidateOrder = () => {
-    ["orders", "order_items", "order_jobs", "jobs", "fila_jobs", "accounts_receivable", "financial_ledger", "dashboard"].forEach(key => qc.invalidateQueries({ queryKey: [key] }));
+    ["products", "inventory_items", "inventory_movements", "order_stock_allocations", "orders", "order_items", "order_jobs", "jobs", "fila_jobs", "accounts_receivable", "financial_ledger", "dashboard"].forEach(key => qc.invalidateQueries({ queryKey: [key] }));
   };
   const rpc = supabase.rpc.bind(supabase) as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
   const saveOrder = async (id: string | null) => {
@@ -437,6 +438,11 @@ export default function Pedidos() {
       toast({ title: "Pedido criado", description: "Itens, frete e total foram salvos juntos." });
     },
     onError: (error: Error) => toast({ title: "Não foi possível salvar", description: error.message, variant: "destructive" }),
+  });
+  const fulfillStock = useMutation({
+    mutationFn: async () => { const { error } = await rpc("fulfill_order_from_stock", { p_order_id: stockOrderId }); if (error) throw new Error(error.message); },
+    onSuccess: () => { invalidateOrder(); setStockOrderId(null); toast({ title: "Pedido atendido com estoque", description: "Estoque baixado e conta a receber registrada. O pedido está pronto para envio." }); },
+    onError: (error: Error) => toast({ title: "Não foi possível atender", description: error.message, variant: "destructive" }),
   });
   const updateStatusMut = useMutation({
     mutationFn: async ({ id, status }: { id: string; status: string }) => {
@@ -482,7 +488,7 @@ export default function Pedidos() {
           <TableCell className="flex min-w-0 flex-col justify-center p-0 text-sm font-medium sm:table-cell sm:p-1.5 sm:text-right sm:text-xs"><span className="text-xs text-muted-foreground sm:hidden">Total do item</span><output aria-label={`Total do item ${index + 1}`} className="break-words font-mono">{fmtCurrency(line.total)}</output></TableCell>
           <TableCell className="block min-w-0 p-0 text-right sm:table-cell sm:p-1.5"><Button type="button" variant="ghost" className="h-11 gap-1 px-2 sm:h-10 sm:w-10 sm:p-0" aria-label={`Remover item ${index + 1}`} disabled={pending || lines.length <= 1} onClick={() => removeLine(line.id)}><X className="h-3.5 w-3.5 text-muted-foreground" /><span className="text-xs sm:hidden">Remover</span></Button></TableCell>
         </TableRow>
-        {line.product_id && <TableRow className="mt-3 block min-w-0 border-0 hover:bg-transparent sm:mt-0 sm:table-row sm:hover:bg-muted/50"><TableCell colSpan={5} className="block min-w-0 border-t p-0 pt-3 sm:table-cell sm:border-0 sm:p-3"><ProductMaterialChoice key={line.product_id} productId={line.product_id} tenantId={profile?.tenant_id} quantity={Number(line.quantity)} unitPrice={Number.isFinite(Number(line.unit_price)) ? Number(line.unit_price) : null} overrides={line.material_overrides} onChange={value => updateLine(line.id, "material_overrides", value)} onUnitPriceChange={value => updateLine(line.id, "unit_price", value)} disabled={pending} /></TableCell></TableRow>}
+        {line.product_id && <TableRow className="mt-3 block min-w-0 border-0 hover:bg-transparent sm:mt-0 sm:table-row sm:hover:bg-muted/50"><TableCell colSpan={5} className="block min-w-0 border-t p-0 pt-3 sm:table-cell sm:border-0 sm:p-3">{products.find(p => p.id === line.product_id)?.stock_item_id ? <div className="space-y-2"><p className="text-sm">Produto com controle de estoque. Depois de salvar, use <strong>Atender com estoque</strong> para baixar o saldo e gerar o recebimento.</p><details><summary className="cursor-pointer text-sm text-primary">Configurar produção sob encomenda (opcional)</summary><ProductMaterialChoice key={line.product_id} productId={line.product_id} tenantId={profile?.tenant_id} quantity={Number(line.quantity)} unitPrice={Number.isFinite(Number(line.unit_price)) ? Number(line.unit_price) : null} overrides={line.material_overrides} onChange={value => updateLine(line.id, "material_overrides", value)} onUnitPriceChange={value => updateLine(line.id, "unit_price", value)} disabled={pending} /></details></div> : <ProductMaterialChoice key={line.product_id} productId={line.product_id} tenantId={profile?.tenant_id} quantity={Number(line.quantity)} unitPrice={Number.isFinite(Number(line.unit_price)) ? Number(line.unit_price) : null} overrides={line.material_overrides} onChange={value => updateLine(line.id, "material_overrides", value)} onUnitPriceChange={value => updateLine(line.id, "unit_price", value)} disabled={pending} />}</TableCell></TableRow>}
       </TableBody>)}
     </Table>
   </div>;
@@ -491,6 +497,7 @@ export default function Pedidos() {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
+      <Dialog open={!!stockOrderId} onOpenChange={v => !v && !fulfillStock.isPending && setStockOrderId(null)}><DialogContent closeDisabled={fulfillStock.isPending}><DialogHeader><DialogTitle>Atender pedido com estoque?</DialogTitle><DialogDescription>Usa os produtos já disponíveis, baixa as quantidades e registra o valor a receber. Não exige composição nem gera ordens de impressão.</DialogDescription></DialogHeader><DialogFooter><Button variant="outline" disabled={fulfillStock.isPending} onClick={() => setStockOrderId(null)}>Voltar</Button><Button disabled={fulfillStock.isPending} onClick={() => fulfillStock.mutate()}>{fulfillStock.isPending ? "Processando…" : "Confirmar atendimento"}</Button></DialogFooter></DialogContent></Dialog>
       <DeleteRecordDialog key={deleteTarget?.id} target={deleteTarget} onClose={() => setDeleteTarget(null)} onDeleted={() => setViewOrderId(null)} />
       <PageHeader title="Pedidos de venda" description="Vendas, recebimentos e produção vinculada"
         breadcrumbs={[{ label: "Comercial" }, { label: "Pedidos" }]}
@@ -545,6 +552,7 @@ export default function Pedidos() {
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}><Button variant="ghost" size="icon" className="h-10 w-10" aria-label="Ações"><MoreHorizontal className="h-4 w-4" /></Button></DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
+                          {["draft", "approved"].includes(o.status) && <DropdownMenuItem onClick={() => setStockOrderId(o.id)}><Package className="mr-2 h-3.5 w-3.5" />Atender com estoque</DropdownMenuItem>}
                           {o.status === "draft" && <DropdownMenuItem disabled={updateStatusMut.isPending} onClick={() => requestStatus(o.id, "approved")}><CheckCircle2 className="h-3.5 w-3.5 mr-2" /> Aprovar</DropdownMenuItem>}
                           {o.status === "approved" && <DropdownMenuItem disabled={updateStatusMut.isPending} onClick={() => requestStatus(o.id, "in_production")}><Clock className="h-3.5 w-3.5 mr-2" /> Produzir</DropdownMenuItem>}
                           {o.status === "in_production" && <DropdownMenuItem disabled={updateStatusMut.isPending} onClick={() => requestStatus(o.id, "ready")}><CheckCircle2 className="h-3.5 w-3.5 mr-2" /> Pronto</DropdownMenuItem>}
@@ -810,6 +818,7 @@ export default function Pedidos() {
 
               <div className="flex flex-col sm:flex-row justify-between sm:items-end gap-4">
                 <div className="flex gap-2">
+                  {["draft", "approved"].includes(viewOrder.status) && <Button onClick={() => setStockOrderId(viewOrder.id)}><Package className="mr-2 h-4 w-4" />Atender com estoque</Button>}
                   <Button variant="outline" size="sm" onClick={handlePrint} disabled={itemsLoading || !!itemsError}>
                     <Printer className="h-4 w-4 mr-1" /> Imprimir / PDF
                   </Button>

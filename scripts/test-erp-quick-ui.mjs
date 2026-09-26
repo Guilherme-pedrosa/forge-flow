@@ -7,6 +7,7 @@ const stock = [{id:'i1',tenant_id:'test',name:'Embalagem kraft',category:'consum
 const writes=[];
 try {
  for(const width of [1440,390]) {
+  const products=[{...product}];
   const context=await browser.newContext({viewport:{width,height:960}}); const page=await context.newPage(); const errors=[];
   page.on('pageerror',e=>errors.push(e.message));
   await page.route('**/*',async route=>{
@@ -16,8 +17,14 @@ try {
     const table=url.pathname.split('/').pop(); let data=[];
     if(url.pathname.includes('/rpc/')) {
      if(route.request().method()==='POST') writes.push({rpc:table,...route.request().postDataJSON()});
-     data=['product_material_recipe_catalog'].includes(table)?[]:table==='save_product_with_photos'?'saved-product':table==='save_quick_purchase'?'saved-purchase':table==='delete_unused_record'?null:[];
-    } else if(table==='products') data=[product];
+     if(table==='save_product_with_photos') {
+       const body=route.request().postDataJSON();const id=body.p_product_id||`product-${products.length}`;const previous=products.find(p=>p.id===id);const item=body.p_product.stock;
+       const saved={...product,...previous,...body.p_product,id,manual_cost_override:body.p_product.manual_cost,stock_item_id:previous?.stock_item_id||`stock-${id}`,stock:item?{...previous?.stock,...item,id:previous?.stock_item_id||`stock-${id}`,current_stock:item.current_stock??previous?.stock?.current_stock??0}:previous?.stock};
+       const index=products.findIndex(p=>p.id===id);if(index<0)products.push(saved);else products[index]=saved;data=id;
+     } else if(table==='save_inventory_catalog') {
+       const body=route.request().postDataJSON();data=`inventory-${stock.length}`;stock.push({...body.p_item,id:data});
+     } else if(table==='product_material_recipe_preview') data=null; else data=['product_material_recipe_catalog'].includes(table)?[]:table==='save_quick_purchase'?'saved-purchase':table==='delete_unused_record'?null:[];
+    } else if(table==='products') data=products;
     else if(table==='inventory_items') { data=stock; if(route.request().method()==='POST') {const body=route.request().postDataJSON();data={...body};stock.push({...body,avg_cost:0,current_stock:0});} }
     else if(table==='tenants') data={id:'test',name:'Operação de teste',settings:{}};
     else if(table==='bank_accounts') data=[{id:'bank',name:'Conta principal',is_active:true}];
@@ -37,6 +44,26 @@ try {
   await page.getByRole('button',{name:'Salvar e cadastrar outro',exact:true}).click();
   await expect(page.getByLabel('Nome *',{exact:true})).toHaveValue('');
   await expect(page.getByRole('dialog')).toBeVisible();
+  await page.getByRole('button',{name:'Cancelar',exact:true}).click();
+  await page.getByRole('button',{name:'Novo Produto',exact:true}).click();
+  await page.getByLabel('Nome *',{exact:true}).fill('Produto com custo e estoque');
+  await page.getByLabel('Preço de custo (R$)',{exact:true}).fill('12,50');
+  await page.getByLabel('Preço unitário (R$)',{exact:true}).fill('25,00');
+  await page.getByLabel('Estoque inicial',{exact:true}).fill('20');
+  await page.waitForTimeout(250);
+  await page.screenshot({path:`${directory}/cadastro-completo-${width}.png`});
+  await page.getByRole('button',{name:'Criar',exact:true}).click();
+  await expect(page.getByRole('dialog')).not.toBeVisible();
+  await page.getByText('Produto com custo e estoque',{exact:true}).click();
+  await expect(page.getByLabel('Preço de custo (R$)',{exact:true})).toHaveValue('12.5');
+  await expect(page.getByLabel('Quantidade em estoque',{exact:true})).toHaveValue('20');
+  await page.getByLabel('Preço de custo (R$)',{exact:true}).fill('15,75');
+  await page.getByLabel('Quantidade em estoque',{exact:true}).fill('24');
+  await page.getByRole('button',{name:'Salvar',exact:true}).click();
+  await expect(page.getByRole('dialog')).not.toBeVisible();
+  await page.getByText('Produto com custo e estoque',{exact:true}).click();
+  await expect(page.getByLabel('Preço de custo (R$)',{exact:true})).toHaveValue('15.75');
+  await expect(page.getByLabel('Quantidade em estoque',{exact:true})).toHaveValue('24');
   await page.getByRole('button',{name:'Cancelar',exact:true}).click();
   await page.goto('http://127.0.0.1:5173/estoque/compras');
   await page.getByRole('button',{name:'Nova Compra',exact:true}).click();

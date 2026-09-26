@@ -52,10 +52,11 @@ export default function Movimentacoes() {
 
   const [params] = useSearchParams();
   const itemFromLink = params.get("item");
+  const historyOnly = params.get("historico") === "1";
   const [quickItemOpen, setQuickItemOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("all");
-  const [createOpen, setCreateOpen] = useState(!!itemFromLink);
+  const [createOpen, setCreateOpen] = useState(!!itemFromLink && !historyOnly);
 
   // Form
   const [itemId, setItemId] = useState(itemFromLink || "");
@@ -67,12 +68,13 @@ export default function Movimentacoes() {
   const [notes, setNotes] = useState("");
 
   const { data: movements = [], isLoading, error: loadError, refetch } = useQuery({
-    queryKey: ["inventory_movements", page, typeFilter],
+    queryKey: ["inventory_movements", profile?.tenant_id, page, typeFilter, itemFromLink],
     queryFn: async () => {
       let query = supabase
         .from("inventory_movements")
         .select("*, inventory_items(name, unit)")
         .order("created_at", { ascending: false }).order("id", { ascending: false });
+      if (itemFromLink) query = query.eq("item_id", itemFromLink);
       if (typeFilter !== "all") query = query.eq("movement_type", typeFilter as MovementType);
       const { data, error } = await query.range(page * 100, page * 100 + 99);
       if (error) throw error;
@@ -92,7 +94,7 @@ export default function Movimentacoes() {
   });
 
   const appliedItemLink = useRef<string | null>(null);
-  useEffect(() => { const item = items.find(i => i.id === itemFromLink); if (item && appliedItemLink.current !== item.id) { appliedItemLink.current = item.id; setItemId(item.id); setUnitCost(String(item.avg_cost)); setCreateOpen(true); } }, [items, itemFromLink]);
+  useEffect(() => { const item = items.find(i => i.id === itemFromLink); if (item && appliedItemLink.current !== item.id) { appliedItemLink.current = item.id; setItemId(item.id); setUnitCost(String(item.avg_cost)); setCreateOpen(!historyOnly); } }, [items, itemFromLink, historyOnly]);
 
   const filtered = useMemo(() => {
     let list = movements;
@@ -128,6 +130,7 @@ export default function Movimentacoes() {
       request.current = null;
       qc.invalidateQueries({ queryKey: ["inventory_movements"] });
       qc.invalidateQueries({ queryKey: ["inventory_items"] });
+      qc.invalidateQueries({ queryKey: ["products"] });
       setCreateOpen(false);
       setItemId(""); setQuantity(""); setUnitCost(""); setLotNumber(""); setNotes("");
       toast({ title: "Movimentação registrada" });

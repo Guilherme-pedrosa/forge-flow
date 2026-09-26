@@ -1,6 +1,6 @@
 import { DeleteRecordDialog, type DeleteTarget } from "@/components/shared/DeleteRecordDialog";
 import { useState, useMemo, useEffect, useRef } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link as RouterLink, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -101,6 +101,10 @@ export default function Produtos() {
   const [estTime, setEstTime] = useState("");
   const [postMinutes, setPostMinutes] = useState("");
   const [costEstimate, setCostEstimate] = useState("");
+  const [stockQuantity, setStockQuantity] = useState("0");
+  const [stockUnit, setStockUnit] = useState("un");
+  const [minStock, setMinStock] = useState("0");
+  const [stockEnabled, setStockEnabled] = useState(true);
   const [salePrice, setSalePrice] = useState("");
   const [photoUrl, setPhotoUrl] = useState("");
   const [extraPhotos, setExtraPhotos] = useState<string[]>([]);
@@ -141,23 +145,19 @@ export default function Produtos() {
     queryKey: ["products", profile?.tenant_id],
     queryFn: async () => {
       const [rows, recipes] = await Promise.all([
-        allRows((from, to) => supabase.from("products").select("*, inventory_items(name)").eq("tenant_id", profile!.tenant_id).order("name").order("id").range(from, to)),
+        allRows<any>((from, to) => supabase.from("products").select("*, inventory_items!products_material_id_fkey(name), stock:inventory_items!products_stock_item_id_fkey(*)").eq("tenant_id", profile!.tenant_id).order("name").order("id").range(from, to)),
         supabase.rpc("product_material_recipe_catalog"),
       ]);
       if (recipes.error) throw recipes.error;
       const summary = recipes.data as unknown as {id: string; configured: boolean; complete: boolean; cost_per_unit: number | null; plate_count: number}[];
       return rows.map(row => { const recipe = summary.find(value => value.id === row.id); return { ...row,
-        cost_estimate: recipe?.configured ? recipe.cost_per_unit : row.cost_estimate,
+        cost_estimate: row.manual_cost_override ?? (recipe?.configured ? recipe.cost_per_unit : row.cost_estimate),
+        recipe_cost: recipe?.cost_per_unit ?? null,
         recipe_configured: recipe?.configured ?? false, recipe_complete: recipe?.complete ?? false, recipe_plate_count: recipe?.plate_count ?? 0,
       }; });
     },
     enabled: !!profile,
   });
-
-  const editedRecipeProduct = products.find(product => product.id === editItem?.id);
-  useEffect(() => {
-    if (editedRecipeProduct?.recipe_configured) setCostEstimate(editedRecipeProduct.cost_estimate == null ? "" : String(editedRecipeProduct.cost_estimate));
-  }, [editedRecipeProduct?.id, editedRecipeProduct?.recipe_configured, editedRecipeProduct?.cost_estimate]);
 
   const { data: materials = [], error: materialsError } = useQuery({
     queryKey: ["inventory_items", "product-costs", profile?.tenant_id],
@@ -235,7 +235,7 @@ export default function Produtos() {
     if (materialsError || printersError || tenantError || !tenant) { toast({ title: "Parâmetros indisponíveis", description: "Aguarde o carregamento ou atualize a página antes de calcular.", variant: "destructive" }); return; }
     if (costBreakdown.error) { toast({ title: "Não foi possível calcular", description: costBreakdown.error, variant: "destructive" }); return; }
     setCostEstimate(costBreakdown.total.toFixed(2));
-    if (!salePrice || parseFloat(salePrice) === 0) {
+    if (!salePrice || toNumber(salePrice) === 0) {
       setSalePrice(costBreakdown.suggestedPrice.toFixed(2));
     }
   };
@@ -289,6 +289,7 @@ export default function Produtos() {
     setPhotosLoading(false);
     setPrintSourceBusy(false); setRecipeBusy(false);
     setSourceDraft(false); setRecipeDraft(false);
+    setStockQuantity("0"); setStockUnit("un"); setMinStock("0"); setStockEnabled(true);
     setName(""); setDescription(""); setSku(""); setCategory("printed_part"); setMaterialId("");
     setEstGrams(""); setEstTime(""); setPostMinutes(""); setCostEstimate(""); setSalePrice(""); setPhotoUrl(""); setExtraPhotos([]); setNotes(""); setPrinterId(""); setNumColors("1"); setPrintsPerPlate("1"); setExtras([]); setKitComponents([]);
   };
@@ -299,6 +300,7 @@ export default function Produtos() {
     makerImportTarget.current = p.id;
     setPrintSourceBusy(false); setRecipeBusy(false);
     setSourceDraft(false); setRecipeDraft(false);
+    setStockQuantity(String(p.stock?.current_stock ?? 0)); setStockUnit(p.stock?.unit || "un"); setMinStock(String(p.stock?.min_stock ?? 0)); setStockEnabled(p.category !== "service" || !!p.stock_item_id);
     setEditItem(p); setName(p.name); setDescription(p.description || ""); setSku(p.sku || "");
     setCategory(p.category); setMaterialId(p.material_id || ""); setEstGrams(p.est_grams?.toString() || "");
     setEstTime(p.est_time_minutes ? (p.est_time_minutes / 60).toFixed(2) : ""); setPostMinutes(p.post_process_minutes?.toString() || "");
@@ -641,7 +643,13 @@ ${selected?.name ? `Perfil: ${selected.name}
         material_id: materialId || null, est_grams: grams,
         est_time_minutes: Math.round(nonNegative(estTime, "Tempo por placa") * 60),
         post_process_minutes: nonNegative(postMinutes, "Pós-processo por placa"),
-        cost_estimate: cost, sale_price: price,
+        cost_estimate: cost, manual_cost: cost, sale_price: price,
+        ...(stockEnabled ? { stock: {
+          unit: stockUnit, min_stock: nonNegative(minStock, "Estoque mínimo"),
+          ...(!editItem?.stock_item_id || cost !== editItem?.cost_estimate ? { avg_cost: cost ?? 0 } : {}),
+          ...(!editItem?.stock_item_id || nonNegative(stockQuantity, "Estoque") !== Number(editItem?.stock?.current_stock ?? 0)
+            ? { current_stock: nonNegative(stockQuantity, "Estoque"), expected_stock: Number(editItem?.stock?.current_stock ?? 0) } : {}),
+        } } : {}),
         margin_percent: price != null && price > 0 && cost != null ? ((price - cost) / price) * 100 : null,
         notes: notes.trim() || null, photo_url: photoUrl.trim() || null,
         num_colors: positiveInteger(numColors, "Número de cores", 16),
@@ -663,6 +671,7 @@ ${selected?.name ? `Perfil: ${selected.name}
       setCreateOpen(createAnother.current && !result.imported); resetForm();
       if (createAnother.current && !result.imported) requestAnimationFrame(() => document.getElementById("product-name")?.focus());
       await qc.invalidateQueries({ queryKey: ["products"] });
+      await qc.invalidateQueries({ queryKey: ["inventory_items"] });
       if (result.imported) {
         const refreshed = await refetchProducts(); const product = refreshed.data?.find(product => product.id === result.id);
         if (product) openEdit(product);
@@ -673,7 +682,7 @@ ${selected?.name ? `Perfil: ${selected.name}
   });
   const updateMut = useMutation({
     mutationFn: () => saveProduct(editItem?.id ?? null),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["products"] }); setEditItem(null); resetForm(); toast({ title: "Produto atualizado" }); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["products"] }); qc.invalidateQueries({ queryKey: ["inventory_items"] }); qc.invalidateQueries({ queryKey: ["inventory_movements"] }); setEditItem(null); resetForm(); toast({ title: "Produto atualizado" }); },
     onError: (error: Error) => toast({ title: "Não foi possível salvar", description: error.message, variant: "destructive" }),
   });
   const editWritePending = updateMut.isPending || uploadingPhoto || printSourceBusy;
@@ -707,6 +716,19 @@ ${selected?.name ? `Perfil: ${selected.name}
     <div className="grid min-w-0 grid-cols-1 gap-4 max-h-[60dvh] overflow-y-auto pr-1 [&>*]:min-w-0">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className="sm:col-span-2"><Label htmlFor="product-name">Nome *</Label><Input autoFocus id="product-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Vaso Geométrico P" /></div>
+      </div>
+      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Precificação</p>
+      <div className="grid grid-cols-2 gap-3">
+        <div><Label htmlFor="product-cost">Preço de custo (R$)</Label><Input id="product-cost" inputMode="decimal" value={costEstimate} onChange={e => setCostEstimate(e.target.value)} placeholder="0,00" />{editItem?.recipe_cost != null && <p className="mt-1 text-xs text-muted-foreground">Custo calculado da composição: {fmtCurrency(editItem.recipe_cost)}. <button type="button" className="underline text-primary" onClick={() => setCostEstimate(String(editItem.recipe_cost))}>Usar este valor</button></p>}</div>
+        <div><Label htmlFor="product-price">Preço unitário (R$)</Label><Input id="product-price" inputMode="decimal" value={salePrice} onChange={(e) => setSalePrice(e.target.value)} placeholder="39.90" /></div>
+      </div>
+
+      <p className="text-xs text-muted-foreground">Informe custo, preço e estoque aqui. Composição e impressão são opcionais para o cadastro.</p>
+      <section className="rounded-lg border p-4 space-y-3" aria-label="Estoque do produto"><div className="flex items-center justify-between"><h3 className="font-medium">Estoque</h3><label className="flex items-center gap-2 text-sm"><Switch checked={stockEnabled} onCheckedChange={setStockEnabled} disabled={!!editItem?.stock_item_id} />Controlar estoque</label></div>
+        {stockEnabled && <><div className="grid grid-cols-2 sm:grid-cols-3 gap-3"><div><Label htmlFor="product-stock">{editItem?.stock_item_id ? "Quantidade em estoque" : "Estoque inicial"}</Label><Input id="product-stock" inputMode="decimal" value={stockQuantity} onChange={e => setStockQuantity(e.target.value)} /></div><div><Label htmlFor="product-unit">Unidade</Label><select id="product-unit" className="h-10 w-full rounded-md border bg-background px-3" value={stockUnit} onChange={e => setStockUnit(e.target.value)}>{["un", "kg", "g", "m", "l", "ml"].map(u => <option key={u} value={u}>{u}</option>)}</select></div><div><Label htmlFor="product-min-stock">Estoque mínimo</Label><Input id="product-min-stock" inputMode="decimal" value={minStock} onChange={e => setMinStock(e.target.value)} /></div></div><p className="text-xs text-muted-foreground">O saldo é salvo junto com o produto e fica disponível nas compras e nas movimentações. Alterações de quantidade ficam no histórico.</p>
+        {editItem?.stock_item_id && <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" size="sm" asChild><RouterLink to={`/estoque/movimentacoes?item=${editItem.stock_item_id}`}>Registrar entrada / saída</RouterLink></Button><Button type="button" variant="outline" size="sm" asChild><RouterLink to={`/estoque/movimentacoes?item=${editItem.stock_item_id}&historico=1`}>Ver movimentações</RouterLink></Button></div>}</>}
+      </section>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div><Label>Categoria</Label>
           <Select value={category} onValueChange={setCategory}><SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>{Object.entries(categoryLabels).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
@@ -715,13 +737,6 @@ ${selected?.name ? `Perfil: ${selected.name}
         <div><Label>SKU</Label><Input value={sku} onChange={(e) => setSku(e.target.value)} placeholder="VASO-GEO-P" /></div>
         <div className="sm:col-span-2"><Label htmlFor="product-description">Descrição</Label><Textarea id="product-description" value={description} onChange={(e) => setDescription(e.target.value)} rows={2} /></div>
       </div>
-      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Precificação</p>
-      <div className="grid grid-cols-2 gap-3">
-        <div><Label htmlFor="product-cost">Custo unitário de referência (R$)</Label><Input id="product-cost" type="number" min="0" step="0.01" value={costEstimate} onChange={(e) => setCostEstimate(e.target.value)} placeholder="12.50" disabled={products.find(product => product.id === editItem?.id)?.recipe_configured} />{products.find(product => product.id === editItem?.id)?.recipe_configured && <p className="mt-1 text-xs text-muted-foreground">O catálogo e os novos orçamentos usam o custo médio atual dos materiais da composição, somado aos demais custos confirmados. Edite a composição para atualizar.</p>}</div>
-        <div><Label htmlFor="product-price">Preço unitário (R$)</Label><Input id="product-price" type="number" min="0" step="0.01" value={salePrice} onChange={(e) => setSalePrice(e.target.value)} placeholder="39.90" /></div>
-      </div>
-
-      <p className="text-xs text-muted-foreground">Só o nome é obrigatório. Você pode completar os detalhes depois.</p>
       <details className="rounded-lg border p-3"><summary className="cursor-pointer py-2 font-medium">Produção, fotos e detalhes avançados</summary><div className="grid gap-4 pt-4">
       {productionReference && (
         <section aria-label="Referência da produção" className="rounded-xl border border-primary/20 bg-primary/5 p-4 space-y-3">
@@ -895,7 +910,7 @@ ${selected?.name ? `Perfil: ${selected.name}
             <Button type="button" variant="outline" size="sm" className="h-7 text-xs w-full" onClick={() => {
               const totalExtras = extras.reduce((s, e) => s + (e.cost || 0), 0);
               setCostEstimate((kitTotalCost + totalExtras).toFixed(2));
-              if (!salePrice || parseFloat(salePrice) === 0) {
+              if (!salePrice || toNumber(salePrice) === 0) {
                 const total = kitTotalCost + totalExtras;
                 try { setSalePrice(suggestedProductPrice(total, tenantSettings.target_margin).toFixed(2)); }
                 catch (error) { toast({ title: "Revise a margem desejada", description: (error as Error).message, variant: "destructive" }); return; }
@@ -980,7 +995,7 @@ ${selected?.name ? `Perfil: ${selected.name}
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
               <Calculator className="h-3.5 w-3.5" /> Composição de Custo Total
             </p>
-            <Button type="button" variant="outline" size="sm" className="h-9 text-xs" onClick={applyCalculatedCost} disabled={!!costBreakdown.error || products.find(product => product.id === editItem?.id)?.recipe_configured}>
+            <Button type="button" variant="outline" size="sm" className="h-9 text-xs" onClick={applyCalculatedCost} disabled={!!costBreakdown.error}>
               Aplicar Custo Calculado
             </Button>
           </div>
@@ -1024,9 +1039,9 @@ ${selected?.name ? `Perfil: ${selected.name}
       )}
 
       {/* Marketplace fee simulator */}
-      {parseFloat(salePrice) > 0 && parseFloat(costEstimate) > 0 && (() => {
-        const price = parseFloat(salePrice);
-        const cost = parseFloat(costEstimate);
+      {toNumber(salePrice) > 0 && toNumber(costEstimate) > 0 && (() => {
+        const price = toNumber(salePrice);
+        const cost = toNumber(costEstimate);
         const updateChannel = (idx: number, field: string, value: any) => {
           setChannelConfig(prev => prev.map((ch, i) => i === idx ? { ...ch, [field]: value } : ch));
         };
@@ -1192,7 +1207,7 @@ ${selected?.name ? `Perfil: ${selected.name}
           <Table>
             <TableHeader><TableRow>
               <TableHead></TableHead><TableHead>Produto</TableHead><TableHead>Categoria</TableHead><TableHead>Material</TableHead>
-              <TableHead className="text-right">Custo</TableHead><TableHead className="text-right">Preço</TableHead>
+              <TableHead className="text-right">Estoque</TableHead><TableHead className="text-right">Custo</TableHead><TableHead className="text-right">Preço</TableHead>
               <TableHead className="text-right">Margem</TableHead><TableHead className="w-10" />
             </TableRow></TableHeader>
             <TableBody>
@@ -1217,6 +1232,7 @@ ${selected?.name ? `Perfil: ${selected.name}
                     )}
                   </TableCell>
                   <TableCell className="text-sm">{p.inventory_items?.name || "—"}</TableCell>
+                  <TableCell className="text-right font-mono text-sm">{p.stock ? `${Number(p.stock.current_stock).toLocaleString("pt-BR")} ${p.stock.unit}` : "—"}</TableCell>
                   <TableCell className="text-right text-sm">
                     <span className="font-mono">{fmtCurrency(p.cost_estimate)}</span>
                     {(() => { const reference = productProductionReference(p); return reference && (
@@ -1256,7 +1272,7 @@ ${selected?.name ? `Perfil: ${selected.name}
 
       {/* Edit dialog */}
       <Dialog open={!!editItem} onOpenChange={open => { if (!open) closeEditProduct(); }}>
-        <DialogContent className="max-w-2xl" closeDisabled={editWritePending} aria-busy={editWritePending}><DialogHeader className="pr-10"><DialogTitle>Editar Produto</DialogTitle><DialogDescription>Atualize o cadastro, a receita e a precificação.</DialogDescription></DialogHeader>
+        <DialogContent className="max-w-2xl" closeDisabled={editWritePending} aria-busy={editWritePending}><DialogHeader className="pr-10"><DialogTitle>Editar Produto</DialogTitle><DialogDescription>Edite os dados, o custo, o preço e o estoque do produto.</DialogDescription></DialogHeader>
           {formFields}
           {printSourceBusy && <p role="status" className="text-xs text-muted-foreground">Salvando composição ou fonte de impressão. Aguarde a confirmação.</p>}
           {hasProductionDraft && !printSourceBusy && <p role="status" className="text-xs text-amber-800 dark:text-amber-300">Salve ou cancele a composição, fonte ou placa em edição antes de salvar o cadastro. Fechar ou cancelar o produto descarta esses rascunhos.</p>}

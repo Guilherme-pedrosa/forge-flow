@@ -540,6 +540,68 @@ await test('Inventory deletion allows an unused item and preserves material refe
   await rejects("SELECT delete_unused_record('inventory',$1)",[linked],/Arquivar/);
   assert.equal(await scalar('SELECT count(*)::int FROM inventory_items WHERE id=$1',[linked]),1);
 });
+
+await test('Product saves manual cost, price and twenty units atomically and retries without duplicate stock',async()=>{
+ const payload={name:'Produto completo',category:'resale',manual_cost:10,cost_estimate:10,sale_price:25,stock:{current_stock:20,avg_cost:10,unit:'un',min_stock:3}};
+ const request=requestId();const product=await saveProduct(payload,[],null,request);
+ assert.equal(await saveProduct(payload,[],null,request),product);
+ const item=await scalar('SELECT stock_item_id FROM products WHERE id=$1',[product]);
+ assert.equal(Number(await scalar('SELECT current_stock FROM inventory_items WHERE id=$1',[item])),20);
+ assert.equal(Number(await scalar('SELECT cost_estimate FROM products WHERE id=$1',[product])),10);
+ assert.equal(await scalar('SELECT count(*)::int FROM inventory_movements WHERE item_id=$1',[item]),1);
+ await db.query('UPDATE products SET cost_estimate=999 WHERE id=$1',[product]);
+ assert.equal(Number(await scalar('SELECT cost_estimate FROM products WHERE id=$1',[product])),10);
+ await saveProduct({...payload,manual_cost:12.5,cost_estimate:12.5,stock:{current_stock:25,expected_stock:20,avg_cost:12.5,unit:'un',min_stock:3}},[],product);
+ assert.equal(Number(await scalar('SELECT current_stock FROM inventory_items WHERE id=$1',[item])),25);
+ assert.equal(Number(await scalar('SELECT cost_estimate FROM products WHERE id=$1',[product])),12.5);
+ await rejects("SELECT delete_unused_record('product',$1)",[product],/histórico de estoque/);
+});
+await test('Stale product stock rejects the entire save and preserves the newer balance and cost',async()=>{
+ const product=await saveProduct({name:'Saldo concorrente',manual_cost:10,cost_estimate:10,stock:{current_stock:2,avg_cost:10}});
+ const item=await scalar('SELECT stock_item_id FROM products WHERE id=$1',[product]);
+ await postMovement({item_id:item,movement_type:'purchase_in',quantity:3,unit_cost:10});
+ await rejects("SELECT save_product_with_photos($1,$2::jsonb,'[]'::jsonb,$3)",[product,JSON.stringify({name:'Não pode salvar parcial',manual_cost:30,cost_estimate:30,stock:{current_stock:4,expected_stock:2,avg_cost:30}}),requestId()],/saldo mudou/);
+ assert.equal(Number(await scalar('SELECT current_stock FROM inventory_items WHERE id=$1',[item])),5);
+ assert.equal(await scalar('SELECT name FROM products WHERE id=$1',[product]),'Saldo concorrente');
+ assert.equal(Number(await scalar('SELECT cost_estimate FROM products WHERE id=$1',[product])),10);
+});
+await test('Materials accept initial cost and stock in the regular save and retain corrections in history',async()=>{
+ const args=[null,JSON.stringify({name:'Material com saldo inicial',category:'consumable',unit:'un',current_stock:30,avg_cost:2.5}),requestId()];
+ const item=await scalar('SELECT save_inventory_catalog($1,$2::jsonb,$3)',args);
+ assert.equal(await scalar('SELECT save_inventory_catalog($1,$2::jsonb,$3)',args),item);
+ await scalar('SELECT save_inventory_catalog($1,$2::jsonb,$3)',[item,JSON.stringify({name:'Material corrigido',current_stock:25,expected_stock:30,avg_cost:3}),requestId()]);
+ const saved=await row('SELECT current_stock,avg_cost FROM inventory_items WHERE id=$1',[item]);assert.equal(Number(saved.current_stock),25);assert.equal(Number(saved.avg_cost),3);
+ assert.equal(await scalar('SELECT count(*)::int FROM inventory_movements WHERE item_id=$1',[item]),2);
+ await rejects('SELECT save_inventory_catalog($1,$2::jsonb,$3)',[otherMaterial,JSON.stringify({current_stock:5,expected_stock:0}),requestId()],/não encontrado/);
+});
+await test('Purchase receipt increases the exact same product balance',async()=>{
+ const product=await saveProduct({name:'Produto comprado',manual_cost:10,cost_estimate:10,sale_price:25,stock:{current_stock:20,avg_cost:10,unit:'un'}});
+ const item=await scalar('SELECT stock_item_id FROM products WHERE id=$1',[product]);
+ await scalar('SELECT save_quick_purchase($1::jsonb,$2::jsonb,$3::jsonb,$4,true)',[JSON.stringify({order_date:today,subtotal:50,total:50}),JSON.stringify([{description:'Produto comprado',inventory_item_id:item,quantity:5,stock_quantity:5,unit_price:10,total:50}]),JSON.stringify([{amount:50,due_date:today}]),requestId()]);
+ assert.equal(Number(await scalar('SELECT current_stock FROM inventory_items WHERE id=$1',[item])),25);
+});
+await test('Ready-stock sale needs no print recipe, debits once, creates receivable and cancellation restores once',async()=>{
+ const product=await saveProduct({name:'Pronta entrega',manual_cost:10,cost_estimate:10,sale_price:25,stock:{current_stock:20,avg_cost:10}});
+ const item=await scalar('SELECT stock_item_id FROM products WHERE id=$1',[product]);
+ const order=await createOrder(product,3,25);
+ await scalar('SELECT fulfill_order_from_stock($1)',[order.id]);await scalar('SELECT fulfill_order_from_stock($1)',[order.id]);
+ assert.equal(Number(await scalar('SELECT current_stock FROM inventory_items WHERE id=$1',[item])),17);
+ assert.equal(await scalar('SELECT status FROM orders WHERE id=$1',[order.id]),'ready');
+ assert.equal(await scalar('SELECT count(*)::int FROM jobs WHERE order_id=$1',[order.id]),0);
+ assert.equal(Number(await scalar('SELECT amount FROM accounts_receivable WHERE origin_id=$1',[order.id])),75);
+ assert.equal(Number(await scalar('SELECT total_cost FROM order_stock_allocations WHERE order_id=$1',[order.id])),30);
+ await scalar("SELECT transition_sales_order($1,'cancelled')",[order.id]);await scalar("SELECT transition_sales_order($1,'cancelled')",[order.id]);
+ assert.equal(Number(await scalar('SELECT current_stock FROM inventory_items WHERE id=$1',[item])),20);
+ assert.equal(await scalar('SELECT status FROM accounts_receivable WHERE origin_id=$1',[order.id]),'reversed');
+});
+await test('Stock sale shortage rolls back all stock, allocations and financial postings',async()=>{
+ const product=await saveProduct({name:'Sem saldo suficiente',manual_cost:10,cost_estimate:10,sale_price:25,stock:{current_stock:1,avg_cost:10}});
+ const order=await createOrder(product,2,25);
+ await rejects('SELECT fulfill_order_from_stock($1)',[order.id],/Estoque insuficiente/);
+ assert.equal(await scalar('SELECT count(*)::int FROM accounts_receivable WHERE origin_id=$1',[order.id]),0);
+ assert.equal(await scalar('SELECT count(*)::int FROM order_stock_allocations WHERE order_id=$1',[order.id]),0);
+ assert.equal(await scalar('SELECT status FROM orders WHERE id=$1',[order.id]),'draft');
+});
 console.log(`Validated ${passed} PostgreSQL ERP scenarios.`);
 await db.close();
 if(failures.length) { console.error(`${failures.length} scenario(s) failed.`); for(const {name,error} of failures) console.error(name+'\n'+(error.stack?.split('\n').slice(0,5).join('\n') ?? error)); process.exitCode=1; }

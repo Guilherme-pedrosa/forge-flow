@@ -1,6 +1,6 @@
-import { QuickInventoryItem } from "@/components/estoque/QuickInventoryItem";
+import { orderRequest } from "@/lib/sales-order";
 import { DeleteRecordDialog, type DeleteTarget } from "@/components/shared/DeleteRecordDialog";
-import { Fragment, useState, useMemo } from "react";
+import { Fragment, useState, useMemo, useRef } from "react";
 import { Link } from "react-router-dom";
 import { nonNegative, gramsToStockUnit } from "@/lib/production";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -50,7 +50,7 @@ export default function Itens() {
   const { toast } = useToast();
   const qc = useQueryClient();
 
-  const [quickOpen, setQuickOpen] = useState(false);
+  const saveRequest = useRef<{ signature: string; id: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
@@ -150,6 +150,7 @@ export default function Itens() {
   };
 
   const resetForm = () => {
+    saveRequest.current = null;
     setFormMode("group"); setParentId(""); setName(""); setCategory("filament");
     setMaterialType(""); setColor(""); setDiameter("1.75"); setBrand(""); setSku("");
     setMaterialCode(""); setMaterialDescription(""); setColorCode(""); setColorHex("");
@@ -226,14 +227,15 @@ export default function Itens() {
         sku: sku || null,
         unit,
         min_stock: minStock ? parseFloat(minStock) : 0,
-        avg_cost: 0,
-        current_stock: 0,
+        avg_cost: nonNegative(avgCost, "Custo"),
+        current_stock: nonNegative(currentStock, "Estoque inicial"),
         loss_coefficient: nonNegative(lossCoefficient, "Perda prevista", 5) / 100,
         notes: notes || null,
         freight_cost: freightCost ? parseFloat(freightCost) : 0,
         parent_id: formMode === "color" && parentId ? parentId : null,
       };
-      const { error } = await supabase.from("inventory_items").insert(payload);
+      saveRequest.current = orderRequest(saveRequest.current, JSON.stringify(payload));
+      const { error } = await (supabase.rpc as any)("save_inventory_catalog", { p_item_id: null, p_item: payload, p_request_id: saveRequest.current.id });
       if (error) throw error;
     },
     onSuccess: () => {
@@ -264,7 +266,10 @@ export default function Itens() {
         freight_cost: freightCost ? parseFloat(freightCost) : 0,
         parent_id: formMode === "color" && parentId ? parentId : null,
       };
-      const { error } = await supabase.from("inventory_items").update(payload).eq("id", editItem.id);
+      if (nonNegative(currentStock, "Estoque") !== Number(editItem.current_stock)) { payload.current_stock = nonNegative(currentStock, "Estoque"); payload.expected_stock = Number(editItem.current_stock); }
+      if (nonNegative(avgCost, "Custo") !== Number(editItem.avg_cost)) payload.avg_cost = nonNegative(avgCost, "Custo");
+      saveRequest.current = orderRequest(saveRequest.current, JSON.stringify([editItem.id, payload]));
+      const { error } = await (supabase.rpc as any)("save_inventory_catalog", { p_item_id: editItem.id, p_item: payload, p_request_id: saveRequest.current.id });
       if (error) throw error;
     },
     onSuccess: () => {
@@ -356,6 +361,27 @@ export default function Itens() {
         ) : <p className="col-span-full text-sm text-muted-foreground">O item terá saldo próprio. Outra cor não substituirá este material nas composições.</p>}
 
         <div>
+          <Label>Unidade do saldo no estoque</Label>
+          <Select value={unit} onValueChange={setUnit} disabled={!!editItem}>
+            <SelectTrigger aria-label="Unidade do saldo no estoque"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="g">Gramas (g)</SelectItem>
+              <SelectItem value="kg">Quilos (kg)</SelectItem>
+              <SelectItem value="ml">Mililitros (ml)</SelectItem>
+              <SelectItem value="un">Unidade (un)</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="mt-1 text-xs text-muted-foreground">{["g", "kg"].includes(unit) ? `O rolo é a embalagem da compra. Um rolo com 1 kg de material entra como ${unit === "g" ? "1.000 g" : "1 kg"}; o consumo da produção usa este mesmo saldo.` : "Use a unidade física que será contada nas entradas e saídas."}</p>
+        </div>
+        <div>
+          <Label>Estoque atual ({unit})</Label>
+          <Input aria-label="Quantidade em estoque" inputMode="decimal" value={currentStock} onChange={e => setCurrentStock(e.target.value)} placeholder="0" />
+        </div>
+        <div>
+          <Label>Custo Médio (R$/{unit})</Label>
+          <Input aria-label="Custo unitário do estoque" inputMode="decimal" value={avgCost} onChange={e => setAvgCost(e.target.value)} placeholder="0,00" />
+        </div>
+        <div>
           <Label>Categoria</Label>
           <Select value={category} onValueChange={setCategory}>
             <SelectTrigger><SelectValue /></SelectTrigger>
@@ -367,6 +393,7 @@ export default function Itens() {
           </Select>
         </div>
 
+        <details className="col-span-full rounded-lg border p-3"><summary className="cursor-pointer py-2 font-medium">Detalhes do material e impressão (opcional)</summary><div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3">
         <div>
           <Label>Material identificado</Label>
           <Select value={materialCode || "unidentified"} onValueChange={value => { setMaterialCode(value === "unidentified" ? "" : value); if (value !== "unidentified") setMaterialType(MATERIAL_CODES.find(([code]) => code === value)?.[1] ?? ""); }}>
@@ -392,31 +419,13 @@ export default function Itens() {
           <Label>SKU</Label>
           <Input value={sku} onChange={(e) => setSku(e.target.value)} placeholder="PLA-WH-1KG" />
         </div>
-        <div>
-          <Label>Unidade do saldo no estoque</Label>
-          <Select value={unit} onValueChange={setUnit} disabled={!!editItem}>
-            <SelectTrigger aria-label="Unidade do saldo no estoque"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="g">Gramas (g)</SelectItem>
-              <SelectItem value="kg">Quilos (kg)</SelectItem>
-              <SelectItem value="ml">Mililitros (ml)</SelectItem>
-              <SelectItem value="un">Unidade (un)</SelectItem>
-            </SelectContent>
-          </Select>
-          <p className="mt-1 text-xs text-muted-foreground">{["g", "kg"].includes(unit) ? `O rolo é a embalagem da compra. Um rolo com 1 kg de material entra como ${unit === "g" ? "1.000 g" : "1 kg"}; o consumo da produção usa este mesmo saldo.` : "Use a unidade física que será contada nas entradas e saídas."}</p>
-        </div>
+
         <div>
           <Label>Estoque Mínimo</Label>
           <Input type="number" value={minStock} onChange={(e) => setMinStock(e.target.value)} placeholder="200" />
         </div>
-        <div>
-          <Label>Estoque atual ({unit})</Label>
-          <Input value={editItem ? currentStock : "0"} readOnly aria-readonly="true" className="bg-muted" />
-        </div>
-        <div>
-          <Label>Custo Médio (R$/{unit})</Label>
-          <Input value={editItem ? avgCost : "0"} readOnly aria-readonly="true" className="bg-muted" />
-        </div>
+
+
         <div>
           <Label>Custo Frete (R$/kg)</Label>
           <Input type="number" step="0.01" value={freightCost} onChange={(e) => setFreightCost(e.target.value)} placeholder="10.00" />
@@ -425,8 +434,9 @@ export default function Itens() {
           <Label>Perda prevista (%)</Label>
           <Input type="number" min="0" max="100" step="0.01" value={lossCoefficient} onChange={(e) => setLossCoefficient(e.target.value)} placeholder="5" />
         </div>
+        </div></details>
       </div>
-      <p className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">O saldo e o custo médio são calculados pelas entradas. Após cadastrar o material e a cor, registre a compra em <Link className="font-medium text-primary underline" to="/estoque/compras">Compras</Link> ou um ajuste em <Link className="font-medium text-primary underline" to="/estoque/movimentacoes">Movimentações</Link>. O total recebido inclui o frete rateado da compra.</p>
+      <p className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">Custo e quantidade podem ser informados e corrigidos neste cadastro. As alterações ficam no histórico. Para uma nova aquisição, use <Link className="font-medium text-primary underline" to="/estoque/compras">Compras</Link> ou um ajuste em <Link className="font-medium text-primary underline" to="/estoque/movimentacoes">Movimentações</Link>. O total recebido inclui o frete rateado da compra.</p>
       <div>
         <Label>Observações</Label>
         <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} />
@@ -498,14 +508,12 @@ export default function Itens() {
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       <DeleteRecordDialog key={deleteTarget?.id} target={deleteTarget} onClose={() => setDeleteTarget(null)} />
-      {quickOpen && <QuickInventoryItem open onClose={() => setQuickOpen(false)} onCreated={item => { setSearch(item.name); toast({ title: "Item cadastrado" }); }} />}
       <PageHeader
         title="Itens / Materiais"
         description="Cadastro de filamentos, insumos e componentes agrupados por tipo"
         breadcrumbs={[{ label: "Estoque", href: "/estoque/itens" }, { label: "Itens" }]}
         actions={
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" onClick={() => setQuickOpen(true)}><Plus className="mr-1 h-4 w-4" />Cadastro rápido</Button>
             <Button size="sm" variant="outline" onClick={() => { resetForm(); setFormMode("color"); setCreateOpen(true); }}>
               <Palette className="h-4 w-4 mr-1" /> Nova Cor
             </Button>

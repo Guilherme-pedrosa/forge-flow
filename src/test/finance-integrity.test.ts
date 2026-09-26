@@ -130,3 +130,11 @@ describe("Totais sem truncamento silencioso", () => {
     await expect(allRows(async from => from === 0 ? { data: Array(1000).fill(1), error: null } : { data: null, error: new Error("offline") })).rejects.toThrow("offline");
   });
 });
+
+it("inclui venda do estoque no custo uma vez, sem duplicar no ajuste da produção", () => {
+  const result = calculateFinancialResult([{amount:100,status:"open",competence_date:"2026-09-26"}], [], [{actual_total_cost:20,actual_material_cost:20}], [], 30);
+  expect(result.totalCMV).toBe(50);
+  expect(result.stockCost).toBe(30);
+  expect(result.costAdjustment).toBe(0);
+  expect(result.grossProfit).toBe(50);
+});

@@ -14,7 +14,8 @@ export function requiresProductionMeasurement(status: JobStatus, inventoryPosted
 }
 
 export function nonNegative(value: string | number | null | undefined, label: string, fallback = 0): number {
-  const number = value === "" || value == null ? fallback : Number(value);
+  const normalized = typeof value === "string" && value.includes(",") ? value.trim().replace(/\./g, "").replace(",", ".") : value;
+  const number = normalized === "" || normalized == null ? fallback : Number(normalized);
   if (!Number.isFinite(number) || number < 0) throw new Error(`${label} deve ser um número maior ou igual a zero.`);
   return number;
 }

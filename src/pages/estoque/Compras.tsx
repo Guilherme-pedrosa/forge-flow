@@ -302,7 +302,7 @@ export default function Compras() {
     },
     onSuccess: () => {
       purchaseRequests.current.delete("manual");
-      qc.invalidateQueries({ queryKey: ["inventory_items"] });
+      qc.invalidateQueries({ queryKey: ["inventory_items"] }); qc.invalidateQueries({ queryKey: ["products"] });
       qc.invalidateQueries({ queryKey: ["inventory_movements"] });
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
       qc.invalidateQueries({ queryKey: ["accounts_payable"] });
@@ -344,7 +344,7 @@ export default function Compras() {
       qc.invalidateQueries({ queryKey: ["vendors"] });
       qc.invalidateQueries({ queryKey: ["accounts_payable"] });
       if (result?.shouldReceive) {
-        qc.invalidateQueries({ queryKey: ["inventory_items"] });
+        qc.invalidateQueries({ queryKey: ["inventory_items"] }); qc.invalidateQueries({ queryKey: ["products"] });
         qc.invalidateQueries({ queryKey: ["inventory_movements"] });
       }
       setXmlImportOpen(false);
@@ -368,7 +368,7 @@ export default function Compras() {
     },
     onSuccess: (result) => {
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
-      qc.invalidateQueries({ queryKey: ["inventory_items"] });
+      qc.invalidateQueries({ queryKey: ["inventory_items"] }); qc.invalidateQueries({ queryKey: ["products"] });
       qc.invalidateQueries({ queryKey: ["inventory_movements"] });
       setReceiveConfirmOpen(false);
       setReceiveOrderId(null);

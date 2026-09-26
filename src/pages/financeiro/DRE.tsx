@@ -60,16 +60,25 @@ export default function DRE() {
     queryFn: () => allRows<any>((from, to) => supabase.from("purchase_order_items").select("purchase_order_id,inventory_item_id,total").order("id").range(from, to)),
     enabled: !!profile && periodValid,
   });
-  const isLoading = loadingAR || loadingAP || loadingJobs || loadingItems;
+  const { data: stockAllocations = [], isLoading: loadingStock, error: errorStock } = useQuery({
+    queryKey: ["order_stock_allocations", profile?.tenant_id], enabled: !!profile && periodValid,
+    queryFn: () => allRows<any>((from, to) => (supabase as any).from("order_stock_allocations").select("total_cost,posted_at,reversed_at").order("id").range(from, to)),
+  });
+  const stockCost = stockAllocations.reduce((sum, row) => {
+    const posted = row.posted_at.slice(0, 10); const reversed = row.reversed_at?.slice(0, 10);
+    return sum + (posted >= startDate && posted <= endDate ? Number(row.total_cost) : 0) - (reversed && reversed >= startDate && reversed <= endDate ? Number(row.total_cost) : 0);
+  }, 0);
+  const isLoading = loadingAR || loadingAP || loadingJobs || loadingItems || loadingStock;
 
-  const hasError = errorAR || errorAP || errorJobs || errorItems;
-  const dre = useMemo(() => calculateFinancialResult(receivables, payables, jobs, purchaseItems), [receivables, payables, jobs, purchaseItems]);
+  const hasError = errorAR || errorAP || errorJobs || errorItems || errorStock;
+  const dre = useMemo(() => calculateFinancialResult(receivables, payables, jobs, purchaseItems, stockCost), [receivables, payables, jobs, purchaseItems, stockCost]);
 
   const lines = [
     { label: "RECEITA OPERACIONAL", value: dre.totalRevenue, bold: true, section: true },
     { label: "Títulos a receber por competência", value: dre.totalRevenue, indent: true, sub: `${dre.titleCount} títulos · recebidos e em aberto` },
     { label: "", value: 0, separator: true },
-    { label: "(-) CUSTOS DE PRODUÇÃO E PERDAS", value: -dre.totalCMV, bold: true, section: true, negative: true },
+    { label: "(-) CUSTO DAS VENDAS, PRODUÇÃO E PERDAS", value: -dre.totalCMV, bold: true, section: true, negative: true },
+    { label: "Produtos vendidos do estoque", value: dre.stockCost, indent: true },
     { label: "Material / Filamento", value: dre.materialCost, indent: true },
     { label: "Máquina (depreciação + manutenção)", value: dre.machineCost, indent: true },
     { label: "Energia", value: dre.energyCost, indent: true },
