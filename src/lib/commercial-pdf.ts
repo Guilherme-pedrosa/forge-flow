@@ -126,7 +126,8 @@ export function createCommercialPdf(document: CommercialDocument, company: Docum
   doc.text(totalText, 189, y + 39, { align: "right" });
   y += 50;
   if (document.payments?.length) {
-    if (y + 28 > bottom) y = newPage();
+    // Keep short payment schedules together, including their section heading.
+    if (y + Math.min(16 + document.payments.length * 12, 244) > bottom) y = newPage();
     text("CONDIÇÕES DE PAGAMENTO", margin, y, 8, true, color.brand);
     y = table({ startY: y + 4, head: [["PARCELA", "VENCIMENTO", "VALOR"]],
       body: document.payments.map((part, index) => [`${index + 1} / ${document.payments!.length}`, documentDate(part.due_date), documentMoney(part.amount)]),
