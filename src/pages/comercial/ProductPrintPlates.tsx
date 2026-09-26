@@ -16,7 +16,7 @@ import { optionalPlateNumber, sumProductPlateReferences, type ProductPrintPlateV
 import { importedColorHex, importedFilamentLabel, importedPlateFilaments, observedPlateFilaments } from "@/lib/imported-plate-materials";
 
 type Plate = ProductPrintPlateValues & {
-  id: string; tenant_id: string; product_id: string; source_id: string; plate_index: number;
+  id: string; tenant_id: string; product_id: string; source_id: string | null; plate_index: number;
   label: string | null; material_id: string | null; printer_id: string | null;
   actual_source: string | null; actual_updated_at: string | null; model_id: string | null; profile_id: string | null;
   imported_plate_metadata?: unknown; imported_filaments?: unknown;
@@ -59,7 +59,7 @@ function PlateRecipe({ productId, tenantId, plateId, importedFilaments, imported
 }
 
 export default function ProductPrintPlates({ productId, tenantId, sourceId, showProductTotal = false, onBusyChange, onDraftChange }: {
-  productId: string; tenantId: string; sourceId: string; showProductTotal?: boolean;
+  productId: string; tenantId: string; sourceId: string | null; showProductTotal?: boolean;
   onBusyChange?: (sourceId: string, busy: boolean) => void;
   onDraftChange?: (sourceId: string, editing: boolean) => void;
 }) {
@@ -130,8 +130,8 @@ export default function ProductPrintPlates({ productId, tenantId, sourceId, show
     },
     onSuccess: id => {
       const alreadyBound = !!editing?.model_id && !!editing?.profile_id;
-      reset(); void refresh(); setBindingPlate(alreadyBound ? null : id); setTaskId(""); setTaskSearch("");
-      toast({ title: "Placa salva", description: alreadyBound ? "Dados atualizados. O vínculo com a impressão foi preservado." : "Vincule a impressão Bambu correspondente a esta placa." });
+      reset(); void refresh(); setBindingPlate(alreadyBound || !sourceId ? null : id); setTaskId(""); setTaskSearch("");
+      toast({ title: "Placa salva", description: alreadyBound ? "Dados atualizados. O vínculo com a impressão foi preservado." : sourceId ? "Vincule a impressão Bambu correspondente a esta placa." : "Prepare os materiais e o rendimento do componente. O arquivo pode ser vinculado depois." });
     },
     onError: (err: Error) => toast({ title: "Não foi possível salvar a placa", description: err.message, variant: "destructive" }),
   });
@@ -154,9 +154,9 @@ export default function ProductPrintPlates({ productId, tenantId, sourceId, show
     onError: (err: Error) => toast({ title: "Não foi possível vincular esta placa", description: err.message, variant: "destructive" }),
   });
   const busy = save.isPending || archive.isPending || bind.isPending || Object.values(recipeBusy).some(Boolean);
-  useEffect(() => { onBusyChange?.(sourceId, busy); return () => onBusyChange?.(sourceId, false); }, [busy, onBusyChange, sourceId]);
+  useEffect(() => { onBusyChange?.(sourceId || "manual", busy); return () => onBusyChange?.(sourceId || "manual", false); }, [busy, onBusyChange, sourceId]);
   const hasDraft = formOpen || (!!bindingPlate && !!taskId) || Object.values(recipeDraft).some(Boolean);
-  useEffect(() => { onDraftChange?.(sourceId, hasDraft); return () => onDraftChange?.(sourceId, false); }, [hasDraft, onDraftChange, sourceId]);
+  useEffect(() => { onDraftChange?.(sourceId || "manual", hasDraft); return () => onDraftChange?.(sourceId || "manual", false); }, [hasDraft, onDraftChange, sourceId]);
   const editPlate = (plate: Plate) => {
     setEditing(plate); setFormOpen(true); setDraft({ plate_index: String(plate.plate_index), label: plate.label || "", units_per_plate: plate.units_per_plate == null ? "" : String(plate.units_per_plate), material_id: plate.material_id || "", printer_id: plate.printer_id || "", est_grams: plate.est_grams == null ? "" : String(plate.est_grams), est_time_minutes: plate.est_time_seconds == null ? "" : String(plate.est_time_seconds / 60), est_cost_per_unit: plate.est_cost_per_unit == null ? "" : String(plate.est_cost_per_unit), model_id: plate.model_id || "", profile_id: plate.profile_id || "" });
   };
@@ -165,10 +165,11 @@ export default function ProductPrintPlates({ productId, tenantId, sourceId, show
     <Label htmlFor={`plate-${sourceId}-${name}`}>{label}</Label>
     <Input id={`plate-${sourceId}-${name}`} value={draft[name]} onChange={event => setDraft({ ...draft, [name]: event.target.value })} disabled={busy} {...props} />
   </div>;
+  if (!sourceId && !isLoading && !error && !plates.length) return null;
   return <section aria-label="Placas necessárias para o produto" className="border-t pt-3 space-y-3">
     <div className="flex flex-wrap justify-between items-center gap-2">
-      <h4 className="flex items-center gap-1.5 text-sm font-semibold"><Layers3 className="h-4 w-4" /> Placas desta fonte</h4>
-      {!formOpen && <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => { reset(); setDraft({ ...initialDraft(), plate_index: String(Math.max(0, ...plates.map(plate => plate.plate_index)) + 1) }); setFormOpen(true); }}><Plus className="mr-1 h-3.5 w-3.5" /> Adicionar placa</Button>}
+      <h4 className="flex items-center gap-1.5 text-sm font-semibold"><Layers3 className="h-4 w-4" /> {sourceId ? "Placas desta fonte" : "Componentes sem arquivo vinculado"}</h4>
+      {!formOpen && sourceId && <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => { reset(); setDraft({ ...initialDraft(), plate_index: String(Math.max(0, ...plates.map(plate => plate.plate_index)) + 1) }); setFormOpen(true); }}><Plus className="mr-1 h-3.5 w-3.5" /> Adicionar placa</Button>}
     </div>
     {error && <div role="alert" className="text-xs text-destructive">Não foi possível carregar as placas. <Button type="button" size="sm" variant="ghost" onClick={() => refetch()}>Tentar novamente</Button></div>}
     {isLoading ? <p className="text-xs text-muted-foreground">Carregando placas…</p> : !error && !plates.length && <p className="text-xs text-muted-foreground">Nenhuma placa definida nesta fonte. O arquivo associado não informa sozinho quais placas compõem este SKU.</p>}

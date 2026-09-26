@@ -16,6 +16,7 @@ export const navigationGroups = [
   ] },
   { label: "Produção 3D", items: [
     { title: "Ordens de produção", icon: ClipboardList, href: "/producao/ordens" },
+    { title: "Componentes e montagem", icon: Package, href: "/producao/componentes" },
     { title: "Impressões", icon: Hammer, href: "/producao/jobs" },
     { title: "Fila de impressão", icon: CalendarRange, href: "/planejamento/fila" },
     { title: "Impressoras", icon: Printer, href: "/producao/impressoras" },

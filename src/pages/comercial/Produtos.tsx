@@ -1,6 +1,6 @@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DeleteRecordDialog, type DeleteTarget } from "@/components/shared/DeleteRecordDialog";
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { Link as RouterLink, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -34,6 +34,8 @@ import { allRows } from "@/lib/finance";
 import { orderRequest } from "@/lib/sales-order";
 import { productProductionReference } from "@/lib/product-production-reference";
 import ProductPrintSources from "./ProductPrintSources";
+import ProductAssemblySetup from "./ProductAssemblySetup";
+import ProductPrintPlates from "./ProductPrintPlates";
 import ProductMaterialRecipe from "./ProductMaterialRecipe";
 import MakerWorldReference, { MakerWorldPrinterOption } from "./MakerWorldReference";
 import { fetchMakerWorldModel, externalImportReference, legacyMakerWorldUrl, readProductExternalImport, type ProductExternalImport } from "@/lib/makerworld-import";
@@ -121,8 +123,14 @@ export default function Produtos() {
   const [recipeBusy, setRecipeBusy] = useState(false);
   const [sourceDraft, setSourceDraft] = useState(false);
   const [recipeDraft, setRecipeDraft] = useState(false);
-  const printSourceBusy = sourceBusy || recipeBusy;
-  const hasProductionDraft = sourceDraft || recipeDraft;
+  const [manualPlateBusy, setManualPlateBusy] = useState(false);
+  const [manualPlateDraft, setManualPlateDraft] = useState(false);
+  const [assemblySetupBusy, setAssemblySetupBusy] = useState(false);
+  const [assemblySetupDraft, setAssemblySetupDraft] = useState(false);
+  const printSourceBusy = sourceBusy || recipeBusy || manualPlateBusy || assemblySetupBusy;
+  const hasProductionDraft = sourceDraft || recipeDraft || manualPlateDraft || assemblySetupDraft;
+  const reportManualPlateBusy = useCallback((_id: string, value: boolean) => setManualPlateBusy(value), []);
+  const reportManualPlateDraft = useCallback((_id: string, value: boolean) => setManualPlateDraft(value), []);
   const photoLoadVersion = useRef(0);
   const [notes, setNotes] = useState("");
   const [printerId, setPrinterId] = useState("");
@@ -831,7 +839,9 @@ ${selected?.name ? `Perfil: ${selected.name}
           {productionReference.updatedLabel && <p className="text-xs text-muted-foreground">Atualizada em {productionReference.updatedLabel}</p>}
         </section>
       )}
+      {editItem?.id && profile?.tenant_id && <ProductAssemblySetup productId={editItem.id} tenantId={profile.tenant_id} onBusyChange={setAssemblySetupBusy} onDraftChange={setAssemblySetupDraft} />}
       {editItem?.id && profile?.tenant_id && <ProductPrintSources key={editItem.id} productId={editItem.id} tenantId={profile.tenant_id} onBusyChange={setPrintSourceBusy} onDraftChange={setSourceDraft} />}
+      {editItem?.id && profile?.tenant_id && <ProductPrintPlates productId={editItem.id} tenantId={profile.tenant_id} sourceId={null} onBusyChange={reportManualPlateBusy} onDraftChange={reportManualPlateDraft} />}
       {editItem?.id && profile?.tenant_id && category !== "kit" && (products.find(product => product.id === editItem.id)?.recipe_plate_count ?? 0) === 0 &&
         <ProductMaterialRecipe key={`recipe-${editItem.id}`} productId={editItem.id} tenantId={profile.tenant_id} onBusyChange={setRecipeBusy} onDraftChange={setRecipeDraft}
           suggestedNonMaterialCost={!costBreakdown.error ? Math.max(0, costBreakdown.total - costBreakdown.materialCost) : null} />}
