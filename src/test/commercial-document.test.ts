@@ -20,6 +20,7 @@ describe("documentos comerciais para clientes", () => {
   });
   it("handles both legacy addresses and structured addresses", () => {
     expect(documentAddress("Rua da Empresa, 4")).toBe("Rua da Empresa, 4");
+    expect(documentAddress({ cep: "75093-630" })).toBe("CEP 75093-630");
     expect(documentAddress({ street: "Rua São João", number: "5", city: "Anápolis", state: "GO", zip: "75093630" })).toBe("Rua São João, 5, Anápolis / GO, CEP 75093-630");
     expect(documentFilename({ kind: "quote", code: "../../ORC<001>" })).not.toContain("/");
   });

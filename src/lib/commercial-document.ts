@@ -64,7 +64,8 @@ export function documentAddress(value: unknown): string {
   if (typeof value === "string") return value;
   if (!value || typeof value !== "object" || Array.isArray(value)) return "";
   const a = value as Record<string, unknown>;
-  const parts = [a.street, a.number, a.complement, a.neighborhood, [a.city, a.state].filter(Boolean).join(" / "), a.zip ? `CEP ${String(a.zip).replace(/^(\d{5})(\d{3})$/, "$1-$2")}` : ""];
+  const cep = a.cep || a.zip;
+  const parts = [a.street, a.number, a.complement, a.neighborhood, [a.city, a.state].filter(Boolean).join(" / "), cep ? `CEP ${String(cep).replace(/^(\d{5})(\d{3})$/, "$1-$2")}` : ""];
   return parts.filter(value => typeof value === "string" || typeof value === "number").filter(Boolean).join(", ");
 }
 
