@@ -71,6 +71,67 @@ async function chooseA1() {
 const savedPayload = () => mock.rpc.mock.calls.find(call => call[0] === "save_product_with_photos")?.[1];
 
 describe("importação MakerWorld no cadastro de produtos", () => {
+  it("usa o link da placa como foto sem consultar ou inventar um modelo", async () => {
+    const url = "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/836978891/instance/plate_1.png";
+    mount();
+    fireEvent.click(screen.getByRole("button", { name: "Importar da Bambu" }));
+    const dialog = await screen.findByRole("dialog", { name: "Importar da Bambu Lab" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "MakerWorld" }));
+    const input = within(dialog).getByLabelText("Link do modelo MakerWorld");
+    fireEvent.change(input, { target: { value: url } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    const useImage = within(dialog).getByRole("button", { name: "Usar imagem no novo produto" });
+    expect(useImage).toBeDisabled();
+    fireEvent.load(within(dialog).getByAltText("Prévia da imagem do MakerWorld"));
+    fireEvent.click(useImage);
+    const editor = await screen.findByRole("dialog", { name: "Novo Produto" });
+    expect(within(editor).getByLabelText("Nome *")).toHaveValue("");
+    expect(within(editor).getByAltText("Foto 1")).toHaveAttribute("src", url);
+    expect(savedPayload()).toBeUndefined();
+    fireEvent.change(within(editor).getByLabelText("Nome *"), { target: { value: "Produto com foto da placa" } });
+    fireEvent.click(within(editor).getByRole("button", { name: "Criar" }));
+    await waitFor(() => expect(savedPayload()).toBeDefined());
+    expect(savedPayload().p_product.photo_url).toBe(url);
+    expect(savedPayload().p_product.external_import).toBeUndefined();
+    expect(mock.rpc.mock.calls.some(call => /makerworld/.test(call[0]))).toBe(false);
+    expect(mock.toast.mock.calls.some(call => call[0].variant === "destructive")).toBe(false);
+  });
+
+  it("mantém o campo de imagem enquanto digita e permite adicionar outras fotos sem substituir a principal", async () => {
+    mount(); fireEvent.click(screen.getByRole("button", { name: "Novo Produto" }));
+    const editor = await screen.findByRole("dialog", { name: "Novo Produto" });
+    fireEvent.mouseDown(within(editor).getByRole("tab", { name: "Fotos" }), { button: 0, ctrlKey: false });
+    const input = within(editor).getByLabelText("Link da imagem");
+    fireEvent.change(input, { target: { value: "h" } });
+    expect(input).toBeInTheDocument(); expect(within(editor).queryByAltText("Foto 1")).not.toBeInTheDocument();
+    const first = "https://makerworld.bblmw.com/makerworld/model/example/plate_1.png";
+    fireEvent.change(input, { target: { value: first } });
+    fireEvent.click(within(editor).getByRole("button", { name: "Adicionar imagem" }));
+    fireEvent.change(input, { target: { value: photos[0] } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(input).toHaveValue("");
+    expect(within(editor).getByAltText("Foto 1")).toHaveAttribute("src", first);
+    expect(within(editor).getByAltText("Foto 2")).toHaveAttribute("src", photos[0]);
+    expect(savedPayload()).toBeUndefined();
+  });
+
+  it("uma prévia indisponível não permite prosseguir e trocar a URL exige carregar a nova imagem", async () => {
+    mount(); fireEvent.click(screen.getByRole("button", { name: "Importar da Bambu" }));
+    const dialog = await screen.findByRole("dialog", { name: "Importar da Bambu Lab" });
+    fireEvent.click(within(dialog).getByRole("button", { name: "MakerWorld" }));
+    const input = within(dialog).getByLabelText("Link do modelo MakerWorld");
+    fireEvent.change(input, { target: { value: "https://makerworld.bblmw.com/makerworld/model/example/plate_1.png" } });
+    fireEvent.error(within(dialog).getByAltText("Prévia da imagem do MakerWorld"));
+    expect(within(dialog).getByText(/Não foi possível carregar a imagem/)).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Usar imagem no novo produto" })).toBeDisabled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Tentar novamente" }));
+    fireEvent.load(within(dialog).getByAltText("Prévia da imagem do MakerWorld"));
+    expect(within(dialog).getByRole("button", { name: "Usar imagem no novo produto" })).toBeEnabled();
+    fireEvent.change(input, { target: { value: "https://makerworld.bblmw.com/makerworld/model/example/plate_2.png" } });
+    expect(within(dialog).getByRole("button", { name: "Usar imagem no novo produto" })).toBeDisabled();
+    expect(savedPayload()).toBeUndefined();
+  });
+
   it("preserva a configuração A1, todas as fotos/perfis/placas e não inventa material, cor ou rendimento", async () => {
     mount(); const search = await searchModel();
     fireEvent.click(await within(search).findByRole("button", { name: /Conjunto Maker/ }));

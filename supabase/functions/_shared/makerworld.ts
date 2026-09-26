@@ -169,7 +169,18 @@ function variant(value: JsonObject, info: JsonObject, inheritedProfileId?: strin
     images: imageList(value.cover, value.pictures, info.auxiliaryPictures, plates.flatMap(p => p.images)), warnings: distinct(warnings) };
 }
 
+/** A CDN image identifies a picture, not a public model or printing profile. */
+export function makerWorldImageUrl(value: string): string | null {
+  try {
+    const url = new URL(value.trim());
+    if (url.protocol !== "https:" || url.hostname !== "makerworld.bblmw.com" || url.username || url.password || url.port) return null;
+    if (!/^\/makerworld\/model\/.+\.(png|jpe?g|webp|gif)$/i.test(url.pathname)) return null;
+    return url.toString();
+  } catch { return null; }
+}
+
 export function parseMakerWorldUrl(value: string): MakerWorldUrl {
+  if (makerWorldImageUrl(value)) throw new Error("Este link é uma imagem do MakerWorld. Você pode usá-la como foto do produto. Para importar placas, materiais, peso e tempo, copie o endereço da página do modelo, com /models/ID.");
   let url: URL; try { url = new URL(value.trim()); } catch { throw new Error("Informe o link completo do modelo no MakerWorld."); }
   if (url.protocol !== "https:" || !["makerworld.com", "www.makerworld.com"].includes(url.hostname) || url.username || url.password || url.port) throw new Error("Use um link HTTPS do MakerWorld, sem credenciais no endereço.");
   const match = url.pathname.match(/^\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?models\/([1-9]\d{0,18})(?:[-/][^?#]*)?$/i);

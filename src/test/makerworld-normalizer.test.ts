@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeMakerWorldDesign, normalizeMakerWorldHtml, parseMakerWorldUrl, makerWorldPlainText } from "../../supabase/functions/_shared/makerworld";
+import { normalizeMakerWorldDesign, normalizeMakerWorldHtml, parseMakerWorldUrl, makerWorldPlainText, makerWorldImageUrl } from "../../supabase/functions/_shared/makerworld";
 
 // Public response shape observed on Bambu's own API, 2026-09-13. Media paths are
 // synthetic; no account, bearer, signed object URL or creator description is stored.
@@ -98,6 +98,14 @@ describe("MakerWorld deterministic metadata", () => {
   });
 });
 describe("MakerWorld URL identity", () => {
+  it("recognizes CDN pictures without inventing model or profile identifiers", () => {
+    const url = "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/836978891/instance/plate_1.png";
+    expect(makerWorldImageUrl(` ${url} `)).toBe(url);
+    expect(() => parseMakerWorldUrl(url)).toThrow("Este link é uma imagem");
+    for (const value of [url.replace("https:", "http:"), url.replace("bblmw.com", "bblmw.com.evil.test"), url.replace("https://", "https://user:secret@"), url.replace(".png", ".html"), "https://makerworld.com/pt/models/456"]) {
+      expect(makerWorldImageUrl(value)).toBeNull();
+    }
+  });
   it("extracts exact localized design links and public profile selection", () => {
     expect(parseMakerWorldUrl("https://www.makerworld.com/pt/models/1169522-name?from=search#profileId-1177581")).toEqual({ designId: "1169522", instanceId: "1177581", url: "https://makerworld.com/en/models/1169522#profileId-1177581" });
     expect(parseMakerWorldUrl("https://makerworld.com/en/models/1169522?profileId=1177581").instanceId).toBe("1177581");

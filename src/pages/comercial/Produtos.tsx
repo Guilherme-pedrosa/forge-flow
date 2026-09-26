@@ -40,6 +40,9 @@ import ProductPrintPlates from "./ProductPrintPlates";
 import ProductMaterialRecipe from "./ProductMaterialRecipe";
 import MakerWorldReference, { MakerWorldPrinterOption } from "./MakerWorldReference";
 import { fetchMakerWorldModel, externalImportReference, legacyMakerWorldUrl, readProductExternalImport, type ProductExternalImport } from "@/lib/makerworld-import";
+import { makerWorldImageUrl } from "../../../supabase/functions/_shared/makerworld";
+import { MakerWorldImageImport } from "@/components/comercial/MakerWorldImageImport";
+import { normalizePrintSourceUrl } from "@/lib/product-print-source";
 
 const fmtCurrency = (v: number | null) => v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
 const fmtDuration = (s: number | null) => {
@@ -81,6 +84,8 @@ export default function Produtos() {
   const [bambuImportOpen, setBambuImportOpen] = useState(false);
   const [bambuTab, setBambuTab] = useState<"projects" | "tasks" | "makerworld">("projects");
   const [makerWorldUrl, setMakerWorldUrl] = useState("");
+  const makerImageUrl = makerWorldImageUrl(makerWorldUrl);
+  const [photoLink, setPhotoLink] = useState("");
   const [makerWorldLoading, setMakerWorldLoading] = useState(false);
   const [myCollectionsLoading, setMyCollectionsLoading] = useState(false);
   const [makerWorldModels, setMakerWorldModels] = useState<any[]>([]);
@@ -299,6 +304,7 @@ export default function Produtos() {
   }, [products, search, showArchived]);
 
   const resetForm = () => {
+    setPhotoLink("");
     productRequest.current = null;
     setExternalImport(null);
     photoLoadVersion.current += 1;
@@ -311,6 +317,7 @@ export default function Produtos() {
   };
 
   const openEdit = (p: any) => {
+    setPhotoLink("");
     makerRequest.current?.abort(); setMakerWorldLoading(false);
     setExternalImport(readProductExternalImport(p.external_import));
     makerImportTarget.current = p.id;
@@ -389,6 +396,18 @@ export default function Produtos() {
     } finally {
       setUploadingPhoto(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const addPhotoLink = () => {
+    try {
+      const url = normalizePrintSourceUrl(photoLink);
+      if (!url) return;
+      if (!photoUrl) setPhotoUrl(url);
+      else if (url !== photoUrl) setExtraPhotos(previous => [...new Set([...previous, url])]);
+      setPhotoLink("");
+    } catch (error) {
+      toast({ title: "Confira o link da imagem", description: (error as Error).message, variant: "destructive" });
     }
   };
 
@@ -491,8 +510,16 @@ ${selected?.name ? `Perfil: ${selected.name}
     }
   };
   const fetchMakerWorld = () => {
+    if (makerImageUrl) return;
     makerImportTarget.current = null;
     return loadMakerWorld(makerWorldUrl.trim());
+  };
+  const useMakerWorldImage = () => {
+    if (!makerImageUrl) return;
+    makerRequest.current?.abort(); setMakerWorldLoading(false);
+    resetForm(); setPhotoUrl(makerImageUrl);
+    setBambuImportOpen(false); setCreateOpen(true);
+    toast({ title: "Imagem adicionada ao formulário", description: "Ela está na aba Fotos. Preencha os dados do produto e salve para concluir o cadastro." });
   };
   const selectMakerWorld = (model: any) => {
     makerImportTarget.current = null;
@@ -812,16 +839,15 @@ ${selected?.name ? `Perfil: ${selected.name}
           className="hidden"
           onChange={handlePhotoUpload}
         />
-        {allPhotos.length === 0 && (
-          <div className="mt-2">
-            <Input
-              placeholder="Ou cole uma URL de imagem..."
-              value={photoUrl}
-              onChange={(e) => setPhotoUrl(e.target.value)}
-              className="text-xs"
-            />
+        <div className="mt-3 space-y-1.5">
+          <Label htmlFor="product-photo-link">Link da imagem</Label>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Input id="product-photo-link" type="url" placeholder="https://..." value={photoLink}
+              onChange={e => setPhotoLink(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addPhotoLink(); } }} />
+            <Button type="button" variant="outline" disabled={!photoLink.trim()} onClick={addPhotoLink}>Adicionar imagem</Button>
           </div>
-        )}
+        </div>
       </div>
 </TabsContent>
       <TabsContent forceMount value="producao" className={tabClass}><p className="rounded-lg bg-muted p-3 text-sm">Configuração opcional para produtos fabricados. Custo, venda e estoque podem ser cadastrados sem composição.</p>      {productionReference && (
@@ -1398,18 +1424,18 @@ ${selected?.name ? `Perfil: ${selected.name}
       </Dialog>
 
       <Dialog open={bambuImportOpen} onOpenChange={setBambuImportOpen}>
-        <DialogContent className="max-w-2xl max-h-[80vh]">
-          <DialogHeader>
+        <DialogContent className="flex w-[96vw] max-w-2xl max-h-[90dvh] flex-col overflow-hidden p-4 sm:p-6">
+          <DialogHeader className="shrink-0">
             <DialogTitle className="flex items-center gap-2 pr-10"><CloudDownload className="h-5 w-5 text-primary" /> Importar da Bambu Lab</DialogTitle>
             <DialogDescription>Selecione um modelo salvo ou impressão concluída para importar</DialogDescription>
           </DialogHeader>
 
           {/* Tabs */}
-          <div className="flex gap-1 p-1 rounded-lg bg-muted">
+          <div className="grid shrink-0 grid-cols-3 gap-1 p-1 rounded-lg bg-muted">
             <button
               onClick={() => setBambuTab("projects")}
               className={cn(
-                "flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-md text-sm font-medium transition-colors",
+                "min-w-0 flex flex-col sm:flex-row items-center justify-center gap-1.5 py-2 px-2 rounded-md text-sm font-medium transition-colors",
                 bambuTab === "projects" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
               )}
             >
@@ -1418,7 +1444,7 @@ ${selected?.name ? `Perfil: ${selected.name}
             <button
               onClick={() => setBambuTab("tasks")}
               className={cn(
-                "flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-md text-sm font-medium transition-colors",
+                "min-w-0 flex flex-col sm:flex-row items-center justify-center gap-1.5 py-2 px-2 rounded-md text-sm font-medium transition-colors",
                 bambuTab === "tasks" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
               )}
             >
@@ -1427,7 +1453,7 @@ ${selected?.name ? `Perfil: ${selected.name}
             <button
               onClick={() => setBambuTab("makerworld")}
               className={cn(
-                "flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-md text-sm font-medium transition-colors",
+                "min-w-0 flex flex-col sm:flex-row items-center justify-center gap-1.5 py-2 px-2 rounded-md text-sm font-medium transition-colors",
                 bambuTab === "makerworld" ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground"
               )}
             >
@@ -1435,7 +1461,7 @@ ${selected?.name ? `Perfil: ${selected.name}
             </button>
           </div>
 
-          <div className="overflow-y-auto max-h-[50vh]">
+          <div className="min-h-0 overflow-y-auto">
             {bambuTab === "projects" ? (
               bambuProjectsLoading ? (
                 <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
@@ -1505,28 +1531,28 @@ ${selected?.name ? `Perfil: ${selected.name}
                     <Link className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input
                       className="pl-9"
-                      placeholder="https://makerworld.com/pt/models/..." aria-label="Link do modelo MakerWorld"
+                      placeholder="Cole o link do modelo ou de uma imagem" aria-label="Link do modelo MakerWorld"
                       value={makerWorldUrl}
-                      onChange={(e) => setMakerWorldUrl(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && fetchMakerWorld()}
+                      onChange={(e) => { makerRequest.current?.abort(); setMakerWorldLoading(false); setMakerWorldModels([]); setMakerWorldUrl(e.target.value); }}
+                      onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); fetchMakerWorld(); } }}
                     />
                   </div>
                   <div className="flex gap-2">
-                    <Button aria-label="Buscar modelo do MakerWorld" onClick={fetchMakerWorld} disabled={makerWorldLoading || myCollectionsLoading || !makerWorldUrl.trim()}>
+                    {!makerImageUrl && <Button aria-label="Buscar modelo do MakerWorld" onClick={fetchMakerWorld} disabled={makerWorldLoading || myCollectionsLoading || !makerWorldUrl.trim()}>
                       {makerWorldLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />}
-                    </Button>
+                    </Button>}
                     <Button variant="outline" onClick={fetchMyCollections} disabled={myCollectionsLoading || makerWorldLoading}>
                       {myCollectionsLoading ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <FolderOpen className="h-4 w-4 mr-1" />} Minhas coleções
                     </Button>
                   </div>
                 </div>
 
-                {makerWorldLoading || myCollectionsLoading ? (
+                {makerImageUrl ? <MakerWorldImageImport key={makerImageUrl} url={makerImageUrl} onUse={useMakerWorldImage} /> : makerWorldLoading || myCollectionsLoading ? (
                   <div className="flex items-center justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
                 ) : makerWorldModels.length === 0 ? (
                   <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
                     <Globe className="h-8 w-8 mb-2 opacity-40" />
-                    <p className="text-sm">Cole o link público do modelo MakerWorld</p>
+                    <p className="text-sm">Cole o link público do modelo ou de uma imagem do MakerWorld</p>
                     <p className="text-xs mt-1 text-center max-w-sm">Para um projeto privado do MakerLab, publique o modelo no MakerWorld ou vincule o arquivo 3MF ao produto.</p>
                   </div>
                 ) : (
