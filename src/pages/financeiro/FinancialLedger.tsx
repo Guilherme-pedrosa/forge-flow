@@ -1,7 +1,8 @@
+import { DeleteRecordDialog, type DeleteTarget } from "@/components/shared/DeleteRecordDialog";
 import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Search, ArrowDownLeft, ArrowUpRight, Loader2, Receipt, Ban, History, Pencil } from "lucide-react";
+import { Plus, Search, ArrowDownLeft, ArrowUpRight, Loader2, Receipt, Trash2, Ban, History, Pencil } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageHeader } from "@/components/shared/PageHeader";
@@ -28,6 +29,8 @@ export default function FinancialLedger({ kind }: { kind: "payable" | "receivabl
   const { toast } = useToast();
   const qc = useQueryClient();
   const [params] = useSearchParams();
+  const originId = params.get("origem");
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [search, setSearch] = useState(params.get("pedido") || "");
   const [filter, setFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
@@ -42,8 +45,8 @@ export default function FinancialLedger({ kind }: { kind: "payable" | "receivabl
   const refresh = () => { for (const key of [table, "bank_accounts", "bank_transactions", "financial_history", "dre_ar", "dre_ap", "dashboard"]) qc.invalidateQueries({ queryKey: [key] }); };
 
   const { data: titles = [], isLoading, error, refetch } = useQuery({
-    queryKey: [table, tenant], enabled: !!tenant,
-    queryFn: () => allRows<any>((from, to) => supabase.from(table).select(payable ? "*, vendors(name)" : "*, customers(name)").order("due_date").order("id").range(from, to) as any),
+    queryKey: [table, tenant, originId], enabled: !!tenant,
+    queryFn: () => allRows<any>((from, to) => { let query = supabase.from(table).select(payable ? "*, vendors(name)" : "*, customers(name)").order("due_date").order("id"); if (originId) query = query.eq("origin_id", originId); return query.range(from, to) as any; }),
   });
   const { data: options, error: optionsError } = useQuery({
     queryKey: ["financial_options", tenant, kind], enabled: !!tenant,
@@ -128,7 +131,7 @@ export default function FinancialLedger({ kind }: { kind: "payable" | "receivabl
     },
     onSuccess: () => { refresh(); setCancelTitle(null); toast({ title: "Título cancelado", description: "O registro foi preservado no histórico." }); }, onError: fail,
   });
-  const beginSettlement = (title: any) => setSettlement({ title, amount: outstandingAmount(title).toFixed(2), date: localDate(), account: title.bank_account_id || "", requestId: crypto.randomUUID() });
+  const beginSettlement = (title: any) => setSettlement({ title, amount: outstandingAmount(title).toFixed(2), date: localDate(), account: title.bank_account_id || (options?.banks?.length === 1 ? options.banks[0].id : ""), requestId: crypto.randomUUID() });
   const beginEdit = (title: any) => {
     setEditTitle(title);
     setForm({ description: title.description, contact: title.vendor_id || title.customer_id || "", amount: String(title.amount), due_date: title.due_date, competence_date: title.competence_date || title.created_at.slice(0, 10), account_id: title.account_id || "", cost_center_id: title.cost_center_id || "", payment_method_id: title.payment_method_id || "", notes: title.notes || "" });
@@ -140,13 +143,18 @@ export default function FinancialLedger({ kind }: { kind: "payable" | "receivabl
     {payable && title.origin_type === "purchase_order" && !isCancelled(title) && <Button size="sm" variant="outline" onClick={() => beginEdit(title)}><Pencil className="mr-1 h-4 w-4" />Classificar</Button>}
     {!isCancelled(title) && settledAmount(title) === 0 && !title.origin_id && <Button aria-label={`Editar ${title.description}`} size="icon" variant="outline" onClick={() => beginEdit(title)}><Pencil className="h-4 w-4" /></Button>}
     {!isCancelled(title) && settledAmount(title) === 0 && !title.origin_id && <Button aria-label={`Cancelar ${title.description}`} size="icon" variant="ghost" onClick={() => setCancelTitle(title)}><Ban className="h-4 w-4" /></Button>}
+    {settledAmount(title) === 0 && !title.origin_id && <Button aria-label={`Excluir ${title.description}`} size="icon" variant="ghost" onClick={() => setDeleteTarget({ id: title.id, name: title.description, kind })}><Trash2 className="h-4 w-4 text-destructive" /></Button>}
+    {title.origin_type === "purchase_order" && title.origin_id && <Button size="sm" variant="outline" asChild><Link to={`/estoque/compras?compra=${title.origin_id}`}>Abrir compra</Link></Button>}
+    {title.origin_type === "order" && title.origin_id && <Button size="sm" variant="outline" asChild><Link to={`/comercial/pedidos?pedido=${title.origin_id}`}>Abrir pedido</Link></Button>}
   </div>;
   const selectField = (label: string, key: keyof ReturnType<typeof newForm>, list: any[] = []) => <div className="space-y-1.5"><Label>{label}</Label><Select disabled={classificationOnly && ["contact", "payment_method_id"].includes(key)} value={form[key] || "none"} onValueChange={v => set(key, v === "none" ? "" : v)}><SelectTrigger aria-label={label}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">Não informado</SelectItem>{list.map(o => <SelectItem key={o.id} value={o.id}>{o.code ? `${o.code} · ` : ""}{o.name}</SelectItem>)}</SelectContent></Select></div>;
 
   return <div className="space-y-6">
+    <DeleteRecordDialog key={deleteTarget?.id} target={deleteTarget} onClose={() => setDeleteTarget(null)} />
     <PageHeader title={payable ? "Contas a pagar" : "Contas a receber"} description={payable ? "Compromissos, vencimentos e pagamentos em um só lugar." : "Acompanhe os valores em aberto e cada recebimento."}
       breadcrumbs={[{ label: "Financeiro", href: "/financeiro/dre" }, { label: payable ? "A pagar" : "A receber" }]}
-      actions={<Button onClick={() => { setEditTitle(null); setForm(newForm()); setCreateOpen(true); }}><Plus className="mr-2 h-4 w-4" />Novo título</Button>} />
+      actions={<Button onClick={() => { setEditTitle(null); setForm(newForm()); setCreateOpen(true); }}><Plus className="mr-2 h-4 w-4" />{payable ? "Nova despesa" : "Nova receita"}</Button>} />
+    {originId && <div className="flex items-center justify-between gap-3 rounded-lg border bg-muted/30 p-3 text-sm"><span>Exibindo os lançamentos desta operação.</span><Button variant="outline" size="sm" asChild><Link to={payable ? "/financeiro/pagar" : "/financeiro/receber"}>Mostrar todos</Link></Button></div>}
     {error ? <div role="alert" className="rounded-xl border border-destructive/30 bg-destructive/5 p-4">Não foi possível carregar os títulos. <Button variant="outline" onClick={() => refetch()}>Tentar novamente</Button></div> : <>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">{[
         { label: "Saldo em aberto", value: outstanding, sub: "Inclui parcelas vencidas", key: "all" },

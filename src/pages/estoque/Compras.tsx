@@ -1,3 +1,7 @@
+import { Link, useSearchParams } from "react-router-dom";
+import { DeleteRecordDialog, type DeleteTarget } from "@/components/shared/DeleteRecordDialog";
+import { QuickInventoryItem } from "@/components/estoque/QuickInventoryItem";
+import { SearchableItemSelect } from "@/components/shared/SearchableItemSelect";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { allRows, localDate, money, positiveMoney, validDate, monthlyInstallments } from "@/lib/finance";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -136,6 +140,13 @@ export default function Compras() {
   const qc = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const [params] = useSearchParams();
+  const openedPurchase = useRef<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
+  const [quickItemRow, setQuickItemRow] = useState<number | null>(null);
+  const [receiveNow, setReceiveNow] = useState(false);
+  const [shipping, setShipping] = useState("");
+  const [discount, setDiscount] = useState("");
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
@@ -201,7 +212,9 @@ export default function Compras() {
     const payload = JSON.stringify([order, items, installments]);
     let request = purchaseRequests.current.get(key);
     if (!request || request.payload !== payload) { request = { payload, id: crypto.randomUUID() }; purchaseRequests.current.set(key, request); }
-    const { data, error } = await (supabase.rpc as any)("create_purchase_order", { p_order: order, p_items: items, p_installments: installments, p_request_id: request.id });
+    const { data, error } = key === "manual"
+      ? await (supabase.rpc as any)("save_quick_purchase", { p_order: order, p_items: items, p_installments: installments, p_request_id: request.id, p_receive: receiveNow })
+      : await (supabase.rpc as any)("create_purchase_order", { p_order: order, p_items: items, p_installments: installments, p_request_id: request.id });
     if (error) throw error;
     if (typeof data !== "string") throw new Error("A criação não retornou o identificador da compra. Atualize a lista antes de repetir.");
     return data as string;
@@ -274,16 +287,23 @@ export default function Compras() {
     return list;
   }, [orders, statusFilter, search]);
 
+  useEffect(() => {
+    const id = params.get("compra");
+    const found = orders.find(o => o.id === id);
+    if (found && openedPurchase.current !== id) { openedPurchase.current = id; setDetailOrder(found); }
+  }, [params, orders]);
   const nextCode = "Gerado ao salvar";
 
   const createMut = useMutation({
     mutationFn: async () => {
-      const items = manualItems.map(i => ({ description: i.description.trim(), quantity: Number(i.quantity.replace(",", ".")), unit_price: Number(i.unitPrice.replace(",", ".")), total: money(Number(i.quantity.replace(",", ".")) * Number(i.unitPrice.replace(",", "."))), inventory_item_id: i.inventoryItemId || null, stock_quantity: i.inventoryItemId ? purchaseStockQuantity(i.stockQuantity || "") : null }));
+      const items = manualItems.filter(i => i.description.trim() || i.inventoryItemId).map(i => ({ description: i.description.trim(), quantity: Number(i.quantity.replace(",", ".")), unit_price: Number(i.unitPrice.replace(",", ".")), total: money(Number(i.quantity.replace(",", ".")) * Number(i.unitPrice.replace(",", "."))), inventory_item_id: i.inventoryItemId || null, stock_quantity: i.inventoryItemId ? purchaseStockQuantity(i.stockQuantity || "") : null }));
       const subtotal = money(items.reduce((sum, i) => sum + i.total, 0));
-      return persistPurchase("manual", { vendor_id: vendorId || null, order_date: orderDate, expected_date: expectedDate || null, subtotal, discount: 0, shipping: 0, total: subtotal, notes: notes.trim() || null }, items, Number(installments), dueDate || expectedDate || orderDate, paymentMethodId || null);
+      return persistPurchase("manual", { vendor_id: vendorId || null, order_date: orderDate, expected_date: expectedDate || null, subtotal, discount: money(discount || 0), shipping: money(shipping || 0), total: money(subtotal + money(shipping || 0) - money(discount || 0)), receive_now: receiveNow, notes: notes.trim() || null }, items, Number(installments), dueDate || expectedDate || orderDate, paymentMethodId || null);
     },
     onSuccess: () => {
       purchaseRequests.current.delete("manual");
+      qc.invalidateQueries({ queryKey: ["inventory_items"] });
+      qc.invalidateQueries({ queryKey: ["inventory_movements"] });
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
       qc.invalidateQueries({ queryKey: ["accounts_payable"] });
       setCreateOpen(false);
@@ -377,6 +397,7 @@ export default function Compras() {
   });
 
   const resetForm = () => {
+    setReceiveNow(false); setShipping(""); setDiscount("");
     setVendorId("");
     setOrderDate(localDate());
     setExpectedDate("");
@@ -410,6 +431,11 @@ export default function Compras() {
   const updateManualItem = (idx: number, field: string, value: string) => {
     const updated = [...manualItems];
     updated[idx] = { ...updated[idx], [field]: value, ...(["quantity", "inventoryItemId"].includes(field) ? { stockQuantity: "" } : {}) };
+    if (field === "inventoryItemId") {
+      const item = inventoryItems.find(inv => inv.id === value);
+      if (item) { if (!updated[idx].description.trim()) updated[idx].description = item.name; if (item.unit === "un") updated[idx].stockQuantity = updated[idx].quantity; }
+    }
+    if (field === "quantity" && inventoryItems.find(inv => inv.id === updated[idx].inventoryItemId)?.unit === "un") updated[idx].stockQuantity = value;
     setManualItems(updated);
   };
 
@@ -566,6 +592,8 @@ export default function Compras() {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
+      <DeleteRecordDialog key={deleteTarget?.id} target={deleteTarget} onClose={() => setDeleteTarget(null)} onDeleted={() => setDetailOrder(null)} />
+      {quickItemRow !== null && <QuickInventoryItem open initialName={manualItems[quickItemRow]?.description || ""} onClose={() => setQuickItemRow(null)} onCreated={item => setManualItems(rows => rows.map((row, idx) => idx === quickItemRow ? { ...row, inventoryItemId: item.id, description: item.name, stockQuantity: item.unit === "un" ? row.quantity : "" } : row))} />}
       <PageHeader
         title="Pedidos de Compra"
         description="Gerencie compras de materiais e importe NFes"
@@ -669,6 +697,7 @@ export default function Compras() {
                             </DropdownMenuItem>
                           )}
                           <DropdownMenuSeparator />
+                          {["draft", "pending", "cancelled"].includes(o.status) && <DropdownMenuItem className="text-destructive" onClick={e => { e.stopPropagation(); setDeleteTarget({ id: o.id, name: o.code, kind: "purchase" }); }}>Excluir compra</DropdownMenuItem>}
                           <DropdownMenuItem className="text-destructive" onClick={(e) => { e.stopPropagation(); setCancelOrderId(o.id); }}>
                             <Trash2 className="h-3.5 w-3.5 mr-2" /> Cancelar compra
                           </DropdownMenuItem>
@@ -685,7 +714,7 @@ export default function Compras() {
 
       {/* Create Manual Dialog */}
       <Dialog open={createOpen} onOpenChange={v => !createMut.isPending && setCreateOpen(v)}>
-        <DialogContent className="max-w-2xl max-h-[90dvh] overflow-y-auto">
+        <DialogContent className="max-w-4xl max-h-[90dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Nova Compra</DialogTitle>
             <DialogDescription>Código: {nextCode}</DialogDescription>
@@ -741,22 +770,15 @@ export default function Compras() {
               </div>
               <div className="space-y-2">
                 {manualItems.map((item, idx) => (
-                  <div key={idx} className="grid grid-cols-2 sm:grid-cols-[minmax(0,1fr)_140px_80px_100px_32px] gap-2 items-end rounded-lg border p-3 sm:border-0 sm:p-0">
+                  <div key={idx} className="grid grid-cols-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_100px_120px_32px] gap-2 items-end rounded-lg border p-3 sm:border-0 sm:p-0">
                     <div>
                       <Label className="text-xs">Descrição</Label>
                       <Input aria-label={`Descrição do item ${idx + 1}`} value={item.description} onChange={(e) => updateManualItem(idx, "description", e.target.value)} placeholder="Material..." />
                     </div>
                     <div>
                       <Label className="text-xs">Item de estoque</Label>
-                      <Select value={item.inventoryItemId || "none"} onValueChange={(v) => updateManualItem(idx, "inventoryItemId", v === "none" ? "" : v)}>
-                        <SelectTrigger aria-label={`Material de estoque do item ${idx + 1}`} className="h-11 text-xs"><SelectValue placeholder="Vincular..." /></SelectTrigger>
-                        <SelectContent className="max-w-[calc(100vw-2rem)]">
-                          <SelectItem value="none">— Nenhum —</SelectItem>
-                          {inventoryItems.map((inv: any) => (
-                            <SelectItem key={inv.id} value={inv.id} className="min-h-11 whitespace-normal break-words">{purchaseMaterialLabel(inv)}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <SearchableItemSelect value={item.inventoryItemId} onChange={v => updateManualItem(idx, "inventoryItemId", v)} label={`Material de estoque do item ${idx + 1}`} emptyLabel="Sem estoque (despesa / serviço)" options={inventoryItems.map(inv => ({ id: inv.id, label: purchaseMaterialLabel(inv) }))} disabled={createMut.isPending} />
+
                     </div>
                     <div>
                       <Label className="text-xs">Quantidade comprada</Label>
@@ -769,15 +791,18 @@ export default function Compras() {
                     <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => removeManualItem(idx)} disabled={manualItems.length <= 1}>
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
+                    <div className="col-span-full"><Button type="button" size="sm" variant="link" className="h-8 px-0" disabled={createMut.isPending} onClick={() => setQuickItemRow(idx)}>+ Cadastrar item</Button></div>
                     {item.inventoryItemId && <div className="col-span-full rounded-md bg-muted/30 p-3"><PurchaseStockQuantity key={item.inventoryItemId} label={item.description || `item ${idx + 1}`} value={item.stockQuantity || ""} purchasedQuantity={Number(item.quantity.replace(",", "."))} stockUnit={inventoryItems.find(inv => inv.id === item.inventoryItemId)?.unit || "un"} onChange={value => updateManualItem(idx, "stockQuantity", value)} disabled={createMut.isPending} /></div>}
                   </div>
                 ))}
               </div>
               <p className="text-xs text-muted-foreground mt-2">
-                Total: {fmtCurrency(manualItems.reduce((s, i) => s + parseFloat(i.quantity || "0") * parseFloat(i.unitPrice || "0"), 0))}
+                Total com frete e desconto: {fmtCurrency(manualItems.reduce((s, i) => s + Number((i.quantity || "0").replace(",", ".")) * Number((i.unitPrice || "0").replace(",", ".")), 0) + Number((shipping || "0").replace(",", ".")) - Number((discount || "0").replace(",", ".")))}
               </p>
             </div>
 
+            <div className="grid grid-cols-2 gap-3"><div><Label htmlFor="purchase-shipping">Frete (R$)</Label><Input id="purchase-shipping" inputMode="decimal" value={shipping} onChange={e => setShipping(e.target.value)} placeholder="0,00" /></div><div><Label htmlFor="purchase-discount">Desconto (R$)</Label><Input id="purchase-discount" inputMode="decimal" value={discount} onChange={e => setDiscount(e.target.value)} placeholder="0,00" /></div></div>
+            <div className="flex items-center justify-between gap-3 rounded-lg border p-4"><div><Label htmlFor="purchase-receive-now">Receber os itens agora</Label><p className="text-xs text-muted-foreground">Ative se a mercadoria já chegou. Salva a compra, as parcelas e a entrada no estoque juntas.</p></div><Switch id="purchase-receive-now" checked={receiveNow} onCheckedChange={setReceiveNow} disabled={createMut.isPending} /></div>
             <div>
               <Label>Observações</Label>
               <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} />
@@ -786,7 +811,7 @@ export default function Compras() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancelar</Button>
             <Button onClick={() => createMut.mutate()} disabled={!manualItems.some((i) => i.description.trim()) || createMut.isPending}>
-              {createMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Criar Pedido
+              {createMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} {receiveNow ? "Salvar e receber" : "Salvar compra"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1029,6 +1054,7 @@ export default function Compras() {
                 )}
               </div>
 
+              <Button variant="outline" asChild><Link to={`/financeiro/pagar?origem=${detailOrder.id}`}>Ver parcelas no financeiro</Link></Button>
               {/* Receive button */}
               {detailOrder?.status !== "received" && detailOrder?.status !== "cancelled" && (
                 <div className="flex justify-end pt-3 border-t gap-2">

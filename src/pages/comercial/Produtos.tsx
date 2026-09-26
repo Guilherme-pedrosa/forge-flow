@@ -1,3 +1,4 @@
+import { DeleteRecordDialog, type DeleteTarget } from "@/components/shared/DeleteRecordDialog";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -64,9 +65,11 @@ export default function Produtos() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const createAnother = useRef(false);
   const productRequest = useRef<{ signature: string; id: string } | null>(null);
   const kitRequest = useRef<{ signature: string; id: string } | null>(null);
 
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [search, setSearch] = useState("");
   const [showArchived, setShowArchived] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
@@ -657,7 +660,8 @@ ${selected?.name ? `Perfil: ${selected.name}
   const createMut = useMutation({
     mutationFn: () => saveProduct(null),
     onSuccess: async result => {
-      setCreateOpen(false); resetForm();
+      setCreateOpen(createAnother.current && !result.imported); resetForm();
+      if (createAnother.current && !result.imported) requestAnimationFrame(() => document.getElementById("product-name")?.focus());
       await qc.invalidateQueries({ queryKey: ["products"] });
       if (result.imported) {
         const refreshed = await refetchProducts(); const product = refreshed.data?.find(product => product.id === result.id);
@@ -702,7 +706,7 @@ ${selected?.name ? `Perfil: ${selected.name}
   const formFields = (
     <div className="grid min-w-0 grid-cols-1 gap-4 max-h-[60dvh] overflow-y-auto pr-1 [&>*]:min-w-0">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div className="sm:col-span-2"><Label htmlFor="product-name">Nome *</Label><Input id="product-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Vaso Geométrico P" /></div>
+        <div className="sm:col-span-2"><Label htmlFor="product-name">Nome *</Label><Input autoFocus id="product-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Vaso Geométrico P" /></div>
         <div><Label>Categoria</Label>
           <Select value={category} onValueChange={setCategory}><SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>{Object.entries(categoryLabels).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
@@ -711,6 +715,14 @@ ${selected?.name ? `Perfil: ${selected.name}
         <div><Label>SKU</Label><Input value={sku} onChange={(e) => setSku(e.target.value)} placeholder="VASO-GEO-P" /></div>
         <div className="sm:col-span-2"><Label htmlFor="product-description">Descrição</Label><Textarea id="product-description" value={description} onChange={(e) => setDescription(e.target.value)} rows={2} /></div>
       </div>
+      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Precificação</p>
+      <div className="grid grid-cols-2 gap-3">
+        <div><Label htmlFor="product-cost">Custo unitário de referência (R$)</Label><Input id="product-cost" type="number" min="0" step="0.01" value={costEstimate} onChange={(e) => setCostEstimate(e.target.value)} placeholder="12.50" disabled={products.find(product => product.id === editItem?.id)?.recipe_configured} />{products.find(product => product.id === editItem?.id)?.recipe_configured && <p className="mt-1 text-xs text-muted-foreground">O catálogo e os novos orçamentos usam o custo médio atual dos materiais da composição, somado aos demais custos confirmados. Edite a composição para atualizar.</p>}</div>
+        <div><Label htmlFor="product-price">Preço unitário (R$)</Label><Input id="product-price" type="number" min="0" step="0.01" value={salePrice} onChange={(e) => setSalePrice(e.target.value)} placeholder="39.90" /></div>
+      </div>
+
+      <p className="text-xs text-muted-foreground">Só o nome é obrigatório. Você pode completar os detalhes depois.</p>
+      <details className="rounded-lg border p-3"><summary className="cursor-pointer py-2 font-medium">Produção, fotos e detalhes avançados</summary><div className="grid gap-4 pt-4">
       {productionReference && (
         <section aria-label="Referência da produção" className="rounded-xl border border-primary/20 bg-primary/5 p-4 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1011,12 +1023,6 @@ ${selected?.name ? `Perfil: ${selected.name}
         </div>
       )}
 
-      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Precificação</p>
-      <div className="grid grid-cols-2 gap-3">
-        <div><Label htmlFor="product-cost">Custo unitário de referência (R$)</Label><Input id="product-cost" type="number" min="0" step="0.01" value={costEstimate} onChange={(e) => setCostEstimate(e.target.value)} placeholder="12.50" disabled={products.find(product => product.id === editItem?.id)?.recipe_configured} />{products.find(product => product.id === editItem?.id)?.recipe_configured && <p className="mt-1 text-xs text-muted-foreground">O catálogo e os novos orçamentos usam o custo médio atual dos materiais da composição, somado aos demais custos confirmados. Edite a composição para atualizar.</p>}</div>
-        <div><Label htmlFor="product-price">Preço unitário (R$)</Label><Input id="product-price" type="number" min="0" step="0.01" value={salePrice} onChange={(e) => setSalePrice(e.target.value)} placeholder="39.90" /></div>
-      </div>
-
       {/* Marketplace fee simulator */}
       {parseFloat(salePrice) > 0 && parseFloat(costEstimate) > 0 && (() => {
         const price = parseFloat(salePrice);
@@ -1135,12 +1141,14 @@ ${selected?.name ? `Perfil: ${selected.name}
           </div>
         );
       })()}
+      </div></details>
       <div><Label>Observações</Label><Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} /></div>
     </div>
   );
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
+      <DeleteRecordDialog key={deleteTarget?.id} target={deleteTarget} onClose={() => setDeleteTarget(null)} />
       <PageHeader title="Produtos" description="Catálogo de produtos e serviços"
         breadcrumbs={[{ label: "Comercial" }, { label: "Produtos" }]}
         actions={
@@ -1226,6 +1234,7 @@ ${selected?.name ? `Perfil: ${selected.name}
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openEdit(p); }}><Edit className="h-3.5 w-3.5 mr-2" /> Editar</DropdownMenuItem>
                         <DropdownMenuSeparator />
+                        <DropdownMenuItem className="text-destructive" onClick={e => { e.stopPropagation(); setDeleteTarget({ id: p.id, name: p.name, kind: "product" }); }}><Trash2 className="mr-2 h-3.5 w-3.5" />Excluir produto</DropdownMenuItem>
                         <DropdownMenuItem disabled={deleteMut.isPending} onClick={(e) => { e.stopPropagation(); deleteMut.mutate({ id: p.id, active: !p.is_active }); }}><Package className="h-3.5 w-3.5 mr-2" /> {p.is_active ? "Arquivar" : "Reativar"}</DropdownMenuItem>
                       </DropdownMenuContent>
                     </DropdownMenu>
@@ -1241,7 +1250,7 @@ ${selected?.name ? `Perfil: ${selected.name}
       <Dialog open={createOpen} onOpenChange={open => { if (open) setCreateOpen(true); else closeCreateProduct(); }}>
         <DialogContent className="max-w-2xl" closeDisabled={createMut.isPending || uploadingPhoto}><DialogHeader className="pr-10"><DialogTitle>Novo Produto</DialogTitle><DialogDescription>Cadastro e custo unitário do produto ou serviço.</DialogDescription></DialogHeader>
           {formFields}
-          <DialogFooter className="gap-2"><Button type="button" className="min-h-11" variant="outline" disabled={createMut.isPending || uploadingPhoto} onClick={closeCreateProduct}>Cancelar</Button><Button type="button" className="min-h-11" onClick={() => createMut.mutate()} disabled={!name.trim() || createMut.isPending || uploadingPhoto || photosLoading || makerWorldLoading}>{createMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Criar</Button></DialogFooter>
+          <DialogFooter className="gap-2"><Button type="button" className="min-h-11" variant="outline" disabled={createMut.isPending || uploadingPhoto} onClick={closeCreateProduct}>Cancelar</Button><Button type="button" className="min-h-11" onClick={() => { createAnother.current = false; createMut.mutate(); }} disabled={!name.trim() || createMut.isPending || uploadingPhoto || photosLoading || makerWorldLoading}>{createMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Criar</Button><Button type="button" variant="outline" disabled={!name.trim() || createMut.isPending || uploadingPhoto || photosLoading || makerWorldLoading} onClick={() => { createAnother.current = true; createMut.mutate(); }}>Salvar e cadastrar outro</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 

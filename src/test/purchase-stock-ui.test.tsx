@@ -25,36 +25,39 @@ vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: mock.rpc, fr
     then: (resolve: (value: unknown) => unknown, reject: (error: unknown) => unknown) => Promise.resolve({ data: table === "inventory_items" ? [{ id: "red", name: "Filamento", material_code: "PLA", color: "Vermelho", color_code: "RED", unit: "g" }, { id: "blue", name: "Filamento", material_code: "PETG", color: "Azul", color_code: "BLUE", unit: "kg" }] : [], error: null }).then(resolve, reject) };
   return query;
 } } }));
-beforeEach(() => { mock.rpc.mockReset(); mock.toast.mockClear(); mock.rpc.mockResolvedValue({ data: "purchase-1", error: null }); });
+beforeEach(() => { vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} }); Element.prototype.scrollIntoView = vi.fn(); mock.rpc.mockReset(); mock.toast.mockClear(); mock.rpc.mockResolvedValue({ data: "purchase-1", error: null }); });
 afterEach(cleanup);
 const mount = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><Compras /></MemoryRouter></QueryClientProvider>);
 
 describe("recebimento com material/cor e massa explícitos", () => {
   it("mantém quantidade comprada 1 e preço do rolo, salvando entrada de 1000g no material escolhido", async () => {
     mount(); fireEvent.click(screen.getByRole("button", { name: "Nova Compra" }));
-    await screen.findByRole("option", { name: "Filamento · PLA · Vermelho · [RED] · estoque em g" });
+
     fireEvent.change(screen.getByLabelText("Descrição do item 1"), { target: { value: "Rolo vermelho" } });
     fireEvent.change(screen.getByLabelText("Preço unitário do item 1"), { target: { value: "100" } });
-    fireEvent.change(screen.getByLabelText("Material de estoque do item 1"), { target: { value: "red" } });
+    fireEvent.click(screen.getByRole("combobox", { name: "Material de estoque do item 1" }));
+    fireEvent.click(await screen.findByRole("option", { name: /Filamento · PLA/ }));
     expect(screen.getByLabelText("Quantidade de estoque de Rolo vermelho")).toHaveValue("");
     fireEvent.click(screen.getByText("Calcular por rolo ou embalagem"));
     fireEvent.change(screen.getByLabelText("Peso de material por embalagem de Rolo vermelho"), { target: { value: "1" } });
     fireEvent.click(screen.getByRole("button", { name: "Aplicar total de 1.000 g" }));
     expect(screen.getByLabelText("Quantidade comprada do item 1")).toHaveValue(1);
-    fireEvent.click(screen.getByRole("button", { name: "Criar Pedido" }));
-    await waitFor(() => expect(mock.rpc).toHaveBeenCalledWith("create_purchase_order", expect.objectContaining({ p_items: [expect.objectContaining({ quantity: 1, unit_price: 100, total: 100, inventory_item_id: "red", stock_quantity: 1000 })] })));
-    expect(mock.rpc.mock.calls.map(call => call[0])).toEqual(["create_purchase_order"]);
+    fireEvent.click(screen.getByRole("button", { name: "Salvar compra" }));
+    await waitFor(() => expect(mock.rpc).toHaveBeenCalledWith("save_quick_purchase", expect.objectContaining({ p_items: [expect.objectContaining({ quantity: 1, unit_price: 100, total: 100, inventory_item_id: "red", stock_quantity: 1000 })] })));
+    expect(mock.rpc.mock.calls.map(call => call[0])).toEqual(["save_quick_purchase"]);
   });
   it("limpa a conversão ao mudar a quantidade comercial ou selecionar outro material/unidade", async () => {
     mount(); fireEvent.click(screen.getByRole("button", { name: "Nova Compra" }));
-    await screen.findByRole("option", { name: /Filamento · PLA/ });
-    fireEvent.change(screen.getByLabelText("Material de estoque do item 1"), { target: { value: "red" } });
-    fireEvent.change(screen.getByLabelText("Quantidade de estoque de item 1"), { target: { value: "1000" } });
+
+    fireEvent.click(screen.getByRole("combobox", { name: "Material de estoque do item 1" }));
+    fireEvent.click(await screen.findByRole("option", { name: /Filamento · PLA/ }));
+    fireEvent.change(screen.getByLabelText("Quantidade de estoque de Filamento"), { target: { value: "1000" } });
     fireEvent.change(screen.getByLabelText("Quantidade comprada do item 1"), { target: { value: "2" } });
-    expect(screen.getByLabelText("Quantidade de estoque de item 1")).toHaveValue("");
-    fireEvent.change(screen.getByLabelText("Quantidade de estoque de item 1"), { target: { value: "2000" } });
-    fireEvent.change(screen.getByLabelText("Material de estoque do item 1"), { target: { value: "blue" } });
-    expect(screen.getByLabelText("Quantidade de estoque de item 1")).toHaveValue("");
+    expect(screen.getByLabelText("Quantidade de estoque de Filamento")).toHaveValue("");
+    fireEvent.change(screen.getByLabelText("Quantidade de estoque de Filamento"), { target: { value: "2000" } });
+    fireEvent.click(screen.getByRole("combobox", { name: "Material de estoque do item 1" }));
+    fireEvent.click(await screen.findByRole("option", { name: /Filamento · PETG/ }));
+    expect(screen.getByLabelText("Quantidade de estoque de Filamento")).toHaveValue("");
     expect(screen.getByText("Total de entrada no estoque (kg)")).toBeInTheDocument();
   });
   it("usa somente a unidade comercial estruturada da NF e exige aplicar a conversão", () => {

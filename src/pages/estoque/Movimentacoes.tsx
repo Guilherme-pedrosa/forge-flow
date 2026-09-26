@@ -1,6 +1,9 @@
+import { useSearchParams } from "react-router-dom";
+import { QuickInventoryItem } from "@/components/estoque/QuickInventoryItem";
+import { SearchableItemSelect } from "@/components/shared/SearchableItemSelect";
 import { orderRequest } from "@/lib/sales-order";
 import { nonNegative, validateMovement, movementDirection } from "@/lib/production";
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -47,12 +50,15 @@ export default function Movimentacoes() {
   const qc = useQueryClient();
   const request = useRef<{ signature: string; id: string } | null>(null);
 
+  const [params] = useSearchParams();
+  const itemFromLink = params.get("item");
+  const [quickItemOpen, setQuickItemOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("all");
-  const [createOpen, setCreateOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(!!itemFromLink);
 
   // Form
-  const [itemId, setItemId] = useState("");
+  const [itemId, setItemId] = useState(itemFromLink || "");
   const [movementType, setMovementType] = useState<MovementType>("purchase_in");
   const [page, setPage] = useState(0);
   const [quantity, setQuantity] = useState("");
@@ -84,6 +90,9 @@ export default function Movimentacoes() {
     },
     enabled: !!profile,
   });
+
+  const appliedItemLink = useRef<string | null>(null);
+  useEffect(() => { const item = items.find(i => i.id === itemFromLink); if (item && appliedItemLink.current !== item.id) { appliedItemLink.current = item.id; setItemId(item.id); setUnitCost(String(item.avg_cost)); setCreateOpen(true); } }, [items, itemFromLink]);
 
   const filtered = useMemo(() => {
     let list = movements;
@@ -130,6 +139,7 @@ export default function Movimentacoes() {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
+      {quickItemOpen && <QuickInventoryItem open onClose={() => setQuickItemOpen(false)} onCreated={item => setItemId(item.id)} />}
       <PageHeader
         title="Movimentações"
         description="Entradas, saídas e ajustes de estoque"
@@ -222,19 +232,13 @@ export default function Movimentacoes() {
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Nova Movimentação</DialogTitle>
-            <DialogDescription>Registrar entrada ou saída de estoque</DialogDescription>
+            <DialogDescription>Entrada ou saída avulsa, sem gerar contas a pagar. Para registrar também a despesa, use Compras.</DialogDescription>
           </DialogHeader>
           <div className="grid gap-4">
             <div>
               <Label>Item *</Label>
-              <Select value={itemId} onValueChange={setItemId}>
-                <SelectTrigger><SelectValue placeholder="Selecione o item" /></SelectTrigger>
-                <SelectContent>
-                  {items.map((i) => (
-                    <SelectItem key={i.id} value={i.id}>{i.name}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <SearchableItemSelect value={itemId} label="Item de estoque" emptyLabel="Selecione o item" options={items.map(item => ({ id: item.id, label: `${item.name} (${item.unit})` }))} onChange={id => { setItemId(id); const item = items.find(i => i.id === id); setUnitCost(item ? String(item.avg_cost) : ""); }} />
+              <Button type="button" variant="link" className="px-0" onClick={() => setQuickItemOpen(true)}>+ Cadastrar item sem sair da entrada</Button>
             </div>
             <div>
               <Label>Tipo *</Label>

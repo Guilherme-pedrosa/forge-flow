@@ -1,3 +1,4 @@
+import { DeleteRecordDialog, type DeleteTarget } from "@/components/shared/DeleteRecordDialog";
 import { prepareOrder, salesOrderTransitions, escapePrintHtml, printableImageUrl, orderRequest } from "@/lib/sales-order";
 import { readProductionRows } from "@/lib/production-read";
 import { useState, useMemo, useEffect, useRef } from "react";
@@ -76,6 +77,7 @@ export default function Pedidos() {
   const printRef = useRef<HTMLDivElement>(null);
   const saveRequest = useRef<{ signature: string; id: string } | null>(null);
 
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
@@ -489,6 +491,7 @@ export default function Pedidos() {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
+      <DeleteRecordDialog key={deleteTarget?.id} target={deleteTarget} onClose={() => setDeleteTarget(null)} onDeleted={() => setViewOrderId(null)} />
       <PageHeader title="Pedidos de venda" description="Vendas, recebimentos e produção vinculada"
         breadcrumbs={[{ label: "Comercial" }, { label: "Pedidos" }]}
         actions={<Button size="sm" onClick={() => { resetForm(); setCreateOpen(true); }}><Plus className="h-4 w-4 mr-1" /> Novo pedido</Button>}
@@ -553,6 +556,7 @@ export default function Pedidos() {
                             </DropdownMenuItem>
                           )}
                           <DropdownMenuSeparator />
+                          {["draft", "cancelled"].includes(o.status) && <DropdownMenuItem className="text-destructive" onClick={e => { e.stopPropagation(); setDeleteTarget({ id: o.id, name: o.code, kind: "order" }); }}><Trash2 className="mr-2 h-3.5 w-3.5" />Excluir pedido</DropdownMenuItem>}
                           {(salesOrderTransitions[o.status] ?? []).includes("cancelled") && <DropdownMenuItem className="text-destructive" disabled={updateStatusMut.isPending} onClick={(event) => { event.stopPropagation(); requestStatus(o.id, "cancelled"); }}><X className="h-3.5 w-3.5 mr-2" /> Cancelar pedido</DropdownMenuItem>}
                         </DropdownMenuContent>
                       </DropdownMenu>

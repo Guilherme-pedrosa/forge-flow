@@ -470,6 +470,76 @@ await test('A product with consignment stock can only be archived after returnin
   await db.query('UPDATE products SET is_active=false WHERE id=$1',[product]);
   assert.equal(await scalar('SELECT is_active FROM products WHERE id=$1',[product]),false);
 });
+
+await test('Unused product and draft order delete, referenced products remain intact',async()=>{
+  const product=await saveProduct({name:'Quick product with only name'});
+  const order=await createOrder(product);
+  await rejects("SELECT delete_unused_record('product',$1)",[product],/Arquivar/);
+  await scalar("SELECT delete_unused_record('order',$1)",[order.id]);
+  assert.equal(await scalar('SELECT count(*)::int FROM order_items WHERE order_id=$1',[order.id]),0);
+  await scalar("SELECT delete_unused_record('product',$1)",[product]);
+  assert.equal(await scalar('SELECT count(*)::int FROM products WHERE id=$1',[product]),0);
+});
+await test('Delete rejects cross-tenant and viewer access',async()=>{
+  const product=await saveProduct({name:'Protected deletion'});
+  await db.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[otherUid]);
+  await rejects("SELECT delete_unused_record('product',$1)",[product],/não encontrado/);
+  await db.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[viewerUid]);
+  await rejects("SELECT delete_unused_record('product',$1)",[product],/permissão/);
+});
+await test('Orders with receivables cannot be hard deleted even after cancellation',async()=>{
+  const product=await saveProduct({name:'Order with history',sale_price:20});
+  const order=await createOrder(product);
+  await scalar("SELECT transition_sales_order($1,'approved')",[order.id]);
+  await scalar("SELECT transition_sales_order($1,'cancelled')",[order.id]);
+  await rejects("SELECT delete_unused_record('order',$1)",[order.id],/financeiro/);
+});
+await test('Quick purchase receives once with correct freight and installments',async()=>{
+  const item=await makeMaterial('Quick unit','un');
+  const args=[JSON.stringify({order_date:today,subtotal:100,shipping:10,discount:5,total:105}),JSON.stringify([{description:'Quick item',inventory_item_id:item,quantity:2,unit_price:50,total:100,stock_quantity:2}]),JSON.stringify([{amount:52.5,due_date:today},{amount:52.5,due_date:today}]),requestId(),true];
+  const call='SELECT save_quick_purchase($1::jsonb,$2::jsonb,$3::jsonb,$4,$5)';
+  const purchase=await scalar(call,args); assert.equal(await scalar(call,args),purchase);
+  assert.equal(await scalar('SELECT status FROM purchase_orders WHERE id=$1',[purchase]),'received');
+  assert.equal(Number(await scalar('SELECT current_stock FROM inventory_items WHERE id=$1',[item])),2);
+  assert.equal(Number(await scalar('SELECT avg_cost FROM inventory_items WHERE id=$1',[item])),52.5);
+  assert.equal(Number(await scalar('SELECT sum(amount) FROM accounts_payable WHERE origin_id=$1',[purchase])),105);
+  await rejects("SELECT delete_unused_record('purchase',$1)",[purchase],/recebimento/);
+});
+await test('Quick purchase receipt failure rolls back purchase, titles and movements',async()=>{
+  const item=await makeMaterial('Unconverted quick roll','g');
+  const before=await scalar('SELECT count(*)::int FROM purchase_orders');
+  const titlesBefore=await scalar('SELECT count(*)::int FROM accounts_payable');
+  await rejects('SELECT save_quick_purchase($1::jsonb,$2::jsonb,$3::jsonb,$4,true)',[JSON.stringify({order_date:today,subtotal:50,total:50}),JSON.stringify([{description:'Roll',inventory_item_id:item,quantity:1,unit_price:50,total:50}]),JSON.stringify([{amount:50,due_date:today}]),requestId()],/quantidade convertida/);
+  assert.equal(await scalar('SELECT count(*)::int FROM purchase_orders'),before);
+  assert.equal(await scalar('SELECT count(*)::int FROM accounts_payable'),titlesBefore);
+  assert.equal(Number(await scalar('SELECT current_stock FROM inventory_items WHERE id=$1',[item])),0);
+});
+await test('Pending purchase deletion removes its unpaid installments atomically',async()=>{
+  const purchase=await scalar('SELECT save_quick_purchase($1::jsonb,$2::jsonb,$3::jsonb,$4,false)',[JSON.stringify({order_date:today,subtotal:50,total:50}),JSON.stringify([{description:'Service',quantity:1,unit_price:50,total:50}]),JSON.stringify([{amount:50,due_date:today}]),requestId()]);
+  await scalar("SELECT delete_unused_record('purchase',$1)",[purchase]);
+  assert.equal(await scalar('SELECT count(*)::int FROM purchase_orders WHERE id=$1',[purchase]),0);
+  assert.equal(await scalar('SELECT count(*)::int FROM accounts_payable WHERE origin_id=$1',[purchase]),0);
+});
+await test('Paid purchases and manual titles cannot be deleted',async()=>{
+  const purchase=await scalar('SELECT save_quick_purchase($1::jsonb,$2::jsonb,$3::jsonb,$4,false)',[JSON.stringify({order_date:today,subtotal:50,total:50}),JSON.stringify([{description:'Paid service',quantity:1,unit_price:50,total:50}]),JSON.stringify([{amount:50,due_date:today}]),requestId()]);
+  const title=await scalar('SELECT id FROM accounts_payable WHERE origin_id=$1',[purchase]);
+  await scalar("SELECT settle_financial_title('payable',$1,10,CURRENT_DATE,$2,$3)",[title,bank,requestId()]);
+  await rejects("SELECT delete_unused_record('purchase',$1)",[purchase],/pagamento/);
+  await rejects("SELECT delete_unused_record('payable',$1)",[title],/lançamentos manuais/);
+  const manual=await scalar("INSERT INTO accounts_payable(tenant_id,description,amount,due_date) VALUES($1,'Mistake',10,CURRENT_DATE) RETURNING id",[tenant]);
+  await scalar("SELECT delete_unused_record('payable',$1)",[manual]);
+  assert.equal(await scalar('SELECT count(*)::int FROM accounts_payable WHERE id=$1',[manual]),0);
+});
+
+await test('Inventory deletion allows an unused item and preserves material references',async()=>{
+  const unused=await makeMaterial('Unused inventory');
+  await scalar("SELECT delete_unused_record('inventory',$1)",[unused]);
+  assert.equal(await scalar('SELECT count(*)::int FROM inventory_items WHERE id=$1',[unused]),0);
+  const linked=await makeMaterial('Referenced inventory');
+  await saveProduct({name:'Material reference',material_id:linked});
+  await rejects("SELECT delete_unused_record('inventory',$1)",[linked],/Arquivar/);
+  assert.equal(await scalar('SELECT count(*)::int FROM inventory_items WHERE id=$1',[linked]),1);
+});
 console.log(`Validated ${passed} PostgreSQL ERP scenarios.`);
 await db.close();
 if(failures.length) { console.error(`${failures.length} scenario(s) failed.`); for(const {name,error} of failures) console.error(name+'\n'+(error.stack?.split('\n').slice(0,5).join('\n') ?? error)); process.exitCode=1; }

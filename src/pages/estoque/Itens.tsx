@@ -1,3 +1,5 @@
+import { QuickInventoryItem } from "@/components/estoque/QuickInventoryItem";
+import { DeleteRecordDialog, type DeleteTarget } from "@/components/shared/DeleteRecordDialog";
 import { Fragment, useState, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { nonNegative, gramsToStockUnit } from "@/lib/production";
@@ -48,6 +50,8 @@ export default function Itens() {
   const { toast } = useToast();
   const qc = useQueryClient();
 
+  const [quickOpen, setQuickOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [createOpen, setCreateOpen] = useState(false);
@@ -476,7 +480,9 @@ export default function Itens() {
               <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openEdit(item); }}>
                 <Edit className="h-3.5 w-3.5 mr-2" /> Editar
               </DropdownMenuItem>
+              <DropdownMenuItem asChild><Link onClick={e => e.stopPropagation()} to={`/estoque/movimentacoes?item=${item.id}`}>Dar entrada no estoque</Link></DropdownMenuItem>
               <DropdownMenuSeparator />
+              <DropdownMenuItem className="text-destructive" onClick={e => { e.stopPropagation(); setDeleteTarget({ id: item.id, name: item.name, kind: "inventory" }); }}>Excluir item sem uso</DropdownMenuItem>
               <DropdownMenuItem className="text-destructive" onClick={(e) => { e.stopPropagation(); if (window.confirm(`Arquivar ${item.name}? O histórico será preservado.`)) deleteMut.mutate(item.id); }}>
                 <Trash2 className="h-3.5 w-3.5 mr-2" /> Arquivar
               </DropdownMenuItem>
@@ -491,12 +497,15 @@ export default function Itens() {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
+      <DeleteRecordDialog key={deleteTarget?.id} target={deleteTarget} onClose={() => setDeleteTarget(null)} />
+      {quickOpen && <QuickInventoryItem open onClose={() => setQuickOpen(false)} onCreated={item => { setSearch(item.name); toast({ title: "Item cadastrado" }); }} />}
       <PageHeader
         title="Itens / Materiais"
         description="Cadastro de filamentos, insumos e componentes agrupados por tipo"
         breadcrumbs={[{ label: "Estoque", href: "/estoque/itens" }, { label: "Itens" }]}
         actions={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" onClick={() => setQuickOpen(true)}><Plus className="mr-1 h-4 w-4" />Cadastro rápido</Button>
             <Button size="sm" variant="outline" onClick={() => { resetForm(); setFormMode("color"); setCreateOpen(true); }}>
               <Palette className="h-4 w-4 mr-1" /> Nova Cor
             </Button>
