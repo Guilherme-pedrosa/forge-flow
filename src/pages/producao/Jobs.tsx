@@ -1,3 +1,4 @@
+import { SearchableItemSelect } from "@/components/shared/SearchableItemSelect";
 import { useState, useMemo, useRef } from "react";
 import { ProductionTransitionDialog } from "@/components/production/ProductionTransitionDialog";
 import { ProductionFileDialog } from "@/components/production/ProductionFileDialog";
@@ -563,17 +564,7 @@ function CreateJobDialog({
         <div className="grid gap-4 py-2">
           <div className="grid gap-1.5">
             <Label htmlFor="job-product">Produto cadastrado</Label>
-            <Select value={productId || "none"} onValueChange={(v) => handleProductSelect(v === "none" ? "" : v)}>
-              <SelectTrigger id="job-product"><SelectValue placeholder="Selecionar produto..." /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">— Nenhum (manual) —</SelectItem>
-                {products.map(p => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.name}{p.sku ? ` (${p.sku})` : ""}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SearchableItemSelect id="job-product" label="Produto cadastrado" value={productId} onChange={handleProductSelect} emptyLabel="Nenhum (manual)" searchPlaceholder="Digite nome ou SKU do produto…" options={products.map(p => ({ id: p.id, label: p.name, description: p.sku || undefined }))} />
           </div>
 
           {plateQuery.isFetching && <p className="text-sm text-muted-foreground">Consultando as placas do produto…</p>}

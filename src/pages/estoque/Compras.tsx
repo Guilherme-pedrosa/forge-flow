@@ -733,12 +733,7 @@ export default function Compras() {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <div className="flex items-center justify-between"><Label>Fornecedor</Label><Button type="button" size="sm" variant="link" onClick={() => setVendorOpen(true)}>Cadastrar fornecedor</Button></div>
-                <Select value={vendorId} onValueChange={setVendorId}>
-                  <SelectTrigger><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                  <SelectContent>
-                    {vendors.map((v) => <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <SearchableItemSelect label="Fornecedor da compra" value={vendorId} onChange={setVendorId} emptyLabel="Selecionar fornecedor" searchPlaceholder="Digite o nome do fornecedor…" disabled={createMut.isPending} options={vendors.map(v => ({ id: v.id, label: v.name }))} />
               </div>
               <div>
                 <Label>Data do Pedido</Label>

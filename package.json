@@ -13,6 +13,7 @@
     "test:database": "node scripts/test-erp-database.mjs",
     "test:assembly": "node scripts/test-component-assembly.mjs",
     "test:assembly:ui": "node scripts/test-component-assembly-ui.mjs",
+    "test:catalog:ui": "node scripts/test-catalog-search-ui.mjs",
     "test:bambu": "node scripts/test-bambu-accounting.mjs && node scripts/test-bambu-direct-sync.mjs && node scripts/test-product-plates.mjs && node scripts/test-bambu-quality.mjs",
     "test:materials": "node scripts/test-product-material-recipe.mjs && node scripts/test-sales-quotes.mjs && node scripts/test-production-files.mjs && node scripts/test-bambu-material-recipe.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.app.json",

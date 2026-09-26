@@ -1,3 +1,4 @@
+import { SearchableItemSelect } from "@/components/shared/SearchableItemSelect";
 import { useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { positiveInteger, productExtrasPerPiece, requiresProductionMeasurement } from "@/lib/production";
@@ -261,16 +262,7 @@ export default function Fila() {
                 <div className="space-y-4">
                   <div>
                     <Label htmlFor="queue-product">Produto</Label>
-                    <Select value={selProductId} onValueChange={setSelProductId}>
-                      <SelectTrigger id="queue-product"><SelectValue placeholder="Selecione..." /></SelectTrigger>
-                      <SelectContent>
-                        {products.map(p => (
-                          <SelectItem key={p.id} value={p.id}>
-                            {p.name} {p.sku ? `· ${p.sku}` : ""}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <SearchableItemSelect id="queue-product" label="Produto da fila" value={selProductId} onChange={setSelProductId} emptyLabel="Selecionar produto" searchPlaceholder="Digite nome ou SKU do produto…" options={products.map(p => ({ id: p.id, label: p.name, description: p.sku || undefined }))} />
                   </div>
                   {!hasPlates && <div>
                     <Label htmlFor="queue-printer">Impressora</Label>

@@ -1,3 +1,4 @@
+import { SearchableItemSelect } from "@/components/shared/SearchableItemSelect";
 import { DeleteRecordDialog, type DeleteTarget } from "@/components/shared/DeleteRecordDialog";
 import { prepareOrder, salesOrderTransitions, escapePrintHtml, printableImageUrl, orderRequest } from "@/lib/sales-order";
 import { readProductionRows } from "@/lib/production-read";
@@ -483,10 +484,7 @@ export default function Pedidos() {
         <TableRow className="grid min-w-0 grid-cols-2 gap-x-3 gap-y-2 border-0 hover:bg-transparent sm:table-row sm:border-b sm:hover:bg-muted/50">
           <TableCell className="col-span-2 block min-w-0 p-0 sm:table-cell sm:p-1.5">
             <span className="mb-1.5 block text-xs font-medium sm:hidden">Item {index + 1} · Produto</span>
-            <Select value={line.product_id || "custom"} disabled={pending} onValueChange={value => updateLine(line.id, "product_id", value === "custom" ? "" : value)}>
-              <SelectTrigger aria-label={`Produto do item ${index + 1}`} className="h-11 min-w-0 text-sm sm:h-10"><SelectValue placeholder="Selecione" /></SelectTrigger>
-              <SelectContent className="max-w-[calc(100vw-2rem)]"><SelectItem value="custom">Personalizado</SelectItem>{products.map(product => <SelectItem key={product.id} value={product.id} className="min-h-11 whitespace-normal sm:min-h-0">{product.name} {product.sale_price ? `(${fmtCurrency(product.sale_price)})` : ""}</SelectItem>)}</SelectContent>
-            </Select>
+            <SearchableItemSelect value={line.product_id} label={`Produto do item ${index + 1}`} emptyLabel="Personalizado" searchPlaceholder="Digite nome ou SKU do produto…" disabled={pending} onChange={value => updateLine(line.id, "product_id", value)} options={products.map(product => ({ id: product.id, label: product.name, description: [product.sku, product.sale_price != null ? fmtCurrency(product.sale_price) : "Preço a definir"].filter(Boolean).join(" · ") }))} />
             {!line.product_id && <Input aria-label={`Descrição do item ${index + 1}`} className="mt-1 h-11 min-w-0 text-sm sm:h-10" value={line.description} disabled={pending} onChange={event => updateLine(line.id, "description", event.target.value)} placeholder="Descrição do item" />}
           </TableCell>
           <TableCell className="block min-w-0 p-0 sm:table-cell sm:p-1.5"><label className="block"><span className="mb-1.5 block text-xs font-medium sm:hidden">Quantidade</span><Input aria-label={`Quantidade do item ${index + 1}`} type="number" inputMode="numeric" min={1} className="h-11 min-w-0 text-sm sm:h-10 sm:text-center" value={line.quantity} disabled={pending} onChange={event => updateLine(line.id, "quantity", event.target.value)} /></label></TableCell>
@@ -597,13 +595,7 @@ export default function Pedidos() {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <Label>Cliente</Label>
-                <Select value={customerId || "none"} onValueChange={(v) => selectCustomer(v === "none" ? "" : v)}>
-                  <SelectTrigger><SelectValue placeholder="Selecione o cliente" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Sem cliente</SelectItem>
-                    {customers.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
-                  </SelectContent>
-                </Select>
+                <SearchableItemSelect label="Cliente do pedido" value={customerId} onChange={selectCustomer} emptyLabel="Sem cliente" searchPlaceholder="Digite o nome do cliente…" options={customers.map(c => ({ id: c.id, label: c.name }))} />
               </div>
               <div>
                 <Label>Data de Entrega</Label>
@@ -853,13 +845,7 @@ export default function Pedidos() {
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <Label>Cliente</Label>
-                  <Select value={customerId || "none"} onValueChange={(v) => selectCustomer(v === "none" ? "" : v)}>
-                    <SelectTrigger><SelectValue placeholder="Selecione o cliente" /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">Sem cliente</SelectItem>
-                      {customers.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
+                  <SearchableItemSelect label="Cliente do pedido" value={customerId} onChange={selectCustomer} emptyLabel="Sem cliente" searchPlaceholder="Digite o nome do cliente…" options={customers.map(c => ({ id: c.id, label: c.name }))} />
                 </div>
                 <div>
                   <Label>Data de Entrega</Label>

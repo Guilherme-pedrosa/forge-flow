@@ -36,6 +36,12 @@ vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: mock.rpc, fr
 } } }));
 const mount = (page: "order" | "quote", existing = false) => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><MemoryRouter initialEntries={[existing && page === "order" ? "/?pedido=order-1" : "/"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>{page === "order" ? <Pedidos /> : <Orcamentos />}</MemoryRouter></QueryClientProvider>);
 const savedPayload = (name: string) => mock.rpc.mock.calls.find(call => call[0] === name)?.[1];
+const selectOrderProduct = async (line: number, sku: "BASE" | "TAMPA") => {
+  await waitFor(() => expect(document.activeElement?.closest('[role="dialog"]')).not.toBeNull());
+  fireEvent.click(screen.getByRole("combobox", { name: `Produto do item ${line}`, exact: true }));
+  fireEvent.change(await screen.findByRole("combobox", { name: `Buscar produto do item ${line}`, exact: true }), { target: { value: sku } });
+  fireEvent.click(await screen.findByRole("option", { name: new RegExp(sku) }));
+};
 beforeEach(() => { mock.saved = []; mock.rpc.mockReset(); mock.toast.mockClear(); mock.rpc.mockImplementation(async (name: string) => ({ data: name === "save_sales_order" ? "order-1" : "quote-1", error: null })); });
 afterEach(cleanup);
 
@@ -46,8 +52,7 @@ describe("cores preservadas nos itens comerciais", () => {
     try {
       mock.saved = [blue]; mount("order", mode === "editar");
       fireEvent.click(await screen.findByRole("button", { name: mode === "editar" ? "Editar rascunho" : "Novo pedido" }));
-      await screen.findByRole("option", { name: /Base/ });
-      fireEvent.change(screen.getByLabelText("Produto do item 1"), { target: { value: "product-1" } });
+      await selectOrderProduct(1, "BASE");
       fireEvent.click(screen.getByRole("button", { name: "Selecionar azul" }));
       fireEvent.change(screen.getByLabelText("Quantidade do item 1"), { target: { value: "3" } });
       fireEvent.change(screen.getByLabelText("Preço unitário do item 1"), { target: { value: "12.5" } });
@@ -57,7 +62,7 @@ describe("cores preservadas nos itens comerciais", () => {
       expect(screen.getByLabelText("Total do item 1")).toHaveTextContent(/37,50/);
       expect(screen.getByRole("button", { name: "Remover item 1" })).toBeDisabled();
       fireEvent.click(screen.getByRole("button", { name: "Adicionar item ao pedido" }));
-      fireEvent.change(screen.getByLabelText("Produto do item 2"), { target: { value: "product-2" } });
+      await selectOrderProduct(2, "TAMPA");
       expect(screen.getByRole("button", { name: "Remover item 2" })).toBeEnabled();
       fireEvent.click(screen.getByRole("button", { name: "Remover item 2" }));
       expect(screen.queryByLabelText("Produto do item 2")).not.toBeInTheDocument();
@@ -69,8 +74,7 @@ describe("cores preservadas nos itens comerciais", () => {
   });
   it("cria pedido com a cor escolhida para o item, sem modificar o produto do catálogo", async () => {
     mount("order"); fireEvent.click(screen.getByRole("button", { name: "Novo pedido" }));
-    await screen.findByRole("option", { name: /Base/ });
-    fireEvent.change(screen.getByLabelText("Produto do item 1"), { target: { value: "product-1" } });
+    await selectOrderProduct(1, "BASE");
     fireEvent.click(screen.getByRole("button", { name: "Selecionar azul" })); fireEvent.click(screen.getByRole("button", { name: "Usar preço 25" }));
     fireEvent.click(screen.getByRole("button", { name: "Criar pedido" }));
     await waitFor(() => expect(savedPayload("save_sales_order")).toBeDefined());
@@ -115,9 +119,9 @@ describe("cores preservadas nos itens comerciais", () => {
     mock.saved = [blue]; mount("order", true);
     fireEvent.click(await screen.findByRole("button", { name: "Editar rascunho" }));
     expect(screen.getByLabelText("Escolha preservada")).toHaveTextContent(JSON.stringify([blue]));
-    fireEvent.change(screen.getByLabelText("Produto do item 1"), { target: { value: "product-2" } });
+    await selectOrderProduct(1, "TAMPA");
     expect(screen.getByLabelText("Escolha preservada")).toHaveTextContent("[]");
-    fireEvent.change(screen.getByLabelText("Produto do item 1"), { target: { value: "product-1" } });
+    await selectOrderProduct(1, "BASE");
     fireEvent.click(screen.getByRole("button", { name: "Selecionar azul" })); fireEvent.click(screen.getByRole("button", { name: "Usar preço 25" }));
     fireEvent.click(screen.getByRole("button", { name: /Salvar alterações/i }));
     await waitFor(() => expect(savedPayload("save_sales_order")).toBeDefined());

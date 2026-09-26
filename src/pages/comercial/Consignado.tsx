@@ -1,3 +1,4 @@
+import { SearchableItemSelect } from "@/components/shared/SearchableItemSelect";
 import { useState, useMemo, useRef } from "react";
 import { nonNegative, positiveInteger } from "@/lib/production";
 import { readProductionRows } from "@/lib/production-read";
@@ -30,9 +31,6 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
-import { ChevronsUpDown } from "lucide-react";
 
 const fmtCurrency = (v: number | null) =>
   v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
@@ -83,13 +81,11 @@ export default function Consignado() {
   const [saleItems, setSaleItems] = useState<SaleItem[]>([]);
   const [saleAddProductId, setSaleAddProductId] = useState("");
   const [saleAddQty, setSaleAddQty] = useState("1");
-  const [saleAddPopoverOpen, setSaleAddPopoverOpen] = useState(false);
   // Inline qty edit
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [editQtyValue, setEditQtyValue] = useState("");
   const [editOriginalQty, setEditOriginalQty] = useState(0);
   const [editQtyReason, setEditQtyReason] = useState("");
-  const [productPopoverOpen, setProductPopoverOpen] = useState(false);
   // Inline price edit
   const [editingPriceItemId, setEditingPriceItemId] = useState<string | null>(null);
   const [editPriceValue, setEditPriceValue] = useState("");
@@ -135,7 +131,7 @@ export default function Consignado() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("products")
-        .select("id, name, sale_price, cost_estimate, photo_url")
+        .select("id, name, sku, sale_price, cost_estimate, photo_url")
         .eq("is_active", true)
         .order("name");
       if (error) throw error;
@@ -895,49 +891,7 @@ export default function Consignado() {
               <div className="flex gap-2 items-end">
                 <div className="flex-1">
                   <Label className="text-xs">Produto</Label>
-                  <Popover open={saleAddPopoverOpen} onOpenChange={setSaleAddPopoverOpen}>
-                    <PopoverTrigger asChild>
-                      <Button variant="outline" role="combobox" className="w-full justify-between font-normal h-9 text-sm">
-                        {saleAddProductId
-                          ? products.find((x) => x.id === saleAddProductId)?.name || "…"
-                          : "Selecione…"}
-                        <ChevronsUpDown className="ml-1 h-3 w-3 shrink-0 opacity-50" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
-                      <Command>
-                        <CommandInput placeholder="Buscar produto..." />
-                        <CommandList>
-                          <CommandEmpty>Nenhum produto encontrado.</CommandEmpty>
-                          <CommandGroup>
-                            {/* Show only items in stock at this location */}
-                            {viewLocItems.filter((i: any) => i.current_qty > 0).map((ci: any) => {
-                              const p = products.find((x) => x.id === ci.product_id);
-                              if (!p) return null;
-                              const price = getItemSalePrice(ci);
-                              return (
-                                <CommandItem
-                                  key={p.id}
-                                  value={p.name}
-                                  onSelect={() => {
-                                    setSaleAddProductId(p.id);
-                                    setSaleAddPopoverOpen(false);
-                                  }}
-                                >
-                                  <div className="flex justify-between w-full">
-                                    <span>{p.name}</span>
-                                    <span className="text-xs text-muted-foreground ml-2">
-                                      {ci.current_qty}un · {fmtCurrency(price)}
-                                    </span>
-                                  </div>
-                                </CommandItem>
-                              );
-                            })}
-                          </CommandGroup>
-                        </CommandList>
-                      </Command>
-                    </PopoverContent>
-                  </Popover>
+                  <SearchableItemSelect label="Produto para venda consignada" value={saleAddProductId} onChange={setSaleAddProductId} emptyLabel="Selecionar produto" searchPlaceholder="Digite nome ou SKU do produto…" options={viewLocItems.filter(item => item.current_qty > 0).flatMap(item => { const product = products.find(p => p.id === item.product_id); return product ? [{ id: product.id, label: product.name, description: [product.sku, `${item.current_qty} un`, fmtCurrency(getItemSalePrice(item))].filter(Boolean).join(" · ") }] : []; })} />
                 </div>
                 <div className="w-16">
                   <Label className="text-xs">Qtd</Label>
@@ -1031,51 +985,7 @@ export default function Consignado() {
             <div className="grid gap-4">
               <div>
                 <Label>Produto *</Label>
-                <Popover open={productPopoverOpen} onOpenChange={setProductPopoverOpen}>
-                  <PopoverTrigger asChild>
-                    <Button variant="outline" role="combobox" className="w-full justify-between font-normal h-10">
-                      {movProductId
-                        ? (() => {
-                            const p = products.find((x) => x.id === movProductId);
-                            if (!p) return "Selecione…";
-                            const ci = viewLocItems.find((i: any) => i.product_id === movProductId);
-                            const price = ci?.sale_price ?? p.sale_price ?? 0;
-                            return `${p.name} — ${fmtCurrency(price)}`;
-                          })()
-                        : "Selecione um produto…"}
-                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
-                    <Command>
-                      <CommandInput placeholder="Buscar produto..." />
-                      <CommandList>
-                        <CommandEmpty>Nenhum produto encontrado.</CommandEmpty>
-                        <CommandGroup>
-                          {products.map((p) => {
-                            const ci = viewLocItems.find((i: any) => i.product_id === p.id);
-                            const price = ci?.sale_price ?? p.sale_price ?? 0;
-                            return (
-                              <CommandItem
-                                key={p.id}
-                                value={p.name}
-                                onSelect={() => {
-                                  setMovProductId(p.id);
-                                  setProductPopoverOpen(false);
-                                }}
-                              >
-                                <div className="flex flex-col">
-                                  <span>{p.name}</span>
-                                  <span className="text-xs text-muted-foreground">{fmtCurrency(price)}</span>
-                                </div>
-                              </CommandItem>
-                            );
-                          })}
-                        </CommandGroup>
-                      </CommandList>
-                    </Command>
-                  </PopoverContent>
-                </Popover>
+                <SearchableItemSelect label="Produto da consignação" value={movProductId} onChange={setMovProductId} emptyLabel="Selecione um produto…" searchPlaceholder="Digite nome ou SKU do produto…" options={products.map(p => { const item = viewLocItems.find((i: { product_id: string }) => i.product_id === p.id); return { id: p.id, label: p.name, description: [p.sku, fmtCurrency(item?.sale_price ?? p.sale_price ?? 0)].filter(Boolean).join(" · ") }; })} />
               </div>
               <div>
                 <Label>Quantidade *</Label>

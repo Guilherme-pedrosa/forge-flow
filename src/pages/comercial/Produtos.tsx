@@ -1,3 +1,4 @@
+import { SearchableItemSelect } from "@/components/shared/SearchableItemSelect";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DeleteRecordDialog, type DeleteTarget } from "@/components/shared/DeleteRecordDialog";
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
@@ -910,19 +911,7 @@ ${selected?.name ? `Perfil: ${selected.name}
             const unitCost = (prod as any)?.cost_estimate || 0;
             return (
               <div key={idx} className="grid min-w-0 grid-cols-[minmax(0,1fr)_60px_auto] gap-2 items-center sm:grid-cols-[minmax(0,1fr)_70px_90px_auto] [&>*]:min-w-0">
-                <Select value={kc.productId || "none"} onValueChange={(v) => {
-                  const updated = [...kitComponents];
-                  updated[idx] = { ...updated[idx], productId: v === "none" ? "" : v };
-                  setKitComponents(updated);
-                }}>
-                <SelectTrigger className="col-span-3 h-8 min-w-0 text-xs sm:col-span-1"><SelectValue placeholder="Selecione" /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Selecione...</SelectItem>
-                    {products.filter((p: any) => p.is_active && p.category !== "kit").map((p: any) => (
-                      <SelectItem key={p.id} value={p.id}>{p.name} ({fmtCurrency(p.cost_estimate)})</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="col-span-3 min-w-0 sm:col-span-1"><SearchableItemSelect label={`Produto do componente ${idx + 1}`} value={kc.productId} onChange={value => { const updated = [...kitComponents]; updated[idx] = { ...updated[idx], productId: value }; setKitComponents(updated); }} emptyLabel="Selecionar produto" searchPlaceholder="Digite nome ou SKU do produto…" options={products.filter(p => p.is_active && p.category !== "kit").map(p => ({ id: p.id, label: p.name, description: [p.sku, fmtCurrency(p.cost_estimate)].filter(Boolean).join(" · ") }))} /></div>
                 <Input
                   type="number" min={1} className="h-8 text-xs text-center"
                   value={kc.qty}
@@ -1359,19 +1348,7 @@ ${selected?.name ? `Perfil: ${selected.name}
                   const unitPrice = (prod as any)?.sale_price || 0;
                   return (
                     <div key={idx} className="grid grid-cols-[1fr_70px_110px_110px_auto] gap-2 items-center">
-                      <Select value={ki.productId || "none"} onValueChange={(v) => {
-                        const updated = [...kitItems];
-                        updated[idx] = { ...updated[idx], productId: v === "none" ? "" : v };
-                        setKitItems(updated);
-                      }}>
-                        <SelectTrigger className="h-8 text-xs bg-background"><SelectValue placeholder="Selecione um produto" /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">Selecione...</SelectItem>
-                          {products.filter((p: any) => p.is_active && p.category !== "kit").map((p: any) => (
-                            <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <SearchableItemSelect label={`Produto do kit ${idx + 1}`} value={ki.productId} onChange={value => { const updated = [...kitItems]; updated[idx] = { ...updated[idx], productId: value }; setKitItems(updated); }} emptyLabel="Selecionar produto" searchPlaceholder="Digite nome ou SKU do produto…" options={products.filter(p => p.is_active && p.category !== "kit").map(p => ({ id: p.id, label: p.name, description: p.sku || undefined }))} />
                       <Input
                         type="number" min={1} className="h-8 text-xs text-center bg-background"
                         value={ki.qty}
