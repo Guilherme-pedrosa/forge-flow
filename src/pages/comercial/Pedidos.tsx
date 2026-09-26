@@ -1,6 +1,8 @@
+import { CommercialPdfButton } from "@/components/comercial/CommercialPdfButton";
+import { orderDocument } from "@/lib/commercial-document";
 import { SearchableItemSelect } from "@/components/shared/SearchableItemSelect";
 import { DeleteRecordDialog, type DeleteTarget } from "@/components/shared/DeleteRecordDialog";
-import { prepareOrder, salesOrderTransitions, escapePrintHtml, printableImageUrl, orderRequest } from "@/lib/sales-order";
+import { prepareOrder, salesOrderTransitions, orderRequest } from "@/lib/sales-order";
 import { readProductionRows } from "@/lib/production-read";
 import { useState, useMemo, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -9,11 +11,11 @@ import { useAuth } from "@/contexts/AuthContext";
 import { PageHeader } from "@/components/shared/PageHeader";
 import {
   Plus, Search, MoreHorizontal, FileText, Loader2, Trash2, CheckCircle2, Clock, Truck,
-  ShoppingCart, MapPin, X, Package, Printer, DollarSign, ArrowRight, Pencil,
+  ShoppingCart, MapPin, X, Package, DollarSign, ArrowRight, Pencil,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useNavigate, Link, useSearchParams } from "react-router-dom";
-import { QuoteSnapshotSummary, quoteSnapshotMaterials } from "@/components/comercial/QuoteSnapshotSummary";
+import { QuoteSnapshotSummary } from "@/components/comercial/QuoteSnapshotSummary";
 import { ProductMaterialChoice } from "@/components/comercial/ProductMaterialChoice";
 import { readMaterialOverrides, type MaterialOverride } from "@/lib/product-material-variant";
 import { Button } from "@/components/ui/button";
@@ -75,7 +77,6 @@ export default function Pedidos() {
   const [searchParams] = useSearchParams();
   const { toast } = useToast();
   const qc = useQueryClient();
-  const printRef = useRef<HTMLDivElement>(null);
   const saveRequest = useRef<{ signature: string; id: string } | null>(null);
 
   const [stockOrderId, setStockOrderId] = useState<string | null>(null);
@@ -163,17 +164,6 @@ export default function Pedidos() {
     enabled: !!profile,
   });
 
-  const { data: tenant } = useQuery({
-    queryKey: ["tenant"],
-    queryFn: async () => {
-      if (!profile) return null;
-      const { data, error } = await supabase.from("tenants").select("*").eq("id", profile.tenant_id).single();
-      if (error) throw error;
-      return data;
-    },
-    enabled: !!profile,
-  });
-
   // Order items for viewing
   const { data: viewItems = [], isLoading: itemsLoading, error: itemsError } = useQuery({
     queryKey: ["order_items", viewOrderId],
@@ -249,169 +239,6 @@ export default function Pedidos() {
   const shippingVal = parseFloat(shipping) || 0;
   const discountNum = parseFloat(discountVal) || 0;
   const grandTotal = subtotal + shippingVal - discountNum;
-
-  // Resolve image source for print (base64 for internal storage, direct URL for external images)
-  const fetchImageAsBase64 = async (url: string): Promise<string> => {
-    try {
-      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-      const isInternalStorage = !!supabaseUrl
-        && url.includes(supabaseUrl)
-        && url.includes("/storage/v1/object/public/");
-
-      if (isInternalStorage) {
-        const storagePrefix = "/storage/v1/object/public/";
-        const idx = url.indexOf(storagePrefix);
-        const pathAfter = url.substring(idx + storagePrefix.length);
-        const slashIdx = pathAfter.indexOf("/");
-        const bucket = pathAfter.substring(0, slashIdx);
-        const filePath = pathAfter.substring(slashIdx + 1).split("?")[0].split("#")[0];
-
-        const { data, error } = await supabase.storage.from(bucket).download(filePath);
-        if (!error && data) {
-          return await new Promise<string>((resolve) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result as string);
-            reader.readAsDataURL(data);
-          });
-        }
-      }
-
-      // External URLs (ex: MakerWorld) are used directly to avoid CORS failures on fetch()
-      return url;
-    } catch {
-      return url;
-    }
-  };
-
-  // Print PDF
-  const handlePrint = async () => {
-    if (!printRef.current || itemsLoading || itemsError) return;
-    const viewOrder = orders.find(order => order.id === viewOrderId);
-    if (!viewOrder) return;
-    // Open synchronously in the user's click so mobile browsers do not block the PDF window.
-    const printWindow = window.open("", "_blank");
-    if (!printWindow) { toast({ title: "Permita a janela de impressão", description: "O navegador bloqueou a abertura do documento." }); return; }
-    printWindow.opener = null;
-
-    // Pre-fetch logo as base64
-    let logoBase64 = "";
-    if (tenant?.logo_url) {
-      logoBase64 = printableImageUrl(await fetchImageAsBase64(tenant.logo_url));
-    }
-
-    const tenantSettings = (tenant?.settings as any) || {};
-    const addr = tenantSettings.address || {};
-    const companyAddress = [addr.street, addr.number, addr.complement, addr.neighborhood, addr.city, addr.state, addr.zip].filter(Boolean).join(", ");
-
-    const cfg = statusConfig[viewOrder.status] || statusConfig.draft;
-    const customerName = (viewOrder as any).customers?.name || "—";
-
-    // Pre-fetch product images as base64
-    const itemImageMap = new Map<string, string>();
-    await Promise.all(viewItems.map(async (item: any) => {
-      const photoUrl = item.products?.photo_url;
-      if (photoUrl) {
-        const b64 = await fetchImageAsBase64(photoUrl);
-        if (b64) itemImageMap.set(item.id, b64);
-      }
-    }));
-
-    const itemsHtml = viewItems.map((item: any) => {
-      const chosenMaterials = [...new Set(quoteSnapshotMaterials(item.product_snapshot).map(material => `${material.material} · ${material.color}`))].join("; ");
-      const imgB64 = printableImageUrl(itemImageMap.get(item.id) ?? "");
-      return `
-      <tr>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;">
-          <div style="display:flex;align-items:center;gap:10px;">
-            ${imgB64 ? `<img src="${imgB64}" style="width:48px;height:48px;object-fit:cover;border-radius:6px;flex-shrink:0;" />` : ""}
-            <span>${escapePrintHtml(item.description)}${chosenMaterials ? `<br><small>${escapePrintHtml(chosenMaterials)}</small>` : ""}</span>
-          </div>
-        </td>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:center;">${escapePrintHtml(item.quantity)}</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right;font-family:monospace;">${fmtCurrency(item.unit_price)}</td>
-        <td style="padding:8px 12px;border-bottom:1px solid #e5e7eb;text-align:right;font-family:monospace;font-weight:600;">${fmtCurrency(item.total)}</td>
-      </tr>
-    `}).join("");
-
-    const html = `<!DOCTYPE html>
-<html lang="pt-BR"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; style-src 'unsafe-inline';"><title>${escapePrintHtml(viewOrder.code)}</title>
-<style>
-  * { margin:0; padding:0; box-sizing:border-box; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color:#1a1a1a; padding:40px; max-width:800px; margin:0 auto; }
-  .header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:32px; padding-bottom:24px; border-bottom:2px solid #1a1a1a; }
-  .company-info { flex:1; }
-  .company-name { font-size:20px; font-weight:700; margin-bottom:4px; }
-  .company-detail { font-size:11px; color:#666; line-height:1.6; }
-  .logo { max-height:64px; max-width:160px; object-fit:contain; }
-  .doc-title { text-align:center; margin:24px 0; }
-  .doc-title h1 { font-size:18px; font-weight:700; letter-spacing:1px; }
-  .doc-title .badge { display:inline-block; margin-top:6px; padding:3px 12px; border-radius:20px; font-size:11px; font-weight:600; background:#f3f4f6; }
-  .info-grid { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:24px; }
-  .info-block label { display:block; font-size:10px; text-transform:uppercase; letter-spacing:0.5px; color:#888; margin-bottom:2px; }
-  .info-block p { font-size:13px; font-weight:500; }
-  .notes { background:#f9fafb; border-radius:8px; padding:12px 16px; margin-bottom:24px; font-size:12px; white-space:pre-line; line-height:1.6; }
-  table { width:100%; border-collapse:collapse; margin-bottom:24px; }
-  thead th { background:#f3f4f6; padding:8px 12px; font-size:11px; text-transform:uppercase; letter-spacing:0.5px; font-weight:600; text-align:left; border-bottom:2px solid #d1d5db; }
-  .totals { display:flex; justify-content:flex-end; margin-bottom:32px; }
-  .totals-box { width:260px; }
-  .totals-row { display:flex; justify-content:space-between; padding:4px 0; font-size:13px; }
-  .totals-row.total { border-top:2px solid #1a1a1a; padding-top:8px; margin-top:4px; font-weight:700; font-size:15px; }
-  .totals-row.discount { color:#dc2626; }
-  .footer { text-align:center; padding-top:24px; border-top:1px solid #e5e7eb; font-size:10px; color:#999; }
-  @media print { body { padding:20px; } }
-</style></head><body>
-  <div class="header">
-    <div class="company-info">
-      <div class="company-name">${escapePrintHtml(tenant?.name || "Empresa")}</div>
-      ${tenantSettings.cnpj ? `<div class="company-detail">CNPJ: ${escapePrintHtml(tenantSettings.cnpj)}</div>` : ""}
-      ${tenantSettings.phone ? `<div class="company-detail">Tel: ${escapePrintHtml(tenantSettings.phone)}</div>` : ""}
-      ${tenantSettings.email ? `<div class="company-detail">${escapePrintHtml(tenantSettings.email)}</div>` : ""}
-      ${companyAddress ? `<div class="company-detail">${escapePrintHtml(companyAddress)}</div>` : ""}
-    </div>
-    ${logoBase64 ? `<img src="${logoBase64}" class="logo" />` : ""}
-  </div>
-
-  <div class="doc-title">
-    <h1>${escapePrintHtml(viewOrder.code)}</h1>
-    <span class="badge">${escapePrintHtml(cfg.label)}</span>
-  </div>
-
-  <div class="info-grid">
-    <div class="info-block"><label>Cliente</label><p>${escapePrintHtml(customerName)}</p></div>
-    <div class="info-block"><label>Data de Entrega</label><p>${viewOrder.due_date ? new Date(viewOrder.due_date + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</p></div>
-    <div class="info-block"><label>Data de Emissão</label><p>${new Date(viewOrder.created_at).toLocaleDateString("pt-BR")}</p></div>
-  </div>
-
-  ${viewOrder.notes ? `<div class="notes">${escapePrintHtml(viewOrder.notes)}</div>` : ""}
-
-  <table>
-    <thead><tr>
-      <th>Item</th><th style="text-align:center;width:80px;">Qtd</th><th style="text-align:right;width:120px;">Unitário</th><th style="text-align:right;width:120px;">Total</th>
-    </tr></thead>
-    <tbody>${itemsHtml}</tbody>
-  </table>
-
-  <div class="totals">
-    <div class="totals-box">
-      <div class="totals-row"><span>Subtotal</span><span>${fmtCurrency(viewItems.reduce((sum, item) => sum + item.total, 0))}</span></div>
-      ${Number((viewOrder as unknown as { shipping?: number }).shipping ?? 0) > 0 ? `<div class="totals-row"><span>Frete</span><span>${fmtCurrency(Number((viewOrder as unknown as { shipping?: number }).shipping))}</span></div>` : ""}
-      ${viewOrder.discount > 0 ? `<div class="totals-row discount"><span>Desconto</span><span>- ${fmtCurrency(viewOrder.discount)}</span></div>` : ""}
-      <div class="totals-row total"><span>Total</span><span>${fmtCurrency(viewOrder.total)}</span></div>
-    </div>
-  </div>
-
-  <div class="footer">Documento gerado em ${new Date().toLocaleString("pt-BR")}</div>
-</body></html>`;
-
-    printWindow.document.write(html);
-    printWindow.document.close();
-    const images = Array.from(printWindow.document.images);
-    await Promise.race([
-      Promise.all(images.map(image => image.complete ? Promise.resolve() : new Promise<void>(resolve => { image.onload = () => resolve(); image.onerror = () => resolve(); }))),
-      new Promise<void>(resolve => window.setTimeout(resolve, 5000)),
-    ]);
-    if (!printWindow.closed) { printWindow.focus(); printWindow.print(); }
-  };
 
   const invalidateOrder = () => {
     ["products", "inventory_items", "inventory_movements", "order_stock_allocations", "orders", "order_items", "order_jobs", "jobs", "fila_jobs", "accounts_receivable", "financial_ledger", "dashboard"].forEach(key => qc.invalidateQueries({ queryKey: [key] }));
@@ -681,7 +508,7 @@ export default function Pedidos() {
           </DialogHeader>
 
           {viewOrder && !editMode && (
-            <div className="space-y-4" ref={printRef}>
+            <div className="space-y-4">
               {viewOrder.source_quote_id && <div className="rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm">Venda originada de orçamento aprovado. Os preços, materiais e cores combinados estão preservados. <Link className="text-primary underline" to="/comercial/orcamentos">Ver orçamentos</Link></div>}
               {/* ── Status editável ── */}
               {(() => {
@@ -815,11 +642,9 @@ export default function Pedidos() {
               )}
 
               <div className="flex flex-col sm:flex-row justify-between sm:items-end gap-4">
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   {["draft", "approved"].includes(viewOrder.status) && <Button onClick={() => setStockOrderId(viewOrder.id)}><Package className="mr-2 h-4 w-4" />Atender com estoque</Button>}
-                  <Button variant="outline" size="sm" onClick={handlePrint} disabled={itemsLoading || !!itemsError}>
-                    <Printer className="h-4 w-4 mr-1" /> Imprimir / PDF
-                  </Button>
+                  <CommercialPdfButton document={orderDocument(viewOrder, viewItems)} tenantId={profile?.tenant_id} orderId={viewOrder.id} sourceQuoteId={viewOrder.source_quote_id} disabled={itemsLoading || !!itemsError} />
                   {viewOrder.status === "draft" && !viewOrder.source_quote_id && linkedJobs.length === 0 && <Button variant="outline" size="sm" disabled={itemsLoading || !!itemsError || linkedLoading || !!linkedError} onClick={startEdit}>
                     <Pencil className="h-4 w-4 mr-1" /> Editar rascunho
                   </Button>}
