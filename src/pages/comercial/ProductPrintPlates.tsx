@@ -104,6 +104,7 @@ export default function ProductPrintPlates({ productId, tenantId, sourceId, show
       qc.invalidateQueries({ queryKey: ["product_print_plates", tenantId, productId] }),
       qc.invalidateQueries({ queryKey: ["product_material_recipe"] }),
       qc.invalidateQueries({ queryKey: ["product_print_plate_preparation", tenantId] }),
+      qc.invalidateQueries({ queryKey: ["assembly_status", tenantId, productId] }),
       qc.invalidateQueries({ queryKey: ["products"] }),
     ]);
   };

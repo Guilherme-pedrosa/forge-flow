@@ -29,7 +29,7 @@ As reservas obedecem à ordem de liberação. Só concluir as impressões não m
 
 ## Referências e validação
 
-A descrição pública do [modelo fornecido](https://makerworld.com/pt/models/2626659-thermoformed-apple-teacher-appreciation-gift) foi inspecionada no navegador: trata-se de uma maçã termoformada, com acabamento após a impressão. Há vários perfis públicos, e o perfil “Kit Completo (PLA)” aberto no navegador apresentava uma placa. O fluxo de três placas descrito pelo usuário é tratado como a configuração da sua produção; não foram inventados os rendimentos, custos ou materiais de suas placas.
+A descrição pública do [modelo fornecido](https://makerworld.com/pt/models/2626659-thermoformed-apple-teacher-appreciation-gift) foi inspecionada no navegador: trata-se de uma maçã termoformada, com acabamento após a impressão. O perfil “Kit Completo (PLA)” tem uma placa; o perfil “Apple Only - Multi Color (Gyroid)” (2899977) tem as três placas descritas pelo usuário. A configuração A1 (836978891) separa corpo, caule e folha, com previsões de 11 g, 3 g e 3 g. Esses valores pertencem ao arquivo de referência: lotes personalizados precisam de seus próprios rendimentos e previsões. Não foram inventados rendimentos, custos ou correspondências com os filamentos do estoque.
 
 O [modelo de SKUs do Printago](https://docs.printago.io/docs/commerce/sku-management) distingue produto vendável e partes com requisitos próprios. A implementação local usa as placas e receitas já existentes no Forge.
 

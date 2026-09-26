@@ -94,6 +94,7 @@ export default function ProductMaterialRecipe({ productId, tenantId, plateId = n
       qc.invalidateQueries({ queryKey: ["product_material_requirements"] }),
       qc.invalidateQueries({ queryKey: ["product_print_plate_preparation"] }),
       qc.invalidateQueries({ queryKey: ["product_print_plates"] }),
+      qc.invalidateQueries({ queryKey: ["assembly_status", tenantId, productId] }),
       qc.invalidateQueries({ queryKey: ["products"] }),
       qc.invalidateQueries({ queryKey: ["quote_products"] }),
     ]);

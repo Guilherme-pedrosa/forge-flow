@@ -85,6 +85,7 @@ export default function ProductPrintSources({ productId, tenantId, onBusyChange,
     qc.invalidateQueries({ queryKey: ["product_print_plates", tenantId, productId] }),
     qc.invalidateQueries({ queryKey: ["product_material_recipe", tenantId, productId] }),
     qc.invalidateQueries({ queryKey: ["product_print_plate_preparation", tenantId] }),
+    qc.invalidateQueries({ queryKey: ["assembly_status", tenantId, productId] }),
     qc.invalidateQueries({ queryKey: ["products"] }),
   ]);
   const importReference = async (identity: PrintSourceImportIdentity, sourceId: string | null, task?: typeof selectedTask) => {
