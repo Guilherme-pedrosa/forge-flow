@@ -2,7 +2,7 @@
 export interface MakerWorldFilament {
   id: string | null; type: string | null; color: string | null; grams: number | null; meters: number | null;
 }
-export interface MakerWorldObject { id: string | null; name: string | null; }
+export interface MakerWorldObject { id: string | null; name: string | null; quantity?: number | null; }
 export interface MakerWorldPlate {
   index: number | null; name: string | null; weight_grams: number | null; time_seconds: number | null;
   filaments: MakerWorldFilament[]; thumbnail: string | null; images: string[]; objects: MakerWorldObject[];
@@ -143,7 +143,7 @@ function parsePlate(value: unknown): MakerWorldPlate {
   if (index === null) warnings.push("Índice da placa não informado pela fonte.");
   return { index, name: text(plate.name), weight_grams: declared ?? calculated, time_seconds: declaredTime(plate),
     filaments: material, thumbnail: httpsUrl(plate.thumbnail), images: imageList(plate.thumbnail, plate.top_picture, plate.pick_picture),
-    objects: array(plate.objects).map(value => { const item = object(value); return { id: text(item.id) ?? identifier(item.id), name: text(item.name) }; }),
+    objects: array(plate.objects).map(value => { const item = object(value); const qty = firstNumber(item.quantity, item.count); return { id: text(item.id) ?? identifier(item.id), name: text(item.name), ...(qty !== null && Number.isInteger(qty) && qty > 0 ? { quantity: qty } : {}) }; }),
     units_per_plate: null, warnings };
 }
 function modelInfo(value: JsonObject): JsonObject {

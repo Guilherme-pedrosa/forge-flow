@@ -44,6 +44,9 @@ import { makerWorldImageUrl } from "../../../supabase/functions/_shared/makerwor
 import { MakerWorldDescriptionTranslation } from "@/components/comercial/MakerWorldDescriptionTranslation";
 import { MakerWorldImageImport } from "@/components/comercial/MakerWorldImageImport";
 import { normalizePrintSourceUrl } from "@/lib/product-print-source";
+import { importedComposition, importProductPhotos, selectedImportVariant, validateImportedComposition, type ImportedComposition } from "@/lib/imported-composition";
+import { ImportedCompositionPreview } from "@/components/comercial/ImportedCompositionPreview";
+import { ImportedModelImage } from "@/components/comercial/ImportedModelImage";
 
 const fmtCurrency = (v: number | null) => v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
 const fmtDuration = (s: number | null) => {
@@ -73,6 +76,7 @@ export default function Produtos() {
   const { toast } = useToast();
   const qc = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const formScrollRef = useRef<HTMLDivElement>(null);
   const createAnother = useRef(false);
   const productRequest = useRef<{ signature: string; id: string } | null>(null);
   const kitRequest = useRef<{ signature: string; id: string } | null>(null);
@@ -95,12 +99,15 @@ export default function Produtos() {
   const [makerOptionIndex, setMakerOptionIndex] = useState("0");
   const [makerVariantIndex, setMakerVariantIndex] = useState("0");
   const [externalImport, setExternalImport] = useState<ProductExternalImport | null>(null);
+  const [compositionImport, setCompositionImport] = useState<ImportedComposition | null>(null);
+  const [editorImportUrl, setEditorImportUrl] = useState("");
+  const [readingImportFile, setReadingImportFile] = useState(false);
   const makerRequest = useRef<AbortController | null>(null);
   const makerImportTarget = useRef<string | null>(null);
   useEffect(() => () => makerRequest.current?.abort(), []);
   useEffect(() => {
-    if (!bambuImportOpen && !editItem && !makerOptionOpen) { makerRequest.current?.abort(); setMakerWorldLoading(false); }
-  }, [bambuImportOpen, editItem, makerOptionOpen]);
+    if (!bambuImportOpen && !editItem && !makerOptionOpen && !createOpen) { makerRequest.current?.abort(); setMakerWorldLoading(false); }
+  }, [bambuImportOpen, editItem, makerOptionOpen, createOpen]);
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -113,6 +120,7 @@ export default function Produtos() {
   const [postMinutes, setPostMinutes] = useState("");
   const [costEstimate, setCostEstimate] = useState("");
   const [formTab, setFormTab] = useState("dados");
+  useEffect(() => { if (formScrollRef.current) formScrollRef.current.scrollTop = 0; }, [formTab, createOpen, editItem?.id]);
   const [accessoryCost, setAccessoryCost] = useState("0");
   const [otherCost, setOtherCost] = useState("0");
   const [barcode, setBarcode] = useState("");
@@ -309,6 +317,7 @@ export default function Produtos() {
     setPhotoLink("");
     productRequest.current = null;
     setExternalImport(null);
+    setCompositionImport(null); setEditorImportUrl("");
     photoLoadVersion.current += 1;
     setPhotosLoading(false);
     setPrintSourceBusy(false); setRecipeBusy(false);
@@ -322,6 +331,7 @@ export default function Produtos() {
     setPhotoLink("");
     makerRequest.current?.abort(); setMakerWorldLoading(false);
     setExternalImport(readProductExternalImport(p.external_import));
+    setCompositionImport(null); setEditorImportUrl("");
     makerImportTarget.current = p.id;
     setPrintSourceBusy(false); setRecipeBusy(false);
     setSourceDraft(false); setRecipeDraft(false);
@@ -479,8 +489,10 @@ export default function Produtos() {
     const imported = externalImportReference(model, model.source_url, index);
     imported.selected_variant_profile_id = variant?.profile_id || null;
     setExternalImport(imported);
+    const composition = importedComposition(imported);
+    setCompositionImport(composition && updating ? { ...composition, enabled: !!editItem.assembly_enabled } : composition);
     setDescription(previous => updating && previous.trim() ? previous : model.description || "");
-    const images = [...new Set([model.thumbnail, ...(model.gallery || [])].filter(Boolean))] as string[];
+    const images = importProductPhotos(imported);
     if (updating) {
       if (!photoUrl && images[0]) setPhotoUrl(images[0]);
       setExtraPhotos(previous => [...new Set([...previous, ...images])].filter(url => url !== (photoUrl || images[0])));
@@ -492,7 +504,7 @@ ${selected?.name ? `Perfil: ${selected.name}
     }
     setMakerOptionOpen(false); setMakerModelToImport(null); setBambuImportOpen(false);
     if (!updating) setCreateOpen(true);
-    toast({ title: updating ? "Dados carregados para revisão" : "Modelo carregado", description: `${images.length} fotos e ${variant?.plate_details?.length || 0} placas nesta configuração. Salve para preparar os materiais e calcular o custo.` });
+    if (updating) toast({ title: "Dados carregados para revisão", description: `${images.length} fotos e ${variant?.plate_details?.length || 0} placas nesta configuração.` });
   };
 
   const loadMakerWorld = async (url: string, applyToEditor = false) => {
@@ -659,8 +671,9 @@ ${selected?.name ? `Perfil: ${selected.name}
   const saveProduct = async (productId: string | null) => {
     if (!profile) throw new Error("Sua sessão expirou. Entre novamente.");
     if (!name.trim()) throw new Error("Informe o nome do produto.");
+    if (compositionImport) validateImportedComposition(compositionImport);
     if (hasProductionDraft) throw new Error("Salve ou cancele a composição, fonte ou placa em edição antes de salvar o cadastro.");
-    if (uploadingPhoto || photosLoading || printSourceBusy || makerWorldLoading || translatingDescription) throw new Error("Aguarde o carregamento das fotos, fontes e descrição antes de salvar.");
+    if (uploadingPhoto || photosLoading || printSourceBusy || makerWorldLoading || translatingDescription || readingImportFile) throw new Error("Aguarde o carregamento das fotos, fontes e descrição antes de salvar.");
     const baseCost = costEstimate.trim() ? nonNegative(costEstimate, "Preço de custo") : null;
     const expenses = nonNegative(accessoryCost, "Despesas acessórias") + nonNegative(otherCost, "Outras despesas");
     if (baseCost == null && expenses > 0) throw new Error("Informe o custo de compra antes de adicionar despesas.");
@@ -706,6 +719,7 @@ ${selected?.name ? `Perfil: ${selected.name}
         prints_per_plate: positiveInteger(printsPerPlate, "Peças por placa", 10000),
         extras: buildExtrasPayload(),
         ...(externalImport ? { external_import: externalImport } : {}),
+        ...(compositionImport ? { import_composition: compositionImport } : {}),
       },
       p_photos: photos,
     };
@@ -725,7 +739,7 @@ ${selected?.name ? `Perfil: ${selected.name}
       if (result.imported) {
         const refreshed = await refetchProducts(); const product = refreshed.data?.find(product => product.id === result.id);
         if (product) openEdit(product);
-        toast({ title: "Produto e placas cadastrados", description: "Confira os materiais e o rendimento das placas para concluir a precificação." });
+        toast({ title: "Produto e composição cadastrados", description: "Fotos, descrição e componentes foram gravados juntos. Confira os dados de produção ainda não informados pela fonte." });
       } else toast({ title: "Produto criado" });
     },
     onError: (error: Error) => toast({ title: "Não foi possível salvar", description: error.message, variant: "destructive" }),
@@ -769,8 +783,10 @@ ${selected?.name ? `Perfil: ${selected.name}
       <TabsList aria-label="Cadastro do produto" className="h-auto shrink-0 justify-start gap-1 overflow-x-auto bg-muted/40 p-2 md:w-44 md:flex-col md:items-stretch md:self-start">
         {[['dados','Dados'],['valores','Valores'],['estoque','Estoque'],['fotos','Fotos'],['producao','Composição / produção']].map(([value,label]) => <TabsTrigger className="justify-start whitespace-nowrap px-4 py-3 md:whitespace-normal" key={value} value={value}>{label}</TabsTrigger>)}
       </TabsList>
-      <div className="min-h-0 min-w-0 flex-1 overflow-y-auto px-1 pb-4">
+      <div ref={formScrollRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto px-1 pb-4">
       <TabsContent forceMount value="dados" className={tabClass}>
+        <div className="space-y-2 rounded-lg border bg-muted/20 p-3"><Label htmlFor="editor-makerworld-link">Importar produto completo pelo link do MakerWorld</Label><div className="flex flex-col gap-2 sm:flex-row"><Input id="editor-makerworld-link" placeholder="https://makerworld.com/pt/models/..." value={editorImportUrl} onChange={e => setEditorImportUrl(e.target.value)} /><Button type="button" variant="outline" disabled={!editorImportUrl.trim() || makerWorldLoading || printSourceBusy || photosLoading} onClick={() => { makerImportTarget.current = editItem?.id || null; void loadMakerWorld(editorImportUrl.trim(), true); }}>{makerWorldLoading ? "Carregando…" : "Carregar modelo"}</Button></div><p className="text-xs text-muted-foreground">O link da página traz descrição, fotos e placas. Um endereço terminado em .png contém apenas uma imagem.</p></div>
+        {externalImport && <div className="grid grid-cols-[6rem_minmax(0,1fr)] gap-3 rounded-lg border p-3"><ImportedModelImage src={photoUrl || null} alt="Foto principal do produto importado" className="h-24 w-24 rounded-md bg-muted object-contain" /><div className="min-w-0"><p className="font-medium break-words">{name}</p><p className="mt-1 text-sm text-muted-foreground">{allPhotos.length} foto(s) · {compositionImport?.plates.length ?? selectedImportVariant(externalImport)?.plate_details.length ?? 0} placa(s)</p><p className="text-sm">{description.trim() ? "Descrição carregada abaixo." : "O autor não disponibilizou a descrição deste modelo."}</p><Button type="button" variant="link" className="h-auto px-0 py-1 whitespace-normal text-left" onClick={() => setFormTab("producao")}>Conferir peças e composição</Button></div></div>}
         <div><h3 className="text-lg font-semibold">Dados do produto</h3><p className="text-sm text-muted-foreground">Preencha o nome e complete os valores e o estoque nas abas ao lado.</p></div>
         <div className="sm:col-span-2"><Label htmlFor="product-name">Nome *</Label><Input autoFocus id="product-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Vaso Geométrico P" /></div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -810,7 +826,7 @@ ${selected?.name ? `Perfil: ${selected.name}
         <div className="flex flex-wrap gap-2">
           {allPhotos.map((url, i) => (
             <div key={i} className="relative group">
-              <img src={url} alt={`Foto ${i + 1}`} className="w-20 h-20 rounded-lg object-cover border" />
+              <ImportedModelImage src={url} alt={`Foto ${i + 1}`} className="w-20 h-20 rounded-lg object-contain border" />
               {i === 0 && <span className="absolute bottom-0 left-0 right-0 bg-primary/80 text-primary-foreground text-[9px] text-center rounded-b-lg">Principal</span>}
               <button
                 type="button"
@@ -852,7 +868,7 @@ ${selected?.name ? `Perfil: ${selected.name}
         </div>
       </div>
 </TabsContent>
-      <TabsContent forceMount value="producao" className={tabClass}><p className="rounded-lg bg-muted p-3 text-sm">Configuração opcional para produtos fabricados. Custo, venda e estoque podem ser cadastrados sem composição.</p>      {productionReference && (
+      <TabsContent forceMount value="producao" className={tabClass}>{compositionImport && <ImportedCompositionPreview key={compositionImport.profile_id} value={compositionImport} onChange={setCompositionImport} onBusyChange={setReadingImportFile} />}<p className="rounded-lg bg-muted p-3 text-sm">Configuração opcional para produtos fabricados. Custo, venda e estoque podem ser cadastrados sem composição.</p>      {productionReference && (
         <section aria-label="Referência da produção" className="rounded-xl border border-primary/20 bg-primary/5 p-4 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-sm font-semibold">Base na produção</h3>
@@ -874,7 +890,7 @@ ${selected?.name ? `Perfil: ${selected.name}
       {editItem?.id && profile?.tenant_id && category !== "kit" && (products.find(product => product.id === editItem.id)?.recipe_plate_count ?? 0) === 0 &&
         <ProductMaterialRecipe key={`recipe-${editItem.id}`} productId={editItem.id} tenantId={profile.tenant_id} onBusyChange={setRecipeBusy} onDraftChange={setRecipeDraft}
           suggestedNonMaterialCost={!costBreakdown.error ? Math.max(0, costBreakdown.total - costBreakdown.materialCost) : null} />}
-      {!editItem && category !== "kit" && <p className="rounded-lg border bg-muted/30 p-3 text-sm">Salve o produto para cadastrar a composição exata de materiais, cores e arquivos. Produtos com várias placas terão uma composição por placa.</p>}
+      {!editItem && !compositionImport && category !== "kit" && <p className="rounded-lg border bg-muted/30 p-3 text-sm">Importe o link do modelo na aba Dados para preencher a composição ou salve para cadastrar manualmente.</p>}
       {(materialsError || printersError || tenantError) && <p role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm">Não foi possível carregar todos os parâmetros de custo. Atualize a página antes de aplicar o cálculo.</p>}
       {(externalImport || legacyMakerWorldUrl(notes)) && <div className="space-y-3">
         {editItem && <Button type="button" variant="outline" className="min-h-11 w-full whitespace-normal" disabled={makerWorldLoading || photosLoading} onClick={refreshMakerWorld}>{makerWorldLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CloudDownload className="mr-2 h-4 w-4" />}Atualizar fotos e detalhes do link</Button>}

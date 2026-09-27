@@ -1,0 +1,763 @@
+{
+  "id": 2626659,
+  "title": "Thermoformed Apple  | Teacher Appreciation Gift",
+  "coverUrl": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/design/1a648bd90b228515.jpg",
+  "summary": "<boostme><boosttitle>Boost Me</boosttitle><boostcontent>If you like functional gift designs like this, a boost really helps 🙌<br>Got more “fillable” designs coming soon.</boostcontent></boostme><p>&nbsp;</p><p>A fresh take on the classic teacher apple—this <strong>thermoformed apple doubles as a lightweight container</strong>, perfect for small gifts.</p><p>The mesh-style thermoformed shell gives it a unique look while still allowing you to <strong>hold sweets, notes, or small surprises inside</strong>, making it ideal for thoughtful gifting.</p><p>Designed with <strong>Teacher Appreciation Week</strong> in mind, this piece blends symbolism with functionality—something simple, but meaningful.</p><h3>🎁 Why it works:</h3><ul><li>🍬 Holds candy, chocolates, or small gifts</li><li>📝 Perfect for handwritten notes</li><li>🍎 Recognizable teacher-themed design</li><li>✨ Unique thermoformed mesh aesthetic</li></ul><h2><strong>Use Ideas</strong></h2><ul><li>Fill with candy and gift it directly</li><li>Add a thank-you note inside</li><li>Bundle with other small presents</li><li>Classroom giveaways or desk gifts</li></ul><h2><strong>Print &amp; Thermoforming Notes</strong></h2><ul><li>Mesh design prints fast and forms easily</li><li>Use even heat to preserve structure</li><li>Works great in PLA</li><li>Optional: pair with a solid base (like shown) for stability</li></ul>",
+  "defaultInstanceId": 2899902,
+  "modelId": "US58554a31ea5504",
+  "instances": [
+    {
+      "id": 2899902,
+      "title": "Full Kit (PLA)",
+      "profileId": 706256543,
+      "summary": "",
+      "extention": {
+        "modelInfo": {
+          "auxiliaryPictures": [],
+          "auxiliaryBom": [],
+          "auxiliaryGuide": [],
+          "auxiliaryOther": [],
+          "compatibility": {
+            "devModelName": "C12",
+            "devProductName": "P1S",
+            "nozzleDiameter": 0.4
+          },
+          "otherCompatibility": [
+            {
+              "devModelName": "C13",
+              "devProductName": "X1E",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "O1C2",
+              "devProductName": "H2C",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "BL-P002",
+              "devProductName": "X1",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "O1E",
+              "devProductName": "H2D Pro",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "O1D",
+              "devProductName": "H2D",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "N2S",
+              "devProductName": "A1",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "C11",
+              "devProductName": "P1P",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "BL-P001",
+              "devProductName": "X1 Carbon",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "O1S",
+              "devProductName": "H2S",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "N7",
+              "devProductName": "P2S",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "N6",
+              "devProductName": "X2D",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "N9",
+              "devProductName": "A2L",
+              "nozzleDiameter": 0.4
+            }
+          ],
+          "plates": [
+            {
+              "index": 1,
+              "name": "",
+              "thumbnail": {
+                "name": "plate_1.png",
+                "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/706256543/instance/plate_1.png"
+              },
+              "top_picture": {
+                "name": "plate_1.png",
+                "dir": "",
+                "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/706256543/instance/plate_1.png"
+              },
+              "pick_picture": {
+                "name": "plate_1.png",
+                "dir": "",
+                "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/706256543/instance/plate_1.png"
+              },
+              "objects": [],
+              "skipped_objects": [],
+              "label_object_enabled": false,
+              "prediction": 8790,
+              "weight": 106,
+              "filaments": [
+                {
+                  "id": "1",
+                  "type": "PLA",
+                  "color": "#FFFFFF",
+                  "usedM": "34.77",
+                  "usedG": "106"
+                }
+              ],
+              "warning": []
+            }
+          ],
+          "projectSettings": {
+            "layerHeight": "0.2",
+            "wallLoops": "2",
+            "sparseInfillDensity": "15%"
+          },
+          "hasAssemblyPic": false,
+          "hasFilamentMixed": false
+        },
+        "otherCompatibilityModelInfo": []
+      }
+    },
+    {
+      "id": 2899977,
+      "title": "Apple Only - Multi Color (Gyroid)",
+      "profileId": 706258524,
+      "summary": "",
+      "extention": {
+        "modelInfo": {
+          "auxiliaryPictures": [],
+          "auxiliaryBom": [],
+          "auxiliaryGuide": [],
+          "auxiliaryOther": [],
+          "compatibility": {
+            "devModelName": "C12",
+            "devProductName": "P1S",
+            "nozzleDiameter": 0.4
+          },
+          "otherCompatibility": [
+            {
+              "devModelName": "C13",
+              "devProductName": "X1E",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "N7",
+              "devProductName": "P2S",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "N2S",
+              "devProductName": "A1",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "O1S",
+              "devProductName": "H2S",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "BL-P001",
+              "devProductName": "X1 Carbon",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "O1C2",
+              "devProductName": "H2C",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "O1E",
+              "devProductName": "H2D Pro",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "O1D",
+              "devProductName": "H2D",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "C11",
+              "devProductName": "P1P",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "BL-P002",
+              "devProductName": "X1",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "N6",
+              "devProductName": "X2D",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "N9",
+              "devProductName": "A2L",
+              "nozzleDiameter": 0.4
+            }
+          ],
+          "plates": [
+            {
+              "index": 1,
+              "name": "",
+              "thumbnail": {
+                "name": "plate_1.png",
+                "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/706258524/instance/plate_1.png"
+              },
+              "top_picture": {
+                "name": "plate_1.png",
+                "dir": "",
+                "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/706258524/instance/plate_1.png"
+              },
+              "pick_picture": {
+                "name": "plate_1.png",
+                "dir": "",
+                "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/706258524/instance/plate_1.png"
+              },
+              "objects": [],
+              "skipped_objects": [],
+              "label_object_enabled": false,
+              "prediction": 1796,
+              "weight": 11,
+              "filaments": [
+                {
+                  "id": "1",
+                  "type": "PLA",
+                  "color": "#C12E1F",
+                  "usedM": "3.47",
+                  "usedG": "11"
+                }
+              ],
+              "warning": []
+            },
+            {
+              "index": 2,
+              "name": "",
+              "thumbnail": {
+                "name": "plate_2.png",
+                "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/706258524/instance/plate_2.png"
+              },
+              "top_picture": {
+                "name": "plate_2.png",
+                "dir": "",
+                "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/706258524/instance/plate_2.png"
+              },
+              "pick_picture": {
+                "name": "plate_2.png",
+                "dir": "",
+                "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/706258524/instance/plate_2.png"
+              },
+              "objects": [],
+              "skipped_objects": [],
+              "label_object_enabled": false,
+              "prediction": 1205,
+              "weight": 3,
+              "filaments": [
+                {
+                  "id": "3",
+                  "type": "PLA",
+                  "color": "#6F5034",
+                  "usedM": "0.75",
+                  "usedG": "3"
+                }
+              ],
+              "warning": []
+            },
+            {
+              "index": 3,
+              "name": "",
+              "thumbnail": {
+                "name": "plate_3.png",
+                "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/706258524/instance/plate_3.png"
+              },
+              "top_picture": {
+                "name": "plate_3.png",
+                "dir": "",
+                "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/706258524/instance/plate_3.png"
+              },
+              "pick_picture": {
+                "name": "plate_3.png",
+                "dir": "",
+                "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/706258524/instance/plate_3.png"
+              },
+              "objects": [],
+              "skipped_objects": [],
+              "label_object_enabled": false,
+              "prediction": 1211,
+              "weight": 3,
+              "filaments": [
+                {
+                  "id": "2",
+                  "type": "PLA",
+                  "color": "#00AE42",
+                  "usedM": "0.92",
+                  "usedG": "3"
+                }
+              ],
+              "warning": []
+            }
+          ],
+          "projectSettings": {
+            "layerHeight": "0.2",
+            "wallLoops": "2",
+            "sparseInfillDensity": "15%"
+          },
+          "hasAssemblyPic": false,
+          "hasFilamentMixed": false
+        },
+        "otherCompatibilityModelInfo": [
+          {
+            "devModelName": "N2S",
+            "devProductName": "A1",
+            "profileId": 836978891,
+            "modelInfo": {
+              "auxiliaryPictures": [],
+              "auxiliaryBom": [],
+              "auxiliaryGuide": [],
+              "auxiliaryOther": [],
+              "compatibility": {
+                "devModelName": "N2S",
+                "devProductName": "A1",
+                "nozzleDiameter": 0.4
+              },
+              "otherCompatibility": [
+                {
+                  "devModelName": "C12",
+                  "devProductName": "P1S",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "C13",
+                  "devProductName": "X1E",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "N7",
+                  "devProductName": "P2S",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "O1S",
+                  "devProductName": "H2S",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "BL-P001",
+                  "devProductName": "X1 Carbon",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "O1C2",
+                  "devProductName": "H2C",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "O1E",
+                  "devProductName": "H2D Pro",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "O1D",
+                  "devProductName": "H2D",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "C11",
+                  "devProductName": "P1P",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "BL-P002",
+                  "devProductName": "X1",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "N6",
+                  "devProductName": "X2D",
+                  "nozzleDiameter": 0.4
+                },
+                {
+                  "devModelName": "N9",
+                  "devProductName": "A2L",
+                  "nozzleDiameter": 0.4
+                }
+              ],
+              "plates": [
+                {
+                  "index": 1,
+                  "name": "",
+                  "thumbnail": {
+                    "name": "plate_1.png",
+                    "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/836978891/instance/plate_1.png"
+                  },
+                  "top_picture": {
+                    "name": "plate_1.png",
+                    "dir": "",
+                    "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/836978891/instance/plate_1.png"
+                  },
+                  "pick_picture": {
+                    "name": "plate_1.png",
+                    "dir": "",
+                    "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/836978891/instance/plate_1.png"
+                  },
+                  "objects": [],
+                  "skipped_objects": [],
+                  "label_object_enabled": false,
+                  "prediction": 1929,
+                  "weight": 11,
+                  "filaments": [
+                    {
+                      "id": "1",
+                      "type": "PLA",
+                      "color": "#C12E1F",
+                      "usedM": "3.46",
+                      "usedG": "11"
+                    }
+                  ],
+                  "warning": []
+                },
+                {
+                  "index": 2,
+                  "name": "",
+                  "thumbnail": {
+                    "name": "plate_2.png",
+                    "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/836978891/instance/plate_2.png"
+                  },
+                  "top_picture": {
+                    "name": "plate_2.png",
+                    "dir": "",
+                    "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/836978891/instance/plate_2.png"
+                  },
+                  "pick_picture": {
+                    "name": "plate_2.png",
+                    "dir": "",
+                    "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/836978891/instance/plate_2.png"
+                  },
+                  "objects": [],
+                  "skipped_objects": [],
+                  "label_object_enabled": false,
+                  "prediction": 1576,
+                  "weight": 3,
+                  "filaments": [
+                    {
+                      "id": "3",
+                      "type": "PLA",
+                      "color": "#6F5034",
+                      "usedM": "0.75",
+                      "usedG": "3"
+                    }
+                  ],
+                  "warning": []
+                },
+                {
+                  "index": 3,
+                  "name": "",
+                  "thumbnail": {
+                    "name": "plate_3.png",
+                    "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/836978891/instance/plate_3.png"
+                  },
+                  "top_picture": {
+                    "name": "plate_3.png",
+                    "dir": "",
+                    "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/836978891/instance/plate_3.png"
+                  },
+                  "pick_picture": {
+                    "name": "plate_3.png",
+                    "dir": "",
+                    "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/836978891/instance/plate_3.png"
+                  },
+                  "objects": [],
+                  "skipped_objects": [],
+                  "label_object_enabled": false,
+                  "prediction": 1580,
+                  "weight": 3,
+                  "filaments": [
+                    {
+                      "id": "2",
+                      "type": "PLA",
+                      "color": "#00AE42",
+                      "usedM": "0.91",
+                      "usedG": "3"
+                    }
+                  ],
+                  "warning": []
+                }
+              ],
+              "projectSettings": {
+                "layerHeight": "",
+                "wallLoops": "",
+                "sparseInfillDensity": ""
+              },
+              "hasAssemblyPic": false,
+              "hasFilamentMixed": false
+            },
+            "instanceFilaments": [
+              {
+                "type": "PLA",
+                "color": "#C12E1F",
+                "usedM": "3.46",
+                "usedG": "11"
+              },
+              {
+                "type": "PLA",
+                "color": "#6F5034",
+                "usedM": "0.75",
+                "usedG": "3"
+              },
+              {
+                "type": "PLA",
+                "color": "#00AE42",
+                "usedM": "0.91",
+                "usedG": "3"
+              }
+            ],
+            "prediction": 5085,
+            "weight": 17,
+            "autoArrangeStrategy": 0
+          }
+        ]
+      }
+    },
+    {
+      "id": 3614514,
+      "title": "Apple Only - Multi Color (Gyroid) - A1 mini",
+      "profileId": 945601812,
+      "summary": "",
+      "extention": {
+        "modelInfo": {
+          "auxiliaryPictures": [],
+          "auxiliaryBom": [],
+          "auxiliaryGuide": [],
+          "auxiliaryOther": [],
+          "compatibility": {
+            "devModelName": "N1",
+            "devProductName": "A1 mini",
+            "nozzleDiameter": 0.4
+          },
+          "otherCompatibility": [
+            {
+              "devModelName": "O1D",
+              "devProductName": "H2D",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "O1C2",
+              "devProductName": "H2C",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "C12",
+              "devProductName": "P1S",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "N2S",
+              "devProductName": "A1",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "O1E",
+              "devProductName": "H2D Pro",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "N7",
+              "devProductName": "P2S",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "BL-P001",
+              "devProductName": "X1 Carbon",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "O1S",
+              "devProductName": "H2S",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "N9",
+              "devProductName": "A2L",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "C11",
+              "devProductName": "P1P",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "N6",
+              "devProductName": "X2D",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "C13",
+              "devProductName": "X1E",
+              "nozzleDiameter": 0.4
+            },
+            {
+              "devModelName": "BL-P002",
+              "devProductName": "X1",
+              "nozzleDiameter": 0.4
+            }
+          ],
+          "plates": [
+            {
+              "index": 1,
+              "name": "",
+              "thumbnail": {
+                "name": "plate_1.png",
+                "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/945601812/instance/plate_1.png"
+              },
+              "top_picture": {
+                "name": "plate_1.png",
+                "dir": "",
+                "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/945601812/instance/plate_1.png"
+              },
+              "pick_picture": {
+                "name": "plate_1.png",
+                "dir": "",
+                "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/945601812/instance/plate_1.png"
+              },
+              "objects": [],
+              "skipped_objects": [],
+              "label_object_enabled": false,
+              "prediction": 1534,
+              "weight": 3,
+              "filaments": [
+                {
+                  "id": "3",
+                  "type": "PLA",
+                  "color": "#6F5034",
+                  "usedM": "0.75",
+                  "usedG": "3"
+                }
+              ],
+              "warning": []
+            },
+            {
+              "index": 2,
+              "name": "",
+              "thumbnail": {
+                "name": "plate_2.png",
+                "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/945601812/instance/plate_2.png"
+              },
+              "top_picture": {
+                "name": "plate_2.png",
+                "dir": "",
+                "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/945601812/instance/plate_2.png"
+              },
+              "pick_picture": {
+                "name": "plate_2.png",
+                "dir": "",
+                "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/945601812/instance/plate_2.png"
+              },
+              "objects": [],
+              "skipped_objects": [],
+              "label_object_enabled": false,
+              "prediction": 1551,
+              "weight": 3,
+              "filaments": [
+                {
+                  "id": "2",
+                  "type": "PLA",
+                  "color": "#00AE42",
+                  "usedM": "0.91",
+                  "usedG": "3"
+                }
+              ],
+              "warning": []
+            },
+            {
+              "index": 3,
+              "name": "",
+              "thumbnail": {
+                "name": "plate_3.png",
+                "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/945601812/instance/plate_3.png"
+              },
+              "top_picture": {
+                "name": "plate_3.png",
+                "dir": "",
+                "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/945601812/instance/plate_3.png"
+              },
+              "pick_picture": {
+                "name": "plate_3.png",
+                "dir": "",
+                "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/945601812/instance/plate_3.png"
+              },
+              "objects": [],
+              "skipped_objects": [],
+              "label_object_enabled": false,
+              "prediction": 1880,
+              "weight": 11,
+              "filaments": [
+                {
+                  "id": "1",
+                  "type": "PLA",
+                  "color": "#C12E1F",
+                  "usedM": "3.47",
+                  "usedG": "11"
+                }
+              ],
+              "warning": []
+            }
+          ],
+          "projectSettings": {
+            "layerHeight": "0.2",
+            "wallLoops": "2",
+            "sparseInfillDensity": "15%"
+          },
+          "hasAssemblyPic": false,
+          "hasFilamentMixed": false
+        },
+        "otherCompatibilityModelInfo": []
+      }
+    }
+  ],
+  "designExtension": {
+    "design_pictures": [
+      {
+        "name": "g.gif",
+        "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/design/19707439db6fac07.gif",
+        "isRealLifePhoto": 0,
+        "isCompression": 0
+      },
+      {
+        "name": "c.jpg",
+        "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/design/f15d8bed21895616.jpg",
+        "isRealLifePhoto": 0,
+        "isCompression": 0
+      },
+      {
+        "name": "1.jpeg",
+        "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/design/c1360561c8875505.jpeg",
+        "isRealLifePhoto": 0,
+        "isCompression": 0
+      },
+      {
+        "name": "3.jpeg",
+        "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/design/3260476feaf225f2.jpeg",
+        "isRealLifePhoto": 0,
+        "isCompression": 0
+      },
+      {
+        "name": "4.jpeg",
+        "url": "https://makerworld.bblmw.com/makerworld/model/US58554a31ea5504/design/affce394bfbf0e63.jpeg",
+        "isRealLifePhoto": 0,
+        "isCompression": 0
+      }
+    ]
+  }
+}
