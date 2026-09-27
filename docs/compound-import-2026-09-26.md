@@ -38,8 +38,27 @@ identificação completa desse exemplo somente pelo link ainda não está resolv
   tamanhos 1440×900, 1108×580 e 390×720. Descrição traduzida simulada nesse teste.
 - Banco publicado: transação de teste com metadados reais, três componentes e fotos
   na consulta de produção; repetição validada e rollback. Catálogo permaneceu vazio.
+- Versão publicada conferida no navegador: link da maçã, perfil multicolorido e
+  configuração A1; descrição traduzida pelo serviço real, 14 imagens do modelo e
+  as três fotografias técnicas renderizadas. O rascunho foi fechado sem salvar.
+- Dois outros modelos públicos passaram pela mesma importação: caixa 3028621,
+  perfil 3403607 (quatro placas), e calendário 2057487, perfil 2221070 (nove placas).
+  Ambos preservaram descrição e fotos; os nomes informados no calendário foram
+  aproveitados. Nenhum deles foi cadastrado no banco da empresa.
 - TypeScript e build de produção passaram. Nenhuma mensagem enviada ao Lovable.
 
 Os testes não comprovam reconhecimento semântico de qualquer geometria nem a leitura
 do arquivo 3MF original da maçã; comprovam os dados públicos e o formato de metadados
 do projeto usado nos cenários. Evidências visuais locais: `artifacts/imported-composition`.
+
+## Estado do plano
+
+1. Reproduzir a perda de descrição, fotos e composição: concluído.
+2. Importar e persistir produto, placas e peças fornecidas pela fonte: concluído.
+3. Conferir antes de salvar e gravar sem duplicação: concluído.
+4. Publicar e verificar a maçã e outros produtos compostos: concluído para os
+   dados que a fonte fornece; identificação semântica completa continua pendente.
+
+A última pendência não foi substituída por reconhecimento fictício. Se o perfil
+não expõe os objetos, a leitura de 3MF está disponível; o reconhecimento geral
+de nomes e quantidades a partir das imagens exigirá uma integração adicional.
