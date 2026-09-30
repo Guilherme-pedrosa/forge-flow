@@ -6,6 +6,14 @@ Bagulhos3D e nenhuma mensagem deve ser enviada ao Lovable.
 
 ## Ordem e critérios de aceitação
 
+**Correção prioritária em 30/09:** a implementação anterior identificava peças,
+mas armazenava estoque por conjunto de placa. Isso não atendia ao requisito.
+Antes de qualquer outra melhoria, cada peça passa a ser um produto real com SKU,
+estoque próprio e quantidade na composição do produto final. Uma placa pode
+produzir vários subitens, conferidos separadamente. A montagem consome a quantidade
+de cada peça e capitaliza o produto pronto, preservando reservas e histórico.
+As outras melhorias abaixo já estão implementadas; não substituem esta correção.
+
 1. **Composição visual** — abrir STL/3MF localmente, visualizar e selecionar objetos,
    conferir nomes/quantidades e usar os componentes no produto. Preservar a distinção
    entre objeto, região de cor, placa e unidade comercial. Não anunciar reconhecimento
@@ -21,6 +29,21 @@ Bagulhos3D e nenhuma mensagem deve ser enviada ao Lovable.
    verificar código publicado e os fluxos possíveis na sessão autenticada.
 
 ## Estado
+
+- Correção de estoque individual: cada subitem é um produto do catálogo com SKU
+  e item de estoque próprios. A composição tem quantidade por produto, placa
+  opcional e quantidade por impressão. Entrada/perda funcionam sem receita.
+- A importação cria os cadastros das peças identificadas automaticamente. Placas
+  sem objetos identificados não são apresentadas como peças cadastradas.
+- A montagem consome as quantidades físicas (ex.: duas metades), preserva as
+  reservas das OPs e registra o custo do produto pronto. Uma placa mista aprova
+  cada peça separadamente; seu custo total é rateado pelas unidades aprovadas.
+- Validação desta correção: 15 cenários PostgreSQL específicos, mais 13 legados de
+  montagem, 9 de importação, 54 de ERP e 23 de orçamento. Fluxo visual de cadastro,
+  entrada, montagem e qualidade aprovado em 1440 e 390 px; 412 testes Vitest.
+- Banco real: migrações 20260930030000 e 20260930031000 aplicadas. Teste transacional
+  confirmou 20 metades, 10 caules e 6 folhas -> montagem de 5 -> saldos 10/5/1 e
+  5 produtos finais. Repetição não duplicou. Rollback deixou zero produtos de teste.
 
 - Implementado: leitor visual STL/3MF, seleção dos objetos e composição local
   salva atomicamente com o novo produto. O leitor suporta componentes internos da

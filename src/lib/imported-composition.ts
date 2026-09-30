@@ -33,7 +33,7 @@ function componentFromPlate(plate: MakerWorldPlate): ImportedComponent | null {
     source_key: `object:${object.id || index + 1}:${index + 1}`, name: sourcePartName(object.name!), photo_url: photo,
     quantity_per_product: null, quantity_per_plate: object.quantity ?? null, name_source: "source",
   })) : [{ source_key: "plate", name: plate.name ? sourcePartName(plate.name) : `Conjunto da placa ${plate.index}`, photo_url: photo,
-    quantity_per_product: null, quantity_per_plate: null, name_source: plate.name ? "source" : "unknown" }];
+    quantity_per_product: null, quantity_per_plate: null, name_source: "unknown" }];
   return { index: plate.index, label: plate.name ? sourcePartName(plate.name) : parts.map(p => p.name).join(" + ").slice(0, 200),
     photo_url: photo, units_per_plate: null, weight_grams: plate.weight_grams, time_seconds: plate.time_seconds, parts };
 }

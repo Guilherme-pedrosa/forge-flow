@@ -1,4 +1,5 @@
 import { AssemblyComponentIdentity } from "./AssemblyComponentIdentity";
+import { PhysicalSubitemWorkspace } from "./PhysicalSubitemWorkspace";
 import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -20,7 +21,7 @@ export function AssemblyWorkspace({ productId, tenantId, itemId }: { productId: 
   const request = useRef<{ signature: string; id: string } | null>(null);
   const targetNumber = Number(target); const validTarget = Number.isInteger(targetNumber) && targetNumber > 0 && targetNumber <= 10000;
   const status = useQuery({ queryKey: ["assembly_status", tenantId, productId, itemId, targetNumber], enabled: validTarget, refetchInterval: 15000, queryFn: () => readAssemblyStatus(productId, targetNumber, itemId) });
-  const jobs = useQuery({ queryKey: ["assembly_jobs", tenantId, productId], refetchInterval: 15000, queryFn: () => assemblyRows<ComponentJob>("jobs", "id,code,name,description,planned_quantity,produced_quantity,component_stock_key,status", { tenant_id: tenantId, product_id: productId, status: "quality_check" }) });
+  const jobs = useQuery({ queryKey: ["assembly_jobs", tenantId, productId], refetchInterval: 15000, queryFn: () => assemblyRows<ComponentJob>("jobs", "id,code,name,description,planned_quantity,produced_quantity,component_stock_key,status,production_snapshot", { tenant_id: tenantId, product_id: productId, status: "quality_check" }) });
   const history = useQuery({ queryKey: ["assembly_history", tenantId, productId], queryFn: () => assemblyRows<AssemblyHistory>("product_assemblies", "id,quantity,component_cost,finishing_cost,item_id,created_at,notes", { tenant_id: tenantId, product_id: productId }, "created_at") });
   const refresh = () => Promise.all(assemblyKeys.map(key => qc.invalidateQueries({ queryKey: [key] })));
   const open = (next: Action) => { setAction(next); setQuantity(next.kind === "batch" ? String(Math.max(1, next.part.to_print || next.part.missing)) : next.kind === "quality" ? String(next.job.produced_quantity ?? next.job.planned_quantity) : next.kind === "assemble" ? String(Math.max(1, Math.min(status.data?.ready_to_assemble || 1, status.data?.required || 1))) : "1"); setCost("0"); setNotes(""); request.current = null; };
@@ -37,6 +38,7 @@ export function AssemblyWorkspace({ productId, tenantId, itemId }: { productId: 
     return assemblyRpc<string>("assemble_product", { ...shared, p_product_id: productId, p_quantity: qty, p_item_id: itemId || null, p_finishing_cost: money, p_notes: notes });
   }, onSuccess: async () => { const kind = action?.kind; setAction(null); await refresh(); toast({ title: kind === "batch" ? "Lote enviado à fila de impressão" : kind === "assemble" ? "Montagem registrada" : "Saldo de componentes atualizado" }); }, onError: (e: Error) => toast({ title: "Não foi possível concluir", description: e.message, variant: "destructive" }) });
   const data = status.data; const goodJobs = jobs.data?.filter(job => job.component_stock_key && data?.components.some(part => part.material_key === job.component_stock_key)) || [];
+  if (data?.individual_stock) return <>{(status.error || jobs.error || history.error) && <p role="alert" className="text-destructive">{status.error?.message || jobs.error?.message || history.error?.message}</p>}<PhysicalSubitemWorkspace data={data} productId={productId} itemId={itemId} target={target} onTarget={setTarget} refresh={refresh} jobs={jobs.data || []} history={history.data || []} /></>;
   return <section className="space-y-4" aria-label="Componentes e montagem">
     <div className="flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-lg font-semibold">{data?.name || "Componentes e montagem"}</h2><p className="text-sm text-muted-foreground">Cada componente representa o conjunto de peças necessário para um produto: por exemplo, o par de metades do corpo, um caule e uma folha.</p></div><Button variant="outline" size="sm" onClick={refresh}><RefreshCw className="mr-2 h-4 w-4" />Atualizar saldos</Button></div>
     {!itemId && <div className="flex flex-wrap items-end gap-3"><div><Label htmlFor={`assembly-target-${productId}`}>Quantos produtos quero montar?</Label><Input id={`assembly-target-${productId}`} className="w-40" type="number" min={1} max={10000} value={target} onChange={e => setTarget(e.target.value)} /></div><Button variant="outline" asChild><Link to={`/comercial/produtos?produto=${productId}`}>Editar componentes do produto</Link></Button></div>}

@@ -79,7 +79,7 @@ await test('Parent, description, gallery, all plates, parts and assembly mode sa
  assert.equal(await scalar('SELECT count(*)::integer FROM product_photos WHERE product_id=$1',[p]),34);
  assert.deepEqual((await plates(p)).map(x=>x.label),['Corpo','Tampa','Encaixe']);
  assert.deepEqual((await plates(p)).map(x=>x.units_per_plate),[null,20,20]);
- assert.equal((await status(p)).components[0].parts[0].name,'Base');
+ assert.equal((await status(p)).individual_stock,true); assert.equal((await status(p)).components[0].label,'Base'); assert.equal(await scalar('SELECT count(*)::integer FROM product_subitems WHERE product_id='+String.fromCharCode(36)+'1',[p]),3);
 });
 await test('Same request replay and fresh source refresh keep identities, names, photos and counts without duplicates',async()=>{
  const data=payload(),key=next(),p=await save(data,[],null,key); const before=await parts(p);

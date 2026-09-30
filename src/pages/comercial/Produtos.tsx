@@ -36,7 +36,7 @@ import { allRows } from "@/lib/finance";
 import { orderRequest } from "@/lib/sales-order";
 import { productProductionReference } from "@/lib/product-production-reference";
 import ProductPrintSources from "./ProductPrintSources";
-import ProductAssemblySetup from "./ProductAssemblySetup";
+import ProductAssemblySetup from "./PhysicalSubitemSetup";
 import ProductPrintPlates from "./ProductPrintPlates";
 import ProductMaterialRecipe from "./ProductMaterialRecipe";
 import MakerWorldReference, { MakerWorldPrinterOption } from "./MakerWorldReference";
@@ -188,7 +188,7 @@ export default function Produtos() {
       if (recipes.error) throw recipes.error;
       const summary = recipes.data as unknown as {id: string; configured: boolean; complete: boolean; cost_per_unit: number | null; plate_count: number}[];
       return rows.map(row => { const recipe = summary.find(value => value.id === row.id); return { ...row,
-        cost_estimate: row.manual_cost_override ?? (recipe?.configured ? recipe.cost_per_unit : row.cost_estimate),
+        cost_estimate: row.manual_cost_override ?? (recipe?.configured ? recipe.cost_per_unit : row.cost_estimate) ?? (row.is_component && row.stock && (Number(row.stock.avg_cost) > 0 || Number(row.stock.current_stock) > 0) ? Number(row.stock.avg_cost) : null),
         recipe_cost: recipe?.cost_per_unit ?? null,
         recipe_configured: recipe?.configured ?? false, recipe_complete: recipe?.complete ?? false, recipe_plate_count: recipe?.plate_count ?? 0,
       }; });
@@ -1311,7 +1311,7 @@ ${selected?.name ? `Perfil: ${selected.name}
                     <div><p className="font-medium text-sm">{p.name}{!p.is_active && <span className="ml-2 rounded bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">Arquivado</span>}</p>{p.sku && <p className="text-xs text-muted-foreground">{p.sku}</p>}</div>
                   </TableCell>
                   <TableCell className="text-sm">
-                    {categoryLabels[p.category] || p.category}
+                    {p.is_component ? "Subitem" : categoryLabels[p.category] || p.category}
                     {Array.isArray((p as any).extras) && (p as any).extras.length > 0 && (
                       <span className="ml-1.5 text-[10px] text-muted-foreground">+{(p as any).extras.length} extras</span>
                     )}

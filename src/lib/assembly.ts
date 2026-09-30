@@ -2,9 +2,11 @@ import { supabase } from "@/integrations/supabase/client";
 import { allRows } from "./finance";
 
 export type AssemblyComponent = { plate_id: string; label: string; plate_index: number; units_per_print: number | null; balance: number; available: number; reserved: number; pending: number; required: number; missing: number; to_print: number; runs: number | null; prepared: boolean; material_key: string; photo_url?: string | null; parts?: { name: string; quantity_per_product: number | null; quantity_per_plate: number | null; name_source: string }[] };
-export type AssemblyStatus = { product_id: string; name: string; enabled: boolean; item_id: string | null; required: number; assembled: number; ready_to_assemble: number; finished_stock: number; components: AssemblyComponent[] };
+export type PhysicalSubitem = AssemblyComponent & { id: string; component_product_id: string; stock_item_id: string; sku: string; quantity_per_product: number | null; quantity_per_plate: number | null; plate_label: string | null };
+export type PhysicalOutput = { component_product_id: string; name: string; quantity: number };
+export type AssemblyStatus = { product_id: string; name: string; enabled: boolean; individual_stock?: boolean; issues?: string[]; item_id: string | null; required: number; assembled: number; ready_to_assemble: number; finished_stock: number; components: AssemblyComponent[] };
 export type AssemblyItem = { id: string; product_id: string; description: string; quantity: number; assembled_quantity: number; assembly_required: boolean; production_order_id: string };
-export type ComponentJob = { id: string; code: string; name: string; description: string | null; planned_quantity: number; produced_quantity: number | null; component_stock_key: string | null; status: string };
+export type ComponentJob = { id: string; code: string; name: string; description: string | null; planned_quantity: number; produced_quantity: number | null; component_stock_key: string | null; status: string; production_snapshot?: { individual_stock?: boolean; physical_outputs?: PhysicalOutput[] } };
 export type AssemblyHistory = { id: string; quantity: number; component_cost: number; finishing_cost: number; item_id: string | null; created_at: string; notes: string | null };
 export async function assemblyRpc<T>(name: string, args: Record<string, unknown>): Promise<T> {
   const rpc = supabase.rpc.bind(supabase) as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ data: T | null; error: { message: string } | null }>;

@@ -574,7 +574,7 @@ function CreateJobDialog({
           {recipe && <ProductionRecipeSummary recipe={recipe} />}
           {hasPlates ? <>
             <div className="grid gap-1.5"><Label htmlFor="job-set-quantity">Quantidade de conjuntos / SKUs</Label><Input id="job-set-quantity" type="number" min="1" max="10000" step="1" value={setQuantity} onChange={event => setSetQuantity(event.target.value)} /></div>
-            <ProductionPlatePlan plates={platesWithRecipe(plateQuery.data!, recipeQuery.data)} quantity={setQuantity} materials={materials} printers={printers} />
+            <ProductionPlatePlan productId={productId} plates={platesWithRecipe(plateQuery.data!, recipeQuery.data)} quantity={setQuantity} materials={materials} printers={printers} />
           </> : <>
           <div className="grid gap-1.5">
             <Label>Peça / Nome *</Label>

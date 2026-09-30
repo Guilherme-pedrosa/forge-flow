@@ -279,7 +279,7 @@ export default function Fila() {
                   {plateQuery.error && <p role="alert" className="text-sm text-destructive">Não foi possível consultar as placas. {plateQuery.error.message}</p>}
                   {recipeQuery.isFetching && <p className="text-sm text-muted-foreground">Consultando materiais, cores e custos…</p>}
                   {recipeQuery.error && <p role="alert" className="text-sm text-destructive">{recipeQuery.error.message}</p>}
-                  {hasPlates && <ProductionPlatePlan plates={platesWithRecipe(plateQuery.data!, recipeQuery.data)} quantity={selQty} printers={printers} />}
+                  {hasPlates && <ProductionPlatePlan productId={selProductId} plates={platesWithRecipe(plateQuery.data!, recipeQuery.data)} quantity={selQty} printers={printers} />}
                   {recipeQuery.data?.recipe && <ProductionRecipeSummary recipe={recipeQuery.data.recipe} />}
                   {selProductId && !hasPlates && !recipeQuery.data?.recipe && !recipeQuery.isFetching && !plateQuery.isFetching && !plateQuery.error && (
                     <div className="text-xs text-muted-foreground bg-muted rounded p-2">
