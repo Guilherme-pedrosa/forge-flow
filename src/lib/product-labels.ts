@@ -108,7 +108,10 @@ export function validateLabels(labels: ProductLabel[], options: LabelOptions) {
     if (!label.name.trim() || label.name.length > 200 || label.sku.length > 80)
       throw new Error("Revise o nome (até 200 caracteres) e o SKU (até 80).");
     count += positiveInteger(label.quantity, "Etiquetas", 500);
-    nonNegative(label.price, "Preço");
+    if (options.showPrice || (options.mode === "pix" && options.pixAmount)) {
+      if (!Number.isFinite(label.price)) throw new Error("Informe o preço da etiqueta ou desative a exibição de preço.");
+      nonNegative(label.price, "Preço");
+    }
     labelQr(label, options);
   }
   if (count > 500) throw new Error("Gere até 500 etiquetas por arquivo.");

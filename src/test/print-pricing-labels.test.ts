@@ -96,6 +96,11 @@ const options: LabelOptions = {
   showPrice: true,
 };
 describe("etiquetas e Pix", () => {
+  it("never turns a missing catalogue price into a zero-price label", () => {
+    const labels = [{ name: "Produto sem preço", sku: "", price: NaN, quantity: 1 }];
+    expect(() => validateLabels(labels, options)).toThrow(/Informe o preço/);
+    expect(validateLabels(labels, { ...options, showPrice: false })).toBe(1);
+  });
   it("matches the complete CRC of the official BCB static QR example", () => {
     const payload = staticPix(
       "123e4567-e12b-12d1-a456-426655440000",

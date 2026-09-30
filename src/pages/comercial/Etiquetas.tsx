@@ -122,7 +122,7 @@ export default function Etiquetas() {
                           id: p.id,
                           name: p.name,
                           sku: p.sku || "",
-                          price: p.sale_price || 0,
+                          price: p.sale_price ?? NaN,
                           quantity: 1,
                         },
                       ],
@@ -269,10 +269,10 @@ export default function Etiquetas() {
                   </p>
                   {options.showPrice && (
                     <strong className="mt-2 block">
-                      {first.price.toLocaleString("pt-BR", {
+                      {Number.isFinite(first.price) ? first.price.toLocaleString("pt-BR", {
                         style: "currency",
                         currency: "BRL",
-                      })}
+                      }) : "Preço não informado"}
                     </strong>
                   )}
                 </div>
