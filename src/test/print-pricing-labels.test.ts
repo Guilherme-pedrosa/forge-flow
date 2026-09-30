@@ -33,6 +33,11 @@ const input: PricingInput = {
   ],
 };
 describe("precificação reutilizável", () => {
+  it("keeps a zero simulation free of negative-zero prices", () => {
+    const value = pricePrint({ ...input, hours: 0, laborMinutes: 0, materials: [], extras: [] });
+    expect(Object.is(value.suggested, -0)).toBe(false);
+    expect(value.suggested).toBe(0);
+  });
   it("calculates multiple materials, costs and lot/unit extras without confusing margin with markup", () => {
     const p = pricePrint(input);
     expect(p.materials).toBe(16);

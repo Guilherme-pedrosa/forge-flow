@@ -55,12 +55,12 @@ export function pricePrint(input: PricingInput) {
   const lot =
     materials + energy + machine + labor + overhead + failures + extras;
   const unit = lot / quantity;
-  const suggested =
+  const suggested = Math.max(0,
     Math.ceil(
       (suggestedProductPrice(unit, nonNegative(input.margin, "Margem")) -
         1e-9) *
         100,
-    ) / 100;
+    ) / 100);
   const target =
     input.target === "" ? suggested : nonNegative(input.target, "Preço alvo");
   if (
