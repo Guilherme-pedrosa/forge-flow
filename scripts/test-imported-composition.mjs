@@ -117,6 +117,28 @@ await test('Tenant and role protection applies to writes and reads of imported p
  await db.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[viewer]);await assert.rejects(save(payload(),[]),/permissão/);
  await db.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[uid]);
 });
-console.log(`Validated ${passed} automatic composition scenarios.`);
+await test('Local 3MF composition saves atomically and repeat requests do not duplicate parts',async()=>{
+ const composition={profile_id:'local:'+'a'.repeat(64),enabled:true,plates:[{index:1,label:'Folhas',units_per_plate:10,parts:[{source_key:'file-object:1',name:'Folha',quantity_per_product:1,quantity_per_plate:10,name_source:'file'}]},{index:2,label:'Caules',units_per_plate:10,parts:[{source_key:'file-object:2',name:'Caule',quantity_per_product:1,quantity_per_plate:10,name_source:'file'}]}]};
+ const data={name:'Local project',file_composition:composition},key=next();const p=await save(data,[],null,key);
+ assert.equal(await save(data,[],null,key),p);assert.equal((await parts(p)).length,2);assert.equal((await status(p)).enabled,true);
+ const before=await scalar('SELECT count(*) FROM products');await assert.rejects(save({...data,file_composition:{...composition,plates:[composition.plates[0],composition.plates[0]]}},[]),/repetida/);assert.equal(await scalar('SELECT count(*) FROM products'),before);
+});
+await test('Consignment transfers, simultaneous sale/return, stale protection and request replay',async()=>{
+ const p=await save({name:'Consigned product',sale_price:20,manual_cost:5,stock:{unit:'un',current_stock:20,avg_cost:5}},[]);
+ const customer=await owner(()=>scalar("INSERT INTO customers(tenant_id,name) VALUES($1,'Point customer') RETURNING id",[tenant]));
+ const loc=await scalar('SELECT create_consignment_location($1::jsonb,NULL,$2)',[JSON.stringify({name:'Point',customer_id:customer,commission_percent:20}),next()]);
+ const move=(type,qty,key=next())=>scalar('SELECT post_consignment_movement($1,$2,$3::jsonb,NULL,$4)',[loc,type,JSON.stringify([{product_id:p,quantity:qty,unit_price:20}]),key]);
+ const central=()=>scalar('SELECT current_stock FROM inventory_items WHERE id=(SELECT stock_item_id FROM products WHERE id=$1)',[p]);
+ const point=()=>row('SELECT current_qty,warehouse_tracked_qty FROM consignment_items WHERE location_id=$1 AND product_id=$2',[loc,p]);
+ await move('placement',10);assert.equal(Number(await central()),10);assert.equal((await point()).warehouse_tracked_qty,10);
+ const lines=[{product_id:p,expected_qty:10,unit_price:20,sold:3,returned:2}],key=next();
+ const reconcile=(items,k=next())=>scalar('SELECT reconcile_consignment($1,$2::jsonb,20,NULL,$3)',[loc,JSON.stringify(items),k]);
+ const result=await reconcile(lines,key);assert.equal(await reconcile(lines,key),result);assert.equal(Number(await central()),12);assert.equal(Number((await point()).current_qty),5);assert.equal((await point()).warehouse_tracked_qty,5);
+ assert.equal(Number(await scalar("SELECT sum(amount) FROM accounts_receivable WHERE customer_id=$1",[customer])),48);
+ await assert.rejects(reconcile(lines),/saldo mudou/);await assert.rejects(move('replenishment',99),/insuficiente/);assert.equal(Number(await central()),12);assert.equal(Number((await point()).current_qty),5);
+ const receivables=await scalar('SELECT count(*) FROM accounts_receivable');await assert.rejects(reconcile([{...lines[0],expected_qty:5,sold:5,returned:1}]),/excedem/);assert.equal(await scalar('SELECT count(*) FROM accounts_receivable'),receivables);
+ await db.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[otherUid]);await assert.rejects(reconcile([{...lines[0],expected_qty:5}]),/inválido/);await db.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[uid]);
+});
+console.log(`Validated ${passed} automatic composition and reconciliation scenarios.`);
 }finally{await db.close();}
 const publish=(p,plate,item,grams=57,other=1)=>scalar("SELECT save_product_material_recipe($1,$2,'per_print',$3::jsonb,NULL,$4,$5)",[p,plate,JSON.stringify([{item_id:item,grams}]),next(),other]);

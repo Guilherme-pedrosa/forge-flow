@@ -1,4 +1,5 @@
 import { SearchableItemSelect } from "@/components/shared/SearchableItemSelect";
+import { ConsignmentReconciliation } from "@/components/comercial/ConsignmentReconciliation";
 import { useState, useMemo, useRef } from "react";
 import { nonNegative, positiveInteger } from "@/lib/production";
 import { readProductionRows } from "@/lib/production-read";
@@ -57,6 +58,7 @@ export default function Consignado() {
   const [createLocOpen, setCreateLocOpen] = useState(false);
   const [viewLocId, setViewLocId] = useState<string | null>(null);
   const [movementOpen, setMovementOpen] = useState(false);
+  const [reconcileOpen, setReconcileOpen] = useState(false);
   const [movementType, setMovementType] = useState<string>("placement");
 
   // Location form
@@ -171,7 +173,7 @@ export default function Consignado() {
   const totalItemsOut = Object.values(locationSummary).reduce((s, v) => s + v.totalItems, 0);
   const totalValueOut = Object.values(locationSummary).reduce((s, v) => s + v.totalValue, 0);
 
-  const invalidateConsignment = () => ["consignment_locations", "consignment_items", "consignment_movements", "orders", "accounts_receivable", "financial_ledger", "customers", "customers_consignment", "dashboard"].forEach(key => qc.invalidateQueries({ queryKey: [key] }));
+  const invalidateConsignment = () => ["consignment_locations", "consignment_items", "consignment_movements", "orders", "accounts_receivable", "financial_ledger", "customers", "customers_consignment", "dashboard", "inventory_items", "inventory_movements", "products"].forEach(key => qc.invalidateQueries({ queryKey: [key] }));
   const runOperation = async (name: string, payload: Record<string, unknown>, operation: string) => {
     const signature = JSON.stringify({ name, payload });
     const request = orderRequest(operations.current[operation] ?? null, signature);
@@ -693,8 +695,10 @@ export default function Consignado() {
                   <ArrowUpFromLine className="h-3.5 w-3.5 mr-1" /> Colocar Itens
                 </Button>
                 <Button size="sm" variant="outline" className="text-emerald-700 border-emerald-300 hover:bg-emerald-50" onClick={() => openMovement("sale")}>
-                  <ShoppingCart className="h-3.5 w-3.5 mr-1" /> Registrar Venda
-                </Button>
+                    <ShoppingCart className="h-3.5 w-3.5 mr-1" /> Registrar Venda
+                  </Button>
+                  <Button size="sm" disabled={itemsLoading || !!itemsError || !viewLocItems.some(i=>i.current_qty>0)} onClick={()=>setReconcileOpen(true)}>Conferir vendas e devoluções</Button>
+                  {reconcileOpen && <ConsignmentReconciliation items={viewLocItems.filter(i=>i.current_qty>0).map(i=>({product_id:i.product_id,name:i.products?.name||"Produto",current_qty:i.current_qty,unit_price:getItemSalePrice(i)}))} commission={COMMISSION_PERCENT} onClose={()=>setReconcileOpen(false)} onSave={async(items,commission,notes)=>{await runOperation("reconcile_consignment",{p_location_id:viewLocId,p_items:items,p_expected_commission:commission,p_notes:notes||null},"reconciliation");invalidateConsignment();toast({title:"Conferência registrada",description:"Vendas, devoluções e repasse atualizados."});}}/>}
                 <Button size="sm" variant="outline" className="text-amber-700 border-amber-300 hover:bg-amber-50" onClick={() => openMovement("replenishment")}>
                   <RotateCcw className="h-3.5 w-3.5 mr-1" /> Repor
                 </Button>

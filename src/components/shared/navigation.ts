@@ -8,8 +8,10 @@ export const navigationGroups = [
     { title: "Clientes", icon: Users, href: "/comercial/clientes" },
     { title: "Fornecedores", icon: Building, href: "/cadastros/fornecedores" },
     { title: "Produtos", icon: Package, href: "/comercial/produtos" },
+    { title: "Etiquetas", icon: FileText, href: "/comercial/etiquetas" },
   ] },
   { label: "Comercial", items: [
+    { title: "Precificação 3D", icon: BarChart3, href: "/comercial/precificacao" },
     { title: "Orçamentos", icon: FileText, href: "/comercial/orcamentos" },
     { title: "Vendas", icon: ShoppingCart, href: "/comercial/pedidos" },
     { title: "Consignação", icon: Handshake, href: "/comercial/consignado" },

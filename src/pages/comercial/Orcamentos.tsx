@@ -3,8 +3,8 @@ import { CommercialPdfButton } from "@/components/comercial/CommercialPdfButton"
 import { quoteDocument } from "@/lib/commercial-document";
 import { InstallmentEditor, generateParts, validateParts, type PaymentPart } from "@/components/shared/InstallmentEditor";
 import { localDate } from "@/lib/finance";
-import { useMemo, useRef, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useMemo, useRef, useState, useEffect } from "react";
+import { Link, useNavigate, useLocation } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { ArrowRight, Check, Copy, FileText, Loader2, Plus, RefreshCw, Search, Trash2, X } from "lucide-react";
@@ -39,6 +39,7 @@ const statusClass: Record<QuoteStatus, string> = { draft: "bg-muted text-muted-f
 
 export default function Orcamentos() {
   const navigate = useNavigate();
+  const location = useLocation(); const receivedPricing = useRef<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [paymentCount, setPaymentCount] = useState("1"); const [paymentDays, setPaymentDays] = useState(""); const [paymentParts, setPaymentParts] = useState<PaymentPart[]>([]);
   const [customerOpen, setCustomerOpen] = useState(false);
@@ -83,6 +84,15 @@ export default function Orcamentos() {
   }, onSuccess: async id => { await qc.invalidateQueries({ queryKey: ["production_orders"] }); navigate(`/producao/ordens?op=${id}`); }, onError: failed });
   const busy = save.isPending || transition.isPending || convert.isPending || produce.isPending;
   const openNew = () => { setEditingId(null); setRevision(null); setForm(emptyForm()); setPaymentCount("1"); setPaymentDays(""); setPaymentParts([]); setLines([newLine()]); saveRequest.current = null; setFormOpen(true); };
+  useEffect(() => {
+    if (receivedPricing.current === location.key || !products.data) return;
+    const draft = location.state?.pricingQuote;
+    const product = products.data.find(p => p.id === draft?.product_id);
+    if (!product || !Number.isInteger(draft.quantity) || draft.quantity < 1 || draft.quantity > 10000 || !Number.isFinite(draft.unit_price) || draft.unit_price < 0) return;
+    receivedPricing.current = location.key; openNew();
+    setLines([{ ...newLine(), product_id: product.id, description: product.name, quantity: String(draft.quantity), unit_price: String(draft.unit_price) }]);
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.key, products.data]);
   const edit = (duplicate = false) => {
     if (!selected || details.isLoading || details.error) return;
     let restored: QuoteDraftLine[];

@@ -1,8 +1,9 @@
 import { SearchableItemSelect } from "@/components/shared/SearchableItemSelect";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DeleteRecordDialog, type DeleteTarget } from "@/components/shared/DeleteRecordDialog";
-import { useState, useMemo, useEffect, useRef, useCallback } from "react";
-import { Link as RouterLink, useSearchParams } from "react-router-dom";
+import { useState, useMemo, useEffect, useRef, useCallback, lazy, Suspense } from "react";
+import { Link as RouterLink, useSearchParams, useLocation, useNavigate } from "react-router-dom";
+import { readPricingTransfer, type PricingTransfer } from "@/lib/print-pricing";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -49,6 +50,7 @@ import { ImportedCompositionPreview } from "@/components/comercial/ImportedCompo
 import { ImportedModelImage } from "@/components/comercial/ImportedModelImage";
 
 const fmtCurrency = (v: number | null) => v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
+const ModelFileInput = lazy(() => import("@/components/comercial/ModelFileInput"));
 const fmtDuration = (s: number | null) => {
   if (!s) return "—";
   const h = (s / 3600).toFixed(1).replace(".", ",");
@@ -69,6 +71,8 @@ const categoryFilter: string[] = ["all", ...Object.keys(categoryLabels)];
 type ExtraItem = { name: string; cost: number; costInput?: string };
 
 export default function Produtos() {
+  const location = useLocation(); const navigate = useNavigate();
+  const pricingTransfer = useRef<PricingTransfer | null>(null); const receivedPricing = useRef<string | null>(null);
   const [searchParams] = useSearchParams();
   const requestedProductId = searchParams.get("produto");
   const openedFromLink = useRef<string | null>(null);
@@ -101,7 +105,9 @@ export default function Produtos() {
   const [externalImport, setExternalImport] = useState<ProductExternalImport | null>(null);
   const [compositionImport, setCompositionImport] = useState<ImportedComposition | null>(null);
   const [editorImportUrl, setEditorImportUrl] = useState("");
-  const [readingImportFile, setReadingImportFile] = useState(false);
+  const [readingMetadataFile, setReadingImportFile] = useState(false);
+  const [readingModelFile, setReadingModelFile] = useState(false);
+  const readingImportFile = readingMetadataFile || readingModelFile;
   const makerRequest = useRef<AbortController | null>(null);
   const makerImportTarget = useRef<string | null>(null);
   useEffect(() => () => makerRequest.current?.abort(), []);
@@ -314,6 +320,7 @@ export default function Produtos() {
   }, [products, search, showArchived]);
 
   const resetForm = () => {
+    pricingTransfer.current = null;
     setPhotoLink("");
     productRequest.current = null;
     setExternalImport(null);
@@ -326,6 +333,14 @@ export default function Produtos() {
     setName(""); setDescription(""); setSku(""); setCategory("printed_part"); setMaterialId("");
     setEstGrams(""); setEstTime(""); setPostMinutes(""); setCostEstimate(""); setSalePrice(""); setPhotoUrl(""); setExtraPhotos([]); setNotes(""); setPrinterId(""); setNumColors("1"); setPrintsPerPlate("1"); setExtras([]); setKitComponents([]);
   };
+
+  useEffect(() => {
+    if (receivedPricing.current === location.key) return;
+    const transfer = readPricingTransfer(location.state?.pricing); if (!transfer) return;
+    receivedPricing.current = location.key; resetForm(); pricingTransfer.current = transfer;
+    setName(transfer.name); setCostEstimate(String(transfer.cost)); setSalePrice(String(transfer.price)); setCreateOpen(true); setFormTab("valores");
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.key]);
 
   const openEdit = (p: any) => {
     setPhotoLink("");
@@ -719,7 +734,7 @@ ${selected?.name ? `Perfil: ${selected.name}
         prints_per_plate: positiveInteger(printsPerPlate, "Peças por placa", 10000),
         extras: buildExtrasPayload(),
         ...(externalImport ? { external_import: externalImport } : {}),
-        ...(compositionImport ? { import_composition: compositionImport } : {}),
+        ...(compositionImport ? { [compositionImport.profile_id.startsWith("local:") ? "file_composition" : "import_composition"]: compositionImport } : {}),
       },
       p_photos: photos,
     };
@@ -732,10 +747,12 @@ ${selected?.name ? `Perfil: ${selected.name}
   const createMut = useMutation({
     mutationFn: () => saveProduct(null),
     onSuccess: async result => {
+      const transfer = pricingTransfer.current; pricingTransfer.current = null;
       setCreateOpen(createAnother.current && !result.imported); resetForm();
       if (createAnother.current && !result.imported) requestAnimationFrame(() => document.getElementById("product-name")?.focus());
       await qc.invalidateQueries({ queryKey: ["products"] });
       await qc.invalidateQueries({ queryKey: ["inventory_items"] });
+      if (transfer?.quote) { navigate("/comercial/orcamentos", { state: { pricingQuote: { product_id: result.id, quantity: transfer.quantity, unit_price: nonNegative(salePrice, "Preço") } } }); return; }
       if (result.imported) {
         const refreshed = await refetchProducts(); const product = refreshed.data?.find(product => product.id === result.id);
         if (product) openEdit(product);
@@ -868,7 +885,9 @@ ${selected?.name ? `Perfil: ${selected.name}
         </div>
       </div>
 </TabsContent>
-      <TabsContent forceMount value="producao" className={tabClass}>{compositionImport && <ImportedCompositionPreview key={compositionImport.profile_id} value={compositionImport} onChange={setCompositionImport} onBusyChange={setReadingImportFile} />}<p className="rounded-lg bg-muted p-3 text-sm">Configuração opcional para produtos fabricados. Custo, venda e estoque podem ser cadastrados sem composição.</p>      {productionReference && (
+      <TabsContent forceMount value="producao" className={tabClass}>
+        {formTab === "producao" && (!editItem || compositionImport) && <Suspense fallback={<p>Carregando leitor de arquivos…</p>}><ModelFileInput current={compositionImport?.profile_id.startsWith("local:") ? undefined : compositionImport || undefined} onChange={setCompositionImport} onBusyChange={setReadingModelFile} disabled={readingMetadataFile} /></Suspense>}
+        {compositionImport && <ImportedCompositionPreview key={compositionImport.profile_id} value={compositionImport} onChange={setCompositionImport} onBusyChange={setReadingImportFile} />}<p className="rounded-lg bg-muted p-3 text-sm">Configuração opcional para produtos fabricados. Custo, venda e estoque podem ser cadastrados sem composição.</p>      {productionReference && (
         <section aria-label="Referência da produção" className="rounded-xl border border-primary/20 bg-primary/5 p-4 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-sm font-semibold">Base na produção</h3>

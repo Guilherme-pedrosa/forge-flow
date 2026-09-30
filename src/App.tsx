@@ -10,6 +10,8 @@ import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { AppLayout } from "@/components/AppLayout";
 
 const Dashboard = lazy(() => import("./pages/Dashboard"));
+const Precificacao = lazy(() => import("./pages/comercial/Precificacao"));
+const Etiquetas = lazy(() => import("./pages/comercial/Etiquetas"));
 const ModulePlaceholder = lazy(() => import("./pages/ModulePlaceholder"));
 const BambuLab = lazy(() => import("./pages/integracoes/BambuLab"));
 const ContasPagar = lazy(() => import("./pages/financeiro/ContasPagar"));
@@ -91,6 +93,8 @@ function AuthenticatedRoutes() {
         <Route path="/planejamento/gantt" element={<Fila />} />
         {/* Comercial */}
         <Route path="/comercial/produtos" element={<Produtos />} />
+        <Route path="/comercial/precificacao" element={<Precificacao />} />
+        <Route path="/comercial/etiquetas" element={<Etiquetas />} />
         <Route path="/comercial/orcamentos" element={<Orcamentos />} />
         <Route path="/comercial/pedidos" element={<Pedidos />} />
         <Route path="/cadastros/fornecedores" element={<Fornecedores />} />
