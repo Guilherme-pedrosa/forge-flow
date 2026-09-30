@@ -44,6 +44,12 @@ As outras melhorias abaixo já estão implementadas; não substituem esta corre�
 - Banco real: migrações 20260930030000 e 20260930031000 aplicadas. Teste transacional
   confirmou 20 metades, 10 caules e 6 folhas -> montagem de 5 -> saldos 10/5/1 e
   5 produtos finais. Repetição não duplicou. Rollback deixou zero produtos de teste.
+- Publicado e conferido em 30/09: commit 47efcee, bundle AssemblyWorkspace-D4P3j_Dl.
+  A maçã existente tem quatro produtos filhos: metade 1, metade 2, caule e folha,
+  cada um com SKU e estoque zero próprios, uma unidade de cada por produto final.
+  A tela publicada mostrou os quatro saldos e abriu a entrada de uma peça sem
+  exigir receita ou impressora. O perfil antigo Full Kit foi preservado; não se
+  associaram peças a placas nem rendimentos sem confirmação do arquivo correto.
 
 - Implementado: leitor visual STL/3MF, seleção dos objetos e composição local
   salva atomicamente com o novo produto. O leitor suporta componentes internos da
