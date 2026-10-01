@@ -31,7 +31,13 @@ Bagulhos3D e nenhuma mensagem deve ser enviada ao Lovable.
 - Limite concreto da maçã: seus quatro subitens estão cadastrados, mas não há
   vínculo confirmado entre cada geometria e a placa/rendimento. O perfil público
   disponível não fornece consumo individual. Não foram inventados pesos/tempos.
-- Publicação e verificação visual desta ficha: em andamento.
+- Publicado: commit 6b8a34a, implantação 38ee2b75-987a-4f05-939e-a6b7a6bfb544.
+  O site servido contém a previsão técnica e os métodos de leitura/salvamento da
+  ficha (index-BBYz0O2O.js / AssemblyWorkspace-D6Ji0jAj.js /
+  ImportedModelImage-CBINCTxl.js). A sessão autenticada do Chrome ficou
+  indisponível: a ferramenta pediu atualização da extensão. Testes visuais de
+  desktop/celular são locais; não foram apresentados como verificação visual
+  autenticada da publicação. O navegador integrado permanece na tela de login.
 
 ## Ordem e critérios de aceitação
 
