@@ -15,6 +15,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  PieceTechnicalSheet,
+  PieceTechnicalSummary,
+} from "./PieceTechnicalSheet";
+import { pieceForecast, pieceNumber, pieceTime } from "@/lib/piece-technical";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -32,6 +37,7 @@ const brl = (n: number) =>
 export function PhysicalSubitemWorkspace({
   data,
   productId,
+  tenantId,
   itemId,
   target,
   onTarget,
@@ -41,6 +47,7 @@ export function PhysicalSubitemWorkspace({
 }: {
   data: AssemblyStatus;
   productId: string;
+  tenantId: string;
   itemId?: string;
   target: string;
   onTarget: (value: string) => void;
@@ -185,6 +192,11 @@ export function PhysicalSubitemWorkspace({
     action?.kind === "batch" && action.part.quantity_per_plate
       ? Math.ceil(Number(quantity) / action.part.quantity_per_plate)
       : 0;
+  const forecast = pieceForecast(parts);
+  const totalEstimate = (key: "grams" | "seconds" | "cost") =>
+    forecast.some((p) => p[key] == null)
+      ? null
+      : forecast.reduce((sum, p) => sum + p[key]!, 0);
   return (
     <section className="space-y-4" aria-label="Estoque individual e montagem">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -258,6 +270,55 @@ export function PhysicalSubitemWorkspace({
           </p>
         </article>
       </div>
+      <section
+        className="space-y-2 rounded-lg border bg-muted/30 p-4"
+        aria-label="Previsão técnica de produção"
+      >
+        <h3 className="font-semibold">Filamento e tempo para repor as peças</h3>
+        <p className="text-sm text-muted-foreground">
+          Desconta estoque e peças já na fila. Arredonda pelas quantidades por
+          placa conhecidas e inclui as sobras.
+        </p>
+        <dl className="grid gap-3 sm:grid-cols-3">
+          <div>
+            <dt className="text-sm text-muted-foreground">
+              Filamento previsto
+            </dt>
+            <dd className="font-semibold">
+              {pieceNumber(totalEstimate("grams"), " g")}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-sm text-muted-foreground">
+              Tempo equivalente de impressão
+            </dt>
+            <dd className="font-semibold">
+              {pieceTime(totalEstimate("seconds"))}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-sm text-muted-foreground">
+              Custo técnico previsto
+            </dt>
+            <dd className="font-semibold">
+              {totalEstimate("cost") == null
+                ? "A completar"
+                : brl(totalEstimate("cost")!)}
+            </dd>
+          </div>
+        </dl>
+        {forecast.some((p) => p.grams == null || p.seconds == null) && (
+          <p className="text-xs text-amber-800 dark:text-amber-300">
+            Complete as fichas abaixo para calcular o total. Dados ausentes não
+            contam como consumo zero.
+          </p>
+        )}
+        <p className="text-xs text-muted-foreground">
+          Estimativa com base nas fichas das peças; o tempo do lote deve ser
+          conferido no fatiador. Impressoras em paralelo e mudanças no
+          preenchimento alteram o prazo.
+        </p>
+      </section>
       <div className="grid gap-3 lg:grid-cols-2">
         {parts.map((part) => (
           <article
@@ -313,6 +374,11 @@ export function PhysicalSubitemWorkspace({
                 : ""}
             </p>
             <div className="flex flex-wrap gap-2">
+              <PieceTechnicalSheet
+                productId={part.component_product_id}
+                name={part.label}
+                tenantId={tenantId}
+              />
               <Button
                 type="button"
                 size="sm"
@@ -339,6 +405,20 @@ export function PhysicalSubitemWorkspace({
               >
                 Registrar perda
               </Button>
+            </div>
+            <div className="space-y-3 border-t pt-3">
+              <PieceTechnicalSummary spec={part.technical} />
+              {(() => {
+                const f = forecast.find((p) => p.id === part.id)!;
+                return (
+                  <p className="rounded-md bg-muted p-2 text-xs">
+                    Reposição prevista:{" "}
+                    <strong>{pieceNumber(f.count, " peças")}</strong> ·{" "}
+                    {pieceNumber(f.grams, " g")} · {pieceTime(f.seconds)}
+                    {f.surplus ? ` · ${f.surplus} peças de sobra` : ""}
+                  </p>
+                );
+              })()}
             </div>
             <div className="flex flex-wrap gap-3 text-xs">
               <Link

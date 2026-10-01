@@ -175,6 +175,52 @@ await test('Subitem losses appear once in the financial result',async()=>{
  await move(x.parts[0].component_product_id,2,'loss',0,key);await move(x.parts[0].component_product_id,2,'loss',0,key);
  const after=await scalar('SELECT production_financial_result(CURRENT_DATE,CURRENT_DATE)');assert.equal(Number(after.component_loss_cost)-Number(before.component_loss_cost),2);
 });
+const specData=(grams=5)=>({materials:[{item_id:material,grams,material:null,color:null,cost_per_kg:null},{item_id:null,grams:3,material:'PETG',color:'Verde',cost_per_kg:30}],print_seconds:600,finishing_seconds:120,machine_hour_cost:6,labor_hour_cost:30,extra_cost:0.2,pieces_per_plate:10,notes:'0.2mm'});
+const readSpec=p=>scalar('SELECT product_piece_spec($1)',[p]);
+const saveSpec=(p,data,key=next())=>scalar('SELECT save_product_piece_spec($1,$2::jsonb,$3)',[p,JSON.stringify(data),key]);
+await test('Technical sheet is per physical SKU, calculates multi-filament cost and never changes stock valuation',async()=>{
+ const x=await apple(),p=x.parts[0].component_product_id,key=next();
+ assert.equal((await readSpec(p)).grams,null);assert.equal((await readSpec(p)).source,'unknown');
+ await saveSpec(p,specData(),key);await saveSpec(p,specData(),key);
+ const s=await readSpec(p);assert.equal(s.grams,8);assert.equal(s.material_cost,0.19);assert.equal(s.estimated_cost,2.39);assert.equal(s.materials[0].color,'Preto');
+ assert.equal(Number(await scalar('SELECT avg_cost FROM inventory_items WHERE id=$1',[x.parts[0].stock_item_id])),1);
+ const other=await product();await add(other,{component_product_id:p,quantity_per_product:2});assert.equal((await status(other)).components[0].technical.grams,8);
+ const rev=s.revision;await saveSpec(p,{...specData(6),revision:rev});await assert.rejects(saveSpec(p,{...specData(7),revision:rev}),/outra tela/);
+});
+await test('Incomplete technical sheets preserve NULL instead of inventing grams, time or costs',async()=>{
+ const x=await apple(),p=x.parts[0].component_product_id;
+ await saveSpec(p,{materials:[{grams:null,material:'PLA'}],print_seconds:null});
+ const s=await readSpec(p);assert.equal(s.grams,null);assert.equal(s.print_seconds,null);assert.equal(s.material_cost,null);assert.equal(s.estimated_cost,null);
+ await assert.rejects(saveSpec(p,{...specData(),print_seconds:-1}),/não negativos/);
+ await assert.rejects(saveSpec(p,{...specData(),materials:[{grams:'NaN'}]}),/finitos/);
+ await assert.rejects(saveSpec(p,{...specData(),materials:[{item_id:otherMaterial,grams:1}]}),/desta empresa/);
+});
+await test('Atomic subitem creation saves technical data; retry cannot overwrite a newer sheet',async()=>{
+ const p=await product(),key=next(),data={name:'Folha com ficha',quantity_per_product:1,technical:specData()};
+ const b=await add(p,data,null,key),[child]=await subitems(p);assert.equal((await readSpec(child.component_product_id)).grams,8);
+ await saveSpec(child.component_product_id,specData(7));assert.equal(await add(p,data,null,key),b);assert.equal((await readSpec(child.component_product_id)).grams,10);
+ const before=(await subitems(p)).length;await assert.rejects(add(p,{name:'Invalid piece',technical:{...specData(),print_seconds:-1}}),/não negativos/);assert.equal((await subitems(p)).length,before);
+});
+await test('Mapped homogeneous plates automatically provide grams/time per piece; mixed plates do not',async()=>{
+ const p=await product();await add(p,{name:'Peça única',quantity_per_product:1});const [b]=await subitems(p);
+ const pl=await scalar('SELECT save_product_print_plate(NULL,$1,NULL,$2::jsonb)',[p,JSON.stringify({plate_index:1,label:'20 folhas',units_per_plate:1,material_id:material,est_grams:100,est_time_seconds:3600})]);
+ await add(p,{quantity_per_product:1,plate_id:pl,quantity_per_plate:20},b.id);
+ let s=await readSpec(b.component_product_id);assert.equal(s.source,'plate');assert.equal(s.grams,5);assert.equal(s.print_seconds,180);
+ await add(p,{name:'Outro formato',quantity_per_product:1,plate_id:pl,quantity_per_plate:2});
+ s=await readSpec(b.component_product_id);assert.equal(s.source,'unknown');assert.equal(s.grams,null);assert.equal(s.plate.grams,100);
+});
+await test('Production orders and print jobs freeze per-piece technical data',async()=>{
+ const x=await apple();await plate(x.p,x.parts);const p=x.parts[0].component_product_id;await saveSpec(p,specData());
+ const one=await stockOrder(x.p,10);await scalar('SELECT release_production_order($1)',[one.op]);
+ await saveSpec(p,specData(50));assert.equal((await status(x.p)).components[0].technical.grams,53);assert.equal((await status(x.p,10,one.item)).components[0].technical.grams,8);
+ const frozen=await scalar('SELECT production_snapshot FROM jobs WHERE production_order_id=$1 LIMIT 1',[one.op]);assert.equal(frozen.physical_outputs[0].technical.grams,8);
+});
+await test('Technical sheets reject other tenants, read-only roles and direct writes',async()=>{
+ const x=await apple(),p=x.parts[0].component_product_id;await saveSpec(p,specData());
+ await assert.rejects(db.query('UPDATE product_piece_specs SET spec=\'{}\' WHERE product_id=$1',[p]),/permission denied/);
+ await db.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[otherUid]);await assert.rejects(readSpec(p),/não encontrada/);await assert.rejects(saveSpec(p,specData()),/não encontrada/);
+ await db.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[viewer]);await assert.rejects(saveSpec(p,specData()),/permissão/);await db.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[uid]);
+});
 console.log(`Validated ${passed} individual physical subitem scenarios.`);
 } finally {await db.close();}
 

@@ -39,6 +39,7 @@ import ProductPrintSources from "./ProductPrintSources";
 import ProductAssemblySetup from "./PhysicalSubitemSetup";
 import ProductPrintPlates from "./ProductPrintPlates";
 import ProductMaterialRecipe from "./ProductMaterialRecipe";
+import { PieceTechnicalSheet } from "@/components/production/PieceTechnicalSheet";
 import MakerWorldReference, { MakerWorldPrinterOption } from "./MakerWorldReference";
 import { fetchMakerWorldModel, externalImportReference, legacyMakerWorldUrl, readProductExternalImport, type ProductExternalImport } from "@/lib/makerworld-import";
 import { makerWorldImageUrl } from "../../../supabase/functions/_shared/makerworld";
@@ -329,6 +330,7 @@ export default function Produtos() {
     setPhotosLoading(false);
     setPrintSourceBusy(false); setRecipeBusy(false);
     setSourceDraft(false); setRecipeDraft(false);
+    setAssemblySetupBusy(false); setAssemblySetupDraft(false); setManualPlateDraft(false);
     setFormTab("dados"); setAccessoryCost("0"); setOtherCost("0"); setBarcode(""); setMaxStock("0"); setMarkup(""); setStockQuantity("0"); setStockUnit("un"); setMinStock("0"); setStockEnabled(true);
     setName(""); setDescription(""); setSku(""); setCategory("printed_part"); setMaterialId("");
     setEstGrams(""); setEstTime(""); setPostMinutes(""); setCostEstimate(""); setSalePrice(""); setPhotoUrl(""); setExtraPhotos([]); setNotes(""); setPrinterId(""); setNumColors("1"); setPrintsPerPlate("1"); setExtras([]); setKitComponents([]);
@@ -350,6 +352,7 @@ export default function Produtos() {
     makerImportTarget.current = p.id;
     setPrintSourceBusy(false); setRecipeBusy(false);
     setSourceDraft(false); setRecipeDraft(false);
+    setAssemblySetupBusy(false); setAssemblySetupDraft(false); setManualPlateDraft(false);
     setStockQuantity(String(p.stock?.current_stock ?? 0)); setStockUnit(p.stock?.unit || "un"); setMinStock(String(p.stock?.min_stock ?? 0)); setStockEnabled(p.category !== "service" || !!p.stock_item_id);
     setFormTab("dados"); setAccessoryCost(String(p.catalog_details?.accessory_cost ?? 0)); setOtherCost(String(p.catalog_details?.other_cost ?? 0)); setBarcode(p.catalog_details?.barcode || ""); setMaxStock(String(p.stock?.max_stock ?? 0)); setMarkup("");
     setEditItem(p); setName(p.name); setDescription(p.description || ""); setSku(p.sku || "");
@@ -886,6 +889,7 @@ ${selected?.name ? `Perfil: ${selected.name}
       </div>
 </TabsContent>
       <TabsContent forceMount value="producao" className={tabClass}>
+        {editItem?.is_component && profile?.tenant_id && <PieceTechnicalSheet key={`technical-${editItem.id}`} productId={editItem.id} name={editItem.name} tenantId={profile.tenant_id} showSummary />}
         {formTab === "producao" && (!editItem || compositionImport) && <Suspense fallback={<p>Carregando leitor de arquivos…</p>}><ModelFileInput current={compositionImport?.profile_id.startsWith("local:") ? undefined : compositionImport || undefined} onChange={setCompositionImport} onBusyChange={setReadingModelFile} disabled={readingMetadataFile} /></Suspense>}
         {compositionImport && <ImportedCompositionPreview key={compositionImport.profile_id} value={compositionImport} onChange={setCompositionImport} onBusyChange={setReadingImportFile} />}<p className="rounded-lg bg-muted p-3 text-sm">Configuração opcional para produtos fabricados. Custo, venda e estoque podem ser cadastrados sem composição.</p>      {productionReference && (
         <section aria-label="Referência da produção" className="rounded-xl border border-primary/20 bg-primary/5 p-4 space-y-3">
@@ -903,9 +907,9 @@ ${selected?.name ? `Perfil: ${selected.name}
           {productionReference.updatedLabel && <p className="text-xs text-muted-foreground">Atualizada em {productionReference.updatedLabel}</p>}
         </section>
       )}
-      {editItem?.id && profile?.tenant_id && <ProductAssemblySetup productId={editItem.id} tenantId={profile.tenant_id} onBusyChange={setAssemblySetupBusy} onDraftChange={setAssemblySetupDraft} />}
+      {editItem?.id && !editItem.is_component && profile?.tenant_id && <ProductAssemblySetup key={`subitems-${editItem.id}`} productId={editItem.id} tenantId={profile.tenant_id} onBusyChange={setAssemblySetupBusy} onDraftChange={setAssemblySetupDraft} />}
       {editItem?.id && profile?.tenant_id && <ProductPrintSources key={editItem.id} productId={editItem.id} tenantId={profile.tenant_id} onBusyChange={setPrintSourceBusy} onDraftChange={setSourceDraft} />}
-      {editItem?.id && profile?.tenant_id && <ProductPrintPlates productId={editItem.id} tenantId={profile.tenant_id} sourceId={null} onBusyChange={reportManualPlateBusy} onDraftChange={reportManualPlateDraft} />}
+      {editItem?.id && profile?.tenant_id && <ProductPrintPlates key={`manual-plates-${editItem.id}`} productId={editItem.id} tenantId={profile.tenant_id} sourceId={null} onBusyChange={reportManualPlateBusy} onDraftChange={reportManualPlateDraft} />}
       {editItem?.id && profile?.tenant_id && category !== "kit" && (products.find(product => product.id === editItem.id)?.recipe_plate_count ?? 0) === 0 &&
         <ProductMaterialRecipe key={`recipe-${editItem.id}`} productId={editItem.id} tenantId={profile.tenant_id} onBusyChange={setRecipeBusy} onDraftChange={setRecipeDraft}
           suggestedNonMaterialCost={!costBreakdown.error ? Math.max(0, costBreakdown.total - costBreakdown.materialCost) : null} />}
@@ -915,7 +919,7 @@ ${selected?.name ? `Perfil: ${selected.name}
         {editItem && <Button type="button" variant="outline" className="min-h-11 w-full whitespace-normal" disabled={makerWorldLoading || photosLoading} onClick={refreshMakerWorld}>{makerWorldLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CloudDownload className="mr-2 h-4 w-4" />}Atualizar fotos e detalhes do link</Button>}
         {externalImport && <MakerWorldReference value={externalImport} />}
       </div>}
-      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Referência geral de produção</p>
+      {!editItem?.is_component && <><p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Referência geral de produção</p>
       <p className="-mt-2 text-xs leading-relaxed text-muted-foreground">Para produtos sem placas separadas, informe peso, impressão e acabamento da placa inteira. O cálculo divide esses custos pelas peças da placa; extras são cobrados por unidade. Em produtos com várias placas, cadastre cada uma em Arquivos e links de impressão; as referências por unidade se somam para formar o produto completo.</p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div><Label>Material</Label>
@@ -952,6 +956,7 @@ ${selected?.name ? `Perfil: ${selected.name}
       </div>
 
       {/* Kit Components */}
+      </>}
       {category === "kit" && (
         <div className="space-y-2">
           <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">

@@ -1,8 +1,9 @@
 import { supabase } from "@/integrations/supabase/client";
 import { allRows } from "./finance";
+import type { PieceTechnical } from "./piece-technical";
 
 export type AssemblyComponent = { plate_id: string; label: string; plate_index: number; units_per_print: number | null; balance: number; available: number; reserved: number; pending: number; required: number; missing: number; to_print: number; runs: number | null; prepared: boolean; material_key: string; photo_url?: string | null; parts?: { name: string; quantity_per_product: number | null; quantity_per_plate: number | null; name_source: string }[] };
-export type PhysicalSubitem = AssemblyComponent & { id: string; component_product_id: string; stock_item_id: string; sku: string; quantity_per_product: number | null; quantity_per_plate: number | null; plate_label: string | null };
+export type PhysicalSubitem = Omit<AssemblyComponent, "plate_id"> & { plate_id: string | null; id: string; component_product_id: string; stock_item_id: string; sku: string; quantity_per_product: number | null; quantity_per_plate: number | null; plate_label: string | null; technical?: PieceTechnical };
 export type PhysicalOutput = { component_product_id: string; name: string; quantity: number };
 export type AssemblyStatus = { product_id: string; name: string; enabled: boolean; individual_stock?: boolean; issues?: string[]; item_id: string | null; required: number; assembled: number; ready_to_assemble: number; finished_stock: number; components: AssemblyComponent[] };
 export type AssemblyItem = { id: string; product_id: string; description: string; quantity: number; assembled_quantity: number; assembly_required: boolean; production_order_id: string };

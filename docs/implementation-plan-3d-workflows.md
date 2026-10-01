@@ -4,6 +4,35 @@ Autorizado pelo usuário após a análise do Bagulhos3D. Referência funcional d
 GestãoClick. Implementação própria no Forge; não foi localizado repositório do
 Bagulhos3D e nenhuma mensagem deve ser enviada ao Lovable.
 
+## Ficha técnica individual — 01/10/2026
+
+- Cada SKU de subitem tem uma ficha compartilhada por todas as suas composições:
+  múltiplos filamentos/cores, gramas por material, impressão e acabamento por peça,
+  rendimento de placa, custo de filamento/máquina/mão de obra/outros e observações.
+- Entrada por peça ou placa de peças iguais; conversão explícita para gramas e
+  segundos por peça. Trocar a base mantém o valor equivalente. Dados desconhecidos
+  continuam nulos; custo técnico não sobrescreve o custo histórico do estoque.
+- Placa vinculada que contém somente um subitem identificado fornece automaticamente
+  peso e tempo divididos pelo rendimento confirmado. Placas mistas e peças não
+  identificadas não recebem rateio sem informação. A ficha manual prevalece.
+- Composição e tela de montagem mostram a ficha de cada peça e a previsão de
+  reposição: descontam estoque/fila e arredondam pelos lotes conhecidos, incluindo
+  saídas extras de placas mistas. Tempo é estimativa equivalente, não prazo de entrega.
+- Ordens liberadas e impressões guardam a ficha junto da composição aprovada.
+  Atualizações posteriores não reescrevem a referência desses trabalhos.
+- Corrigido também o estado do editor: abrir a peça a partir do produto pai não
+  herda um rascunho nem bloqueia indevidamente o botão Salvar.
+- Validação: 416 testes da suíte completa e um novo teste adicional de troca de
+  base; 21 cenários PostgreSQL; navegador em 1440 e 390 px, incluindo salvar ficha
+  pelo cadastro da peça. Typecheck, lint dos módulos novos e build aprovados.
+- Migração 20260930040000 aplicada no banco publicado. Teste transacional conferiu
+  ficha com 8 g, custo técnico R$ 2,39 e necessidade de 100 peças para 50 produtos;
+  rollback confirmado com zero cadastros de teste remanescentes.
+- Limite concreto da maçã: seus quatro subitens estão cadastrados, mas não há
+  vínculo confirmado entre cada geometria e a placa/rendimento. O perfil público
+  disponível não fornece consumo individual. Não foram inventados pesos/tempos.
+- Publicação e verificação visual desta ficha: em andamento.
+
 ## Ordem e critérios de aceitação
 
 **Correção prioritária em 30/09:** a implementação anterior identificava peças,

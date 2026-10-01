@@ -15,6 +15,16 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SearchableItemSelect } from "@/components/shared/SearchableItemSelect";
+import {
+  PieceSpecFields,
+  PieceTechnicalSheet,
+  PieceTechnicalSummary,
+} from "@/components/production/PieceTechnicalSheet";
+import {
+  pieceDraft,
+  piecePayload,
+  type PieceDraft,
+} from "@/lib/piece-technical";
 
 type Draft = {
   id: string | null;
@@ -27,6 +37,7 @@ type Draft = {
   cost: string;
   plate: string;
   yield: string;
+  technical: PieceDraft;
 };
 const emptyDraft = (): Draft => ({
   id: null,
@@ -39,6 +50,7 @@ const emptyDraft = (): Draft => ({
   cost: "",
   plate: "",
   yield: "",
+  technical: pieceDraft(),
 });
 
 export default function PhysicalSubitemSetup({
@@ -133,6 +145,14 @@ export default function PhysicalSubitemSetup({
         quantity_per_plate: yieldCount,
         initial_stock: initialStock,
         unit_cost: cost,
+        ...(!draft.id &&
+        draft.mode === "new" &&
+        (draft.technical.minutes.trim() ||
+          draft.technical.materials.some(
+            (m) => m.grams.trim() || m.material.trim() || m.item_id,
+          ))
+          ? { technical: piecePayload(draft.technical) }
+          : {}),
       };
       request.current = orderRequest(
         request.current,
@@ -257,6 +277,12 @@ export default function PhysicalSubitemSetup({
                 </dd>
               </div>
             </dl>
+            <PieceTechnicalSummary spec={part.technical} />
+            <PieceTechnicalSheet
+              productId={part.component_product_id}
+              name={part.label}
+              tenantId={tenantId}
+            />
             <p className="text-xs text-muted-foreground">
               {part.plate_label || "Placa de impressão ainda não vinculada"}
               {part.quantity_per_plate != null
@@ -378,6 +404,25 @@ export default function PhysicalSubitemSetup({
                   description: c.sku || undefined,
                 }))}
             />
+          )}
+          {!draft.id && draft.mode === "new" && (
+            <details>
+              <summary className="cursor-pointer text-sm font-medium">
+                Filamento, tempo e ficha técnica da peça
+              </summary>
+              <div className="mt-3">
+                <PieceSpecFields
+                  value={draft.technical}
+                  onChange={(technical) =>
+                    setDraft((current) =>
+                      current ? { ...current, technical } : null,
+                    )
+                  }
+                  tenantId={tenantId}
+                  prefix="new-subitem"
+                />
+              </div>
+            </details>
           )}
           <div>
             <Label htmlFor="subitem-quantity">

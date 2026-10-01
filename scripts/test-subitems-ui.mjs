@@ -13,6 +13,27 @@ try {
       page = await context.newPage(),
       writes = [],
       errors = [];
+    const technical = {
+      source: "manual",
+      revision: null,
+      materials: [
+        {
+          item_id: null,
+          material: "PLA",
+          color: "Vermelho",
+          grams: 5,
+          cost_per_kg: 80,
+        },
+      ],
+      grams: 5,
+      print_seconds: 120,
+      finishing_seconds: 0,
+      machine_hour_cost: 6,
+      labor_hour_cost: 0,
+      extra_cost: 0,
+      pieces_per_plate: 10,
+      estimated_cost: 0.6,
+    };
     const parts = ["Metade da maçã", "Caule", "Folha"].map((name, i) => ({
       id: id(10 + i),
       component_product_id: id(20 + i),
@@ -33,6 +54,7 @@ try {
       missing: i === 2 ? 4 : 0,
       to_print: i === 2 ? 4 : 0,
       prepared: true,
+      technical,
     }));
     const products = [
       {
@@ -112,6 +134,7 @@ try {
         if (name === "products") data = products;
         if (name === "tenants") data = { name: "Teste", settings: {} };
         if (name === "assembly_product_status") data = status;
+        if (name === "product_piece_spec") data = technical;
         if (name === "product_material_recipe_preview")
           data = {
             product: products[0],
@@ -140,6 +163,7 @@ try {
             "plan_subitem_batch",
             "confirm_subitem_output",
             "save_product_subitem",
+            "save_product_piece_spec",
           ].includes(name)
         ) {
           writes.push({ name, payload: route.request().postDataJSON() });
@@ -234,7 +258,6 @@ try {
         });
         throw e;
       });
-    console.log(await page.getByRole("tab").allTextContents());
     await page.getByRole("tab", { name: /Composição/ }).click();
     await expect(
       page.getByRole("region", { name: "Subitens com estoque próprio" }),
@@ -247,6 +270,15 @@ try {
       .fill("Laço decorativo");
     await page.getByLabel("Estoque inicial da peça", { exact: true }).fill("7");
     await page.getByLabel("Custo por peça (R$)", { exact: true }).fill("2,50");
+    await page
+      .getByText("Filamento, tempo e ficha técnica da peça", { exact: true })
+      .click();
+    await page
+      .getByLabel("Filamento por peça (g)", { exact: true })
+      .fill("3,5");
+    await page
+      .getByLabel("Impressão por peça (min)", { exact: true })
+      .fill("8");
     await page
       .getByLabel("Quantas unidades desta peça formam um produto?", {
         exact: true,
@@ -262,7 +294,61 @@ try {
       unit_cost: 2.5,
       quantity_per_product: 2,
       plate_id: null,
+      technical: { print_seconds: 480, materials: [{ grams: 3.5 }] },
     });
+    await page
+      .getByRole("button", { name: "Cadastrar subitem", exact: true })
+      .click();
+    await page
+      .getByLabel("Nome da peça", { exact: true })
+      .fill("Rascunho do produto pai");
+    await page
+      .getByRole("article")
+      .filter({ hasText: "Metade da maçã" })
+      .getByRole("link", { name: "Abrir cadastro da peça", exact: true })
+      .click();
+    await expect(page.getByLabel("Nome *", { exact: true })).toHaveValue(
+      "Metade da maçã",
+    );
+    await expect(
+      page.getByRole("button", { name: "Salvar", exact: true }),
+    ).toBeEnabled();
+    await page.getByRole("tab", { name: /Composição/ }).click();
+    await page
+      .getByRole("button", { name: "Ficha técnica", exact: true })
+      .click();
+    const specDialog = page.getByRole("dialog", {
+      name: "Ficha técnica — Metade da maçã",
+      exact: true,
+    });
+    await expect(specDialog).toBeVisible();
+    await specDialog
+      .getByLabel("Peso e tempo informados para", { exact: true })
+      .selectOption("plate");
+    await specDialog
+      .getByLabel("Peças iguais por placa (opcional)", { exact: true })
+      .fill("20");
+    await specDialog
+      .getByLabel("Filamento da placa (g)", { exact: true })
+      .fill("55,5");
+    await specDialog
+      .getByLabel("Impressão da placa (min)", { exact: true })
+      .fill("90");
+    await page.screenshot({
+      path: `${output}/technical-${width}.png`,
+      animations: "disabled",
+    });
+    await specDialog
+      .getByRole("button", { name: "Salvar ficha técnica", exact: true })
+      .click();
+    await expect.poll(() => writes.length).toBe(5);
+    expect(writes[4].payload.p_product_id).toBe(parts[0].component_product_id);
+    expect(writes[4].payload.p_data.print_seconds).toBe(270);
+    expect(writes[4].payload.p_data.materials[0].grams).toBe(2.775);
+    await expect(specDialog).toBeHidden();
+    await expect(
+      page.getByRole("button", { name: "Salvar", exact: true }),
+    ).toBeEnabled();
     expect(errors).toEqual([]);
     console.log(
       `PASS physical subitem UI ${width}px: independent entry, assembly consumption preview, per-part QC and catalogue creation`,
