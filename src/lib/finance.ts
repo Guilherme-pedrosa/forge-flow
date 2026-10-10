@@ -35,12 +35,14 @@ export interface FinancialTitle {
   amount: number;
   amount_paid?: number;
   amount_received?: number;
+  /** Principal retained then cancelled by the channel: it never entered cash. */
+  marketplace_cancelled_gross?: number;
   due_date: string;
   status: string;
 }
 
 export const settledAmount = (title: FinancialTitle) => money(title.amount_paid ?? title.amount_received ?? 0);
-export const outstandingAmount = (title: FinancialTitle) => Math.max(0, money(title.amount - settledAmount(title)));
+export const outstandingAmount = (title: FinancialTitle) => Math.max(0, money(title.amount - settledAmount(title) - (title.marketplace_cancelled_gross ?? 0)));
 export const isCancelled = (title: FinancialTitle) => ["cancelled", "reversed"].includes(title.status);
 export function effectiveStatus(title: FinancialTitle, today = localDate()): "cancelled" | "settled" | "overdue" | "partial" | "open" {
   if (isCancelled(title)) return "cancelled";

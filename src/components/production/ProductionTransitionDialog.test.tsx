@@ -14,6 +14,31 @@ function field(label: RegExp, value: string) { fireEvent.change(screen.getByLabe
 function submit() { fireEvent.submit(screen.getByRole("button", { name: "Confirmar apuração" }).closest("form")!); }
 
 describe("apuração de uma ordem", () => {
+  it("exige contar peças boas sem preencher o rendimento previsto como conferência", () => {
+    const save = vi.fn();
+    render(<ProductionTransitionDialog value={{ job: { ...job, planned_quantity: 4, status: "quality_check", inventory_posted_at: "2026-10-10T12:00:00Z" }, status: "ready" }} printers={[{ id: "printer-1", name: "P1S", status: "idle" }]} pending={false} onClose={vi.fn()} onSave={save} />);
+    expect(screen.getByLabelText("Quantidade boa conferida")).toHaveValue(null);
+    fireEvent.submit(screen.getByRole("button", { name: "Confirmar qualidade" }).closest("form")!);
+    expect(save).not.toHaveBeenCalled(); expect(screen.getByRole("alert")).toHaveTextContent("quantidade boa conferida");
+  });
+  it("exige motivo para rejeição parcial e conserva a identidade ao repetir a mesma conferência", () => {
+    const save = vi.fn();
+    render(<ProductionTransitionDialog value={{ job: { ...job, planned_quantity: 4, status: "quality_check", inventory_posted_at: "2026-10-10T12:00:00Z" }, status: "ready" }} printers={[{ id: "printer-1", name: "P1S", status: "idle" }]} pending={false} onClose={vi.fn()} onSave={save} />);
+    field(/Quantidade boa conferida/, "3");
+    const submitQuality = () => fireEvent.submit(screen.getByRole("button", { name: "Confirmar qualidade" }).closest("form")!);
+    submitQuality(); expect(save).not.toHaveBeenCalled(); expect(screen.getByRole("alert")).toHaveTextContent("motivo");
+    field(/Motivo das peças rejeitadas/, "Uma peça deformou"); submitQuality(); submitQuality();
+    expect(save).toHaveBeenCalledWith(expect.objectContaining({ status: "ready", approvedQuantity: 3, failureReason: "Uma peça deformou", qualityRequestId: expect.any(String) }));
+    expect(save.mock.calls[0][0].qualityRequestId).toBe(save.mock.calls[1][0].qualityRequestId);
+    expect(save.mock.calls[0][0]).not.toHaveProperty("actualGrams");
+  });
+  it("não permite aprovar mais peças do que a execução Bambu apurada", () => {
+    const save = vi.fn();
+    render(<ProductionTransitionDialog value={{ job: { ...job, planned_quantity: 4, produced_quantity: 2, status: "quality_check", inventory_posted_at: "2026-10-10T12:00:00Z" }, status: "ready" }} printers={[{ id: "printer-1", name: "P1S", status: "idle" }]} pending={false} onClose={vi.fn()} onSave={save} />);
+    field(/Quantidade boa conferida/, "3");
+    fireEvent.submit(screen.getByRole("button", { name: "Confirmar qualidade" }).closest("form")!);
+    expect(save).not.toHaveBeenCalled(); expect(screen.getByRole("alert")).toHaveTextContent("entre 1 e 2");
+  });
   it("não substitui valores reais vazios por estimativas", () => {
     const save = mount(); submit();
     expect(save).not.toHaveBeenCalled();

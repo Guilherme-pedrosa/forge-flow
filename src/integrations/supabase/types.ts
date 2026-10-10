@@ -144,6 +144,7 @@ export type Database = {
       }
       accounts_receivable: {
         Row: {
+          marketplace_cancelled_gross: number
           account_id: string | null
           amount: number
           amount_received: number
@@ -169,6 +170,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          marketplace_cancelled_gross?: number
           account_id?: string | null
           amount: number
           amount_received?: number
@@ -194,6 +196,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          marketplace_cancelled_gross?: number
           account_id?: string | null
           amount?: number
           amount_received?: number
@@ -2105,6 +2108,11 @@ export type Database = {
       }
       orders: {
         Row: {
+          ship_by_at: string | null
+          internal_due_at: string | null
+          marketplace_order_id: string | null
+          workflow_issues: Json
+          workflow_checked_at: string | null
           approved_at: string | null
           code: string
           created_at: string
@@ -2124,6 +2132,11 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          ship_by_at?: string | null
+          internal_due_at?: string | null
+          marketplace_order_id?: string | null
+          workflow_issues?: Json
+          workflow_checked_at?: string | null
           approved_at?: string | null
           code: string
           created_at?: string
@@ -2143,6 +2156,11 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          ship_by_at?: string | null
+          internal_due_at?: string | null
+          marketplace_order_id?: string | null
+          workflow_issues?: Json
+          workflow_checked_at?: string | null
           approved_at?: string | null
           code?: string
           created_at?: string
@@ -3393,6 +3411,12 @@ export type Database = {
       }
     }
     Functions: {
+
+      confirm_finished_output: { Args: { p_job_id: string; p_good_quantity: number; p_reason: string | null; p_request_id: string }; Returns: string }
+      confirm_sales_workflow: { Args: { p_order_id: string | null; p_order: Json | null; p_items: Json | null; p_request_id: string }; Returns: Json }
+      update_sales_order_deadlines: { Args: { p_order_id: string; p_dates: Json; p_reason: string; p_request_id: string }; Returns: string }
+      save_marketplace_workflow_policy: { Args: { p_account_id: string; p_values: Json; p_request_id: string }; Returns: string }
+      organize_eligible_marketplace_orders: { Args: { p_account_id: string; p_order_ids: string[]; p_request_id: string }; Returns: Json }
 
       create_financial_installments: { Args: { p_kind:string;p_title:Json;p_parts:Json;p_request_id:string }; Returns: string }
       post_inventory_batch: { Args: { p_movements:Json;p_request_id:string }; Returns: string }

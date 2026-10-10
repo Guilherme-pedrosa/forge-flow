@@ -10,25 +10,30 @@ import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { AppLayout } from "@/components/AppLayout";
 
 const Dashboard = lazy(() => import("./pages/Dashboard"));
+const Hoje = lazy(() => import("./pages/Hoje"));
 const Precificacao = lazy(() => import("./pages/comercial/Precificacao"));
 const Etiquetas = lazy(() => import("./pages/comercial/Etiquetas"));
-const ModulePlaceholder = lazy(() => import("./pages/ModulePlaceholder"));
 const BambuLab = lazy(() => import("./pages/integracoes/BambuLab"));
+const Marketplaces = lazy(() => import("./pages/integracoes/Marketplaces"));
 const ContasPagar = lazy(() => import("./pages/financeiro/ContasPagar"));
 const ContasReceber = lazy(() => import("./pages/financeiro/ContasReceber"));
 const CaixaBancos = lazy(() => import("./pages/financeiro/CaixaBancos"));
 const Conciliacao = lazy(() => import("./pages/financeiro/Conciliacao"));
 const DRE = lazy(() => import("./pages/financeiro/DRE"));
+const Repasses = lazy(() => import("./pages/financeiro/Repasses"));
 const CadastrosFinanceiros = lazy(() => import("./pages/financeiro/Cadastros"));
 const Itens = lazy(() => import("./pages/estoque/Itens"));
 const Movimentacoes = lazy(() => import("./pages/estoque/Movimentacoes"));
 const Alertas = lazy(() => import("./pages/estoque/Alertas"));
 const Compras = lazy(() => import("./pages/estoque/Compras"));
+const Bobinas = lazy(() => import("./pages/estoque/Bobinas"));
+const Reposicao = lazy(() => import("./pages/estoque/Reposicao"));
 const Jobs = lazy(() => import("./pages/producao/Jobs"));
 const MargemSKU = lazy(() => import("./pages/producao/MargemSKU"));
 const Impressoras = lazy(() => import("./pages/producao/Impressoras"));
 const Perdas = lazy(() => import("./pages/producao/Perdas"));
 const Fila = lazy(() => import("./pages/planejamento/Fila"));
+const Capacidade = lazy(() => import("./pages/planejamento/Capacidade"));
 const Produtos = lazy(() => import("./pages/comercial/Produtos"));
 const Pedidos = lazy(() => import("./pages/comercial/Pedidos"));
 const Orcamentos = lazy(() => import("./pages/comercial/Orcamentos"));
@@ -68,19 +73,23 @@ function AuthenticatedRoutes() {
     <AppLayout>
       <Suspense fallback={<PageLoading />}>
       <Routes>
-        <Route path="/" element={<Dashboard />} />
+        <Route path="/" element={<Hoje />} />
+        <Route path="/visao-geral" element={<Dashboard />} />
         {/* Financeiro */}
         <Route path="/financeiro/pagar" element={<ContasPagar />} />
         <Route path="/financeiro/receber" element={<ContasReceber />} />
         <Route path="/financeiro/caixa" element={<CaixaBancos />} />
         <Route path="/financeiro/conciliacao" element={<Conciliacao />} />
         <Route path="/financeiro/dre" element={<DRE />} />
+        <Route path="/financeiro/repasses" element={<Repasses />} />
         <Route path="/financeiro/cadastros" element={<CadastrosFinanceiros />} />
         {/* Estoque */}
         <Route path="/estoque/itens" element={<Itens />} />
         <Route path="/estoque/movimentacoes" element={<Movimentacoes />} />
         <Route path="/estoque/alertas" element={<Alertas />} />
         <Route path="/estoque/compras" element={<Compras />} />
+        <Route path="/estoque/bobinas" element={<Bobinas />} />
+        <Route path="/estoque/reposicao" element={<Reposicao />} />
         {/* Produção */}
         <Route path="/producao/ordens" element={<OrdensProducao />} />
         <Route path="/producao/componentes" element={<ComponentesProducao />} />
@@ -91,6 +100,7 @@ function AuthenticatedRoutes() {
         {/* Planejamento */}
         <Route path="/planejamento/fila" element={<Fila />} />
         <Route path="/planejamento/gantt" element={<Fila />} />
+        <Route path="/planejamento/capacidade" element={<Capacidade />} />
         {/* Comercial */}
         <Route path="/comercial/produtos" element={<Produtos />} />
         <Route path="/comercial/precificacao" element={<Precificacao />} />
@@ -100,10 +110,12 @@ function AuthenticatedRoutes() {
         <Route path="/cadastros/fornecedores" element={<Fornecedores />} />
         <Route path="/comercial/clientes" element={<Clientes />} />
         <Route path="/comercial/consignado" element={<Consignado />} />
-        <Route path="/comercial/marketplaces" element={<ModulePlaceholder />} />
+        <Route path="/comercial/marketplaces" element={<Marketplaces />} />
         {/* Integrações */}
         <Route path="/integracoes/bambu" element={<BambuLab />} />
-        <Route path="/integracoes/ml" element={<ModulePlaceholder />} />
+        <Route path="/integracoes/ml" element={<Marketplaces />} />
+        <Route path="/integracoes/shopee" element={<Marketplaces />} />
+        <Route path="/integracoes/marketplaces" element={<Marketplaces />} />
         {/* Config */}
         <Route path="/configuracoes" element={<Empresa />} />
         <Route path="/configuracoes/usuarios" element={<Usuarios />} />

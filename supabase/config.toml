@@ -1,1 +1,10 @@
 project_id = "gaomleftwxpzjivrnzjk"
+
+[functions.marketplace-sync]
+verify_jwt = true
+
+[functions.marketplace-webhook]
+verify_jwt = true
+
+[functions.shopee-sync]
+verify_jwt = true

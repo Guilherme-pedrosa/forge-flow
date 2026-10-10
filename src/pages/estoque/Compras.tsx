@@ -40,7 +40,8 @@ import { useToast } from "@/hooks/use-toast";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { PurchaseStockQuantity } from "@/components/estoque/PurchaseStockQuantity";
-import { purchaseMaterialLabel, purchaseStockQuantity } from "@/lib/purchase-stock";
+import { purchaseMaterialLabel, purchaseStockQuantity, purchaseMassToStock } from "@/lib/purchase-stock";
+import { parseFilamentPurchaseSuggestion } from "@/lib/filament-planning";
 
 const fmtCurrency = (v: number | null) =>
   v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
@@ -142,6 +143,11 @@ export default function Compras() {
   const { profile } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
+  const refreshPlanning = () => {
+    void qc.invalidateQueries({ queryKey: ["filament-planning"] });
+    void qc.invalidateQueries({ queryKey: ["daily-operations"] });
+    void qc.invalidateQueries({ queryKey: ["capacity_data"] });
+  };
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [params] = useSearchParams();
@@ -185,6 +191,9 @@ export default function Compras() {
   const [manualItems, setManualItems] = useState<{ description: string; quantity: string; unitPrice: string; inventoryItemId: string; stockQuantity?: string }[]>([
     { description: "", quantity: "1", unitPrice: "0", inventoryItemId: "" },
   ]);
+  const [replenishmentReview, setReplenishmentReview] = useState<string | null>(null);
+  const [replenishmentError, setReplenishmentError] = useState<string | null>(null);
+  const openedReplenishment = useRef<string | null>(null);
 
   // NFe form
   const [nfeInstallments, setNfeInstallments] = useState("1");
@@ -238,15 +247,15 @@ export default function Compras() {
     enabled: !!profile,
   });
 
-  const { data: vendors = [] } = useQuery({
-    queryKey: ["vendors"],
+  const { data: vendors = [], isLoading: vendorsLoading, error: vendorsError } = useQuery({
+    queryKey: ["vendors", profile?.tenant_id],
     queryFn: async () => {
       return allRows((from, to) => supabase.from("vendors").select("id, name").eq("is_active", true).order("name").order("id").range(from, to));
     },
     enabled: !!profile,
   });
 
-  const { data: inventoryItems = [], error: inventoryError, refetch: refetchInventory } = useQuery({
+  const { data: inventoryItems = [], isLoading: inventoryLoading, error: inventoryError, refetch: refetchInventory } = useQuery({
     queryKey: ["inventory_items", profile?.tenant_id, "purchase-selection"],
     queryFn: async () => {
       return allRows<{ id: string; name: string; sku: string | null; unit: string; category: string | null; material_code: string | null; color: string | null; color_code: string | null; avg_cost: number; current_stock: number }>((from, to) => supabase.from("inventory_items").select("id, name, sku, unit, category, material_code, color, color_code, avg_cost, current_stock").eq("is_active", true).order("name").order("id").range(from, to));
@@ -296,12 +305,51 @@ export default function Compras() {
     const found = orders.find(o => o.id === id);
     if (found && openedPurchase.current !== id) { openedPurchase.current = id; setDetailOrder(found); }
   }, [params, orders]);
+  // A suggestion only fills a review form. No purchase, receipt or payable is created here.
+  useEffect(() => {
+    const key = `${profile?.tenant_id}:${params.toString()}`;
+    if (!profile || openedReplenishment.current === key) return;
+    let requested;
+    try { requested = parseFilamentPurchaseSuggestion(params); }
+    catch (error) { setReplenishmentError((error as Error).message); return; }
+    if (!requested) { setReplenishmentError(null); return; }
+    // Resolve the complete list after both tenant-scoped catalogues load.
+    // One missing/color/unit error rejects the entire suggestion, never part of it.
+    if (inventoryLoading || vendorsLoading) return;
+    if (inventoryError || vendorsError) { setReplenishmentError("Não foi possível conferir os materiais e o fornecedor. Atualize a página antes de abrir a sugestão."); return; }
+    let prepared;
+    try {
+      prepared = requested.map(line => {
+        const item = inventoryItems.find(row => row.id === line.item_id);
+        if (!item || item.category !== "filament") throw new Error("Um material da sugestão não está disponível nesta empresa. Confira o cadastro e abra novamente pela reposição.");
+        const stockQuantity = purchaseMassToStock(line.kg, "kg", item.unit);
+        if (stockQuantity === null || !Number.isFinite(stockQuantity) || stockQuantity <= 0) throw new Error(`Confira a unidade de estoque de ${item.name}: a reposição usa filamentos em g ou kg.`);
+        return { description: `${item.name} · compra em kg`, quantity: String(line.kg), unitPrice: "0", inventoryItemId: item.id, stockQuantity: String(stockQuantity), item, kg: line.kg, stock: stockQuantity };
+      });
+    } catch (error) { setReplenishmentError((error as Error).message); return; }
+    const vendor = params.get("reposicao_fornecedor");
+    const knownVendor = vendors.find(row => row.id === vendor);
+    const delivery = params.get("reposicao_entrega");
+    const currentDate = localDate();
+    openedReplenishment.current = key;
+    setReplenishmentError(null);
+    setManualItems(prepared.map(({ description, quantity, unitPrice, inventoryItemId, stockQuantity }) => ({ description, quantity, unitPrice, inventoryItemId, stockQuantity })));
+    setVendorId(knownVendor?.id ?? ""); setOrderDate(currentDate);
+    setExpectedDate(delivery && validDate(delivery) && delivery >= currentDate ? delivery : "");
+    setReceiveNow(false); setShipping(""); setDiscount(""); setTaxes(""); setInvoiceNumber("");
+    setPaymentMethodId(""); setInstallments("1"); setDueDate(""); setPaymentParts([]); setPaymentDays("");
+    setNotes(`Sugestão de reposição: ${prepared.map(line => `${line.kg} kg de ${line.item.name}`).join("; ")}. Compra consolidada para conferir um único frete. Confirme preços, prazo e disponibilidade com o fornecedor.`);
+    setReplenishmentReview(`Sugestão: ${prepared.map(line => `${line.item.name}: ${line.kg.toLocaleString("pt-BR")} kg → ${line.stock.toLocaleString("pt-BR")} ${line.item.unit} no estoque`).join("; ")}. Informe o preço por kg de todos os materiais e confira o frete único desta compra.${!knownVendor ? " O fornecedor precisa ser definido; a referência sugerida não está disponível no cadastro ativo desta empresa." : ""}${delivery && validDate(delivery) && delivery < currentDate ? " A primeira data necessária já passou; confira uma nova previsão de entrega." : ""}${delivery && !validDate(delivery) ? " A data sugerida é inválida; informe uma previsão de entrega." : ""}`);
+    setCreateOpen(true);
+  }, [params, profile, inventoryItems, inventoryLoading, inventoryError, vendors, vendorsLoading, vendorsError]);
   const nextCode = "Gerado ao salvar";
   const manualTotal = (() => { try { return money(manualItems.reduce((sum,i) => sum + money(Number(i.quantity.replace(",",".")) * Number(i.unitPrice.replace(",","."))),0) + money(shipping || 0) + money(taxes || 0) - money(discount || 0)); } catch { return 0; } })();
 
   const createMut = useMutation({
     mutationFn: async () => {
       const items = manualItems.filter(i => i.description.trim() || i.inventoryItemId).map(i => ({ description: i.description.trim(), quantity: Number(i.quantity.replace(",", ".")), unit_price: Number(i.unitPrice.replace(",", ".")), total: money(Number(i.quantity.replace(",", ".")) * Number(i.unitPrice.replace(",", "."))), inventory_item_id: i.inventoryItemId || null, stock_quantity: i.inventoryItemId ? purchaseStockQuantity(i.stockQuantity || "") : null }));
+      if (replenishmentReview && !vendors.some(vendor => vendor.id === vendorId)) throw new Error("Selecione um fornecedor ativo para salvar a reposição consolidada.");
+      if (replenishmentReview && items.some(item => !Number.isFinite(item.unit_price) || item.unit_price <= 0)) throw new Error("Informe o preço por kg de todos os materiais antes de salvar a reposição.");
       const subtotal = money(items.reduce((sum, i) => sum + i.total, 0));
       return persistPurchase("manual", { vendor_id: vendorId || null, order_date: orderDate, expected_date: expectedDate || null, subtotal, discount: money(discount || 0), shipping: money(shipping || 0), additional_costs: money(taxes || 0), nfe_number: invoiceNumber.trim() || null, total: money(subtotal + money(shipping || 0) + money(taxes || 0) - money(discount || 0)), receive_now: receiveNow, notes: notes.trim() || null }, items, Number(installments), dueDate || expectedDate || orderDate, paymentMethodId || null);
     },
@@ -310,6 +358,7 @@ export default function Compras() {
       qc.invalidateQueries({ queryKey: ["inventory_items"] }); qc.invalidateQueries({ queryKey: ["products"] });
       qc.invalidateQueries({ queryKey: ["inventory_movements"] });
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
+      refreshPlanning();
       qc.invalidateQueries({ queryKey: ["accounts_payable"] });
       setCreateOpen(false);
       resetForm();
@@ -346,6 +395,7 @@ export default function Compras() {
     onSuccess: (result) => {
       purchaseRequests.current.delete("xml");
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
+      refreshPlanning();
       qc.invalidateQueries({ queryKey: ["vendors"] });
       qc.invalidateQueries({ queryKey: ["accounts_payable"] });
       if (result?.shouldReceive) {
@@ -373,6 +423,7 @@ export default function Compras() {
     },
     onSuccess: (result) => {
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
+      refreshPlanning();
       qc.invalidateQueries({ queryKey: ["inventory_items"] }); qc.invalidateQueries({ queryKey: ["products"] });
       qc.invalidateQueries({ queryKey: ["inventory_movements"] });
       setReceiveConfirmOpen(false);
@@ -394,6 +445,7 @@ export default function Compras() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
+      refreshPlanning();
       qc.invalidateQueries({ queryKey: ["accounts_payable"] });
       setCancelOrderId(null); setDetailOrder(null);
       toast({ title: "Compra cancelada", description: "Pedido e títulos preservados no histórico." });
@@ -402,6 +454,7 @@ export default function Compras() {
   });
 
   const resetForm = () => {
+    setReplenishmentReview(null);
     setReceiveNow(false); setShipping(""); setDiscount("");
     setVendorId("");
     setOrderDate(localDate());
@@ -458,7 +511,7 @@ export default function Compras() {
       if (error) throw error;
       if (!data?.length) throw new Error("O item não foi atualizado. Reabra o pedido.");
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["purchase_order_items", detailOrder?.id] }),
+    onSuccess: () => { refreshPlanning(); return qc.invalidateQueries({ queryKey: ["purchase_order_items", detailOrder?.id] }); },
     onError: (error: any) => { toast({ title: "Vínculo não salvo", description: error.message, variant: "destructive" }); qc.invalidateQueries({ queryKey: ["purchase_order_items", detailOrder?.id] }); },
   });
 
@@ -574,6 +627,7 @@ export default function Compras() {
     onSuccess: () => {
       purchaseRequests.current.delete("marketplace");
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
+      refreshPlanning();
       qc.invalidateQueries({ queryKey: ["vendors"] });
       qc.invalidateQueries({ queryKey: ["accounts_payable"] });
       setMarketplaceParsed(prev => prev.filter((_, i) => i !== marketplaceSelectedIdx));
@@ -617,6 +671,7 @@ export default function Compras() {
           </div>
         }
       />
+      {replenishmentError && <div role="alert" className="rounded-lg border border-destructive/30 p-3 text-sm"><p className="font-medium">Não foi possível abrir a reposição sugerida.</p><p className="mt-1">{replenishmentError}</p><Link className="mt-2 inline-block text-primary underline" to="/estoque/reposicao">Conferir sugestões de reposição</Link></div>}
       {inventoryError && <div role="alert" className="rounded-lg border border-destructive/30 p-3 text-sm">Não foi possível carregar os materiais para vincular ao estoque. <Button variant="outline" size="sm" onClick={() => refetchInventory()}>Tentar novamente</Button></div>}
 
       {/* KPIs */}
@@ -725,17 +780,18 @@ export default function Compras() {
             <DialogDescription>Código: {nextCode}</DialogDescription>
           </DialogHeader>
           <div className="grid min-h-0 flex-1 gap-6 overflow-y-auto pr-1">
+            {replenishmentReview && <div role="status" className="rounded-lg border border-amber-300 bg-amber-50/30 p-3 text-sm"><strong>Revisar reposição sugerida</strong><p className="mt-1">{replenishmentReview}</p><p className="mt-1 text-muted-foreground">Nenhuma compra ou conta a pagar foi criada. O botão Salvar compra usa o fluxo normal, após sua conferência.</p></div>}
             <h3 className="font-semibold">Dados da compra</h3>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><div><div className="flex flex-wrap items-center justify-between"><Label>Fornecedor</Label><Button type="button" size="sm" variant="link" onClick={() => setVendorOpen(true)}>Cadastrar fornecedor</Button></div>
                 <SearchableItemSelect label="Fornecedor da compra" value={vendorId} onChange={setVendorId} emptyLabel="Selecionar fornecedor" searchPlaceholder="Digite o nome do fornecedor…" disabled={createMut.isPending} options={vendors.map(v => ({ id: v.id, label: v.name }))} />
               </div>
               <div>
-                <Label>Data do Pedido</Label>
-                <Input type="date" value={orderDate} onChange={(e) => setOrderDate(e.target.value)} />
+                <Label htmlFor="purchase-order-date">Data do Pedido</Label>
+                <Input id="purchase-order-date" type="date" value={orderDate} onChange={(e) => setOrderDate(e.target.value)} />
               </div>
               <div>
-                <Label>Previsão de Entrega</Label>
-                <Input type="date" value={expectedDate} onChange={(e) => setExpectedDate(e.target.value)} />
+                <Label htmlFor="purchase-expected-date">Previsão de Entrega</Label>
+                <Input id="purchase-expected-date" type="date" value={expectedDate} onChange={(e) => setExpectedDate(e.target.value)} />
               </div>
               <div><Label htmlFor="purchase-invoice">Número da nota fiscal</Label><Input id="purchase-invoice" value={invoiceNumber} onChange={e => setInvoiceNumber(e.target.value)}/></div>
             </div>
