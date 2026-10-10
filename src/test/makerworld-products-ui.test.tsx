@@ -5,7 +5,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import Produtos from "@/pages/comercial/Produtos";
 import { supabase } from "@/integrations/supabase/client";
 
-const mock = vi.hoisted(() => ({ rpc: vi.fn(), toast: vi.fn(), products: [] as Record<string, unknown>[], photos: [] as { url: string }[], get: vi.fn() }));
+const mock = vi.hoisted(() => ({ rpc: vi.fn(), toast: vi.fn(), products: [] as Record<string, unknown>[], photos: [] as { url: string }[], get: vi.fn(), translate: vi.fn<(text: string, source: string, signal: AbortSignal) => Promise<string>>() }));
 const abortDescriptor = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "throwIfAborted");
 beforeAll(() => { if (!abortDescriptor) Object.defineProperty(AbortSignal.prototype, "throwIfAborted", { configurable: true, value(this: AbortSignal) { if (this.aborted) throw new DOMException("Consulta cancelada", "AbortError"); } }); });
 afterAll(() => { if (!abortDescriptor) delete (AbortSignal.prototype as unknown as Record<string, unknown>).throwIfAborted; });
@@ -32,6 +32,8 @@ const bom = { schema_version: 1, product: existingProduct, plates: [], component
   recipe: { version_id: "recipe-manual-7", version: 7, basis: "per_unit", units_per_print: 3, non_material_cost_per_unit: 3, material_cost_per_unit: .5, cost_per_unit: 3.5, complete: true, missing: [], created_at: "2026-09-13", notes: "Receita aprovada", lines: [{ item_id: inventoryItem.id, name: inventoryItem.name, material_code: "PETG", color: "Azul", color_code: "BLUE", grams: 10, grams_per_unit: 10, grams_per_print: 30 }] } };
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ profile: { tenant_id: "tenant-1" } }) }));
 vi.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: mock.toast }) }));
+// Translation has its own provider/component tests; this flow must not depend on external network timing.
+vi.mock("@/lib/public-description-translation", () => ({ translatePublicDescription: mock.translate }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {
   rpc: mock.rpc, functions: { invoke: async () => ({ data: { projects: [] }, error: null }) },
   from: (table: string) => {
@@ -41,7 +43,8 @@ vi.mock("@/integrations/supabase/client", () => ({ supabase: {
   },
 } }));
 beforeEach(() => {
-  mock.products = []; mock.photos = []; mock.toast.mockClear(); mock.rpc.mockReset(); mock.get.mockReset();
+  mock.products = []; mock.photos = []; mock.toast.mockClear(); mock.rpc.mockReset(); mock.get.mockReset(); mock.translate.mockReset();
+  mock.translate.mockImplementation(async text => text);
   mock.get.mockResolvedValue({ data: { status: "ready", payload: rawDesign }, error: null });
   mock.rpc.mockImplementation(async (name: string, args: unknown) => {
     if (name === "request_makerworld_import") return { data: "request-1", error: null };
@@ -66,7 +69,7 @@ async function chooseA1() {
   fireEvent.click(within(chooser).getByRole("button", { name: /Perfil detalhado/ }));
   fireEvent.change(within(chooser).getByLabelText("Configuração da impressora"), { target: { value: "1" } });
   expect(within(chooser).getByRole("option", { name: /^A1 · bico 0.4 mm/ })).toHaveProperty("selected", true);
-  fireEvent.click(within(chooser).getByRole("button", { name: "Importar esta opção" }));
+  await act(async () => { fireEvent.click(within(chooser).getByRole("button", { name: "Importar esta opção" })); });
 }
 const savedPayload = () => mock.rpc.mock.calls.find(call => call[0] === "save_product_with_photos")?.[1];
 
@@ -89,7 +92,8 @@ describe("importação MakerWorld no cadastro de produtos", () => {
     expect(within(editor).getByAltText("Foto 1")).toHaveAttribute("src", url);
     expect(savedPayload()).toBeUndefined();
     fireEvent.change(within(editor).getByLabelText("Nome *"), { target: { value: "Produto com foto da placa" } });
-    fireEvent.click(within(editor).getByRole("button", { name: "Criar" }));
+    const create = within(editor).getByRole("button", { name: "Criar" });
+    await waitFor(() => expect(create).toBeEnabled()); fireEvent.click(create);
     await waitFor(() => expect(savedPayload()).toBeDefined());
     expect(savedPayload().p_product.photo_url).toBe(url);
     expect(savedPayload().p_product.external_import).toBeUndefined();
@@ -142,7 +146,8 @@ describe("importação MakerWorld no cadastro de produtos", () => {
     fireEvent.click(within(editor).getByText("Ver ficha técnica, placas e materiais"));
     expect(within(editor).getByText("A1 · selecionada")).toBeInTheDocument();
     fireEvent.change(within(editor).getByLabelText("Preço unitário (R$)"), { target: { value: "39.9" } });
-    fireEvent.click(within(editor).getByRole("button", { name: "Criar" }));
+    const create = within(editor).getByRole("button", { name: "Criar" });
+    await waitFor(() => expect(create).toBeEnabled()); fireEvent.click(create);
     await waitFor(() => expect(savedPayload()).toBeDefined());
     const payload = savedPayload(); const imported = payload.p_product.external_import;
     expect(payload.p_product).toMatchObject({ name: "Conjunto Maker", material_id: null, prints_per_plate: 1, num_colors: 2, sale_price: 39.9 });
@@ -156,6 +161,35 @@ describe("importação MakerWorld no cadastro de produtos", () => {
     expect(mock.rpc.mock.contexts.every(context => context === supabase)).toBe(true);
     expect(mock.rpc.mock.calls.some(call => call[0] === "save_product_material_recipe")).toBe(false);
   });
+  it("aguarda a tradução pendente antes de salvar a descrição e a configuração importada", async () => {
+    let finishTranslation!: (text: string) => void;
+    mock.translate.mockImplementation(() => new Promise<string>(resolve => { finishTranslation = resolve; }));
+    mount(); const search = await searchModel();
+    fireEvent.click(await within(search).findByRole("button", { name: /Conjunto Maker/ }));
+    await chooseA1();
+    const editor = await screen.findByRole("dialog", { name: "Novo Produto" });
+    await waitFor(() => expect(mock.translate).toHaveBeenCalledTimes(1));
+    const original = String(mock.translate.mock.calls[0][0]);
+    expect(mock.translate).toHaveBeenCalledWith(original, "en", expect.any(AbortSignal));
+    const create = within(editor).getByRole("button", { name: "Criar" });
+    expect(create).toBeDisabled();
+    fireEvent.click(create);
+    expect(savedPayload()).toBeUndefined();
+    expect(within(editor).getByLabelText("Descrição")).toHaveValue(original);
+    const translated = "Descrição traduzida para o cadastro. Revise a montagem.";
+    await act(async () => finishTranslation(translated));
+    await waitFor(() => expect(create).toBeEnabled());
+    expect(savedPayload()).toBeUndefined();
+    expect(within(editor).getByLabelText("Descrição")).toHaveValue(translated);
+    fireEvent.click(create);
+    await waitFor(() => expect(savedPayload()).toBeDefined());
+    expect(mock.rpc.mock.calls.filter(call => call[0] === "save_product_with_photos")).toHaveLength(1);
+    expect(savedPayload().p_product).toMatchObject({ name: "Conjunto Maker", description: translated, material_id: null, prints_per_plate: 1 });
+    expect(savedPayload().p_product.external_import).toMatchObject({ description: original, selected_profile_id: "102", selected_variant_profile_id: "602" });
+    expect(savedPayload().p_product.external_import.gallery).toEqual(photos);
+    expect(savedPayload().p_product.external_import.profiles[1].variants[0].plate_details.map((value: { name: string }) => value.name)).toEqual(["Base A1", "Tampa A1"]);
+    expect(savedPayload().p_photos).toEqual(photos.slice(1));
+  });
   it("atualiza detalhes e mescla a galeria do produto existente preservando nome, preço e composição manual", async () => {
     mock.products = [existingProduct]; mock.photos = [{ url: "https://own.example.test/manual-extra.jpg" }, { url: photos[2] }]; mount();
     fireEvent.click(await screen.findByText(existingProduct.name));
@@ -164,7 +198,8 @@ describe("importação MakerWorld no cadastro de produtos", () => {
     await waitFor(() => expect(refresh).toBeEnabled()); fireEvent.click(refresh);
     await chooseA1(); editor = screen.getByRole("dialog", { name: "Editar Produto" });
     expect(within(editor).getByText("Versão 7 · Composição e custo completos")).toBeInTheDocument();
-    fireEvent.click(within(editor).getByRole("button", { name: "Salvar" }));
+    const save = within(editor).getByRole("button", { name: "Salvar" });
+    await waitFor(() => expect(save).toBeEnabled()); fireEvent.click(save);
     await waitFor(() => expect(savedPayload()).toBeDefined());
     const payload = savedPayload(); expect(payload.p_product_id).toBe(existingProduct.id);
     expect(payload.p_product).toMatchObject({ name: existingProduct.name, sale_price: 79.9, sku: "SKU-MANUAL", material_id: inventoryItem.id, prints_per_plate: 3, est_grams: 88, est_time_minutes: 120, post_process_minutes: 7, num_colors: 2, notes: existingProduct.notes, extras: existingProduct.extras });
