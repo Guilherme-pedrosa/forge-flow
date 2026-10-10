@@ -251,4 +251,3 @@ Painel útil: saldo de caixa/carteiras livres; recebíveis previstos por data e 
 - Lead time, consumo, defeitos e custo precisam de revisão quando mudar material, impressora, perfil, fornecedor ou projeto; manter história, não reescrever custos de pedidos passados ao editar o cadastro atual.
 - Não se assumiu tabela vigente de Shopee/ML, regime tributário, contratos de software/modelos nem potência média de máquina específica. Cada um influencia preço e deve vir de evidência da conta/operação.
 - Não foram feitos pedidos a fornecedores, conciliações externas, lançamentos contábeis ou alterações de código. O recorte é recomendação de domínio e pesquisa para o diagnóstico do produto.
-
