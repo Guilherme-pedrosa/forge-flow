@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { readProductionRows } from "./production-read";
+import { excludeUnstartedCancelledJobs } from "./job-source-cancellation";
 
 export interface FilamentMaterial {
   id: string; name: string; unit: string; current_stock: number; min_stock: number | null;
@@ -19,6 +20,7 @@ export interface FilamentJob {
   material_id: string | null; secondary_material_id: string | null; print_plate_id: string | null;
   production_snapshot: unknown; inventory_posted_at: string | null; order_id?: string | null;
   production_order_id?: string | null; production_order_item_id?: string | null;
+  started_at?: string | null;
 }
 export interface FilamentDemand { id: string; label: string; due_date: string | null; lines: { item_id: string; grams: number }[] | null }
 export interface FilamentPurchase {
@@ -241,7 +243,7 @@ export async function loadFilamentPlanningSnapshot(client: SupabaseClient): Prom
   type DemandItem = { id: string; order_id?: string; production_order_id?: string; quantity: number; product_snapshot?: unknown; commercial_snapshot?: unknown; production_snapshot?: unknown; description: string };
   const [items, jobs, purchases, purchaseItems, reservations, spools, policies, vendors, printers, orders, orderItems, productionOrders, productionItems, tenants] = await Promise.all([
     read<FilamentMaterial & { category: string; is_active: boolean }>("inventory_items", "id,name,unit,current_stock,min_stock,vendor_id,material_code,color,color_code,category,is_active"),
-    read<FilamentJob>("jobs", "id,code,name,status,due_date,est_grams,material_id,secondary_material_id,print_plate_id,production_snapshot,inventory_posted_at,order_id,production_order_id,production_order_item_id"),
+    read<FilamentJob>("jobs", "id,code,name,status,due_date,est_grams,material_id,secondary_material_id,print_plate_id,production_snapshot,started_at,inventory_posted_at,order_id,production_order_id,production_order_item_id"),
     read<Omit<FilamentPurchase, "items">>("purchase_orders", "id,code,status,expected_date"),
     read<FilamentPurchase["items"][number] & { purchase_order_id: string }>("purchase_order_items", "id,purchase_order_id,inventory_item_id,stock_quantity"),
     read<FilamentReservation>("filament_active_reservations", "id,job_id,item_id,spool_id,grams,status,released_at"),
@@ -254,8 +256,7 @@ export async function loadFilamentPlanningSnapshot(client: SupabaseClient): Prom
   ]);
   const timezone = tenants[0]?.timezone || "America/Sao_Paulo";
   const cancelled = new Set(orders.filter(o => o.status === "cancelled").map(o => o.id));
-  const cancelledProduction = new Set(productionOrders.filter(o => o.status === "cancelled").map(o => o.id));
-  const liveJobs = jobs.filter(j => !cancelled.has(j.order_id ?? "") && !cancelledProduction.has(j.production_order_id ?? "")).map(job => {
+  const liveJobs = excludeUnstartedCancelledJobs(jobs, orders, productionOrders).map(job => {
     const production = productionOrders.find(p => p.id === job.production_order_id);
     const order = orders.find(o => o.id === (job.order_id ?? production?.source_order_id) || (production?.source_quote_id && o.source_quote_id === production.source_quote_id));
     const operationalDate = order ? operatingDemandDate(order, timezone) : null;

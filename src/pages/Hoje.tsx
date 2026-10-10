@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { readProductionRows } from "@/lib/production-read";
+import { excludeUnstartedCancelledJobs, type PlanningSourceJob, type PlanningSourceProductionOrder } from "@/lib/job-source-cancellation";
 import { dailyPrinterStatus, readDailyMarketplaceOrders, summarizeDailyOperations, type DailyJob, type DailyMaterial, type DailyOrder, type DailyPrinter } from "@/lib/daily-operations";
 import { displayDate } from "@/lib/finance";
 import { operationalIssueLabel } from "@/lib/operational-planning";
@@ -16,8 +17,8 @@ import { cn } from "@/lib/utils";
 const orderStatus: Record<string, string> = { draft: "Rascunho", approved: "Aprovado", in_production: "Em produção", ready: "Pronto", shipped: "Enviado" };
 const timestampLabel = (value: string) => new Date(value).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" });
 const stockLabel = (value: number, unit: string) => `${value.toLocaleString("pt-BR", { maximumFractionDigits: 3 })} ${unit || "(unidade a informar)"}`;
-// Optional module: the historical generated schema does not include the inbox yet.
-const marketplaceClient = supabase as unknown as SupabaseClient;
+// The historical generated schema omits operational tables added by migrations.
+const operationalClient = supabase as unknown as SupabaseClient;
 
 function Panel({ title, description, href, children }: { title: string; description?: string; href?: string; children: React.ReactNode }) {
   return <section className="min-w-0 overflow-hidden rounded-xl border bg-card">
@@ -38,14 +39,15 @@ export default function Hoje() {
   const query = useQuery({
     queryKey: ["daily-operations", tenantId], enabled: !!tenantId, staleTime: 30_000, retry: 1,
     queryFn: async () => {
-      const [orders, jobs, printers, materials, marketplaceOrders] = await Promise.all([
-        readProductionRows<DailyOrder>((from, to) => supabase.from("orders").select("*").eq("tenant_id", tenantId!).not("status", "in", "(delivered,cancelled)").order("id").range(from, to)),
-        readProductionRows<DailyJob>((from, to) => supabase.from("jobs").select("id, status, reprint_of").eq("tenant_id", tenantId!).order("id").range(from, to)),
+      const [orders, jobs, printers, materials, marketplaceOrders, productionOrders] = await Promise.all([
+        readProductionRows<DailyOrder>((from, to) => supabase.from("orders").select("*").eq("tenant_id", tenantId!).order("id").range(from, to)),
+        readProductionRows<DailyJob & PlanningSourceJob>((from, to) => supabase.from("jobs").select("id, status, reprint_of, order_id, production_order_id, started_at, inventory_posted_at").eq("tenant_id", tenantId!).order("id").range(from, to)),
         readProductionRows<DailyPrinter>((from, to) => supabase.from("printers").select("id, name, model, status").eq("tenant_id", tenantId!).eq("is_active", true).order("id").range(from, to)),
         readProductionRows<DailyMaterial>((from, to) => supabase.from("inventory_items").select("id, name, unit, current_stock, min_stock").eq("tenant_id", tenantId!).eq("is_active", true).order("id").range(from, to)),
-        readDailyMarketplaceOrders((from, to) => marketplaceClient.from("marketplace_orders").select("id, internal_order_id, shipping_deadline_at, needs_review, review_reason").eq("tenant_id", tenantId!).not("internal_order_id", "is", null).order("id").range(from, to)),
+        readDailyMarketplaceOrders((from, to) => operationalClient.from("marketplace_orders").select("id, internal_order_id, shipping_deadline_at, needs_review, review_reason").eq("tenant_id", tenantId!).not("internal_order_id", "is", null).order("id").range(from, to)),
+        readProductionRows<PlanningSourceProductionOrder>((from, to) => operationalClient.from("production_orders").select("id, status, source_order_id").eq("tenant_id", tenantId!).order("id").range(from, to)),
       ]);
-      return { orders, jobs, printers, materials, marketplaceOrders };
+      return { orders, jobs: excludeUnstartedCancelledJobs(jobs, orders, productionOrders), printers, materials, marketplaceOrders };
     },
   });
   const data = useMemo(() => query.data ? summarizeDailyOperations(query.data, now) : null, [query.data, now]);

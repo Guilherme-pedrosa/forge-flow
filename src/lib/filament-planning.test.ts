@@ -77,6 +77,41 @@ describe("filament planning", () => {
     const client = { from: () => ({ select() { return this; }, order() { return this; }, range() { return Promise.resolve({ data: null, error: { message: "Relation missing", code: "42P01" } }); } }) } as unknown as SupabaseClient;
     await expect(loadFilamentPlanningSnapshot(client)).rejects.toMatchObject({ message: "Relation missing", code: "42P01" });
   });
+  it("resolves cancelled sales through paginated OP sources and retains physical work", async () => {
+    const rows: Record<string, unknown[]> = {
+      inventory_items: [{ ...snapshot().items[0], category: "filament", is_active: true }],
+      orders: [...Array.from({ length: 500 }, (_, index) => ({ id: `other-sale-${index}`, status: "draft" })), { id: "cancelled-sale", status: "cancelled" }],
+      production_orders: [...Array.from({ length: 500 }, (_, index) => ({ id: `other-op-${index}`, status: "completed" })), { id: "derived-op", status: "released", source_order_id: "cancelled-sale" }, { id: "cancelled-op", status: "cancelled" }],
+      jobs: [
+        job({ id: "derived", order_id: null, production_order_id: "derived-op" }),
+        job({ id: "direct", order_id: "cancelled-sale" }),
+        job({ id: "draft-op", status: "draft", production_order_id: "cancelled-op" }),
+        job({ id: "reprint-op", status: "reprint", production_order_id: "cancelled-op" }),
+        job({ id: "printing", status: "printing", production_order_id: "derived-op" }),
+        job({ id: "started", order_id: "cancelled-sale", started_at: "2026-10-10T10:00:00Z" }),
+        job({ id: "posted", order_id: "cancelled-sale", inventory_posted_at: "2026-10-10T11:00:00Z" }),
+        job({ id: "qc", status: "quality_check", production_order_id: "cancelled-op" }),
+        job({ id: "active" }),
+      ],
+      filament_active_reservations: [{ id: "cancelled-reservation", job_id: "derived", item_id: "a", spool_id: null, grams: 600, status: "reserved", released_at: null }],
+    };
+    const requests: { table: string; columns: string; from: number }[] = [];
+    const client = { from: (table: string) => {
+      let columns = "";
+      return { select(value: string) { columns = value; return this; }, order() { return this; }, range(from: number, to: number) {
+        requests.push({ table, columns, from });
+        return Promise.resolve({ data: (rows[table] ?? []).slice(from, to + 1), error: null });
+      } };
+    } } as unknown as SupabaseClient;
+    const loaded = await loadFilamentPlanningSnapshot(client);
+    expect(loaded.jobs.map(entry => entry.id)).toEqual(["printing", "started", "posted", "qc", "active"]);
+    expect(loaded.committedDemand).toEqual([]);
+    expect(calculateFilamentPlan(loaded, "2026-10-10").materials[0]).toMatchObject({ demandGrams: 1800, reservedGrams: 0 });
+    expect(requests).toContainEqual(expect.objectContaining({ table: "orders", from: 500 }));
+    expect(requests).toContainEqual(expect.objectContaining({ table: "production_orders", from: 500 }));
+    expect(requests.find(request => request.table === "jobs")?.columns.split(",")).toContain("started_at");
+    expect(rows.jobs).toHaveLength(9);
+  });
   it("consolidates colors for one supplier and chooses the earliest need even when overdue", () => {
     const materials = calculateFilamentPlan(snapshot({ items: [snapshot().items[0], { ...snapshot().items[0], id: "b", name: "PLA azul", unit: "g", current_stock: 0 }], jobs: [job({ est_grams: 2000 }), job({ id: "blue", material_id: "b", est_grams: 1500, due_date: "2026-10-15" })] }), "2026-10-10").materials;
     const href = filamentSupplierPurchaseHref(materials);

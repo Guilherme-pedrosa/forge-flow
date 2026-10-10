@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { positiveInteger, productExtrasPerPiece, requiresProductionMeasurement } from "@/lib/production";
 import { createJobs, transitionJob, productionQueryKeys, type CreateJobInput } from "@/lib/production-api";
 import { readProductionRows } from "@/lib/production-read";
+import { excludeUnstartedCancelledJobs } from "@/lib/job-source-cancellation";
 import { assemblyRows } from "@/lib/assembly";
 import { isMissingDatabaseStructure } from "@/lib/database-readiness";
 import { compareOperationalJobs, operationalJobTiming, type OperationalJob } from "@/lib/operational-planning";
@@ -135,13 +136,13 @@ export default function Fila() {
           .in("status", QUEUE_STATUSES)
           .order("priority", { ascending: true })
           .order("created_at", { ascending: true }).order("id").range(from, to)),
-        assemblyRows<{ id: string; due_date: string | null; ship_by_at?: string | null; internal_due_at?: string | null }>("orders", "*", { tenant_id: profile!.tenant_id }),
-        assemblyRows<{ id: string; source_order_id: string | null }>("production_orders", "*", { tenant_id: profile!.tenant_id }),
+        assemblyRows<{ id: string; status: string; due_date: string | null; ship_by_at?: string | null; internal_due_at?: string | null }>("orders", "*", { tenant_id: profile!.tenant_id }),
+        assemblyRows<{ id: string; status: string; source_order_id: string | null }>("production_orders", "*", { tenant_id: profile!.tenant_id }),
         assemblyRows<QueueMarketplaceOrder>("marketplace_orders", "id,internal_order_id,shipping_deadline_at,needs_review,review_reason", { tenant_id: profile!.tenant_id }).catch(error => { if (isMissingDatabaseStructure(error)) return []; throw error; }),
       ]);
       const byOrder = new Map(orders.map(order => [order.id, order]));
       const sources = new Map(productionOrders.map(order => [order.id, order.source_order_id]));
-      return rows.map(job => {
+      return excludeUnstartedCancelledJobs(rows, orders, productionOrders).map(job => {
         const orderId = job.order_id ?? (job.production_order_id ? sources.get(job.production_order_id) : null) ?? null;
         const order = byOrder.get(orderId ?? "");
         const linked = marketplaceOrders.filter(row => row.internal_order_id != null && row.internal_order_id === orderId);
@@ -347,6 +348,7 @@ export default function Fila() {
 
       {jobsError && <p role="alert" className="rounded-lg bg-destructive/10 p-4 text-sm text-destructive">Não foi possível atualizar a fila: {jobsError.message}</p>}
       {jobsLoading && <p role="status" className="text-sm text-muted-foreground">Carregando fila de produção...</p>}
+      <p className="text-xs text-muted-foreground">Impressões ainda não iniciadas de pedidos ou OPs cancelados ficam fora da fila. Execuções já iniciadas permanecem para acompanhamento.</p>
       {transition && <ProductionTransitionDialog key={`${transition.job.id}-${transition.status}`} value={transition} printers={printers} pending={updateStatusMut.isPending} onClose={() => setTransition(null)} onSave={value => updateStatusMut.mutate(value)} />}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4 text-sm">
         <div className="space-y-1"><p className="text-muted-foreground">A fila prioriza o prazo e o tempo previsto; prioridade manual desempata. Confirme o controle de qualidade e os consumos antes de concluir.</p><p className="text-xs text-muted-foreground">O prazo cadastrado não confirma capacidade: preparação, turnos, retirada, montagem e embalagem ainda precisam ser conferidos.</p><p className="text-xs text-muted-foreground"><Link to="/integracoes/bambu" className="text-primary underline-offset-4 hover:underline">Confira os vínculos e a apuração das tentativas Bambu</Link>. As execuções seguem as regras configuradas para cada produto e placa.</p></div>
