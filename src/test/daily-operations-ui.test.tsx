@@ -8,7 +8,7 @@ const mock = vi.hoisted(() => ({
   from: vi.fn(), tenant: "tenant-1" as string | null,
   tables: {} as Record<string, Record<string, unknown>[]>,
   errors: {} as Record<string, string | { message: string; code?: string } | null>,
-  requests: [] as { table: string; columns?: string; filters: [string, unknown][]; from: number; to: number }[],
+  requests: [] as { table: string; columns?: string; filters: [string, unknown][]; excluded: { column: string; operator: string; value: unknown }[]; from: number; to: number }[],
 }));
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ profile: mock.tenant ? { tenant_id: mock.tenant } : null }) }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { from: mock.from } }));
@@ -20,15 +20,17 @@ beforeEach(() => {
   mock.from.mockImplementation((table: string) => {
     let columns: string | undefined;
     const filters: [string, unknown][] = [];
+    const excluded: { column: string; operator: string; value: unknown }[] = [];
     const builder = {
       select: (value: string) => { columns = value; return builder; },
       eq: (column: string, value: unknown) => { filters.push([column, value]); return builder; },
-      not: () => builder,
+      not: (column: string, operator: string, value: unknown) => { excluded.push({ column, operator, value }); return builder; },
       order: () => builder,
       range: (from: number, to: number) => {
-        mock.requests.push({ table, columns, filters: [...filters], from, to });
+        mock.requests.push({ table, columns, filters: [...filters], excluded: [...excluded], from, to });
         const error = mock.errors[table];
-        return Promise.resolve({ data: error ? null : (mock.tables[table] ?? []).slice(from, to + 1), error: typeof error === "string" ? { message: error } : error ?? null });
+        const rows = (mock.tables[table] ?? []).filter(row => excluded.every(filter => filter.operator === "in" ? !String(filter.value).replace(/^\(|\)$/g, "").split(",").includes(String(row[filter.column])) : filter.operator === "is" && filter.value === null ? row[filter.column] != null : true));
+        return Promise.resolve({ data: error ? null : rows.slice(from, to + 1), error: typeof error === "string" ? { message: error } : error ?? null });
       },
     };
     return builder;
@@ -133,5 +135,57 @@ describe("página Hoje", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Aguardando a identificação da empresa");
     expect(mock.from).not.toHaveBeenCalled();
     expect(screen.getByRole("button", { name: "Atualizar" })).toBeDisabled();
+  });
+
+  it.each(["venda direta", "OP", "venda da OP", "venda da OP com venda direta ativa"].flatMap(origin => ["queued", "draft", "reprint"].map(status => ({ origin, status }))))("não conta $status nunca iniciado de $origin cancelada", async ({ origin, status }) => {
+    mock.tables.orders = [{ id: "active-order", code: "PED-ATIVO", status: "draft" }, { id: "cancelled-order", code: "PED-CANCELADO", status: "cancelled" }];
+    mock.tables.production_orders = [{ id: "cancelled-production", status: origin === "OP" ? "cancelled" : "planned", source_order_id: origin === "OP" ? "active-order" : "cancelled-order" }];
+    mock.tables.jobs = [
+      { id: "background", status: "queued", order_id: null, production_order_id: null, started_at: null, inventory_posted_at: null },
+      { id: "cancelled-job", status, order_id: origin === "venda direta" ? "cancelled-order" : origin === "venda da OP com venda direta ativa" ? "active-order" : null, production_order_id: origin === "venda direta" ? null : "cancelled-production", started_at: null, inventory_posted_at: null },
+    ];
+    mount(); await screen.findByRole("link", { name: /PED-ATIVO.*Confirmar e organizar/ });
+    expect(screen.getByRole("link", { name: "Na fila / reimpressão 1" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Rascunhos 0" })).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: /PED-CANCELADO/ })).not.toBeInTheDocument();
+  });
+
+  it("continua contando impressão, QC e fila com início ou consumo apurado após cancelamento", async () => {
+    mock.tables.orders = [{ id: "cancelled-order", code: "PED-CANCELADO", status: "cancelled" }];
+    mock.tables.production_orders = [{ id: "cancelled-production", source_order_id: "cancelled-order", status: "cancelled" }];
+    const base = { order_id: null, production_order_id: "cancelled-production", started_at: null, inventory_posted_at: null };
+    mock.tables.jobs = [
+      { ...base, id: "running", status: "printing" },
+      { ...base, id: "qc", status: "quality_check" },
+      { ...base, id: "started", status: "queued", started_at: "2026-10-10T07:00:00Z" },
+      { ...base, id: "posted", status: "queued", inventory_posted_at: "2026-10-10T07:30:00Z" },
+      { ...base, id: "unstarted", status: "queued" },
+      { ...base, id: "background", status: "queued", production_order_id: null },
+    ];
+    mount(); await screen.findByText("Nenhum pedido ativo");
+    expect(screen.getByRole("link", { name: "Na fila / reimpressão 3" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Imprimindo 1" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Acabamento / inspeção 1" })).toBeInTheDocument();
+  });
+
+  it("pagina vínculos de OP e lê os campos físicos sem excluir vendas canceladas na consulta", async () => {
+    mock.tables.orders = [{ id: "cancelled-order", code: "PED-CANCELADO", status: "cancelled" }];
+    mock.tables.production_orders = [...Array.from({ length: 500 }, (_, index) => ({ id: `other-production-${index}`, source_order_id: null, status: "planned" })), { id: "cancelled-production", source_order_id: "cancelled-order", status: "planned" }];
+    mock.tables.jobs = [{ id: "unstarted", status: "queued", order_id: null, production_order_id: "cancelled-production", started_at: null, inventory_posted_at: null }];
+    mount(); await screen.findByText("Nenhum pedido ativo");
+    expect(screen.getByRole("link", { name: "Na fila / reimpressão 0" })).toBeInTheDocument();
+    const productionRequests = mock.requests.filter(request => request.table === "production_orders");
+    expect(productionRequests.map(request => [request.from, request.to])).toEqual([[0, 499], [500, 999]]);
+    for (const request of productionRequests) expect(request.filters).toContainEqual(["tenant_id", "tenant-1"]);
+    const jobColumns = mock.requests.find(request => request.table === "jobs")?.columns?.split(",").map(column => column.trim());
+    for (const field of ["order_id", "production_order_id", "started_at", "inventory_posted_at"]) expect(jobColumns).toContain(field);
+    expect(mock.requests.find(request => request.table === "orders")?.excluded.some(filter => filter.column === "status" && String(filter.value).includes("cancelled"))).toBe(false);
+  });
+
+  it.each(["orders", "production_orders"])("mantém visível falha na leitura de origem %s", async table => {
+    mock.errors[table] = { code: "42501", message: `Origem indisponível: ${table}` };
+    mount();
+    expect(await screen.findByRole("alert")).toHaveTextContent(`Origem indisponível: ${table}`);
+    expect(screen.queryByRole("link", { name: /Na fila \/ reimpressão/ })).not.toBeInTheDocument();
   });
 });

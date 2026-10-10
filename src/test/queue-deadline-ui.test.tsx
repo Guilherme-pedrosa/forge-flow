@@ -1,18 +1,22 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Fila from "@/pages/planejamento/Fila";
 
-const mock = vi.hoisted(() => ({ rpc: vi.fn(), tables: {} as Record<string, Record<string, unknown>[]>, errors: {} as Record<string, { code: string; message: string }>, pages: [] as { table: string; from: number; to: number }[] }));
+const mock = vi.hoisted(() => ({ rpc: vi.fn(), tables: {} as Record<string, Record<string, unknown>[]>, errors: {} as Record<string, { code: string; message: string }>, pages: [] as { table: string; from: number; to: number }[], filters: [] as { table: string; column: string; value: unknown }[] }));
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ profile: { tenant_id: "tenant-1" } }) }));
 vi.mock("@/components/production/ProductionFileDialog", () => ({ ProductionFileDialog: () => null }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: mock.rpc, from: (table: string) => {
   let start = 0, end = 499;
+  let statuses: unknown[] | undefined;
   const query = {
-    select: () => query, eq: () => query, in: () => query, order: () => query, gte: () => query,
+    select: () => query,
+    eq: (column: string, value: unknown) => { mock.filters.push({ table, column, value }); return query; },
+    in: (column: string, values: unknown[]) => { if (column === "status") statuses = values; return query; },
+    order: () => query, gte: () => query,
     range: (from: number, to: number) => { start = from; end = to; mock.pages.push({ table, from, to }); return query; },
-    then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) => Promise.resolve({ data: (mock.tables[table] ?? []).slice(start, end + 1), error: mock.errors[table] ?? null }).then(resolve, reject),
+    then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) => Promise.resolve({ data: (mock.tables[table] ?? []).filter(row => !statuses || statuses.includes(row.status)).slice(start, end + 1), error: mock.errors[table] ?? null }).then(resolve, reject),
   };
   return query;
 } } }));
@@ -21,7 +25,7 @@ function mount() {
 }
 const job = (id: string, name: string, priority: number, productionId: string) => ({ id, name, priority, code: `JOB-${id}`, status: "queued", printer_id: "printer-1", product_id: null, order_id: null, production_order_id: productionId, due_date: "2026-10-20", est_time_minutes: 60, created_at: "2026-10-09T12:00:00Z", products: null, printers: { name: "P1" } });
 beforeEach(() => {
-  mock.rpc.mockReset(); mock.pages = []; mock.errors = {};
+  mock.rpc.mockReset(); mock.pages = []; mock.errors = {}; mock.filters = [];
   mock.tables = {
     printers: [{ id: "printer-1", name: "P1", model: "Modelo", status: "idle", brand: null, bambu_device_id: null }],
     jobs: [job("late", "Placa depois", 1, "production-late"), job("early", "Placa urgente", 10, "production-early")],
@@ -79,5 +83,53 @@ describe("prazo na fila", () => {
     mount(); await screen.findByText("Placa urgente"); cleanup();
     mock.errors.marketplace_orders = { code: "42501", message: "permission denied" };
     mount(); expect(await screen.findByRole("alert")).toHaveTextContent("permission denied");
+  });
+
+  it.each(["venda direta", "OP", "venda da OP", "venda da OP com venda direta ativa"].flatMap(origin => ["queued", "reprint"].map(status => ({ origin, status }))))("retira $status nunca iniciado quando $origin está cancelada", async ({ origin, status }) => {
+    mock.tables.orders.push({ id: "order-cancelled", status: "cancelled" });
+    mock.tables.production_orders.push({ id: "production-cancelled", status: origin === "OP" ? "cancelled" : "planned", source_order_id: origin === "OP" ? "order-late" : "order-cancelled" });
+    mock.tables.jobs = [
+      { ...job("active", "Reposição ativa sem venda", 5, ""), production_order_id: null },
+      { ...job("cancelled", "Placa cancelada sem execução", 1, "production-cancelled"), status, order_id: origin === "venda direta" ? "order-cancelled" : origin === "venda da OP com venda direta ativa" ? "order-late" : null, production_order_id: origin === "venda direta" ? null : "production-cancelled", started_at: null, inventory_posted_at: null },
+      { ...job("draft", "Rascunho cancelado", 1, "production-cancelled"), status: "draft", started_at: null, inventory_posted_at: null },
+    ];
+    mount(); await screen.findByText("Reposição ativa sem venda");
+    expect(screen.queryByText("Placa cancelada sem execução")).not.toBeInTheDocument();
+    expect(screen.queryByText("Rascunho cancelado")).not.toBeInTheDocument();
+    expect(within(screen.getByText("Aguardando").parentElement!).getByText("1")).toBeInTheDocument();
+  });
+
+  it("preserva impressão, QC e placas já iniciadas ou apuradas apesar do cancelamento", async () => {
+    mock.tables.orders = [{ id: "order-cancelled", status: "cancelled" }];
+    mock.tables.production_orders = [{ id: "production-cancelled", status: "cancelled", source_order_id: "order-cancelled" }];
+    const base = { ...job("base", "Base", 5, "production-cancelled"), order_id: null, started_at: null, inventory_posted_at: null };
+    mock.tables.jobs = [
+      { ...base, id: "running", name: "Impressão física continua", status: "printing" },
+      { ...base, id: "qc", name: "Inspeção física continua", status: "quality_check" },
+      { ...base, id: "started", name: "Placa com início registrado", started_at: "2026-10-10T07:00:00Z" },
+      { ...base, id: "posted", name: "Placa com consumo apurado", inventory_posted_at: "2026-10-10T07:30:00Z" },
+      { ...base, id: "unstarted", name: "Placa sem execução cancelada" },
+      { ...base, id: "background", name: "Reposição independente continua", production_order_id: null },
+    ];
+    mount(); await screen.findByText("Reposição independente continua");
+    for (const name of ["Impressão física continua", "Inspeção física continua", "Placa com início registrado", "Placa com consumo apurado"]) expect(screen.getByText(name)).toBeInTheDocument();
+    expect(screen.queryByText("Placa sem execução cancelada")).not.toBeInTheDocument();
+    expect(within(screen.getByText("Aguardando").parentElement!).getByText("3")).toBeInTheDocument();
+  });
+
+  it("consulta OP cancelada após a primeira página e mantém os vínculos no tenant", async () => {
+    mock.tables.production_orders = [...Array.from({ length: 1000 }, (_, index) => ({ id: `other-production-${index}`, source_order_id: null })), { id: "production-cancelled", status: "cancelled", source_order_id: null }];
+    mock.tables.jobs = [{ ...job("active", "Reposição independente", 5, ""), production_order_id: null }, job("cancelled", "Cancelada na segunda página", 1, "production-cancelled")];
+    mount(); await screen.findByText("Reposição independente");
+    expect(screen.queryByText("Cancelada na segunda página")).not.toBeInTheDocument();
+    expect(mock.pages).toContainEqual({ table: "production_orders", from: 1000, to: 1999 });
+    for (const table of ["orders", "production_orders"]) expect(mock.filters).toContainEqual({ table, column: "tenant_id", value: "tenant-1" });
+  });
+
+  it.each(["orders", "production_orders"])("expõe erro ao conferir cancelamento em %s", async table => {
+    mock.errors[table] = { code: "42501", message: `Falha na origem ${table}` };
+    mount();
+    expect(await screen.findByRole("alert")).toHaveTextContent(`Falha na origem ${table}`);
+    expect(screen.queryByText("Placa urgente")).not.toBeInTheDocument();
   });
 });

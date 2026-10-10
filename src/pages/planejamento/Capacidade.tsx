@@ -10,13 +10,14 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { assemblyRows } from "@/lib/assembly";
+import { excludeUnstartedCancelledJobs } from "@/lib/job-source-cancellation";
 import { isMissingDatabaseStructure } from "@/lib/database-readiness";
 import { compareOperationalJobs, operationalIssueLabel, planOperations, type OperationalJob, type OperatorWindow } from "@/lib/operational-planning";
 
 type CapacityOrder = { id: string; code: string; status: string; due_date: string | null; ship_by_at?: string | null; internal_due_at?: string | null };
-type CapacityJob = { id: string; code: string; name: string; status: string; order_id: string | null; production_order_id: string | null; printer_id: string | null; due_date: string | null; est_time_minutes: number | null; priority: number; created_at: string; reprint_of: string | null };
+type CapacityJob = { id: string; code: string; name: string; status: string; order_id: string | null; production_order_id: string | null; printer_id: string | null; due_date: string | null; est_time_minutes: number | null; priority: number; created_at: string; reprint_of: string | null; started_at?: string | null; inventory_posted_at?: string | null };
 type CapacityPrinter = { id: string; name: string; status: string; model?: string | null };
-type CapacityProductionOrder = { id: string; source_order_id: string | null };
+type CapacityProductionOrder = { id: string; status: string; source_order_id: string | null };
 type CapacityMarketplaceOrder = { internal_order_id: string | null; shipping_deadline_at: string | null; needs_review: boolean; review_reason: string | null };
 type TimeField = "setup" | "clearance" | "finishing" | "assembly" | "packaging";
 type TimeInputs = Record<TimeField, string>;
@@ -112,8 +113,9 @@ export default function Capacidade() {
       const order = byOrder.get(orderIdFor(job) ?? "");
       return { id: job.id, status: job.status, deadlineAt: order ? order.planningDeadline : job.due_date, internalDeadlineAt: order?.planningInternalDeadline, durationMinutes: job.est_time_minutes, priority: job.priority, createdAt: job.created_at };
     };
-    const replacements = new Set((query.data?.jobs ?? []).filter(job => job.reprint_of).map(job => job.reprint_of));
-    const jobs = (query.data?.jobs ?? []).filter(job => !(job.status === "failed" && replacements.has(job.id)) && (orderIds.has(orderIdFor(job) ?? "") || backgroundStatuses.has(job.status))).sort((a, b) => compareOperationalJobs(deadlineFor(a), deadlineFor(b)));
+    const planningJobs = excludeUnstartedCancelledJobs(query.data?.jobs ?? [], allOrders, query.data?.productionOrders ?? []);
+    const replacements = new Set(planningJobs.filter(job => job.reprint_of).map(job => job.reprint_of));
+    const jobs = planningJobs.filter(job => !(job.status === "failed" && replacements.has(job.id)) && (orderIds.has(orderIdFor(job) ?? "") || backgroundStatuses.has(job.status))).sort((a, b) => compareOperationalJobs(deadlineFor(a), deadlineFor(b)));
     return { orders, jobs, printers: query.data?.printers ?? [], orderIdFor, deadlineFor };
   }, [query.data]);
 

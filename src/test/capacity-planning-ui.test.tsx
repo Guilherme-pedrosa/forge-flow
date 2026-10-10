@@ -171,4 +171,64 @@ describe("simulação de prazo da farm", () => {
     expect(screen.getByRole("button", { name: "Simular prazo" })).toBeDisabled();
     expect(screen.queryByRole("region", { name: "Resultado da simulação" })).not.toBeInTheDocument();
   });
+
+  it.each(["venda direta", "OP", "venda da OP", "venda da OP com venda direta ativa"].flatMap(origin => ["queued", "draft", "reprint"].map(status => ({ origin, status }))))("exclui $status nunca iniciado de $origin cancelada da cobertura e da capacidade", async ({ origin, status }) => {
+    mock.tables.orders.push({ id: "cancelled-order", code: "PED-CANCELADO", status: "cancelled" });
+    mock.tables.production_orders.push({ id: "cancelled-production", status: origin === "OP" ? "cancelled" : "planned", source_order_id: origin === "OP" ? "order-1" : "cancelled-order" });
+    mock.tables.jobs.push({ ...mock.tables.jobs[0], id: "cancelled-job", code: "JOB-CANCELLED", name: "Cancelada", status, order_id: origin === "venda direta" ? "cancelled-order" : origin === "venda da OP com venda direta ativa" ? "order-1" : null, production_order_id: origin === "venda direta" ? null : "cancelled-production", started_at: null, inventory_posted_at: null });
+    mount(); await screen.findByLabelText("Tempo de impressão de JOB-1 (min)");
+    expect(screen.queryByLabelText("Tempo de impressão de JOB-CANCELLED (min)")).not.toBeInTheDocument();
+    expect(screen.getByText("PED-1 · 1 ordem(ns) vinculada(s)")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Abrir pedido PED-CANCELADO" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Simular prazo" })).toBeEnabled());
+    enterConfirmedInputs();
+    const result = simulate();
+    expect(within(result).getByText("Estimativa dentro do prazo")).toBeInTheDocument();
+    expect(within(result).getByText(/Conclusão estimada:/)).toHaveTextContent("09:25");
+  });
+
+  it("preserva trabalho físico de origem cancelada e a fila independente que disputa a farm", async () => {
+    mock.tables.orders.push({ id: "cancelled-order", code: "PED-CANCELADO", status: "cancelled" });
+    mock.tables.production_orders.push({ id: "cancelled-production", source_order_id: "cancelled-order", status: "cancelled" });
+    const base = { ...mock.tables.jobs[0], order_id: null, production_order_id: "cancelled-production", started_at: null, inventory_posted_at: null };
+    mock.tables.jobs.push(
+      { ...base, id: "running", code: "JOB-RUNNING", name: "Impressão física", status: "printing" },
+      { ...base, id: "qc", code: "JOB-QC", name: "Inspeção física", status: "quality_check" },
+      { ...base, id: "started", code: "JOB-STARTED", name: "Início registrado", started_at: "2026-10-10T07:00:00Z" },
+      { ...base, id: "posted", code: "JOB-POSTED", name: "Consumo apurado", inventory_posted_at: "2026-10-10T07:30:00Z" },
+      { ...base, id: "unstarted", code: "JOB-CANCELLED", name: "Sem execução" },
+      { ...base, id: "background", code: "JOB-BACKGROUND", name: "Reposição independente", production_order_id: null },
+    );
+    mount(); await load();
+    expect(screen.getByLabelText("Tempo restante de JOB-RUNNING (min)")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Conferi e liberei as peças de JOB-QC para as etapas finais agora" })).toBeInTheDocument();
+    for (const code of ["JOB-STARTED", "JOB-POSTED", "JOB-BACKGROUND"]) expect(screen.getByLabelText(`Tempo de impressão de ${code} (min)`)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Tempo de impressão de JOB-CANCELLED (min)")).not.toBeInTheDocument();
+    enterConfirmedInputs();
+    const result = simulate();
+    expect(within(result).queryByText("Estimativa dentro do prazo")).not.toBeInTheDocument();
+    expect(within(result).getByText("Bloqueado")).toBeInTheDocument();
+    expect(within(result).getByText("Resolva a impressão que bloqueia esta máquina.")).toBeInTheDocument();
+  });
+
+  it("mantém uma impressão de venda cancelada ocupando a máquina durante a simulação", async () => {
+    mock.tables.orders.push({ id: "cancelled-order", code: "PED-CANCELADO", status: "cancelled" });
+    mock.tables.production_orders.push({ id: "cancelled-production", source_order_id: "cancelled-order", status: "planned" });
+    mock.tables.jobs.push({ ...mock.tables.jobs[0], id: "background-running", code: "JOB-BACKGROUND", name: "Impressão já iniciada", status: "printing", order_id: null, production_order_id: "cancelled-production" });
+    mock.tables.printers[0].status = "printing";
+    mount(); await load(); enterConfirmedInputs({ bed: false });
+    fireEvent.click(screen.getByRole("checkbox", { name: "Conferi a compatibilidade de JOB-BACKGROUND com P1" }));
+    fireEvent.change(screen.getByLabelText("Tempo restante de JOB-BACKGROUND (min)"), { target: { value: "30" } });
+    const result = simulate();
+    expect(within(result).getByText("Estimativa dentro do prazo")).toBeInTheDocument();
+    expect(within(result).getByText(/Conclusão estimada:/)).toHaveTextContent("10:00");
+  });
+
+  it.each(["orders", "production_orders"])("bloqueia simulação e expõe erro ao conferir origem %s", async table => {
+    mock.rows.mockImplementation((requested: string) => requested === table ? Promise.reject(new Error(`Origem indisponível: ${table}`)) : Promise.resolve(mock.tables[requested] ?? []));
+    mount();
+    expect(await screen.findByRole("alert")).toHaveTextContent(`Origem indisponível: ${table}`);
+    expect(screen.getByRole("button", { name: "Simular prazo" })).toBeDisabled();
+    expect(screen.queryByRole("region", { name: "Resultado da simulação" })).not.toBeInTheDocument();
+  });
 });
