@@ -1,6 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { readProductionRows } from "./production-read";
 import { excludeUnstartedCancelledJobs } from "./job-source-cancellation";
+import { deliveryPreparationDay } from "./order-preparation-deadline";
+import { isMissingDatabaseStructure } from "./database-readiness";
 
 export interface FilamentMaterial {
   id: string; name: string; unit: string; current_stock: number; min_stock: number | null;
@@ -20,9 +22,11 @@ export interface FilamentJob {
   material_id: string | null; secondary_material_id: string | null; print_plate_id: string | null;
   production_snapshot: unknown; inventory_posted_at: string | null; order_id?: string | null;
   production_order_id?: string | null; production_order_item_id?: string | null;
+  order_item_id?: string | null;
+  reprint_of?: string | null;
   started_at?: string | null;
 }
-export interface FilamentDemand { id: string; label: string; due_date: string | null; lines: { item_id: string; grams: number }[] | null }
+export interface FilamentDemand { id: string; label: string; due_date: string | null; lines: { item_id: string; grams: number }[] | null; draft_job_ids?: string[] }
 export interface FilamentPurchase {
   id: string; code: string; status: string; expected_date: string | null;
   items: { inventory_item_id: string | null; stock_quantity: number | null }[];
@@ -41,10 +45,21 @@ export interface FilamentPlanMaterial {
   shortageDate: string | null; minimumProjectedGrams: number; suggestedKg: number;
   orderByDate: string | null; expectedDeliveryDate: string | null; vendorId: string | null;
   multipleKg: number; leadDays: number; bufferGrams: number;
+  currentSafetyGapGrams: number;
+  staleReservationCount: number; staleReservedGrams: number;
 }
 const record = (value: unknown): Record<string, unknown> => value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const finite = (value: unknown): number | null => value != null && typeof value !== "boolean" && value !== "" && Number.isFinite(Number(value)) && Number(value) >= 0 ? Number(value) : null;
 const rounded = (value: number) => Math.round(value * 1000) / 1000;
+const lineGrams = (lines: FilamentDemand["lines"], itemId: string) => lines?.filter(line => line.item_id === itemId).reduce((sum, line) => sum + line.grams, 0) ?? 0;
+function residualDraftDemand(lines: FilamentDemand["lines"], jobs: FilamentJob[]) {
+  // A replacement is another attempt at the same frozen plate, not coverage
+  // of a second OP slot. Failed attempts provide no usable physical output.
+  const replaced = new Set(jobs.map(job => job.reprint_of).filter(Boolean));
+  const covered = jobs.filter(job => job.status !== "failed" && !replaced.has(job.id) && (job.status !== "draft" || job.inventory_posted_at)).map(jobFilamentDemand);
+  if (lines === null || covered.some(value => value === null)) return null;
+  return lines.map(line => ({ ...line, grams: rounded(Math.max(0, line.grams - covered.reduce((sum, value) => sum + lineGrams(value, line.item_id), 0))) }));
+}
 export function stockQuantityToGrams(quantity: number, unit: string): number {
   if (!Number.isFinite(quantity)) throw new Error("Saldo de filamento inválido.");
   const normalized = unit.trim().toLowerCase();
@@ -61,9 +76,9 @@ export function addPlanningDays(date: string, days: number): string {
   const value = new Date(`${date}T12:00:00Z`); value.setUTCDate(value.getUTCDate() + days);
   return value.toISOString().slice(0, 10);
 }
-export function operatingDemandDate(order: { internal_due_at?: string | null; ship_by_at?: string | null; due_date: string | null }, timezone = "America/Sao_Paulo"): string | null {
+export function operatingDemandDate(order: { internal_due_at?: string | null; ship_by_at?: string | null; marketplace_order_id?: string | null; due_date: string | null }, timezone = "America/Sao_Paulo", hasMarketplaceLink = false): string | null {
   const timestamp = order.internal_due_at || order.ship_by_at;
-  if (!timestamp) return validPlanningDate(order.due_date) ? order.due_date : null;
+  if (!timestamp) return deliveryPreparationDay(order, hasMarketplaceLink) ?? (validPlanningDate(order.due_date) ? order.due_date : null);
   const date = new Date(timestamp); if (Number.isNaN(date.getTime())) return null;
   const parts = new Intl.DateTimeFormat("en", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(date);
   return ["year", "month", "day"].map(name => parts.find(part => part.type === name)?.value).join("-");
@@ -121,10 +136,29 @@ export function snapshotFilamentDemand(value: unknown, quantity: number, depth =
 
 export function calculateFilamentPlan(snapshot: FilamentPlanningSnapshot, today: string) {
   if (!validPlanningDate(today)) throw new Error("Informe a data do planejamento.");
-  const openJobs = snapshot.jobs.filter(job => !job.inventory_posted_at && ["queued", "printing", "paused", "reprint"].includes(job.status));
-  const demand = [...openJobs.map(job => ({ id: job.id, label: job.code, due_date: job.due_date, lines: jobFilamentDemand(job) })), ...snapshot.committedDemand];
-  const activeJobIds = new Set(snapshot.jobs.filter(job => !job.inventory_posted_at && ["draft", "queued", "printing", "paused", "reprint"].includes(job.status)).map(job => job.id));
+  const activeJobs = snapshot.jobs.filter(job => !job.inventory_posted_at && ["draft", "queued", "printing", "paused", "reprint"].includes(job.status));
+  const activeJobIds = new Set(activeJobs.map(job => job.id));
   const reservations = snapshot.reservations.filter(r => r.status === "reserved" && !r.released_at && activeJobIds.has(r.job_id));
+  const staleReservations = snapshot.reservations.filter(r => r.status === "reserved" && !r.released_at && !activeJobIds.has(r.job_id));
+  const jobDemand = activeJobs.flatMap(job => {
+    const held = reservations.filter(r => r.job_id === job.id);
+    if (job.status === "draft" && !held.length) return [];
+    const recipe = job.status === "draft" ? [] : jobFilamentDemand(job);
+    const quantities = new Map((recipe ?? []).map(line => [line.item_id, line.grams]));
+    for (const reservation of held) quantities.set(reservation.item_id, Math.max(quantities.get(reservation.item_id) ?? 0, reservation.grams));
+    const entries: FilamentDemand[] = [{ id: job.id, label: job.code, due_date: job.due_date, lines: [...quantities].map(([item_id, grams]) => ({ item_id, grams })) }];
+    // A reservation is a known hold, not proof that an incomplete recipe is sufficient.
+    if (recipe === null) entries.push({ id: `${job.id}:unknown`, label: job.code, due_date: job.due_date, lines: null });
+    return entries;
+  });
+  const committedDemand = snapshot.committedDemand.map(entry => {
+    if (!entry.lines || !entry.draft_job_ids?.length) return entry;
+    // A draft reservation for this same physical demand covers its residual;
+    // it is not an additional print or a second consumption of the same grams.
+    const held = jobDemand.filter(job => entry.draft_job_ids!.includes(job.id));
+    return { ...entry, lines: entry.lines.map(line => ({ ...line, grams: rounded(Math.max(0, line.grams - held.reduce((sum, job) => sum + lineGrams(job.lines, line.item_id), 0))) })) };
+  });
+  const demand = [...jobDemand, ...committedDemand];
   let undatedPurchaseCount = 0; let unconvertedPurchaseCount = 0;
   const incoming = snapshot.purchases.filter(p => p.status === "pending");
   for (const purchase of incoming) {
@@ -135,6 +169,7 @@ export function calculateFilamentPlan(snapshot: FilamentPlanningSnapshot, today:
     const policy = snapshot.policies.find(p => p.item_id === item.id);
     const stockGrams = stockQuantityToGrams(item.current_stock, item.unit);
     const reservedGrams = rounded(reservations.filter(r => r.item_id === item.id).reduce((sum, r) => sum + r.grams, 0));
+    const stale = staleReservations.filter(reservation => reservation.item_id === item.id);
     const spools = snapshot.spools.filter(s => s.item_id === item.id && s.is_active);
     const spoolGrams = rounded(spools.reduce((sum, spool) => sum + spool.estimated_remaining_grams, 0));
     const bufferGrams = policy?.buffer_grams ?? stockQuantityToGrams(item.min_stock ?? 0, item.unit);
@@ -142,7 +177,7 @@ export function calculateFilamentPlan(snapshot: FilamentPlanningSnapshot, today:
     const event = (date: string) => { if (!events.has(date)) events.set(date, { demandGrams: 0, incomingGrams: 0 }); return events.get(date)!; };
     let demandGrams = 0, incomingGrams = 0, undatedIncomingGrams = 0;
     for (const entry of demand) {
-      const grams = entry.lines?.filter(line => line.item_id === item.id).reduce((sum, line) => sum + line.grams, 0) ?? 0;
+      const grams = lineGrams(entry.lines, item.id);
       demandGrams += grams;
       // Missing/overdue demand is immediate; it must not disappear from the projection.
       event(validPlanningDate(entry.due_date) && entry.due_date > today ? entry.due_date : today).demandGrams += grams;
@@ -156,14 +191,19 @@ export function calculateFilamentPlan(snapshot: FilamentPlanningSnapshot, today:
         incomingGrams += grams; event(purchase.expected_date).incomingGrams += grams;
       }
     }
-    let balance = stockGrams; let minimum = stockGrams;
-    let shortageDate: string | null = stockGrams < bufferGrams ? today : null;
+    const currentSafetyGapGrams = Math.max(0, rounded(bufferGrams - stockGrams));
+    // Today's ETA is still expected stock. Consider it before today's demand
+    // for net purchasing, while retaining the physical safety gap separately.
+    const incomingToday = events.get(today)?.incomingGrams ?? 0;
+    let balance = stockGrams; let minimum = incomingToday > 0 ? Infinity : stockGrams;
+    let shortageDate: string | null = currentSafetyGapGrams > 0 && incomingToday === 0 ? today : null;
     const timeline = [...events].sort(([a], [b]) => a.localeCompare(b)).map(([date, row]) => {
       // Reservations are part of job demand, never another deduction from the projection.
       balance = rounded(balance + row.incomingGrams - row.demandGrams); minimum = Math.min(minimum, balance);
       if (balance < bufferGrams && !shortageDate) shortageDate = date;
       return { date, demandGrams: rounded(row.demandGrams), incomingGrams: rounded(row.incomingGrams), balanceGrams: balance };
     });
+    if (!Number.isFinite(minimum)) minimum = stockGrams;
     const multipleKg = policy?.multiple_kg ?? 1, leadDays = policy?.lead_days ?? 7;
     const shortage = Math.max(0, bufferGrams - minimum);
     const suggestedKg = shortage > 0 ? rounded(Math.ceil((shortage / 1000) / multipleKg - 1e-10) * multipleKg) : 0;
@@ -171,11 +211,12 @@ export function calculateFilamentPlan(snapshot: FilamentPlanningSnapshot, today:
       spoolDifferenceGrams: spools.length ? rounded(spoolGrams - stockGrams) : null,
       spoolsNeedingWeighing: spools.filter(s => s.needs_weighing).length, demandGrams: rounded(demandGrams), incomingGrams: rounded(incomingGrams), undatedIncomingGrams: rounded(undatedIncomingGrams), timeline,
       shortageDate, minimumProjectedGrams: minimum, suggestedKg, orderByDate: shortageDate ? addPlanningDays(shortageDate, -leadDays) : null,
-      expectedDeliveryDate: shortageDate, vendorId: policy?.vendor_id ?? item.vendor_id, multipleKg, leadDays, bufferGrams };
+      expectedDeliveryDate: shortageDate, vendorId: policy?.vendor_id ?? item.vendor_id, multipleKg, leadDays, bufferGrams, currentSafetyGapGrams,
+      staleReservationCount: stale.length, staleReservedGrams: rounded(stale.reduce((sum, reservation) => sum + reservation.grams, 0)) };
   });
   return { materials, unknownDemandCount: demand.filter(d => d.lines === null).length,
     undatedDemandCount: demand.filter(d => !validPlanningDate(d.due_date)).length,
-    undatedPurchaseCount, unconvertedPurchaseCount, calculatedAt: today };
+    undatedPurchaseCount, unconvertedPurchaseCount, staleReservationCount: staleReservations.length, calculatedAt: today };
 }
 
 export function filamentPurchaseHref(material: FilamentPlanMaterial) {
@@ -239,41 +280,62 @@ export async function loadFilamentPlanningSnapshot(client: SupabaseClient): Prom
     if (result.error) throw Object.assign(new Error(result.error.message), result.error);
     return result;
   });
-  type Order = { id: string; code: string; status: string; due_date: string | null; source_order_id?: string | null; source_quote_id?: string | null; ship_by_at?: string | null; internal_due_at?: string | null };
+  type Order = { id: string; code: string; status: string; due_date: string | null; marketplace_order_id?: string | null; source_order_id?: string | null; source_quote_id?: string | null; ship_by_at?: string | null; internal_due_at?: string | null };
   type DemandItem = { id: string; order_id?: string; production_order_id?: string; quantity: number; product_snapshot?: unknown; commercial_snapshot?: unknown; production_snapshot?: unknown; description: string };
-  const [items, jobs, purchases, purchaseItems, reservations, spools, policies, vendors, printers, orders, orderItems, productionOrders, productionItems, tenants] = await Promise.all([
+  const marketplaceLinks = async () => {
+    try { return await read<{ internal_order_id: string | null }>("marketplace_orders", "id,internal_order_id"); }
+    catch (error) { if (isMissingDatabaseStructure(error)) return []; throw error; }
+  };
+  const [items, jobs, purchases, purchaseItems, reservations, spools, policies, vendors, printers, orders, orderItems, productionOrders, productionItems, tenants, links] = await Promise.all([
     read<FilamentMaterial & { category: string; is_active: boolean }>("inventory_items", "id,name,unit,current_stock,min_stock,vendor_id,material_code,color,color_code,category,is_active"),
-    read<FilamentJob>("jobs", "id,code,name,status,due_date,est_grams,material_id,secondary_material_id,print_plate_id,production_snapshot,started_at,inventory_posted_at,order_id,production_order_id,production_order_item_id"),
+    read<FilamentJob>("jobs", "id,code,name,status,due_date,est_grams,material_id,secondary_material_id,print_plate_id,production_snapshot,started_at,inventory_posted_at,order_id,order_item_id,production_order_id,production_order_item_id,reprint_of"),
     read<Omit<FilamentPurchase, "items">>("purchase_orders", "id,code,status,expected_date"),
     read<FilamentPurchase["items"][number] & { purchase_order_id: string }>("purchase_order_items", "id,purchase_order_id,inventory_item_id,stock_quantity"),
-    read<FilamentReservation>("filament_active_reservations", "id,job_id,item_id,spool_id,grams,status,released_at"),
+    read<FilamentReservation>("filament_reservations", "id,job_id,item_id,spool_id,grams,status,released_at"),
     read<FilamentSpool>("filament_spools", "*"), read<FilamentPolicy>("filament_replenishment_policies", "*", "item_id"),
     read<{ id: string; name: string }>("vendors", "id,name"), read<{ id: string; name: string }>("printers", "id,name"),
-    read<Order>("orders", "id,code,status,due_date,source_quote_id,ship_by_at,internal_due_at"), read<DemandItem>("order_items", "id,order_id,quantity,product_snapshot,description"),
+    read<Order>("orders", "*"), read<DemandItem>("order_items", "id,order_id,quantity,product_snapshot,description"),
     read<Order>("production_orders", "id,code,status,due_date,source_order_id,source_quote_id"),
     read<DemandItem>("production_order_items", "id,production_order_id,quantity,production_snapshot,commercial_snapshot,description"),
-    read<{ id: string; timezone: string }>("tenants", "id,timezone"),
+    read<{ id: string; timezone: string }>("tenants", "id,timezone"), marketplaceLinks(),
   ]);
   const timezone = tenants[0]?.timezone || "America/Sao_Paulo";
+  const linkedSales = new Set(links.map(link => link.internal_order_id));
+  const saleDemandDate = (order: Order) => operatingDemandDate(order, timezone, linkedSales.has(order.id));
   const cancelled = new Set(orders.filter(o => o.status === "cancelled").map(o => o.id));
-  const liveJobs = excludeUnstartedCancelledJobs(jobs, orders, productionOrders).map(job => {
+  const cancelledQuotes = new Set(orders.filter(o => o.status === "cancelled" && o.source_quote_id).map(o => o.source_quote_id));
+  const effectiveProductionOrders = productionOrders.map(order => cancelledQuotes.has(order.source_quote_id) ? { ...order, status: "cancelled" } : order);
+  const liveJobs = excludeUnstartedCancelledJobs(jobs, orders, effectiveProductionOrders).map(job => {
     const production = productionOrders.find(p => p.id === job.production_order_id);
     const order = orders.find(o => o.id === (job.order_id ?? production?.source_order_id) || (production?.source_quote_id && o.source_quote_id === production.source_quote_id));
-    const operationalDate = order ? operatingDemandDate(order, timezone) : null;
+    const operationalDate = order ? saleDemandDate(order) : null;
     return { ...job, due_date: operationalDate && (!validPlanningDate(job.due_date) || operationalDate < job.due_date) ? operationalDate : job.due_date };
   });
   const committedDemand: FilamentDemand[] = [];
-  for (const order of productionOrders.filter(o => ["preparing", "released"].includes(o.status) && !cancelled.has(o.source_order_id ?? ""))) {
+  for (const order of effectiveProductionOrders.filter(o => ["preparing", "released"].includes(o.status) && !cancelled.has(o.source_order_id ?? ""))) {
     for (const item of productionItems.filter(i => i.production_order_id === order.id)) {
-      // Once any print exists, the generated jobs are the plan for this line.
-      if (liveJobs.some(j => j.production_order_item_id === item.id)) continue;
+      const linked = liveJobs.filter(j => j.production_order_item_id === item.id);
+      const drafts = linked.filter(j => j.status === "draft" && !j.inventory_posted_at);
+      // Active/physical prints keep their existing plan. A returned draft does
+      // not make the remaining committed OP disappear from purchasing.
+      if (linked.length && !drafts.length) continue;
       const sale = orders.find(o => o.id === order.source_order_id || (order.source_quote_id && o.source_quote_id === order.source_quote_id));
-      committedDemand.push({ id: item.id, label: `${order.code} · ${item.description}`, due_date: sale ? operatingDemandDate(sale, timezone) ?? order.due_date : order.due_date, lines: snapshotFilamentDemand(item.production_snapshot ?? item.commercial_snapshot, item.quantity) });
+      const lines = residualDraftDemand(snapshotFilamentDemand(item.production_snapshot ?? item.commercial_snapshot, item.quantity), linked);
+      committedDemand.push({ id: item.id, label: `${order.code} · ${item.description}`, due_date: sale ? saleDemandDate(sale) ?? order.due_date : order.due_date, lines, draft_job_ids: drafts.map(j => j.id) });
     }
   }
   for (const order of orders.filter(o => ["approved", "in_production"].includes(o.status))) {
-    if (productionOrders.some(p => (p.source_order_id === order.id || (order.source_quote_id && p.source_quote_id === order.source_quote_id)) && p.status !== "cancelled") || liveJobs.some(j => j.order_id === order.id)) continue;
-    for (const item of orderItems.filter(i => i.order_id === order.id)) committedDemand.push({ id: item.id, label: `${order.code} · ${item.description}`, due_date: operatingDemandDate(order, timezone), lines: snapshotFilamentDemand(item.product_snapshot, item.quantity) });
+    if (productionOrders.some(p => p.source_order_id === order.id || (order.source_quote_id && p.source_quote_id === order.source_quote_id))) continue;
+    const saleJobs = liveJobs.filter(j => j.order_id === order.id);
+    for (const item of orderItems.filter(i => i.order_id === order.id)) {
+      const linked = saleJobs.filter(j => j.order_item_id === item.id);
+      const drafts = linked.filter(j => j.status === "draft" && !j.inventory_posted_at);
+      if (linked.length && !drafts.length) continue;
+      // Legacy jobs without a line identity cannot prove how much of this line they cover.
+      const unidentified = saleJobs.some(j => !j.order_item_id);
+      const lines = unidentified ? null : residualDraftDemand(snapshotFilamentDemand(item.product_snapshot, item.quantity), linked);
+      committedDemand.push({ id: item.id, label: `${order.code} · ${item.description}`, due_date: saleDemandDate(order), lines, draft_job_ids: drafts.map(j => j.id) });
+    }
   }
   return { items: items.filter(i => i.category === "filament" && i.is_active && ["g", "kg"].includes(i.unit.trim().toLowerCase())), jobs: liveJobs,
     purchases: purchases.map(p => ({ ...p, items: purchaseItems.filter(i => i.purchase_order_id === p.id) })), reservations, spools, policies, committedDemand, vendors, printers };

@@ -89,6 +89,89 @@ describe("simulação de prazo da farm", () => {
     expect(within(result).getByText(/Conclusão parcial estimada:/)).toBeInTheDocument();
   });
 
+  it("usa o dia anterior à entrega manual como meta de produção sem fabricar cutoff ou folga", async () => {
+    Object.assign(mock.tables.orders[0], { due_date: "2026-10-12", ship_by_at: null, internal_due_at: null, marketplace_order_id: null });
+    mount(); await load(); enterConfirmedInputs();
+    expect(screen.getByText("Postar até: horário não informado · Meta de produção (data): 11/10/2026 · 1 dia antes da entrega · Entrega: 12/10/2026 (data comercial)")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Abrir pedido PED-1" })).toHaveAttribute("href", "/comercial/pedidos?pedido=order-1");
+    const result = simulate();
+    expect(within(result).getByText("Dados a conferir")).toBeInTheDocument();
+    expect(within(result).getByText("Informe o horário limite de postagem e o fuso.")).toBeInTheDocument();
+    expect(within(result).getByText("Confira o horário do prazo interno.")).toBeInTheDocument();
+    expect(within(result).getByText(/Conclusão parcial estimada:/)).toHaveTextContent("09:25");
+    expect(within(result).queryByText(/Folga até a postagem/)).not.toBeInTheDocument();
+    expect(within(result).queryByText("Estimativa dentro do prazo")).not.toBeInTheDocument();
+  });
+
+  it("ordena placas ligadas pela OP usando a meta do dia 11 mesmo com entrega comercial no dia 12", async () => {
+    Object.assign(mock.tables.orders[0], { due_date: "2026-10-12", ship_by_at: null, internal_due_at: null, marketplace_order_id: null });
+    mock.tables.orders.push({ id: "order-2", code: "PED-2", status: "in_production", due_date: "2026-10-11", ship_by_at: "2026-10-11T12:00:00Z", internal_due_at: null, marketplace_order_id: null });
+    mock.tables.production_orders.push({ id: "production-2", source_order_id: "order-2" });
+    mock.tables.jobs.unshift({ ...mock.tables.jobs[0], id: "job-2", code: "JOB-2", production_order_id: "production-2", due_date: "2026-10-11", priority: 1 });
+    mount(); await load();
+    expect(screen.getAllByLabelText(/^Tempo de impressão de JOB-/).map(input => input.getAttribute("id"))).toEqual(["job-time-job-1", "job-time-job-2"]);
+    enterConfirmedInputs();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Todas as placas e peças de PED-2 estão representadas" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "Conferi a compatibilidade de JOB-2 com P1" }));
+    const result = simulate();
+    const manualOrder = within(result).getByRole("heading", { name: "PED-1 Dados a conferir" }).parentElement!.parentElement!;
+    expect(within(manualOrder).getByText(/Conclusão parcial estimada:/)).toHaveTextContent("09:30");
+    expect(within(manualOrder).queryByText(/Folga até a postagem/)).not.toBeInTheDocument();
+  });
+
+  it.each([undefined, "marketplace-1"])("não infere meta pela entrega para origem %s sem prova de pedido manual", async marketplaceOrderId => {
+    Object.assign(mock.tables.orders[0], { due_date: "2026-10-12", ship_by_at: null, internal_due_at: null, marketplace_order_id: marketplaceOrderId });
+    mount(); await load(); enterConfirmedInputs();
+    expect(screen.getByText("Postar até: horário não informado · Prazo interno: não informado · Entrega: 12/10/2026 (data comercial)")).toBeInTheDocument();
+    expect(screen.queryByText(/Meta de produção \(data\)/)).not.toBeInTheDocument();
+    const result = simulate();
+    expect(within(result).getByText("Dados a conferir")).toBeInTheDocument();
+    expect(within(result).queryByText("Confira o horário do prazo interno.")).not.toBeInTheDocument();
+    expect(within(result).queryByText(/Folga até a postagem/)).not.toBeInTheDocument();
+  });
+
+  it("preserva a meta explícita de produção em vez de antecipar novamente a entrega manual", async () => {
+    Object.assign(mock.tables.orders[0], { due_date: "2026-10-12", ship_by_at: null, internal_due_at: "2026-10-10T15:00:00Z", marketplace_order_id: null });
+    mount(); await load(); enterConfirmedInputs();
+    expect(screen.getByText(/Postar até: horário não informado · Prazo interno:.*10\/10\/2026.*15:00.*Entrega: 12\/10\/2026 \(data comercial\)/)).toBeInTheDocument();
+    expect(screen.queryByText(/Meta de produção \(data\)/)).not.toBeInTheDocument();
+    expect(within(simulate()).queryByText("Confira o horário do prazo interno.")).not.toBeInTheDocument();
+  });
+
+  it("preserva o cutoff explícito de postagem sem inferir meta pela entrega manual", async () => {
+    Object.assign(mock.tables.orders[0], { due_date: "2026-10-12", internal_due_at: null, marketplace_order_id: null });
+    mount(); await load(); enterConfirmedInputs();
+    expect(screen.getByText(/Postar até:.*10\/10\/2026.*17:00.*Prazo interno: não informado.*Entrega: 12\/10\/2026 \(data comercial\)/)).toBeInTheDocument();
+    expect(screen.queryByText(/Meta de produção \(data\)/)).not.toBeInTheDocument();
+    expect(within(simulate()).getByText("Estimativa dentro do prazo")).toBeInTheDocument();
+  });
+
+  it("não mantém meta inferida ativa quando o pedido já está pronto", async () => {
+    Object.assign(mock.tables.orders[0], { status: "ready", due_date: "2026-10-12", ship_by_at: null, internal_due_at: null, marketplace_order_id: null });
+    mock.tables.jobs[0].status = "completed";
+    mount(); await load();
+    expect(screen.getByText("Postar até: horário não informado · Prazo interno: não informado · Entrega: 12/10/2026 (data comercial)")).toBeInTheDocument();
+    expect(screen.queryByText(/Meta de produção \(data\)/)).not.toBeInTheDocument();
+    expect(within(simulate()).queryByText("Confira o horário do prazo interno.")).not.toBeInTheDocument();
+  });
+
+  it.each(["shipped", "delivered", "cancelled"])("não prioriza trabalho físico de pedido %s por uma meta de produção inferida já encerrada", async status => {
+    Object.assign(mock.tables.orders[0], { due_date: "2026-10-11", ship_by_at: "2026-10-11T12:00:00Z", internal_due_at: null });
+    mock.tables.orders.push({ id: "closed-order", code: "PED-ENCERRADO", status, due_date: "2026-10-12", ship_by_at: null, internal_due_at: null, marketplace_order_id: null });
+    mock.tables.production_orders.push({ id: "closed-production", source_order_id: "closed-order", status: "planned" });
+    mock.tables.jobs.unshift({ ...mock.tables.jobs[0], id: "closed-job", code: "JOB-ENCERRADO", production_order_id: "closed-production", due_date: "2026-10-12", priority: 1, started_at: "2026-10-09T12:00:00Z" });
+    mount(); await load();
+    expect(screen.getAllByLabelText(/^Tempo de impressão de JOB-/).map(input => input.getAttribute("id"))).toEqual(["job-time-job-1", "job-time-closed-job"]);
+    expect(screen.queryByRole("link", { name: "Abrir pedido PED-ENCERRADO" })).not.toBeInTheDocument();
+  });
+
+  it("mantém uma entrega impossível a conferir sem normalizar para outro dia", async () => {
+    Object.assign(mock.tables.orders[0], { due_date: "2026-02-30", ship_by_at: null, internal_due_at: null, marketplace_order_id: null });
+    mount(); await load();
+    expect(screen.getByText("Postar até: horário não informado · Prazo interno: não informado · Entrega: data a conferir (data comercial)")).toBeInTheDocument();
+    expect(screen.queryByText(/Meta de produção \(data\)/)).not.toBeInTheDocument();
+  });
+
   it("não troca o tempo restante observado pelo tempo total cadastrado", async () => {
     mock.tables.jobs[0].status = "printing"; mock.tables.printers[0].status = "printing";
     mount(); await load(); enterConfirmedInputs({ bed: false });
@@ -157,8 +240,21 @@ describe("simulação de prazo da farm", () => {
   it("não recupera o prazo antigo da venda quando o canal atual está sem cutoff", async () => {
     mock.tables.marketplace_orders = [{ id: "inbox-1", internal_order_id: "order-1", shipping_deadline_at: null, needs_review: true, review_reason: "SLA atual ainda não informado." }];
     mount(); await load(); enterConfirmedInputs();
-    expect(screen.getByText("Postar até: não informado · Prazo interno: não informado")).toBeInTheDocument();
+    expect(screen.getByText("Postar até: horário não informado · Prazo interno: não informado · Entrega: 10/10/2026 (data comercial)")).toBeInTheDocument();
     expect(within(simulate()).getByText("Informe o horário limite de postagem e o fuso.")).toBeInTheDocument();
+  });
+
+  it("bloqueia a meta inferida de entrega quando existe inbox vinculada sem cutoff", async () => {
+    Object.assign(mock.tables.orders[0], { due_date: "2026-10-12", ship_by_at: null, internal_due_at: null, marketplace_order_id: null });
+    mock.tables.marketplace_orders = [{ id: "inbox-1", internal_order_id: "order-1", shipping_deadline_at: null, needs_review: false, review_reason: null }];
+    mount(); await load(); enterConfirmedInputs();
+    expect(screen.getByText("Postar até: horário não informado · Prazo interno: não informado · Entrega: 12/10/2026 (data comercial)")).toBeInTheDocument();
+    expect(screen.queryByText(/Meta de produção \(data\)/)).not.toBeInTheDocument();
+    const result = simulate();
+    expect(within(result).getByText("Dados a conferir")).toBeInTheDocument();
+    expect(within(result).getByText("Informe o horário limite de postagem e o fuso.")).toBeInTheDocument();
+    expect(within(result).queryByText("Confira o horário do prazo interno.")).not.toBeInTheDocument();
+    expect(within(result).queryByText(/Folga até a postagem/)).not.toBeInTheDocument();
   });
 
   it("ignora somente a ausência de esquema da inbox e apresenta outros erros de leitura", async () => {

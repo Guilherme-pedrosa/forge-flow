@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Pedidos from "@/pages/comercial/Pedidos";
+import { operatingDateInput } from "@/lib/sales-workflow";
 
 const mock = vi.hoisted(() => ({ rpc: vi.fn(), toast: vi.fn(), orders: [] as Record<string, unknown>[], schemaError: null as { code: string; message: string } | null }));
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ profile: { tenant_id: "tenant-1" } }) }));
@@ -101,5 +102,41 @@ describe("confirm and organize sales", () => {
     expect(mock.rpc.mock.calls[0][1]).toMatchObject({ p_order_id: "active", p_dates: { ship_by_at: expect.any(String), internal_due_at: expect.any(String) } });
     expect(mock.rpc.mock.calls[0][1]).not.toHaveProperty("p_order");
     expect(mock.rpc.mock.calls[0][1]).not.toHaveProperty("p_items");
+  });
+  it("previews one preparation day before a direct delivery without submitting a fabricated shipping hour", async () => {
+    mock.rpc.mockResolvedValue({ data: { order_id: "direct", outcome: "production_queued", production_order_id: "op-1", issues: [] }, error: null });
+    mount(); fireEvent.click(screen.getByRole("button", { name: "Novo pedido" }));
+    await screen.findByRole("option", { name: "Maçã" });
+    fireEvent.change(screen.getByLabelText("Produto do item 1"), { target: { value: "product-1" } });
+    fireEvent.change(screen.getByLabelText("Cliente do pedido"), { target: { value: "customer-1" } });
+    fireEvent.change(screen.getByLabelText(/Receber em/), { target: { value: "2026-11-10" } });
+    fireEvent.change(screen.getByLabelText("Data de Entrega"), { target: { value: "2026-11-10" } });
+    expect(screen.getByText("Meta de produção: 09/11/2026 (1 dia antes da entrega; horário não combinado)")).toBeInTheDocument();
+    expect(screen.getByLabelText("Postar até")).toHaveValue("");
+    expect(screen.queryByLabelText("Folga antes da postagem (horas)")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Confirmar e organizar" }));
+    await waitFor(() => expect(mock.rpc).toHaveBeenCalled());
+    expect(mock.rpc.mock.calls[0][1].p_order).toMatchObject({ due_date: "2026-11-10", ship_by_at: null, internal_due_at: null });
+  });
+  it("shows the direct preparation day in the order list and detail while keeping the agreed delivery", async () => {
+    mock.orders = [{ ...order("direct", "in_production"), marketplace_order_id: null }];
+    mount();
+    expect(await screen.findByText("Meta de produção: 09/11/2026 (1 dia antes da entrega; horário não combinado)")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("PED-direct"));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Meta de produção: 09/11/2026 (1 dia antes da entrega; horário não combinado)")).toBeInTheDocument();
+    expect(within(dialog).getByText("Data de Entrega").parentElement).toHaveTextContent("10/11/2026");
+  });
+  it("keeps official seconds and fractions when only the internal target is revised", async () => {
+    const official = "2026-10-13T23:59:59.123456-03:00";
+    mock.orders = [{ ...order("marketplace", "in_production"), marketplace_order_id: "source-1", ship_by_at: official, internal_due_at: "2026-10-12T23:59:59.123456-03:00" }];
+    mock.rpc.mockResolvedValue({ data: "marketplace", error: null });
+    mount("/?pedido=marketplace");
+    fireEvent.click(await screen.findByRole("button", { name: "Revisar prazos" }));
+    const edited = operatingDateInput("2026-10-13T12:00:00-03:00");
+    fireEvent.change(screen.getByLabelText("Meta interna (opcional)"), { target: { value: edited } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar prazos" }));
+    await waitFor(() => expect(mock.rpc).toHaveBeenCalled());
+    expect(mock.rpc.mock.calls[0][1].p_dates).toEqual({ ship_by_at: official, internal_due_at: new Date(edited).toISOString() });
   });
 });

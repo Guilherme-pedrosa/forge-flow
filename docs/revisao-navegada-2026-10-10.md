@@ -2,6 +2,8 @@
 
 Esta revisão aprofunda a avaliação do Forge Flow após a entrega da PR #1. A base examinada é `aceb02e449517cb2b2520f5f16fa60a0d588aa03`. Foram usados navegador Chromium, páginas públicas, um manual hospedado pelo MakerWorld, um 3MF oficial do Bambu Studio, o código dos dois sistemas e banco isolado com dados sintéticos. A [matriz de cobertura](coverage-2026-10-10.md) continua registrando o que falta para atender integralmente a entrevista.
 
+A [reconferência direta do Plaud](revisao-plaud-2026-10-10.md), posterior a esta revisão, registra omissões adicionais e corrige a prioridade de TikTok e a classificação do controle real de filamento.
+
 ## O que foi acessado
 
 | Fonte | Acesso efetivo | Evidência e limite |
@@ -71,7 +73,7 @@ A venda de um kit também ainda não aproveita corretamente o estoque pronto dos
 
 A fala de Gleyce em 00:00:47–00:01:28 exige entrada automática de vendas ML/Shopee/TikTok, fila pelo prazo de postagem com folga e pedidos particulares no mesmo local. Em 00:01:57, ela pede visão real do filamento das três máquinas para consolidar a compra. A revisão não muda esses critérios.
 
-Ainda faltam ingestão contínua com recuperação de eventos e cancelamentos, adaptador automático TikTok, jornada única de atendimento incluindo externos pendentes, agenda persistida da farm, rotas alternativas de placas, aprovação de personalização por item, expedição/embalagem física, gestão completa de anúncios e atualização remota de estoque. Credenciais ausentes limitam o aceite externo; não explicam funcionalidades ainda não implementadas.
+Para o núcleo explícito do Plaud, ainda faltam entrada contínua dos três canais com recuperação de eventos/cancelamentos, atendimento de todos os pedidos na mesma página e controle físico confiável dos filamentos das três máquinas para comprar junto. TikTok pertence a esse aceite original. Agenda persistida, rotas alternativas, aprovação de arte, expedição, gestão completa de anúncios e atualização remota de estoque são evoluções ligadas ao ERP mais amplo solicitado pelo usuário ou recomendações técnicas; não foram todas exigidas literalmente nesta gravação. Credenciais ausentes limitam o aceite externo; não explicam funcionalidades ainda não implementadas.
 
 O piloto deve atravessar: produto simples; kit com quantidade comercial 1 e vários componentes; produto composto com rendimentos desiguais; variante de cor; personalização sem foto seguida de conferência; estoque parcial; perda que exige reposição e sobra que não exige; venda cancelada; duas contas com IDs externos semelhantes; compra de cores das três máquinas em um documento. Medir minutos administrativos por pedido, atraso, retrabalho e diferença de inventário. Só então afirmar que a dificuldade relatada foi resolvida na operação.
 

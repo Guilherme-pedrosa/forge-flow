@@ -49,6 +49,9 @@ const fmtCurrency = (v: number | null) =>
 const fmtDate = (d: string | null) =>
   d ? new Date(d + "T00:00:00").toLocaleDateString("pt-BR") : "—";
 
+const expectedDateActivationMessage = "A revisão da previsão de entrega depende da ativação da estrutura de compras. Peça ao responsável pelo sistema para aplicar a atualização.";
+const missingExpectedDateRpc = (error: unknown) => !!error && typeof error === "object" && ["42883", "PGRST202"].includes(String((error as { code?: string }).code));
+
 const statusConfig: Record<string, { label: string; variant: "default" | "secondary" | "destructive" | "outline" }> = {
   draft: { label: "Rascunho", variant: "outline" },
   pending: { label: "Pendente", variant: "secondary" },
@@ -165,6 +168,9 @@ export default function Compras() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [detailOrder, setDetailOrder] = useState<any>(null);
+  const [reviewExpectedDate, setReviewExpectedDate] = useState("");
+  const [expectedDateSaveError, setExpectedDateSaveError] = useState<string | null>(null);
+  const [expectedDateStructureMissing, setExpectedDateStructureMissing] = useState(false);
   const [xmlImportOpen, setXmlImportOpen] = useState(false);
   const [marketplaceImportOpen, setMarketplaceImportOpen] = useState(false);
   const [marketplaceImages, setMarketplaceImages] = useState<string[]>([]);
@@ -284,6 +290,57 @@ export default function Compras() {
       return data;
     },
     enabled: !!detailOrder,
+  });
+
+  const expectedDateAvailability = useQuery({
+    queryKey: ["purchase-expected-date-review", profile?.tenant_id],
+    enabled: !!profile && detailOrder?.status === "pending",
+    retry: false,
+    queryFn: async () => {
+      const { data, error } = await (supabase.rpc as any)("purchase_expected_date_review_available");
+      if (error) throw error;
+      if (typeof data !== "boolean") throw new Error("Não foi possível confirmar a disponibilidade da revisão.");
+      return data;
+    },
+  });
+  useEffect(() => {
+    setReviewExpectedDate(detailOrder?.expected_date || "");
+    setExpectedDateSaveError(null);
+    setExpectedDateStructureMissing(false);
+  }, [detailOrder?.id, detailOrder?.expected_date]);
+
+  const updateExpectedDateMut = useMutation({
+    mutationFn: async ({ id, date }: { id: string; date: string | null }) => {
+      if (!profile) throw new Error("Sessão indisponível.");
+      if (date !== null && !validDate(date)) throw new Error("Informe uma previsão de entrega válida.");
+      const key = `expected-date:${id}`;
+      const payload = JSON.stringify([id, date]);
+      let request = purchaseRequests.current.get(key);
+      if (!request || request.payload !== payload) { request = { payload, id: crypto.randomUUID() }; purchaseRequests.current.set(key, request); }
+      const { data, error } = await (supabase.rpc as any)("set_purchase_expected_date", { p_order_id: id, p_expected_date: date, p_request_id: request.id });
+      if (error) throw error;
+      if (data !== id) throw new Error("A revisão não foi confirmada. Atualize a compra antes de repetir.");
+      return { id, date };
+    },
+    onSuccess: async ({ id, date }) => {
+      // A confirmed save ends this operation. A later review of the same date
+      // must get a fresh identity, including after changes in another session.
+      purchaseRequests.current.delete(`expected-date:${id}`);
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["purchase_orders"] }),
+        qc.invalidateQueries({ queryKey: ["filament-planning"] }),
+      ]);
+      setDetailOrder((current: any) => current?.id === id ? { ...current, expected_date: date } : current);
+      setExpectedDateSaveError(null);
+      toast({ title: "Previsão atualizada", description: date ? "A projeção de filamento usará a data confirmada." : "A compra ficará sem data na projeção até a confirmação da entrega." });
+    },
+    onError: (error: any) => {
+      const missing = missingExpectedDateRpc(error);
+      setExpectedDateStructureMissing(missing);
+      const message = missing ? expectedDateActivationMessage : error.message || "Não foi possível salvar a previsão. Tente novamente.";
+      setExpectedDateSaveError(message);
+      toast({ title: "Previsão não salva", description: message, variant: "destructive" });
+    },
   });
 
   const filtered = useMemo(() => {
@@ -1000,6 +1057,22 @@ export default function Compras() {
                 {detailOrder.nfe_key && <div className="col-span-2"><span className="text-muted-foreground">Chave NFe:</span> <span className="font-mono text-xs break-all">{detailOrder.nfe_key}</span></div>}
                 {detailOrder.notes && <div className="col-span-2"><span className="text-muted-foreground">Obs:</span> {detailOrder.notes}</div>}
               </div>
+
+              {detailOrder.status === "pending" && <section className="rounded-lg border p-3 space-y-2" aria-label="Revisar previsão de entrega">
+                <p className="text-sm font-medium">Previsão de entrega</p>
+                {expectedDateAvailability.isPending && <p className="text-sm text-muted-foreground">Conferindo disponibilidade da revisão…</p>}
+                {(expectedDateStructureMissing || missingExpectedDateRpc(expectedDateAvailability.error)) ? <p role="alert" className="text-sm text-amber-700">{expectedDateActivationMessage}</p>
+                  : expectedDateAvailability.error ? <div className="space-y-2"><p role="alert" className="text-sm text-destructive">Não foi possível consultar a revisão da previsão. Tente novamente.</p><Button variant="outline" size="sm" onClick={() => void expectedDateAvailability.refetch()}>Tentar novamente</Button></div>
+                  : expectedDateAvailability.data === false ? <p className="text-sm text-muted-foreground">Seu perfil não tem permissão para revisar a previsão de compras.</p>
+                  : expectedDateAvailability.data === true && <>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                      <div className="flex-1"><Label htmlFor="purchase-review-expected-date">Previsão de entrega da compra</Label><Input id="purchase-review-expected-date" type="date" value={reviewExpectedDate} disabled={updateExpectedDateMut.isPending} onChange={event => { setReviewExpectedDate(event.target.value); setExpectedDateSaveError(null); }} /></div>
+                      <Button disabled={updateExpectedDateMut.isPending || reviewExpectedDate === (detailOrder.expected_date || "")} onClick={() => updateExpectedDateMut.mutate({ id: detailOrder.id, date: reviewExpectedDate || null })}>{updateExpectedDateMut.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Salvar previsão</Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">Confirme a data com o fornecedor para considerar esta compra na projeção. Deixe o campo vazio para retirar a previsão.</p>
+                    {expectedDateSaveError && <p role="alert" className="text-sm text-destructive">{expectedDateSaveError}</p>}
+                  </>}
+              </section>}
 
               <div>
                 <Label className="mb-2 block">

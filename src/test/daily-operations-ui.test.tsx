@@ -1,5 +1,5 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { focusManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Hoje from "@/pages/Hoje";
@@ -16,6 +16,7 @@ vi.mock("@/integrations/supabase/client", () => ({ supabase: { from: mock.from }
 const mount = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retryDelay: 0 } } })}><MemoryRouter><Hoje /></MemoryRouter></QueryClientProvider>);
 
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-10-11T12:00:00Z"));
   mock.tenant = "tenant-1"; mock.requests = []; mock.errors = {}; mock.tables = { orders: [], jobs: [], printers: [], inventory_items: [] }; mock.from.mockReset();
   mock.from.mockImplementation((table: string) => {
     let columns: string | undefined;
@@ -36,9 +37,66 @@ beforeEach(() => {
     return builder;
   });
 });
-afterEach(cleanup);
+afterEach(() => { cleanup(); focusManager.setFocused(undefined); vi.useRealTimers(); });
 
 describe("página Hoje", () => {
+  it("consulta novamente a cada 30 segundos e mostra uma venda criada em outra sessão", async () => {
+    vi.useRealTimers();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-11T12:00:00Z"));
+    focusManager.setFocused(true);
+    mount();
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    expect(screen.getByText("Nenhum pedido ativo")).toBeInTheDocument();
+    mock.tables.orders = [{ id: "remoto", code: "PED-NOVA-SESSAO", status: "draft", marketplace_order_id: null, due_date: "2026-10-12" }];
+    await act(async () => { await vi.advanceTimersByTimeAsync(29_999); });
+    expect(screen.queryByRole("link", { name: /PED-NOVA-SESSAO/ })).not.toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(mock.requests.filter(request => request.table === "orders")).toHaveLength(2);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(screen.getByRole("link", { name: /PED-NOVA-SESSAO.*Confirmar e organizar/ })).toBeInTheDocument();
+  });
+
+  it("mostra e alerta a data de produção manual um dia antes sem inventar horário de postagem", async () => {
+    mock.tables.orders = [{ id: "manual", code: "PED-MANUAL", status: "in_production", marketplace_order_id: null, due_date: "2026-10-12" }];
+    mount();
+    await screen.findByRole("link", { name: /PED-MANUAL.*Acompanhar produção/ });
+    expect(screen.getByText("Meta de produção (data): 11/10/2026 · 1 dia antes da entrega")).toBeInTheDocument();
+    expect(screen.getByText("Meta de produção hoje")).toBeInTheDocument();
+    expect(screen.getByText("Entrega: 12/10/2026")).toBeInTheDocument();
+    expect(screen.getByText("Postagem: horário não informado")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Prazos hoje 1/ })).toBeInTheDocument();
+    expect(screen.queryByText(/Postar até/)).not.toBeInTheDocument();
+  });
+
+  it("não infere a meta manual para canal sem cutoff, vínculo da inbox ou origem desconhecida", async () => {
+    mock.tables.orders = [
+      { id: "canal", code: "PED-CANAL", status: "draft", marketplace_order_id: "inbox-canal", due_date: "2026-10-12" },
+      { id: "vinculado", code: "PED-VINCULADO", status: "draft", marketplace_order_id: null, due_date: "2026-10-12" },
+      { id: "desconhecido", code: "PED-LEGADO", status: "draft", due_date: "2026-10-12" },
+    ];
+    mock.tables.marketplace_orders = [{ id: "inbox-vinculado", internal_order_id: "vinculado", shipping_deadline_at: null, needs_review: false, review_reason: null }];
+    mount(); await screen.findByRole("link", { name: /PED-VINCULADO.*Confirmar e organizar/ });
+    expect(screen.queryByText(/Meta de produção \(data\):/)).not.toBeInTheDocument();
+    expect(screen.getAllByText("Meta interna: não informada")).toHaveLength(3);
+    expect(screen.getByRole("link", { name: /Prazos hoje 0/ })).toBeInTheDocument();
+  });
+
+  it("preserva meta explícita e não alerta produção concluída em pedido pronto ou enviado", async () => {
+    mock.tables.orders = [
+      { id: "explicito", code: "PED-EXPLICITO", status: "in_production", marketplace_order_id: null, due_date: "2026-10-12", internal_due_at: "2026-10-13T15:00:00Z" },
+      { id: "pronto", code: "PED-PRONTO", status: "ready", marketplace_order_id: null, due_date: "2026-10-11" },
+      { id: "enviado", code: "PED-ENVIADO", status: "shipped", marketplace_order_id: null, due_date: "2026-10-11" },
+    ];
+    mount(); await screen.findByRole("link", { name: /PED-EXPLICITO.*Acompanhar produção/ });
+    expect(screen.getByText(/Meta interna:.*13\/10\/2026/)).toBeInTheDocument();
+    expect(screen.getByText("Meta de produção (data): 10/10/2026 · 1 dia antes da entrega · produção concluída")).toBeInTheDocument();
+    expect(screen.queryByText("Meta de produção hoje")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Meta de produção vencida/)).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Prazos vencidos 0/ })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /PED-ENVIADO.*Confirmar entrega/ })).toBeInTheDocument();
+  });
+
   it("abre o próximo passo do pedido e expõe os dados desconhecidos sem exigir novos campos", async () => {
     mock.tables.orders = [{ id: "pedido-1", code: "PED-001", status: "ready", due_date: "2026-10-12" }];
     mock.tables.printers = [{ id: "p1", name: "Impressora 1", model: "A1", status: "idle" }];

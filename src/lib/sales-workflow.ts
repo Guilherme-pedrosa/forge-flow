@@ -21,10 +21,12 @@ export function salesOrderNextAction(order: { status: string; workflow_issues?: 
   return ({ in_production: "Acompanhar produção", ready: "Embalar e postar", shipped: "Confirmar entrega", delivered: "Entregue", cancelled: "Cancelado" } as Record<string, string>)[order.status] ?? "Abrir pedido";
 }
 
-export function operatingDateToIso(value: string, label: string): string | null {
+export function operatingDateToIso(value: string, label: string, original?: string | null): string | null {
   if (!value) return null;
   const date = new Date(value);
   if (!Number.isFinite(date.getTime())) throw new Error(`Confira ${label}.`);
+  // datetime-local displays minutes. Keep the full saved instant when it was not edited.
+  if (original && /T.+(?:Z|[+-]\d{2}:\d{2})$/i.test(original) && operatingDateInput(original) === value) return original;
   return date.toISOString();
 }
 

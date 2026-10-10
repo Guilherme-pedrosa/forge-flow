@@ -13,8 +13,10 @@ import { assemblyRows } from "@/lib/assembly";
 import { excludeUnstartedCancelledJobs } from "@/lib/job-source-cancellation";
 import { isMissingDatabaseStructure } from "@/lib/database-readiness";
 import { compareOperationalJobs, operationalIssueLabel, planOperations, type OperationalJob, type OperatorWindow } from "@/lib/operational-planning";
+import { deliveryPreparationDay } from "@/lib/order-preparation-deadline";
+import { displayDate, validDate } from "@/lib/finance";
 
-type CapacityOrder = { id: string; code: string; status: string; due_date: string | null; ship_by_at?: string | null; internal_due_at?: string | null };
+type CapacityOrder = { id: string; code: string; status: string; due_date: string | null; ship_by_at?: string | null; internal_due_at?: string | null; marketplace_order_id?: string | null };
 type CapacityJob = { id: string; code: string; name: string; status: string; order_id: string | null; production_order_id: string | null; printer_id: string | null; due_date: string | null; est_time_minutes: number | null; priority: number; created_at: string; reprint_of: string | null; started_at?: string | null; inventory_posted_at?: string | null };
 type CapacityPrinter = { id: string; name: string; status: string; model?: string | null };
 type CapacityProductionOrder = { id: string; status: string; source_order_id: string | null };
@@ -50,9 +52,13 @@ function localInstant(value: string, label: string): string {
 }
 function dateLabel(value: string | null | undefined): string {
   if (!value) return "não informado";
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return `${new Date(`${value}T12:00:00`).toLocaleDateString("pt-BR")} (horário pendente)`;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return validDate(value) ? `${displayDate(value)} (horário pendente)` : "data a conferir";
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? date.toLocaleString("pt-BR") : "data a conferir";
+}
+function dayLabel(value: string | null | undefined): string {
+  if (!value) return "não informada";
+  return validDate(value) ? displayDate(value) : "data a conferir";
 }
 
 function Check({ id, label, checked, disabled, onChange }: { id: string; label: string; checked: boolean; disabled?: boolean; onChange: (checked: boolean) => void }) {
@@ -102,7 +108,8 @@ export default function Capacidade() {
       const linked = (query.data?.marketplaceOrders ?? []).filter(row => row.internal_order_id != null && row.internal_order_id === order.id);
       const canonical = earliestCapacityDeadline(linked.map(row => row.shipping_deadline_at));
       const review = linked.filter(row => row.needs_review);
-      return { ...order, planningDeadline: linked.length ? canonical : order.ship_by_at ?? order.due_date, planningInternalDeadline: linked.length ? canonical ? earliestCapacityDeadline([order.internal_due_at, canonical]) : null : order.internal_due_at ?? null, marketplaceReview: review.length ? [...new Set(review.map(row => row.review_reason || "Confira a atualização do marketplace antes de confirmar o prazo."))].join(" · ") : null };
+      const preparationDay = ["ready", "shipped", "delivered", "cancelled"].includes(order.status) ? null : deliveryPreparationDay(order, linked.length > 0);
+      return { ...order, preparationDay, planningDeadline: linked.length ? canonical : order.ship_by_at ?? order.due_date, planningInternalDeadline: linked.length ? canonical ? earliestCapacityDeadline([order.internal_due_at, canonical]) : null : order.internal_due_at ?? preparationDay, postingDeadline: linked.length ? canonical : order.ship_by_at ?? null, marketplaceReview: review.length ? [...new Set(review.map(row => row.review_reason || "Confira a atualização do marketplace antes de confirmar o prazo."))].join(" · ") : null };
     });
     const orders = allOrders.filter(order => activeOrders.has(order.status));
     const byOrder = new Map(allOrders.map(order => [order.id, order]));
@@ -170,7 +177,7 @@ export default function Capacidade() {
         <p className="text-sm text-muted-foreground">Confira se as ordens vinculadas representam todas as placas e peças necessárias, inclusive produtos com várias placas. Uma falha substituída por reimpressão não soma outra peça pronta.</p>
         {prepared.orders.map(order => {
           const linked = prepared.jobs.filter(job => prepared.orderIdFor(job) === order.id), canConfirm = linked.length > 0 || order.status === "ready";
-          return <div key={order.id} className="space-y-2 rounded border p-3"><p className="text-sm font-medium">{order.code} · {linked.length} ordem(ns) vinculada(s)</p><p className="text-xs text-muted-foreground">Postar até: {dateLabel(order.planningDeadline)} · Prazo interno: {dateLabel(order.planningInternalDeadline)}</p>{order.marketplaceReview && <p className="text-sm text-amber-700">Revisão do marketplace: {order.marketplaceReview} <Link className="underline" to="/integracoes/marketplaces">Conferir marketplace</Link></p>}{linked.length > 0 && <p className="text-xs text-muted-foreground">{linked.map(job => job.code).join(", ")}</p>}<Check id={`manifest-${order.id}`} label={linked.length ? `Todas as placas e peças de ${order.code} estão representadas` : `Conferi todos os itens de ${order.code}: estão disponíveis e dispensam impressão`} checked={!!manifests[order.id]} disabled={!canConfirm} onChange={checked => setManifests(previous => ({ ...previous, [order.id]: checked }))} />{!canConfirm && <p className="text-sm text-muted-foreground">Vincule as ordens necessárias ou confira o atendimento por estoque no pedido.</p>}<Link className="text-sm text-primary underline" to={`/comercial/pedidos?pedido=${encodeURIComponent(order.id)}`}>Abrir pedido {order.code}</Link></div>;
+          return <div key={order.id} className="space-y-2 rounded border p-3"><p className="text-sm font-medium">{order.code} · {linked.length} ordem(ns) vinculada(s)</p><p className="text-xs text-muted-foreground">Postar até: {order.postingDeadline ? dateLabel(order.postingDeadline) : "horário não informado"} · {order.preparationDay ? <>Meta de produção (data): {dayLabel(order.preparationDay)} · 1 dia antes da entrega</> : <>Prazo interno: {dateLabel(order.planningInternalDeadline)}</>} · Entrega: {dayLabel(order.due_date)} (data comercial)</p>{order.marketplaceReview && <p className="text-sm text-amber-700">Revisão do marketplace: {order.marketplaceReview} <Link className="underline" to="/integracoes/marketplaces">Conferir marketplace</Link></p>}{linked.length > 0 && <p className="text-xs text-muted-foreground">{linked.map(job => job.code).join(", ")}</p>}<Check id={`manifest-${order.id}`} label={linked.length ? `Todas as placas e peças de ${order.code} estão representadas` : `Conferi todos os itens de ${order.code}: estão disponíveis e dispensam impressão`} checked={!!manifests[order.id]} disabled={!canConfirm} onChange={checked => setManifests(previous => ({ ...previous, [order.id]: checked }))} />{!canConfirm && <p className="text-sm text-muted-foreground">Vincule as ordens necessárias ou confira o atendimento por estoque no pedido.</p>}<Link className="text-sm text-primary underline" to={`/comercial/pedidos?pedido=${encodeURIComponent(order.id)}`}>Abrir pedido {order.code}</Link></div>;
         })}
       </CardContent></Card>
     </div>

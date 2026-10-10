@@ -37,7 +37,7 @@ export default function Hoje() {
   const [visibleOrders, setVisibleOrders] = useState(12);
   useEffect(() => { const timer = window.setInterval(() => setNow(new Date()), 60_000); return () => window.clearInterval(timer); }, []);
   const query = useQuery({
-    queryKey: ["daily-operations", tenantId], enabled: !!tenantId, staleTime: 30_000, retry: 1,
+    queryKey: ["daily-operations", tenantId], enabled: !!tenantId, staleTime: 30_000, refetchInterval: 30_000, retry: 1,
     queryFn: async () => {
       const [orders, jobs, printers, materials, marketplaceOrders, productionOrders] = await Promise.all([
         readProductionRows<DailyOrder>((from, to) => supabase.from("orders").select("*").eq("tenant_id", tenantId!).order("id").range(from, to)),
@@ -61,7 +61,7 @@ export default function Hoje() {
       <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-muted-foreground">Consulta concluída em {timestampLabel(new Date(query.dataUpdatedAt).toISOString())} · horários em {timezone}.</p><div className="flex flex-wrap gap-2"><Button asChild size="sm"><Link to="/comercial/pedidos"><ShoppingCart className="mr-2 h-4 w-4" />Pedidos</Link></Button><Button asChild size="sm" variant="outline"><Link to="/planejamento/fila"><Printer className="mr-2 h-4 w-4" />Fila de impressão</Link></Button></div></div>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">{[
         { title: "Pedidos ativos", value: data.orders.length, detail: `${data.unknownDeadlineCount} sem prazo informado`, href: "/comercial/pedidos" },
-        { title: "Prazos hoje", value: data.dueTodayCount, detail: "Postagem, meta interna ou entrega", href: "#pedidos-do-dia" },
+        { title: "Prazos hoje", value: data.dueTodayCount, detail: "Postagem, produção ou entrega", href: "#pedidos-do-dia" },
         { title: "Prazos vencidos", value: data.overdueCount, detail: "Confira o próximo passo", href: "#pedidos-do-dia" },
         { title: "Materiais abaixo do mínimo", value: data.lowStock.length, detail: "Saldo registrado no estoque", href: "/estoque/reposicao" },
       ].map(card => {
@@ -69,20 +69,20 @@ export default function Hoje() {
         const classes = "min-w-0 rounded-xl border bg-card p-4 transition-colors hover:bg-muted/40";
         return card.href.startsWith("#") ? <a key={card.title} className={classes} href={card.href}>{content}</a> : <Link key={card.title} className={classes} to={card.href}>{content}</Link>;
       })}</div>
-      <div id="pedidos-do-dia"><Panel title="Próximo passo dos pedidos" description="Ordenados pelo primeiro prazo com horário registrado; quando ele falta, usamos a data de entrega apenas para ordenar." href="/comercial/pedidos">
+      <div id="pedidos-do-dia"><Panel title="Próximo passo dos pedidos" description="Ordenados pelo primeiro prazo registrado. Vendas manuais sem horário usam a meta de produção um dia antes da entrega." href="/comercial/pedidos">
         {!data.orders.length ? <Empty title="Nenhum pedido ativo">Crie um pedido ou importe as vendas dos marketplaces para organizar o trabalho.</Empty> : <div className="divide-y">{data.orders.slice(0, visibleOrders).map(order => <article key={order.id}><Link to={order.href} className="block px-4 py-4 hover:bg-muted/30 sm:px-5">
           <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">{order.code || "Pedido sem código"}</h3><span className="rounded-full border px-2.5 py-1 text-xs">{orderStatus[order.status] ?? "Status a conferir"}</span></div>
           <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]"><div className="min-w-0 space-y-1 text-sm">
             {order.status !== "shipped" && <p>{order.postingAt ? `Postar até ${timestampLabel(order.postingAt)}${order.postingSource === "marketplace" ? " · prazo do canal" : ""}` : "Postagem: horário não informado"}</p>}
-            {order.status !== "shipped" && <p className={order.internalDeadlineNeedsReview ? "text-amber-700" : "text-muted-foreground"}>{order.internalAt ? `Meta interna: ${timestampLabel(order.internalAt)}${order.internalDeadlineNeedsReview ? " · ajustar para antes da postagem" : ""}` : "Meta interna: não informada"}</p>}
+            {order.status !== "shipped" && <p className={order.internalDeadlineNeedsReview ? "text-amber-700" : "text-muted-foreground"}>{order.internalAt ? `Meta interna: ${timestampLabel(order.internalAt)}${order.internalDeadlineNeedsReview ? " · ajustar para antes da postagem" : ""}` : order.internalDay ? `Meta de produção (data): ${displayDate(order.internalDay)} · 1 dia antes da entrega${order.status === "ready" ? " · produção concluída" : ""}` : "Meta interna: não informada"}</p>}
             {order.deliveryDay && <p>Entrega: {displayDate(order.deliveryDay)}</p>}
-            <p className={cn("text-xs", order.deadline.urgency === "overdue" ? "font-medium text-destructive" : "text-muted-foreground")}>{order.deadline.urgency === "overdue" ? `${order.deadline.kind === "delivery" ? "Data de entrega vencida" : order.deadline.kind === "internal" ? "Meta interna vencida" : "Prazo de postagem vencido"} (conferir andamento)` : order.deadline.urgency === "today" ? `${order.deadline.kind === "delivery" ? "Entrega" : order.deadline.kind === "internal" ? "Meta interna" : "Postagem"} hoje` : order.deadline.kind === "unknown" ? "Prazo a informar" : "Prazo registrado; conclusão a conferir"}</p>
+            <p className={cn("text-xs", order.deadline.urgency === "overdue" ? "font-medium text-destructive" : "text-muted-foreground")}>{order.deadline.urgency === "overdue" ? `${order.deadline.kind === "delivery" ? "Data de entrega vencida" : order.deadline.kind === "internal" ? "Meta interna vencida" : order.deadline.kind === "internal_day" ? "Meta de produção vencida" : "Prazo de postagem vencido"} (conferir andamento)` : order.deadline.urgency === "today" ? `${order.deadline.kind === "delivery" ? "Entrega" : order.deadline.kind === "internal" ? "Meta interna" : order.deadline.kind === "internal_day" ? "Meta de produção" : "Postagem"} hoje` : order.deadline.kind === "unknown" ? "Prazo a informar" : "Prazo registrado; conclusão a conferir"}</p>
             {order.issues.length > 0 && <p className="break-words text-xs text-amber-700">{order.issues.join(" ")}</p>}
             {!order.workflowChecked && <p className="text-xs text-muted-foreground">{order.marketplaceReview ? "Conferência operacional precisa ser refeita após a alteração do canal." : "Conferência operacional ainda não registrada."}</p>}
           </div><span className="inline-flex min-h-11 items-center gap-2 self-start text-sm font-medium text-primary">{order.nextAction}<ArrowRight className="h-4 w-4 shrink-0" /></span></div>
         </Link>{order.marketplaceReview && <div className="mx-4 mb-4 rounded-lg border border-amber-300 bg-amber-50/20 p-3 sm:mx-5"><p className="text-sm font-medium">Revisão do marketplace pendente</p><p className="mt-1 break-words text-xs leading-relaxed text-muted-foreground">{order.marketplaceReviewReason}</p><Link to={order.marketplaceHref} className="mt-2 inline-flex min-h-11 items-center gap-2 text-sm font-medium text-primary">Revisar no marketplace<ArrowRight className="h-4 w-4" /></Link></div>}</article>)}</div>}
         {data.orders.length > visibleOrders && <div className="border-t p-4"><Button variant="outline" className="w-full" onClick={() => setVisibleOrders(count => count + 12)}>Mostrar mais pedidos ({data.orders.length - visibleOrders} restantes)</Button></div>}
-        <p className="border-t bg-muted/20 px-4 py-3 text-xs leading-relaxed text-muted-foreground">Entrega é uma data combinada, sem horário de corte. Os prazos cadastrados não confirmam capacidade nem previsão de conclusão.</p>
+        <p className="border-t bg-muted/20 px-4 py-3 text-xs leading-relaxed text-muted-foreground">Entrega e meta de produção por data não definem um horário de corte. Os prazos cadastrados não confirmam capacidade nem previsão de conclusão.</p>
       </Panel></div>
       <div className="grid items-start gap-5 xl:grid-cols-2">
         <Panel title="Produção para acompanhar" description="Ordens de impressão locais; tentativas substituídas por reimpressões ficam no histórico. A integração não é somada novamente." href="/producao/jobs"><div className="grid grid-cols-2 divide-x divide-y">{[

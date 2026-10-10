@@ -25,6 +25,7 @@ function mount() {
 }
 const job = (id: string, name: string, priority: number, productionId: string) => ({ id, name, priority, code: `JOB-${id}`, status: "queued", printer_id: "printer-1", product_id: null, order_id: null, production_order_id: productionId, due_date: "2026-10-20", est_time_minutes: 60, created_at: "2026-10-09T12:00:00Z", products: null, printers: { name: "P1" } });
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-10-11T12:00:00Z"));
   mock.rpc.mockReset(); mock.pages = []; mock.errors = {}; mock.filters = [];
   mock.tables = {
     printers: [{ id: "printer-1", name: "P1", model: "Modelo", status: "idle", brand: null, bambu_device_id: null }],
@@ -33,9 +34,62 @@ beforeEach(() => {
     production_orders: [{ id: "production-late", source_order_id: "order-late" }, { id: "production-early", source_order_id: "order-early" }],
   };
 });
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe("prazo na fila", () => {
+  it("prioriza a meta manual da OP no dia anterior e preserva a entrega sem criar cutoff", async () => {
+    mock.tables.orders = [
+      { id: "order-late", status: "in_production", marketplace_order_id: null, due_date: "2026-10-13" },
+      { id: "order-early", status: "in_production", marketplace_order_id: null, due_date: "2026-10-12" },
+    ];
+    mount(); const urgent = await screen.findByText("Placa urgente"), later = screen.getByText("Placa depois");
+    expect(urgent.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.getByText("Meta de produção (data): 11/10/2026 · 1 dia antes da entrega")).toBeInTheDocument();
+    expect(screen.getByText("Meta de produção hoje")).toBeInTheDocument();
+    expect(screen.getByText("Entrega combinada: 12/10/2026")).toBeInTheDocument();
+    expect(screen.getAllByText("Postagem: horário não informado")).toHaveLength(2);
+    expect(screen.queryByText(/Postar até:/)).not.toBeInTheDocument();
+    expect(mock.rpc).not.toHaveBeenCalled();
+  });
+
+  it.each([undefined, "inbox-canal"])("não cria meta manual quando a origem está %s e o cutoff está ausente", async marketplace_order_id => {
+    mock.tables.orders = [{ id: "order-late", status: "in_production", marketplace_order_id, due_date: "2026-10-12" }];
+    mock.tables.jobs = [mock.tables.jobs[0]];
+    mount(); await screen.findByText("Placa depois");
+    expect(screen.queryByText(/Meta de produção \(data\):/)).not.toBeInTheDocument();
+    expect(screen.getByText("Entrega combinada: 12/10/2026")).toBeInTheDocument();
+    expect(screen.getByText("Postagem: horário não informado")).toBeInTheDocument();
+  });
+
+  it("o vínculo da inbox pela OP bloqueia fallback manual quando o canal não informa cutoff", async () => {
+    mock.tables.orders = [{ id: "order-late", status: "in_production", marketplace_order_id: null, due_date: "2026-10-12" }];
+    mock.tables.jobs = [mock.tables.jobs[0]];
+    mock.tables.marketplace_orders = [{ id: "inbox-1", internal_order_id: "order-late", shipping_deadline_at: null, needs_review: false, review_reason: null }];
+    mount(); await screen.findByText("Placa depois");
+    expect(screen.queryByText(/Meta de produção \(data\):/)).not.toBeInTheDocument();
+    expect(screen.getByText("Prazo não informado")).toBeInTheDocument();
+    expect(screen.getByText("Sem prazo")).toBeInTheDocument();
+    expect(screen.getByText("Entrega combinada: 12/10/2026")).toBeInTheDocument();
+  });
+
+  it("mantém meta interna explícita de uma venda manual", async () => {
+    mock.tables.orders = [{ id: "order-late", status: "in_production", marketplace_order_id: null, due_date: "2026-10-12", internal_due_at: "2026-10-13T15:00:00Z" }];
+    mock.tables.jobs = [mock.tables.jobs[0]];
+    mount(); await screen.findByText("Placa depois");
+    expect(screen.getByText(/Prazo interno.*13\/10\/2026.*15:00/)).toBeInTheDocument();
+    expect(screen.queryByText(/Meta de produção \(data\):/)).not.toBeInTheDocument();
+    expect(screen.getByText("Entrega combinada: 12/10/2026")).toBeInTheDocument();
+  });
+
+  it.each(["ready", "shipped"])("não alarma produção concluída de venda %s por uma meta inferida", async status => {
+    mock.tables.orders = [{ id: "order-late", status, marketplace_order_id: null, due_date: "2026-10-11" }];
+    mock.tables.jobs = [mock.tables.jobs[0]];
+    mount(); await screen.findByText("Placa depois");
+    expect(screen.queryByText(/Meta de produção \(data\):/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Meta de produção vencida")).not.toBeInTheDocument();
+    expect(screen.getByText("Prazo hoje")).toBeInTheDocument();
+  });
+
   it("usa o prazo interno do pedido vinculado pela OP antes da prioridade manual", async () => {
     mount(); const urgent = await screen.findByText("Placa urgente"), later = screen.getByText("Placa depois");
     expect(urgent.compareDocumentPosition(later) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
