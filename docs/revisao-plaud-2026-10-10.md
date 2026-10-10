@@ -46,7 +46,7 @@ O atendimento de vendas particulares ainda depende de cliente ativo e vencimento
 
 O teste decisivo é acompanhar vendas dos três canais e uma venda particular atravessando entrada, tratamento de exceções, fila com antecedência, produção e postagem; conferir as bobinas nas três máquinas antes/depois do consumo; e abrir uma compra agrupada sem repetir material já comprado. Medir digitação, cliques, atrasos, recompra e diferença de inventário.
 
-Migrações, funções e contas externas ainda precisam de aplicação/ativação e aceite real. Testes locais não provam uso real nem concorrência no PostgreSQL operacional. Nenhuma mensagem ou comando de alteração foi enviado ao Lovable.
+Após a autorização de produção, as 12 migrações foram aplicadas e a interface desta revisão publicada no endereço real. Funções de servidor, contas externas e aceite real continuam pendentes; os três endpoints de marketplace ainda retornam 404. Testes locais não provam uso real nem concorrência no PostgreSQL operacional. Nenhuma mensagem foi enviada ao agente do Lovable. Banco e hosting foram implantados por ferramentas diretas; veja o [registro da publicação](producao-2026-10-10.md).
 
 ## Verificação da revisão
 
