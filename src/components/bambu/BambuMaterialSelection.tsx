@@ -6,7 +6,7 @@ import { bambuRpc, type BambuJobAllocation } from "@/lib/bambu-production-api";
 import { bambuColor, bambuMaterialScope, bambuPlannedMaterialCost, resolveBambuMaterialSelection, selectionBase,
   type BambuMaterialOverride, type BambuMaterialSelectionPreview, type BambuStockMaterial } from "@/lib/bambu-material-selection";
 
-export interface BambuSelectionState { overrides: BambuMaterialOverride[]; ready: boolean; error: string | null }
+export interface BambuSelectionState { overrides: BambuMaterialOverride[]; ready: boolean; error: string | null; physicalQuantity?: number }
 type Props = {
   taskId: string; productId: string; plateId: string; allocations: BambuJobAllocation[];
   bindings: Record<string, string>; setBindings: Dispatch<SetStateAction<Record<string, string>>>;
@@ -36,7 +36,8 @@ export default function BambuMaterialSelection({ taskId, productId, plateId, all
   }, [query.data, query.isFetching, setBindings]);
   useEffect(() => {
     const problem = query.error?.message || (!productId ? "Selecione o produto desta impressão." : query.isFetching ? "Aguarde a conferência dos materiais desta execução." : selection?.errors[0] || (query.data?.complete === false ? query.data.missing[0] || "A composição desta execução ainda requer revisão." : null));
-    onChange({ overrides: selection?.overrides ?? overrides, ready: !!selection && !problem, error: problem });
+    onChange({ overrides: selection?.overrides ?? overrides, ready: !!selection && !problem, error: problem,
+      ...(query.data?.physical_quantity != null ? { physicalQuantity: query.data.physical_quantity } : {}) });
   }, [query.error, query.isFetching, query.data, selection, productId, overrides, onChange]);
 
   if (!productId) return <p className="text-sm text-muted-foreground">Selecione o produto para conferir os materiais desta execução.</p>;
@@ -46,6 +47,7 @@ export default function BambuMaterialSelection({ taskId, productId, plateId, all
   if (!preview) return <p role="alert" className="text-sm text-destructive">Os materiais desta execução ainda não foram carregados.</p>;
   return <div className="space-y-3" aria-label="Materiais desta execução">
     <div><h3 className="font-medium">Filamentos usados nesta execução</h3><p className="mt-1 text-xs text-muted-foreground">{preview.material_policy === "approved_order" ? "Esta impressão atende uma venda. O material e a cor devem corresponder ao que foi aprovado no pedido." : "Escolha o item físico usado na impressão. Essa escolha fica na execução e preserva a composição base do produto."}</p></div>
+    {preview.physical_quantity != null && <p className="rounded-lg bg-muted/30 p-3 text-sm">Cada subitem mantém seu SKU e estoque. Para outra cor ou material, prepare os subitens dessa variante e sua placa.</p>}
     {preview.filaments.map(filament => {
       const base = selectionBase(preview, filament, bases[filament.source_key]);
       const scope = base ? bambuMaterialScope(base) : null;

@@ -24,7 +24,7 @@ export interface BambuSelectionFilament {
 export interface BambuMaterialSelectionPreview {
   material_policy: BambuMaterialPolicy; expected_materials: BambuExpectedMaterial[];
   filaments: BambuSelectionFilament[]; material_options: BambuMaterialOption[];
-  complete: boolean; missing: string[]; cost_per_unit: number | null;
+  complete: boolean; missing: string[]; cost_per_unit: number | null; physical_quantity?: number;
 }
 
 export function bambuColor(value: unknown): string | null {

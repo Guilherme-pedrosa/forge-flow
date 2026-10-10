@@ -2,7 +2,7 @@ import type { Tables } from "@/integrations/supabase/types";
 
 export type DashboardJob = Pick<Tables<"jobs">, "id" | "code" | "name" | "status" | "sale_price" | "actual_total_cost" | "est_total_cost" | "completed_at" | "est_time_minutes" | "created_at"> & { printers?: { name: string } | null };
 export type DashboardTitle = Pick<Tables<"accounts_payable">, "id" | "description" | "amount" | "amount_paid" | "due_date" | "status">;
-export type DashboardReceivable = Pick<Tables<"accounts_receivable">, "id" | "description" | "amount" | "amount_received" | "due_date" | "status">;
+export type DashboardReceivable = Pick<Tables<"accounts_receivable">, "id" | "description" | "amount" | "amount_received" | "due_date" | "status"> & { marketplace_cancelled_gross?: number };
 
 export const numberValue = (value: unknown): number => {
   const n = Number(value);
@@ -37,7 +37,7 @@ export function summarizeDashboard(jobs: DashboardJob[], payables: DashboardTitl
   const unknownFailures = failed.filter(job => job.actual_total_cost == null && job.est_total_cost == null).length;
   const productionCost = costedJobs.reduce((sum, job) => sum + numberValue(job.actual_total_cost ?? job.est_total_cost), 0);
   const pendingPayables = payables.filter(title => !["paid", "cancelled"].includes(title.status)).map(title => ({ ...title, remaining: remainingAmount(title.amount, title.amount_paid), overdue: title.due_date < today })).filter(title => title.remaining > 0).sort((a, b) => a.due_date.localeCompare(b.due_date));
-  const pendingReceivables = receivables.filter(title => ["open", "partial", "overdue"].includes(title.status)).map(title => ({ ...title, remaining: remainingAmount(title.amount, title.amount_received), overdue: title.due_date < today })).filter(title => title.remaining > 0).sort((a, b) => a.due_date.localeCompare(b.due_date));
+  const pendingReceivables = receivables.filter(title => ["open", "partial", "overdue"].includes(title.status)).map(title => ({ ...title, remaining: remainingAmount(title.amount, numberValue(title.amount_received) + numberValue(title.marketplace_cancelled_gross)), overdue: title.due_date < today })).filter(title => title.remaining > 0).sort((a, b) => a.due_date.localeCompare(b.due_date));
   const months = Array.from({ length: 6 }, (_, index) => {
     const date = new Date(now.getFullYear(), now.getMonth() - 5 + index, 1);
     const key = localDateKey(date).slice(0, 7);

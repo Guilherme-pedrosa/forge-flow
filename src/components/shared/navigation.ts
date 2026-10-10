@@ -1,9 +1,14 @@
 import { LayoutDashboard, ArrowUpFromLine, ArrowDownToLine, Wallet, PiggyBank, BookOpen, Package, ArrowRightLeft, AlertTriangle, Printer, Hammer, BarChart3, ShoppingCart, FileText, Store, Link2, Building, UserCog, Users, Handshake, CalendarRange, ClipboardList } from "lucide-react";
 
 export const navigationGroups = [
-  { label: "Início", items: [
-    { title: "Visão geral", icon: LayoutDashboard, href: "/" },
-     ] },
+  { label: "Operação", items: [
+    { title: "Hoje", icon: ClipboardList, href: "/" },
+    { title: "Pedidos", icon: ShoppingCart, href: "/comercial/pedidos" },
+    { title: "Fila de impressão", icon: CalendarRange, href: "/planejamento/fila" },
+    { title: "Bobinas e localização", icon: Package, href: "/estoque/bobinas" },
+    { title: "Sugestões de compra", icon: ShoppingCart, href: "/estoque/reposicao" },
+    { title: "Mercado Livre e Shopee", icon: Store, href: "/comercial/marketplaces" },
+  ] },
   { label: "Cadastros", items: [
     { title: "Clientes", icon: Users, href: "/comercial/clientes" },
     { title: "Fornecedores", icon: Building, href: "/cadastros/fornecedores" },
@@ -11,16 +16,16 @@ export const navigationGroups = [
     { title: "Etiquetas", icon: FileText, href: "/comercial/etiquetas" },
   ] },
   { label: "Comercial", items: [
+    { title: "Visão geral", icon: LayoutDashboard, href: "/visao-geral" },
     { title: "Precificação 3D", icon: BarChart3, href: "/comercial/precificacao" },
     { title: "Orçamentos", icon: FileText, href: "/comercial/orcamentos" },
-    { title: "Vendas", icon: ShoppingCart, href: "/comercial/pedidos" },
     { title: "Consignação", icon: Handshake, href: "/comercial/consignado" },
   ] },
   { label: "Produção 3D", items: [
     { title: "Ordens de produção", icon: ClipboardList, href: "/producao/ordens" },
     { title: "Componentes e montagem", icon: Package, href: "/producao/componentes" },
     { title: "Impressões", icon: Hammer, href: "/producao/jobs" },
-    { title: "Fila de impressão", icon: CalendarRange, href: "/planejamento/fila" },
+    { title: "Simular prazo", icon: CalendarRange, href: "/planejamento/capacidade" },
     { title: "Impressoras", icon: Printer, href: "/producao/impressoras" },
     { title: "Margens de produção", icon: BarChart3, href: "/producao/margem" },
     { title: "Qualidade e perdas", icon: AlertTriangle, href: "/producao/perdas" },
@@ -30,6 +35,7 @@ export const navigationGroups = [
     { title: "Contas a receber", icon: ArrowDownToLine, href: "/financeiro/receber" },
     { title: "Caixa e bancos", icon: Wallet, href: "/financeiro/caixa" },
     { title: "Conciliação", icon: PiggyBank, href: "/financeiro/conciliacao" },
+    { title: "Repasses dos canais", icon: ArrowDownToLine, href: "/financeiro/repasses" },
     { title: "Demonstrativo de resultado", icon: BookOpen, href: "/financeiro/dre" },
     { title: "Cadastros financeiros", icon: ClipboardList, href: "/financeiro/cadastros" },
   ] },
@@ -41,7 +47,6 @@ export const navigationGroups = [
   ] },
   { label: "Administração", items: [
     { title: "Bambu Lab", icon: Link2, href: "/integracoes/bambu" },
-    { title: "Mercado Livre", icon: Store, href: "/integracoes/ml" },
     { title: "Empresa e parâmetros", icon: Building, href: "/configuracoes" },
     { title: "Usuários e acesso", icon: UserCog, href: "/configuracoes/usuarios" },
     { title: "Histórico de atividades", icon: FileText, href: "/configuracoes/logs" },

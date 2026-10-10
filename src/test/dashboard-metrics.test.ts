@@ -52,6 +52,11 @@ describe("dashboard operational totals", () => {
     expect(localDateKey(localNow)).toBe("2026-09-12");
     expect(summarizeDashboard([], [payable({ due_date: "2026-09-12" })], [], localNow).overduePayableCount).toBe(0);
   });
+  it("does not forecast principal cancelled while retained by a marketplace and preserves legacy receipts", () => {
+    const result = summarizeDashboard([], [], [receivable({ id: "marketplace", amount: 100, amount_received: 80, marketplace_cancelled_gross: 20 }), receivable()], now);
+    expect(result.receivableTotal).toBe(400);
+    expect(result.pendingReceivables.map(title => title.id)).toEqual(["r-1"]);
+  });
   it("does not present missing production metrics as real zero percentages", () => {
     const result = summarizeDashboard([], [], [], now);
     expect(result.lossRate).toBeNull();

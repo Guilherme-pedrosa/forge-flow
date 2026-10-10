@@ -4,6 +4,10 @@ import { Link } from "react-router-dom";
 import { positiveInteger, productExtrasPerPiece, requiresProductionMeasurement } from "@/lib/production";
 import { createJobs, transitionJob, productionQueryKeys, type CreateJobInput } from "@/lib/production-api";
 import { readProductionRows } from "@/lib/production-read";
+import { assemblyRows } from "@/lib/assembly";
+import { isMissingDatabaseStructure } from "@/lib/database-readiness";
+import { compareOperationalJobs, operationalJobTiming, type OperationalJob } from "@/lib/operational-planning";
+import { localDateKey } from "@/lib/dashboard-metrics";
 import { orderRequest } from "@/lib/sales-order";
 import { planProductPlates, readProductPlates } from "@/lib/production-plates";
 import { ProductionPlatePlan } from "@/components/production/ProductionPlatePlan";
@@ -57,6 +61,31 @@ const statusConfig: Record<JobStatus, { label: string; color: string; icon: any 
 
 const QUEUE_STATUSES: JobStatus[] = ["queued", "printing", "paused", "post_processing", "quality_check", "failed", "reprint"];
 
+type QueueMarketplaceOrder = { internal_order_id: string | null; shipping_deadline_at: string | null; needs_review: boolean; review_reason: string | null };
+type QueuePlanningJob = Pick<Tables<"jobs">, "id" | "status" | "due_date" | "est_time_minutes" | "priority" | "created_at"> & { planning_deadline?: string | null; planning_internal_deadline?: string | null; planning_marketplace_review?: string | null; planning_order_id?: string | null };
+const earliestQueueDeadline = (values: (string | null | undefined)[]) => values.filter((value): value is string => !!value && value.includes("T") && Number.isFinite(Date.parse(value))).sort((a, b) => Date.parse(a) - Date.parse(b))[0] ?? null;
+const planningJob = (job: QueuePlanningJob): OperationalJob => ({
+  id: job.id, status: job.status, deadlineAt: job.planning_deadline === undefined ? job.due_date : job.planning_deadline, internalDeadlineAt: job.planning_internal_deadline, durationMinutes: job.est_time_minutes,
+  priority: job.priority, createdAt: job.created_at,
+});
+
+function JobTiming({ job, unavailable = false }: { job: Parameters<typeof planningJob>[0]; unavailable?: boolean }) {
+  const deadline = planningJob(job).internalDeadlineAt ?? planningJob(job).deadlineAt;
+  const date = deadline?.includes("T") ? new Date(deadline) : null;
+  const displayDay = date && Number.isFinite(date.getTime()) ? localDateKey(date) : deadline;
+  const timing = operationalJobTiming({ ...planningJob(job), deadlineAt: displayDay, internalDeadlineAt: null }, localDateKey(new Date()));
+  const knownTime = typeof job.est_time_minutes === "number" && Number.isFinite(job.est_time_minutes) && job.est_time_minutes > 0;
+  const label = unavailable ? "Impressora indisponível" : job.planning_marketplace_review ? "Revisão do marketplace" : timing.overdue ? "Prazo vencido" : timing.dueToday ? "Prazo hoje" : !timing.deadlineKnown ? "Sem prazo" : "Previsão a conferir";
+  return <div className="mt-2 space-y-1 text-xs">
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-muted-foreground">{timing.deadlineDay ? `${job.planning_internal_deadline ? "Prazo interno" : "Prazo"} ${date && Number.isFinite(date.getTime()) ? date.toLocaleString("pt-BR") : new Date(`${timing.deadlineDay}T12:00:00`).toLocaleDateString("pt-BR")}` : "Prazo não informado"}</span>
+      <Badge variant="outline" className={cn("text-xs", unavailable || timing.overdue ? "border-destructive/30 text-destructive" : timing.dueToday ? "border-amber-300 text-amber-700" : "text-muted-foreground")}>{label}</Badge>
+    </div>
+    <p className="text-muted-foreground">{knownTime ? `Impressão prevista: ${job.est_time_minutes} min` : "Tempo de impressão não informado"}{job.status === "printing" && " · restante a conferir"}</p>
+    {job.planning_marketplace_review && <p className="text-amber-700">{job.planning_marketplace_review} <Link className="underline" to="/integracoes/marketplaces">Conferir marketplace</Link>{job.planning_order_id && <> · <Link className="underline" to={`/comercial/pedidos?pedido=${encodeURIComponent(job.planning_order_id)}`}>Conferir pedido</Link></>}</p>}
+  </div>;
+}
+
 export default function Fila() {
   const { profile } = useAuth();
   const qc = useQueryClient();
@@ -97,16 +126,29 @@ export default function Fila() {
   });
 
   const { data: jobs = [], refetch: refetchJobs, isLoading: jobsLoading, error: jobsError } = useQuery({
-    queryKey: ["fila_jobs"],
+    queryKey: ["fila_jobs", profile?.tenant_id],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("jobs")
-        .select("*, products(name, sku), printers(name)")
-        .in("status", QUEUE_STATUSES)
-        .order("priority", { ascending: true })
-        .order("created_at", { ascending: true });
-      if (error) throw error;
-      return data;
+      const [rows, orders, productionOrders, marketplaceOrders] = await Promise.all([
+        readProductionRows((from, to) => supabase
+          .from("jobs")
+          .select("*, products(name, sku), printers(name)")
+          .in("status", QUEUE_STATUSES)
+          .order("priority", { ascending: true })
+          .order("created_at", { ascending: true }).order("id").range(from, to)),
+        assemblyRows<{ id: string; due_date: string | null; ship_by_at?: string | null; internal_due_at?: string | null }>("orders", "*", { tenant_id: profile!.tenant_id }),
+        assemblyRows<{ id: string; source_order_id: string | null }>("production_orders", "*", { tenant_id: profile!.tenant_id }),
+        assemblyRows<QueueMarketplaceOrder>("marketplace_orders", "id,internal_order_id,shipping_deadline_at,needs_review,review_reason", { tenant_id: profile!.tenant_id }).catch(error => { if (isMissingDatabaseStructure(error)) return []; throw error; }),
+      ]);
+      const byOrder = new Map(orders.map(order => [order.id, order]));
+      const sources = new Map(productionOrders.map(order => [order.id, order.source_order_id]));
+      return rows.map(job => {
+        const orderId = job.order_id ?? (job.production_order_id ? sources.get(job.production_order_id) : null) ?? null;
+        const order = byOrder.get(orderId ?? "");
+        const linked = marketplaceOrders.filter(row => row.internal_order_id != null && row.internal_order_id === orderId);
+        const canonical = earliestQueueDeadline(linked.map(row => row.shipping_deadline_at));
+        const review = linked.filter(row => row.needs_review);
+        return { ...job, planning_deadline: linked.length ? canonical : order?.ship_by_at ?? order?.due_date ?? job.due_date, planning_internal_deadline: linked.length ? canonical ? earliestQueueDeadline([order?.internal_due_at, canonical]) : null : order?.internal_due_at ?? null, planning_marketplace_review: review.length ? [...new Set(review.map(row => row.review_reason || "Confira a atualização do marketplace antes de confirmar o prazo."))].join(" · ") : null, planning_order_id: orderId };
+      });
     },
     enabled: !!profile,
     refetchInterval: 15000,
@@ -214,7 +256,7 @@ export default function Fila() {
     const map = new Map<string | null, any[]>();
     for (const p of printers) map.set(p.id, []);
     map.set(null, []);
-    for (const j of jobs) {
+    for (const j of [...jobs].sort((a, b) => compareOperationalJobs(planningJob(a), planningJob(b)))) {
       const key = printers.some(p => p.id === j.printer_id) ? j.printer_id : null;
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(j);
@@ -307,7 +349,7 @@ export default function Fila() {
       {jobsLoading && <p role="status" className="text-sm text-muted-foreground">Carregando fila de produção...</p>}
       {transition && <ProductionTransitionDialog key={`${transition.job.id}-${transition.status}`} value={transition} printers={printers} pending={updateStatusMut.isPending} onClose={() => setTransition(null)} onSave={value => updateStatusMut.mutate(value)} />}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-4 text-sm">
-        <div className="space-y-1"><p className="text-muted-foreground">A fila acompanha a produção. Confirme o controle de qualidade e os consumos reais antes de concluir cada ordem.</p><p className="text-xs text-muted-foreground"><Link to="/integracoes/bambu" className="text-primary underline-offset-4 hover:underline">Confira os vínculos e a apuração das tentativas Bambu</Link>. As execuções seguem as regras configuradas para cada produto e placa.</p></div>
+        <div className="space-y-1"><p className="text-muted-foreground">A fila prioriza o prazo e o tempo previsto; prioridade manual desempata. Confirme o controle de qualidade e os consumos antes de concluir.</p><p className="text-xs text-muted-foreground">O prazo cadastrado não confirma capacidade: preparação, turnos, retirada, montagem e embalagem ainda precisam ser conferidos.</p><p className="text-xs text-muted-foreground"><Link to="/integracoes/bambu" className="text-primary underline-offset-4 hover:underline">Confira os vínculos e a apuração das tentativas Bambu</Link>. As execuções seguem as regras configuradas para cada produto e placa.</p></div>
         <Button variant="outline" asChild><Link to="/producao/jobs">Abrir ordens e apurar custos</Link></Button>
       </div>
       {/* KPI strip */}
@@ -396,10 +438,8 @@ export default function Fila() {
                                 </Badge>
                               )}
                               <span className="text-xs text-muted-foreground">P{j.priority}</span>
-                              {j.est_time_minutes ? (
-                                <span className="text-xs text-muted-foreground">{j.est_time_minutes}min</span>
-                              ) : null}
                             </div>
+                            <JobTiming job={j} unavailable={["maintenance", "offline", "error"].includes(printer.status)} />
                           </div>
                         </div>
                         <DropdownMenu>
@@ -459,6 +499,7 @@ export default function Fila() {
                 <div key={j.id} className="border rounded-md p-2.5">
                   <div className="text-xs font-semibold">{j.name || j.products?.name}</div>
                   <div className="text-xs text-muted-foreground font-mono mb-3">{j.code}</div>
+                  <JobTiming job={j} />
                   {j.description && <p className="mb-3 text-xs text-muted-foreground">{j.description}</p>}
                   <Button variant="link" size="sm" className="mb-2 h-auto px-0 text-xs" onClick={() => setFileJobId(j.id)}>Arquivo e receita da placa</Button>
                   <SearchableItemSelect label={`Atribuir impressora para ${j.code}`} value="" onChange={printerId => { if (printerId) updateStatusMut.mutate({ id: j.id, status: j.status, printerId }); }} disabled={updateStatusMut.isPending} emptyLabel="Atribuir impressora" options={printers.map(printer => ({ id: printer.id, label: printer.name }))} />

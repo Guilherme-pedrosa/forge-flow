@@ -4,8 +4,10 @@ const fields = ["material_cost", "machine_cost", "energy_cost", "labor_cost", "o
 const componentCost = (job: any, field: string) => job[`actual_${field}`] ?? (job.status === "failed" ? 0 : job[`est_${field}`]) ?? 0;
 
 /** Missing purchase mappings remain explicit pending amounts, never assumed profit. */
-export function calculateFinancialResult(receivables: any[], payables: any[], jobs: any[], purchaseItems: any[] = [], stockCost = 0, assemblyCost = 0, componentLossCost = 0) {
-  const activeAR = receivables.filter(r => r.status !== "reversed");
+export function calculateFinancialResult(receivables: any[], payables: any[], jobs: any[], purchaseItems: any[] = [], stockCost = 0, assemblyCost = 0, componentLossCost = 0, marketplace: { refunds: number; expenseCredits: number } = { refunds: 0, expenseCredits: 0 }) {
+  // The module preserves original gross plus its immutable contra-revenue event.
+  // Legacy reversals without that provenance remain excluded as before.
+  const activeAR = receivables.filter(r => r.status !== "reversed" || (r.marketplace_cancelled_gross ?? 0) > 0);
   const activeAP = payables.filter(p => p.status !== "cancelled");
   let opExpenses = 0, excludedPurchases = 0, unknownPurchaseAmount = 0, unclassifiedCount = 0, unclassifiedExpenseAmount = 0;
   for (const payable of activeAP) {
@@ -30,11 +32,13 @@ export function calculateFinancialResult(receivables: any[], payables: any[], jo
     else if (["asset", "liability", "equity"].includes(accountType)) excludedPurchases += remaining;
     else unknownPurchaseAmount += remaining;
   }
-  opExpenses = money(opExpenses);
+  const expensesBeforeCredits = money(opExpenses);
+  opExpenses = money(expensesBeforeCredits - marketplace.expenseCredits);
   excludedPurchases = money(excludedPurchases);
   unknownPurchaseAmount = money(unknownPurchaseAmount);
   unclassifiedExpenseAmount = money(unclassifiedExpenseAmount);
-  const totalRevenue = money(activeAR.reduce((sum, title) => sum + title.amount, 0));
+  const grossRevenue = money(activeAR.reduce((sum, title) => sum + title.amount, 0));
+  const totalRevenue = money(grossRevenue - marketplace.refunds);
   const cost = (field: string) => money(jobs.reduce((sum, job) => sum + componentCost(job, field), 0));
   const materialCost = cost("material_cost"), machineCost = cost("machine_cost"), energyCost = cost("energy_cost"), laborCost = cost("labor_cost"), overheadCost = cost("overhead"), extrasCost = cost("extras_cost");
   const productionCMV = money(jobs.reduce((sum, job) => sum + (job.actual_total_cost ?? fields.reduce((value, field) => value + componentCost(job, field), 0)), 0));
@@ -49,6 +53,7 @@ export function calculateFinancialResult(receivables: any[], payables: any[], jo
   const missingCompetenceCount = [...activeAR, ...activeAP].filter(title => !title.competence_date).length;
   const isPartial = unknownPurchaseAmount > 0 || unclassifiedCount > 0 || missingCompetenceCount > 0 || estimatedCount > 0 || unmeasuredFailedCount > 0 || missingFailureDateCount > 0;
   return {
+    grossRevenue, marketplaceRefunds: marketplace.refunds, marketplaceExpenseCredits: marketplace.expenseCredits, expensesBeforeCredits,
     stockCost, assemblyCost, componentLossCost, totalRevenue, opExpenses, materialCost, machineCost, energyCost, laborCost, overheadCost, extrasCost, costAdjustment, totalCMV, grossProfit, netResult,
     grossMargin: !isPartial && totalRevenue > 0 ? grossProfit / totalRevenue * 100 : null,
     netMargin: !isPartial && totalRevenue > 0 ? netResult / totalRevenue * 100 : null,

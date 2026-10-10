@@ -1,7 +1,8 @@
 import { SearchableItemSelect } from "@/components/shared/SearchableItemSelect";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { Tables } from "@/integrations/supabase/types";
-import type { JobTransition } from "@/lib/production-api";
+import { requiresFinishedOutputCount, type JobTransition } from "@/lib/production-api";
+import { orderRequest } from "@/lib/sales-order";
 import { nonNegative, requiresProductionMeasurement, type JobStatus } from "@/lib/production";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -17,6 +18,10 @@ export function ProductionTransitionDialog({ value, printers, pending, onClose, 
   const { job, status } = value;
   const measured = requiresProductionMeasurement(status, (job as unknown as { inventory_posted_at?: string }).inventory_posted_at);
   const secondary = !!job.secondary_material_id && job.secondary_material_id !== job.material_id;
+  const quality = requiresFinishedOutputCount(job, status);
+  const maximumGood = Math.min(job.planned_quantity ?? 1, job.produced_quantity ?? job.planned_quantity ?? 1);
+  const [goodQuantity, setGoodQuantity] = useState("");
+  const qualityRequest = useRef<ReturnType<typeof orderRequest> | null>(null);
   const [grams, setGrams] = useState(job.actual_grams?.toString() ?? "");
   const [minutes, setMinutes] = useState(job.actual_time_minutes?.toString() ?? "");
   const [waste, setWaste] = useState(job.waste_grams?.toString() ?? "0");
@@ -34,6 +39,14 @@ export function ProductionTransitionDialog({ value, printers, pending, onClose, 
     try {
       if (!printerId) throw new Error("Selecione a impressora utilizada.");
       const input: JobTransition = { id: job.id, status, printerId: printerId !== job.printer_id ? printerId : undefined };
+      if (quality) {
+        const good = Number(goodQuantity);
+        if (!goodQuantity.trim() || !Number.isInteger(good) || good < 1 || good > maximumGood) throw new Error(`Informe a quantidade boa conferida entre 1 e ${maximumGood}. Para rejeitar tudo, registre a falha de qualidade.`);
+        if (good < maximumGood && !reason.trim()) throw new Error("Informe o motivo das peças rejeitadas.");
+        qualityRequest.current = orderRequest(qualityRequest.current, JSON.stringify({ id: job.id, good, reason: reason.trim() || null }));
+        input.approvedQuantity = good;
+        input.qualityRequestId = qualityRequest.current.id;
+      }
       if (measured) {
         if (grams === "" || minutes === "" || labor === "" || overhead === "" || extrasCost === "") throw new Error("Preencha os dados reais. Informe zero para custos que não se aplicam.");
         input.actualGrams = nonNegative(grams, "Consumo real");
@@ -60,12 +73,13 @@ export function ProductionTransitionDialog({ value, printers, pending, onClose, 
     <DialogContent className="sm:max-w-xl max-h-[90dvh] overflow-y-auto">
       <form onSubmit={submit} className="space-y-5">
         <DialogHeader>
-          <DialogTitle>{status === "failed" ? "Registrar falha e consumo" : measured ? "Apurar execução da impressão" : "Iniciar ordem de impressão"}</DialogTitle>
-          <DialogDescription>{job.code} · {job.name}. {measured ? "O lançamento registra custos e estoque na mesma operação, antes de avançar de etapa." : status === "failed" ? "Os custos já apurados serão preservados; registre a causa encontrada no controle de qualidade." : "Atualiza a fila do ERP. A impressão deve ser iniciada no equipamento ou no fatiador."}</DialogDescription>
+          <DialogTitle>{quality ? "Conferir quantidade aprovada" : status === "failed" ? "Registrar falha e consumo" : measured ? "Apurar execução da impressão" : "Iniciar ordem de impressão"}</DialogTitle>
+          <DialogDescription>{job.code} · {job.name}. {quality ? "Conte as peças boas após a conferência. Consumo e custos já lançados são preservados; uma falta gera reposição quando as outras impressões não a cobrem." : measured ? "O lançamento registra custos e estoque na mesma operação, antes de avançar de etapa." : status === "failed" ? "Os custos já apurados serão preservados; registre a causa encontrada no controle de qualidade." : "Atualiza a fila do ERP. A impressão deve ser iniciada no equipamento ou no fatiador."}</DialogDescription>
         </DialogHeader>
         <div className="space-y-2"><Label htmlFor="transition-printer">Impressora utilizada</Label>
           <SearchableItemSelect id="transition-printer" label="Impressora utilizada" value={printerId} onChange={setPrinterId} disabled={pending || (!!job.printer_id && !["draft", "queued", "reprint"].includes(job.status))} emptyLabel="Selecione a impressora" options={printers.map(printer => ({ id: printer.id, label: printer.name, disabled: !measured && ["maintenance", "offline", "error"].includes(printer.status) }))} />
         </div>
+        {quality && <div className="space-y-3"><div className="space-y-2"><Label htmlFor="quality-good-quantity">Quantidade boa conferida</Label><Input id="quality-good-quantity" type="number" min="1" max={maximumGood} step="1" value={goodQuantity} onChange={event => setGoodQuantity(event.target.value)} required /><p className="text-xs text-muted-foreground">Até {maximumGood} peça(s) desta execução. O rendimento previsto não substitui a contagem.</p></div><div className="space-y-2"><Label htmlFor="quality-reason">Motivo das peças rejeitadas</Label><Textarea id="quality-reason" value={reason} onChange={event => setReason(event.target.value)} maxLength={1000} placeholder="Necessário quando houver rejeição parcial" /></div></div>}
         {measured && <>
           <p className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">Consumo total = todo o material usado, incluindo purga, suportes e perdas. Informe a medição do fatiador ou da balança. Estimativa da ordem: {job.est_grams ?? "—"} g · {job.est_time_minutes ?? "—"} min.</p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -80,7 +94,7 @@ export function ProductionTransitionDialog({ value, printers, pending, onClose, 
         </>}
         {status === "failed" && <div className="space-y-2"><Label htmlFor="failure-reason">Motivo da falha</Label><Textarea id="failure-reason" value={reason} onChange={e => setReason(e.target.value)} required placeholder="Ex.: descolamento da mesa após 40 minutos" /></div>}
         {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-        <DialogFooter><Button type="button" variant="outline" onClick={onClose} disabled={pending}>Cancelar</Button><Button type="submit" disabled={pending}>{pending ? "Registrando..." : measured ? "Confirmar apuração" : status === "failed" ? "Registrar falha" : "Iniciar no ERP"}</Button></DialogFooter>
+        <DialogFooter><Button type="button" variant="outline" onClick={onClose} disabled={pending}>Cancelar</Button><Button type="submit" disabled={pending}>{pending ? "Registrando..." : quality ? "Confirmar qualidade" : measured ? "Confirmar apuração" : status === "failed" ? "Registrar falha" : "Iniciar no ERP"}</Button></DialogFooter>
       </form>
     </DialogContent>
   </Dialog>;

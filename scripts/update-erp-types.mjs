@@ -6,11 +6,13 @@ const columns={
   jobs:{ production_order_id:"string | null",production_order_item_id:"string | null",inventory_posted_at:'string | null', secondary_actual_grams:'number | null',order_item_id:'string | null',order_unit_index:'number | null',est_extras_cost:'number | null',actual_extras_cost:'number | null',creation_request_id:'string | null',actual_time_seconds:'number | null',actual_material_usage:'Json | null',produced_quantity:'number | null',print_plate_id:'string | null',planned_quantity:'number' },
   products:{catalog_details:"Json",manual_cost_override:"number | null",stock_item_id:"string | null",actual_print_grams_per_unit:'number | null',actual_print_seconds_per_unit:'number | null',actual_print_cost_per_unit:'number | null',actual_print_sample_units:'number | null',actual_print_updated_at:'string | null',actual_print_source:'string | null'},
   accounts_payable:{origin_id:'string | null',origin_type:'string | null'},
+  accounts_receivable:{marketplace_cancelled_gross:'number'},
   orders:{shipping:'number',source_quote_id:'string | null'}, order_items:{source_quote_item_id:'string | null',product_snapshot:'Json | null'}, purchase_orders:{additional_costs:'number'},
   purchase_order_items:{stock_quantity:'number | null'},consignment_locations:{commission_percent:'number'},
 };
 Object.assign(columns.jobs, { production_snapshot: 'Json | null', production_snapshot_origin: 'string | null', production_snapshot_at: 'string | null', print_file_snapshot: 'Json | null' });
 Object.assign(columns.orders, { requires_material_recipe: 'boolean' });
+Object.assign(columns.orders, { ship_by_at: 'string | null', internal_due_at: 'string | null', marketplace_order_id: 'string | null', workflow_issues: 'Json', workflow_checked_at: 'string | null' });
 Object.assign(columns.order_items, { quoted_estimated_cost: 'number | null' });
 columns.inventory_items = { max_stock: "number", material_code: 'string | null', material_description: 'string | null', color_code: 'string | null', color_hex: 'string | null', material_identified_at: 'string | null', material_identified_by: 'string | null' };
 for(const [table, fields] of Object.entries(columns)) {
@@ -37,6 +39,11 @@ const rpcs={
   create_purchase_order:'p_order: Json; p_items: Json; p_installments: Json; p_request_id: string',
   receive_purchase_order:'p_order_id: string; p_received_date: string',cancel_purchase_order:'p_order_id: string',
   save_sales_order:'p_order_id: string | null; p_order: Json; p_items: Json; p_request_id: string',transition_sales_order:'p_order_id: string; p_status: string',
+  confirm_sales_workflow:'p_order_id: string | null; p_order: Json | null; p_items: Json | null; p_request_id: string',
+  update_sales_order_deadlines:'p_order_id: string; p_dates: Json; p_reason: string; p_request_id: string',
+  save_marketplace_workflow_policy:'p_account_id: string; p_values: Json; p_request_id: string',
+  organize_eligible_marketplace_orders:'p_account_id: string; p_order_ids: string[]; p_request_id: string',
+  confirm_finished_output:'p_job_id: string; p_good_quantity: number; p_reason: string | null; p_request_id: string',
   save_product_with_photos:'p_product_id: string | null; p_product: Json; p_photos: Json; p_request_id: string',
   post_inventory_movement:'p_movement: Json; p_request_id: string',
   create_consignment_location:'p_location: Json; p_customer: Json | null; p_request_id: string',
@@ -54,6 +61,6 @@ const rpcs={
   configure_bambu_production:'p_task_id: string; p_product_id: string; p_units: number; p_materials: Json; p_auto: boolean; p_use_slicer: boolean; p_labor_cost: number; p_overhead: number; p_extras_cost: number; p_allocations: Json; p_plate_id?: string | null',
   account_bambu_production:'p_task_id: string; p_materials: Json | null; p_seconds: number | null; p_units: number | null; p_labor_cost: number | null; p_overhead: number | null; p_extras_cost: number | null; p_reason: string | null; p_request_id: string',
 };
-const entries=Object.entries(rpcs).filter(([name])=>!source.includes(`      ${name}:`)).map(([name,args])=>`      ${name}: { Args: { ${args} }; Returns: ${['create_jobs','plan_product_plates'].includes(name)?'string[]':['request_bambu_sync','bambu_production_preview','account_bambu_production','product_material_recipe_catalog'].includes(name)?'Json':['disconnect_bambu_connection','archive_product_print_source','archive_product_print_plate'].includes(name)?'undefined':'string'} }`).join('\n');
+const entries=Object.entries(rpcs).filter(([name])=>!source.includes(`      ${name}:`)).map(([name,args])=>`      ${name}: { Args: { ${args} }; Returns: ${['create_jobs','plan_product_plates'].includes(name)?'string[]':['request_bambu_sync','bambu_production_preview','account_bambu_production','product_material_recipe_catalog','confirm_sales_workflow','organize_eligible_marketplace_orders'].includes(name)?'Json':['disconnect_bambu_connection','archive_product_print_source','archive_product_print_plate'].includes(name)?'undefined':'string'} }`).join('\n');
 source=source.replace('    Functions: {',`    Functions: {\n${entries}`);
 await writeFile(target,source);

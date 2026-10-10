@@ -29,7 +29,7 @@ export default function Dashboard() {
       const [jobs, payables, receivables, inventory, banks, orders, printers] = await Promise.all([
         collectDashboardRows((from, to) => supabase.from("jobs").select("id, code, name, status, sale_price, actual_total_cost, est_total_cost, completed_at, est_time_minutes, created_at, printers(name)").eq("tenant_id", tenantId!).order("created_at", { ascending: false }).order("id").range(from, to)),
         collectDashboardRows((from, to) => supabase.from("accounts_payable").select("id, description, amount, amount_paid, due_date, status").eq("tenant_id", tenantId!).in("status", ["open", "partial", "overdue"]).order("id").range(from, to)),
-        collectDashboardRows((from, to) => supabase.from("accounts_receivable").select("id, description, amount, amount_received, due_date, status").eq("tenant_id", tenantId!).in("status", ["open", "partial", "overdue"]).order("id").range(from, to)),
+        collectDashboardRows((from, to) => supabase.from("accounts_receivable").select("*").eq("tenant_id", tenantId!).in("status", ["open", "partial", "overdue"]).order("id").range(from, to)),
         collectDashboardRows((from, to) => supabase.from("inventory_items").select("id, name, current_stock, min_stock, unit").eq("tenant_id", tenantId!).eq("is_active", true).order("id").range(from, to)),
         collectDashboardRows((from, to) => supabase.from("bank_accounts").select("id, current_balance").eq("tenant_id", tenantId!).eq("is_active", true).order("id").range(from, to)),
         collectDashboardRows((from, to) => supabase.from("orders").select("id, status").eq("tenant_id", tenantId!).neq("status", "cancelled").order("id").range(from, to)),

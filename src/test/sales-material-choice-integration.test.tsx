@@ -28,7 +28,7 @@ vi.mock("@/components/ui/select", async () => {
   };
 });
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: mock.rpc, from: (table: string) => {
-  const query = { select: () => query, eq: () => query, order: () => query, range: () => query, single: () => query,
+  const query = { select: () => query, eq: () => query, order: () => query, range: () => query, single: () => query, limit: () => query,
     then: (resolve: (value: unknown) => unknown, reject: (error: unknown) => unknown) => Promise.resolve({ data:
       table === "orders" ? [{ id: "order-1", code: "PED-001", status: "draft", customer_id: null, total: 20, discount: 0, shipping: 0, notes: "", source_quote_id: null, created_at: "2026-09-13" }]
       : table === "sales_quotes" ? [{ id: "quote-1", code: "ORC-001", status: "draft", revision: 1, customer_id: null, customer_snapshot: null, subtotal: 20, total: 20, discount: 0, shipping: 0, notes: null }]

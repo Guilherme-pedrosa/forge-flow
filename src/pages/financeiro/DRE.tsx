@@ -1,6 +1,8 @@
 import { useState, useMemo } from "react";
 import { allRows, localDate, validDate } from "@/lib/finance";
 import { calculateFinancialResult } from "@/lib/financial-result";
+import { marketplaceResultAdjustments } from "@/lib/marketplace-settlements";
+import { isMissingDatabaseStructure } from "@/lib/database-readiness";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -31,7 +33,7 @@ export default function DRE() {
   const { data: receivables = [], isLoading: loadingAR, error: errorAR } = useQuery({
     queryKey: ["dre_ar", profile?.tenant_id, startDate, endDate],
     queryFn: async () => {
-      const data = await allRows<any>((from, to) => supabase.from("accounts_receivable").select("*").order("id").range(from, to));
+      const data = await allRows<any>((from, to) => supabase.from("accounts_receivable").select("*").eq("tenant_id", profile!.tenant_id).order("id").range(from, to));
       return data.filter(r => { const date = r.competence_date || r.created_at.slice(0, 10); return date >= startDate && date <= endDate; });
     },
     enabled: !!profile && periodValid,
@@ -40,7 +42,7 @@ export default function DRE() {
   const { data: payables = [], isLoading: loadingAP, error: errorAP } = useQuery({
     queryKey: ["dre_ap", profile?.tenant_id, startDate, endDate],
     queryFn: async () => {
-      const data = await allRows<any>((from, to) => supabase.from("accounts_payable").select("*,chart_of_accounts(account_type)").order("id").range(from, to));
+      const data = await allRows<any>((from, to) => supabase.from("accounts_payable").select("*,chart_of_accounts(account_type)").eq("tenant_id", profile!.tenant_id).order("id").range(from, to));
       return data.filter(r => { const date = r.competence_date || r.created_at.slice(0, 10); return date >= startDate && date <= endDate; });
     },
     enabled: !!profile && periodValid,
@@ -58,25 +60,31 @@ export default function DRE() {
 
   const { data: purchaseItems = [], isLoading: loadingItems, error: errorItems } = useQuery({
     queryKey: ["dre_purchase_items", profile?.tenant_id],
-    queryFn: () => allRows<any>((from, to) => supabase.from("purchase_order_items").select("purchase_order_id,inventory_item_id,total").order("id").range(from, to)),
+    queryFn: () => allRows<any>((from, to) => supabase.from("purchase_order_items").select("purchase_order_id,inventory_item_id,total").eq("tenant_id", profile!.tenant_id).order("id").range(from, to)),
     enabled: !!profile && periodValid,
   });
   const { data: stockAllocations = [], isLoading: loadingStock, error: errorStock } = useQuery({
     queryKey: ["order_stock_allocations", profile?.tenant_id], enabled: !!profile && periodValid,
-    queryFn: () => allRows<any>((from, to) => (supabase as any).from("order_stock_allocations").select("total_cost,posted_at,reversed_at").order("id").range(from, to)),
+    queryFn: () => allRows<any>((from, to) => (supabase as any).from("order_stock_allocations").select("total_cost,posted_at,reversed_at").eq("tenant_id", profile!.tenant_id).order("id").range(from, to)),
+  });
+  const { data: marketplaceAdjustments = [], isLoading: loadingMarketplace, error: errorMarketplace } = useQuery({
+    queryKey: ["dre_marketplace_adjustments", profile?.tenant_id, startDate, endDate], enabled: !!profile && periodValid,
+    queryFn: () => allRows<{ kind: string; amount_signed: number }>((from, to) => (supabase as any).from("marketplace_settlement_components").select("kind,amount_signed").eq("tenant_id", profile!.tenant_id).in("kind", ["refund", "fee_credit", "freight_credit", "other_credit"]).gte("competence_date", startDate).lte("competence_date", endDate).order("id").range(from, to)),
   });
   const stockCost = stockAllocations.reduce((sum, row) => {
     const posted = row.posted_at.slice(0, 10); const reversed = row.reversed_at?.slice(0, 10);
     return sum + (posted >= startDate && posted <= endDate ? Number(row.total_cost) : 0) - (reversed && reversed >= startDate && reversed <= endDate ? Number(row.total_cost) : 0);
   }, 0);
-  const isLoading = loadingAR || loadingAP || loadingJobs || loadingItems || loadingStock;
+  const isLoading = loadingAR || loadingAP || loadingJobs || loadingItems || loadingStock || loadingMarketplace;
 
-  const hasError = errorAR || errorAP || errorJobs || errorItems || errorStock;
-  const dre = useMemo(() => calculateFinancialResult(receivables, payables, jobs, purchaseItems, stockCost, production?.assembly_cost || 0, production?.component_loss_cost || 0), [receivables, payables, jobs, purchaseItems, stockCost, production]);
+  const marketplaceNotActivated = !!errorMarketplace && isMissingDatabaseStructure(errorMarketplace);
+  const hasError = errorAR || errorAP || errorJobs || errorItems || errorStock || (!marketplaceNotActivated && errorMarketplace);
+  const dre = useMemo(() => calculateFinancialResult(receivables, payables, jobs, purchaseItems, stockCost, production?.assembly_cost || 0, production?.component_loss_cost || 0, marketplaceResultAdjustments(marketplaceAdjustments)), [receivables, payables, jobs, purchaseItems, stockCost, production, marketplaceAdjustments]);
 
   const lines = [
     { label: "RECEITA OPERACIONAL", value: dre.totalRevenue, bold: true, section: true },
-    { label: "Títulos a receber por competência", value: dre.totalRevenue, indent: true, sub: `${dre.titleCount} títulos · recebidos e em aberto` },
+    { label: "Títulos a receber pelo bruto", value: dre.grossRevenue, indent: true, sub: `${dre.titleCount} títulos · recebidos e em aberto` },
+    { label: "Estornos de vendas nos marketplaces", value: -dre.marketplaceRefunds, indent: true },
     { label: "", value: 0, separator: true },
     { label: "(-) CUSTO DAS VENDAS, PRODUÇÃO E PERDAS", value: -dre.totalCMV, bold: true, section: true, negative: true },
     { label: "Produtos vendidos do estoque", value: dre.stockCost, indent: true },
@@ -93,7 +101,8 @@ export default function DRE() {
     { label: "RESULTADO BRUTO APURADO", value: dre.grossProfit, bold: true, highlight: true, sub: dre.grossMargin == null ? "Margem indisponível enquanto houver pendências" : `${dre.grossMargin.toFixed(1)}% margem` },
     { label: "", value: 0, separator: true },
     { label: "(-) DESPESAS OPERACIONAIS", value: -dre.opExpenses, bold: true, section: true, negative: true },
-    { label: "Despesas por competência (pagas e em aberto)", value: dre.opExpenses, indent: true },
+    { label: "Despesas por competência (pagas e em aberto)", value: dre.expensesBeforeCredits, indent: true },
+    { label: "Créditos de despesas dos marketplaces", value: -dre.marketplaceExpenseCredits, indent: true },
     { label: "", value: 0, separator: true },
     { label: dre.isPartial ? "RESULTADO PARCIAL — COM PENDÊNCIAS" : "RESULTADO GERENCIAL", value: dre.netResult, bold: true, highlight: true, final: true },
   ];
@@ -123,10 +132,12 @@ export default function DRE() {
       </div>
 
       {!periodValid && <p role="alert" className="rounded-lg border border-destructive/30 p-4 text-sm text-destructive">Informe um período válido: a data inicial deve ser anterior ou igual à final.</p>}
+      {marketplaceNotActivated && <p role="status" className="rounded-lg border p-4 text-sm text-muted-foreground">Ajustes de repasses ainda não ativados. A apuração usa as fontes financeiras existentes; estornos e créditos de despesas dos canais poderão ser registrados após a ativação da conciliação.</p>}
       {hasError && <p role="alert" className="rounded-lg border border-destructive/30 p-4 text-sm text-destructive">Não foi possível carregar todas as fontes. O resultado está indisponível para evitar totais incompletos.</p>}
       <div className="rounded-xl border bg-card p-4 text-sm text-muted-foreground space-y-2">
         <p>Produção para estoque permanece no custo dos produtos e entra no resultado quando houver venda. Componentes aproveitados na montagem são contabilizados uma vez; perdas de componentes aparecem separadamente.</p>
         <p>Receitas vêm dos títulos financeiros. O preço dos jobs não é somado novamente. Aquisições vinculadas ao estoque ou classificadas fora de despesas ({fmtCurrency(dre.excludedPurchases)}) não são descontadas novamente.</p>
+        <p>Repasses mantêm a venda pelo bruto. Taxas e frete do canal são despesas; créditos reduzem essas despesas e estornos reduzem receita separadamente. Retenção não é despesa nem dinheiro recebido no banco.</p>
         <p>Custos incluem produção concluída e falhas apuradas ({fmtCurrency(dre.failedCost)} em perdas). Produção em andamento permanece fora desta apuração; diferenças entre produção, entrega e receita devem ser conciliadas no fechamento.</p>
         {dre.isPartial && <p className="font-semibold text-amber-800">Apuração parcial. As margens ficam indisponíveis até a revisão das pendências abaixo.</p>}
         {dre.unknownPurchaseAmount > 0 && <p className="text-amber-800">{fmtCurrency(dre.unknownPurchaseAmount)} em compras ainda sem vínculo de estoque ou classificação contábil estão pendentes, fora do resultado parcial. Podem conter serviços e outras despesas. Revise a origem dos títulos e os itens da compra antes de considerar lucro.</p>}

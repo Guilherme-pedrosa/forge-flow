@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { pricePrint, type PricingInput } from "@/lib/print-pricing";
+import { priceChannel } from "@/lib/channel-pricing";
 import { supabase } from "@/integrations/supabase/client";
 import { allRows } from "@/lib/finance";
 import { useAuth } from "@/contexts/AuthContext";
@@ -27,6 +28,17 @@ const initial: PricingInput = {
   materials: [{ name: "Material 1", grams: "0", kgPrice: "0" }],
   extras: [],
 };
+const initialChannel = {
+  orderQuantity: "1",
+  commissionPercent: "0",
+  taxPercent: "0",
+  fixedFeePerOrder: "0",
+  sellerShippingPerOrder: "0",
+  advertisingPerOrder: "0",
+  otherCostPerOrder: "0",
+  variableUnitCost: "",
+};
+const percent = (value: number | null) => value == null ? "—" : `${value.toFixed(1)}%`;
 export default function Precificacao() {
   const { profile } = useAuth();
   const company = useQuery({
@@ -46,6 +58,9 @@ export default function Precificacao() {
   const [name, setName] = useState("");
   const [product, setProduct] = useState("");
   const [input, setInput] = useState(initial);
+  const [channel, setChannel] = useState("factory");
+  const [channelInput, setChannelInput] = useState(initialChannel);
+  const channelEnabled = channel !== "factory";
   const calculation = useMemo(() => {
     try {
       return { value: pricePrint(input), error: "" };
@@ -54,6 +69,26 @@ export default function Precificacao() {
     }
   }, [input]);
   const result = calculation.value;
+  const commercial = useMemo(() => {
+    if (!channelEnabled || !result) return { value: null, error: "" };
+    try {
+      return {
+        value: priceChannel({
+          ...channelInput,
+          unitCost: result.unit,
+          marginPercent: input.margin,
+          targetUnitPrice: input.target,
+        }),
+        error: "",
+      };
+    } catch (e) {
+      return { value: null, error: (e as Error).message };
+    }
+  }, [channelEnabled, channelInput, input.margin, input.target, result]);
+  const sale = commercial.value;
+  const selectedPrice = channelEnabled ? sale?.target : result?.target;
+  const selectedQuantity = channelEnabled ? sale?.quantity : result?.quantity;
+  const canTransfer = !!result && selectedPrice != null && selectedQuantity != null;
   const products = useQuery({
     queryKey: ["pricing-products"],
     queryFn: () =>
@@ -113,19 +148,33 @@ export default function Precificacao() {
     </div>
   );
   const transfer = (quote: boolean) => {
-    if (result && name.trim())
+    if (result && canTransfer && name.trim())
       navigate("/comercial/produtos", {
         state: {
           pricing: {
             name: name.trim(),
             cost: Math.round(result.unit * 10000) / 10000,
-            price: result.target,
-            quantity: result.quantity,
+            price: selectedPrice!,
+            quantity: selectedQuantity!,
             quote,
           },
         },
       });
   };
+  const channelField = (key: keyof typeof initialChannel, label: string, placeholder?: string) => (
+    <div key={key}>
+      <Label htmlFor={`channel-${key}`}>{label}</Label>
+      <Input
+        id={`channel-${key}`}
+        type="number"
+        min={0}
+        step={key === "orderQuantity" ? "1" : "any"}
+        value={channelInput[key]}
+        placeholder={placeholder}
+        onChange={e => setChannelInput({ ...channelInput, [key]: e.target.value })}
+      />
+    </div>
+  );
   return (
     <div className="space-y-5 min-w-0">
       <PageHeader
@@ -398,6 +447,54 @@ export default function Precificacao() {
               Adicionar extra
             </Button>
           </section>
+          <section className="space-y-4 rounded-xl border bg-card p-4">
+            <h2 className="font-semibold">Venda por canal</h2>
+            <div>
+              <Label htmlFor="pricing-channel">Canal da simulação</Label>
+              <select
+                id="pricing-channel"
+                className="mt-1 w-full rounded-md border bg-background p-2 text-sm"
+                value={channel}
+                onChange={e => setChannel(e.target.value)}
+              >
+                <option value="factory">Somente custo fabril</option>
+                <option value="direct">Venda direta / WhatsApp / Instagram</option>
+                <option value="mercado_livre">Mercado Livre</option>
+                <option value="shopee">Shopee</option>
+                <option value="other">Outro canal</option>
+              </select>
+            </div>
+            {channelEnabled && (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  O canal identifica esta simulação. Preencha as condições da sua
+                  conta; a seleção não aplica tarifas automaticamente.
+                </p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {channelField("orderQuantity", "Unidades por pedido / pacote")}
+                  {channelField("commissionPercent", "Comissão sobre produtos (%)")}
+                  {channelField("taxPercent", "Tributo sobre produtos (%)")}
+                  {channelField("fixedFeePerOrder", "Tarifa fixa por pedido (R$)")}
+                  {channelField("sellerShippingPerOrder", "Frete próprio do pacote (R$)")}
+                  {channelField("advertisingPerOrder", "Anúncios atribuídos ao pedido (R$)")}
+                  {channelField("otherCostPerOrder", "Outros gastos do pedido (R$)")}
+                  {channelField("variableUnitCost", "Parcela variável do custo / unidade (R$)", result ? String(result.unit) : "Custo completo")}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Comissão e tributo usam a receita dos produtos, sem frete do
+                  comprador. Tarifa, frete próprio, anúncios e outros gastos
+                  entram uma vez por pedido. Embalagem já incluída nos extras
+                  permanece no custo fabril. Informe cada gasto em um só lugar.
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Para estimar contribuição, informe a parcela variável do custo.
+                  Em branco, a simulação considera todo o custo fabril como
+                  variável. Estas condições valem para o pacote informado;
+                  tarifas por item devem ser somadas na tarifa do pedido.
+                </p>
+              </>
+            )}
+          </section>
         </div>
         <aside className="h-fit space-y-4 rounded-xl border bg-card p-5 xl:sticky xl:top-4">
           <h2 className="text-lg font-semibold">Resultado da simulação</h2>
@@ -406,11 +503,16 @@ export default function Precificacao() {
               {calculation.error}
             </p>
           )}
+          {commercial.error && (
+            <p role="alert" className="text-destructive">{commercial.error}</p>
+          )}
           {numberField("margin", "Margem desejada sobre a venda (%)")}
           {numberField(
             "target",
             "Preço alvo por unidade (R$)",
-            result ? String(result.suggested) : "Preço sugerido",
+            channelEnabled
+              ? (sale ? String(sale.suggested) : "Preço sugerido no canal")
+              : (result ? String(result.suggested) : "Preço sugerido"),
           )}
           {result && (
             <>
@@ -440,29 +542,65 @@ export default function Precificacao() {
                   <dd>{money(result.unit)}</dd>
                 </div>
               </dl>
-              <p className="text-sm">
-                Preço sugerido: <strong>{money(result.suggested)} / un.</strong>
-              </p>
-              <div className="rounded-lg bg-muted p-3 text-sm">
-                <p>Venda do lote: {money(result.revenue)}</p>
-                <p>Resultado previsto: {money(result.profit)}</p>
-                <p>
-                  Margem efetiva:{" "}
-                  {result.margin == null ? "—" : `${result.margin.toFixed(1)}%`}
-                </p>
-              </div>
-              {result.profit < 0 && (
+              {!channelEnabled && (
+                <>
+                  <p className="text-sm">
+                    Preço sugerido: <strong>{money(result.suggested)} / un.</strong>
+                  </p>
+                  <div className="rounded-lg bg-muted p-3 text-sm">
+                    <p>Venda do lote: {money(result.revenue)}</p>
+                    <p>Resultado previsto: {money(result.profit)}</p>
+                    <p>Margem efetiva: {percent(result.margin)}</p>
+                  </div>
+                </>
+              )}
+              {channelEnabled && sale && (
+                <div className="space-y-3 text-sm" data-testid="channel-pricing-result">
+                  <p>
+                    Preço sugerido no canal: <strong>{money(sale.suggested)} / un.</strong>
+                  </p>
+                  <p>Equilíbrio dos custos informados: {money(sale.breakEven)} / un.</p>
+                  <p className="text-xs text-muted-foreground">
+                    Preços para um pedido de {sale.quantity} {sale.quantity === 1 ? "unidade" : "unidades"}.
+                  </p>
+                  <dl className="space-y-2">
+                    {([
+                      ["Receita de produtos · pedido", sale.revenue],
+                      ["Custo fabril · pedido", sale.manufacturingCost],
+                      ["Comissão", sale.commission],
+                      ["Tributo parametrizado", sale.tax],
+                      ["Tarifa fixa", sale.fixedFee],
+                      ["Frete próprio", sale.sellerShipping],
+                      ["Anúncios", sale.advertising],
+                      ["Outros gastos", sale.otherCost],
+                    ] as const).map(([label, value]) => (
+                      <div key={label} className="flex justify-between gap-2">
+                        <dt>{label}</dt><dd>{money(value)}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  <div className="space-y-1 rounded-lg bg-muted p-3">
+                    <p>Resultado após custos informados: <strong>{money(sale.includedResult)}</strong></p>
+                    <p>Margem sobre receita: {percent(sale.includedMargin)}</p>
+                    <p>Markup sobre custo total: {percent(sale.markup)}</p>
+                    <p>Contribuição estimada: {money(sale.contribution)}</p>
+                    <p>Margem de contribuição: {percent(sale.contributionMargin)}</p>
+                  </div>
+                </div>
+              )}
+              {(channelEnabled ? sale && sale.includedResult < 0 : result.profit < 0) && (
                 <p role="status" className="text-sm text-destructive">
-                  O preço alvo não cobre o custo informado.
+                  O preço alvo não cobre os custos informados.
                 </p>
               )}
               <p className="text-xs text-muted-foreground">
-                Estimativa com os valores informados. Inclua tributos e taxas
-                nos extras quando aplicáveis.
+                {channelEnabled
+                  ? "Estimativa local com os valores informados, antes de gastos não incluídos. Resultado e contribuição não são lucro líquido nem repasse da plataforma. Regras com faixas, tetos ou outras bases exigem ajuste dos parâmetros."
+                  : "Estimativa com os valores informados. Selecione um canal para compor taxas, tributo e gastos do pedido."}
               </p>
               <Button
                 className="w-full"
-                disabled={!name.trim()}
+                disabled={!name.trim() || !canTransfer}
                 onClick={() => transfer(false)}
               >
                 Cadastrar produto com estes valores
@@ -470,7 +608,7 @@ export default function Precificacao() {
               <Button
                 className="w-full"
                 variant="outline"
-                disabled={!name.trim()}
+                disabled={!name.trim() || !canTransfer}
                 onClick={() => transfer(true)}
               >
                 Cadastrar produto e orçar
@@ -492,14 +630,14 @@ export default function Precificacao() {
                 <Button
                   className="w-full"
                   variant="outline"
-                  disabled={!product}
+                  disabled={!product || !canTransfer}
                   onClick={() =>
                     navigate("/comercial/orcamentos", {
                       state: {
                         pricingQuote: {
                           product_id: product,
-                          quantity: result.quantity,
-                          unit_price: result.target,
+                          quantity: selectedQuantity!,
+                          unit_price: selectedPrice!,
                         },
                       },
                     })

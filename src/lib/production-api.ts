@@ -1,5 +1,7 @@
 import { supabase } from "@/integrations/supabase/client";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { JobStatus } from "./production";
+import { isMissingDatabaseStructure } from "./database-readiness";
 
 export interface CreateJobInput {
   name: string;
@@ -56,11 +58,34 @@ export interface JobTransition {
   actualLaborCost?: number;
   actualOverhead?: number;
   actualExtrasCost?: number;
+  approvedQuantity?: number;
+  qualityRequestId?: string;
+}
+
+export function requiresFinishedOutputCount(job: { component_stock_key?: string | null; production_snapshot?: unknown }, status: JobStatus) {
+  const snapshot = job.production_snapshot && typeof job.production_snapshot === "object" && !Array.isArray(job.production_snapshot)
+    ? job.production_snapshot as Record<string, unknown> : null;
+  return status === "ready" && !job.component_stock_key && !(Array.isArray(snapshot?.physical_outputs) && snapshot.physical_outputs.length);
+}
+
+export async function readFinishedOutputAvailability(): Promise<boolean> {
+  const { error } = await (supabase as unknown as SupabaseClient).from("order_stock_allocations").select("order_item_id").limit(0);
+  if (error) {
+    if (isMissingDatabaseStructure(error)) return false;
+    throw new Error(error.message);
+  }
+  return true;
 }
 
 /** One database transaction owns status, cost and stock. Never retry as client-side writes. */
 export async function transitionJob(input: JobTransition) {
   const rpc = supabase.rpc.bind(supabase) as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ error: { message: string } | null }>;
+  if (input.status === "ready" && input.approvedQuantity !== undefined) {
+    if (!Number.isInteger(input.approvedQuantity) || input.approvedQuantity < 1 || !input.qualityRequestId) throw new Error("Confira a quantidade aprovada e a identificação da conferência de qualidade.");
+    const { error } = await rpc("confirm_finished_output", { p_job_id: input.id, p_good_quantity: input.approvedQuantity, p_reason: input.failureReason ?? null, p_request_id: input.qualityRequestId });
+    if (error) throw new Error(error.message);
+    return;
+  }
   const { error } = await rpc("transition_job", {
     p_job_id: input.id, p_status: input.status,
     p_actual_grams: input.actualGrams ?? null,
@@ -76,4 +101,4 @@ export async function transitionJob(input: JobTransition) {
   if (error) throw new Error(error.message);
 }
 
-export const productionQueryKeys = ["jobs", "fila_jobs", "orders", "inventory_items", "inventory_movements", "margin_sku_jobs", "production_losses", "printers", "fila_printers", "products", "products_list", "fila_products", "product_print_plates", "bambu_production_review", "bambu_production_preview", "job_production_review", "dre_jobs"];
+export const productionQueryKeys = ["jobs", "fila_jobs", "orders", "inventory_items", "inventory_movements", "margin_sku_jobs", "production_losses", "printers", "fila_printers", "products", "products_list", "fila_products", "product_print_plates", "bambu_production_review", "bambu_production_preview", "job_production_review", "dre_jobs", "daily-operations", "filament-planning", "filament-spool-events", "capacity_data", "production_orders", "production_order_items"];

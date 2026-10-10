@@ -8,11 +8,12 @@ import { Link, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { estimateProductionCosts, productExtrasPerPiece, requiresProductionMeasurement, jobTransitions as nextStatuses, nonNegative } from "@/lib/production";
-import { createJobs, transitionJob, productionQueryKeys, type CreateJobInput } from "@/lib/production-api";
+import { createJobs, transitionJob, productionQueryKeys, requiresFinishedOutputCount, readFinishedOutputAvailability, type CreateJobInput } from "@/lib/production-api";
 import { orderRequest } from "@/lib/sales-order";
 import { planProductPlates, readProductPlates } from "@/lib/production-plates";
 import { ProductionPlatePlan } from "@/components/production/ProductionPlatePlan";
 import { useAuth } from "@/contexts/AuthContext";
+import { readProductionRows } from "@/lib/production-read";
 import { PageHeader } from "@/components/shared/PageHeader";
 import {
   Plus, Search, MoreHorizontal, Play, Pause, AlertTriangle,
@@ -104,18 +105,23 @@ export default function Jobs() {
   const [detailJob, setDetailJob] = useState<JobRow | null>(null);
   const [fileJobId, setFileJobId] = useState<string | null>(null);
   const [transition, setTransition] = useState<{ job: JobRow; status: JobStatus } | null>(null);
+  const finishedOutputAvailability = useQuery({
+    queryKey: ["finished_output_available", profile?.tenant_id],
+    queryFn: readFinishedOutputAvailability,
+    enabled: !!profile?.tenant_id,
+    retry: false,
+  });
 
   // ── Fetch jobs ──
   const { data: jobs = [], isLoading, error: loadError, refetch } = useQuery({
     queryKey: ["jobs"],
-    queryFn: async () => {
-      const { data, error } = await supabase
+    queryFn: () => readProductionRows((from, to) => supabase
         .from("jobs")
         .select("*, orders(code)")
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return data;
-    },
+        .eq("tenant_id", profile!.tenant_id)
+        .order("created_at", { ascending: false })
+        .order("id")
+        .range(from, to)),
     enabled: !!profile,
   });
 
@@ -179,11 +185,20 @@ export default function Jobs() {
   });
 
   const requestTransition = (job: JobRow, status: JobStatus) => {
+    const quantityReview = requiresFinishedOutputCount(job, status);
+    if (quantityReview && (finishedOutputAvailability.error || finishedOutputAvailability.data === undefined)) {
+      toast({ variant: "destructive", title: "Conferência de qualidade indisponível", description: finishedOutputAvailability.error?.message ?? "Aguarde a consulta da disponibilidade e tente novamente." });
+      return;
+    }
+    if (quantityReview && finishedOutputAvailability.data === false) {
+      toast({ title: "Aprovação pelo fluxo atual", description: "A conferência detalhada de quantidades ainda precisa ser ativada. Esta aprovação mantém o fluxo atual da empresa." });
+      statusMutation.mutate({ id: job.id, status }); return;
+    }
     if (requiresProductionMeasurement(status, job.inventory_posted_at) && jobRecipeMaterialCount(job) > 2) {
       toast({ variant: "destructive", title: "Apuração completa de materiais necessária", description: "Esta receita tem três ou mais materiais. Use a apuração Bambu para registrar todos os consumos." });
       setDetailJob(null); setFileJobId(job.id); return;
     }
-    if (["failed", "printing"].includes(status) || requiresProductionMeasurement(status, (job as unknown as { inventory_posted_at?: string }).inventory_posted_at)) setTransition({ job, status });
+    if (["failed", "printing"].includes(status) || requiresFinishedOutputCount(job, status) || requiresProductionMeasurement(status, (job as unknown as { inventory_posted_at?: string }).inventory_posted_at)) setTransition({ job, status });
     else statusMutation.mutate({ id: job.id, status });
   };
 
@@ -239,6 +254,8 @@ export default function Jobs() {
         description="Gerencie a produção: crie, acompanhe e apure custos reais de cada OI."
         breadcrumbs={[{ label: "Produção" }, { label: "Jobs" }]}
       />
+      {finishedOutputAvailability.data === false && <p role="status" className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">A conferência detalhada de quantidades ainda precisa ser ativada nesta empresa. A qualidade segue pelo fluxo atual; pedidos com estoque parcial ficam disponíveis após essa ativação.</p>}
+      {finishedOutputAvailability.error && <div role="alert" className="rounded-lg border border-destructive/30 p-3 text-sm">Não foi possível verificar a disponibilidade da conferência de quantidades: {finishedOutputAvailability.error.message}<Button variant="outline" size="sm" className="ml-3" onClick={() => void finishedOutputAvailability.refetch()}>Tentar novamente</Button></div>}
 
       {/* KPI Filter Strip */}
       <div className="flex flex-wrap gap-2">

@@ -146,3 +146,44 @@ describe("vínculos explícitos Bambu", () => {
     await screen.findByText("Selecione a placa que foi impressa nesta execução."); expect(rpc).not.toHaveBeenCalled();
   });
 });
+
+it("uma placa de subitens usa o rendimento físico confirmado e não a quantidade de conjuntos", async () => {
+  const item = { ...materials[0], material_code: "PLA", color: "Branco", color_code: "WHITE", color_hex: "#FFFFFF", avg_cost: 20 };
+  const expected = { product_id: "product", plate_id: "plate", base_item_id: "material", selected_item_id: "material", material_code: "PLA", color_code: "WHITE", color_hex: "#FFFFFF" };
+  rpc.mockImplementation(async name => name === "bambu_material_selection_preview" ? {
+    material_policy: "execution_variant", expected_materials: [expected], material_options: [{ ...expected, options: [item] }],
+    filaments: [{ ...preview.filaments[0], base_item_id: "material", source_type: "PLA", source_color: "FFFFFFFF", target_type: "PLA", target_color: "FFFFFFFF" }],
+    complete: true, missing: [], cost_per_unit: 1, physical_quantity: 15,
+  } : "configuration");
+  const plate = { id: "plate", product_id: "product", source_id: null, plate_index: 1, label: "10 corpos e 5 folhas", units_per_plate: 5, material_id: "material", printer_id: null, est_grams: 100, est_time_seconds: 3600, est_cost_per_unit: 1, is_active: true };
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <BambuConfigurationForm {...props({ ...preview, material_policy: "execution_variant", record: { ...preview.record!, plate_id: "plate", units: 5 } })} materials={[item]} plates={[plate]} />
+  </QueryClientProvider>);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Salvar vínculo" })).toBeEnabled());
+  expect(screen.getByLabelText("Peças nesta impressão")).toHaveValue(15);
+  expect(screen.getByLabelText("Peças nesta impressão")).toBeDisabled();
+  expect(screen.getByText(/peças físicas confirmadas na placa/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Salvar vínculo" }));
+  await waitFor(() => expect(rpc).toHaveBeenCalledWith("configure_bambu_production", expect.objectContaining({ p_units: 15, p_plate_id: "plate", p_allocations: [] })));
+});
+
+it("o vínculo de uma OI física mantém a placa inteira mesmo com valor antigo de conjuntos", async () => {
+  const item = { ...materials[0], material_code: "PLA", color: "Branco", color_code: "WHITE", color_hex: "#FFFFFF", avg_cost: 20 };
+  const expected = { product_id: "product", plate_id: "plate", base_item_id: "material", selected_item_id: "material", material_code: "PLA", color_code: "WHITE", color_hex: "#FFFFFF" };
+  rpc.mockImplementation(async name => name === "bambu_material_selection_preview" ? {
+    material_policy: "execution_variant", expected_materials: [expected], material_options: [{ ...expected, options: [item] }],
+    filaments: [{ ...preview.filaments[0], base_item_id: "material" }], complete: true, missing: [], cost_per_unit: 1, physical_quantity: 15,
+  } : "configuration");
+  const plate = { id: "plate", product_id: "product", source_id: null, plate_index: 1, label: "Placa de subitens", units_per_plate: 5, material_id: "material", printer_id: null, est_grams: 100, est_time_seconds: 3600, est_cost_per_unit: 1, is_active: true };
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+    <BambuConfigurationForm {...props({ ...preview, material_policy: "execution_variant", record: { ...preview.record!, plate_id: "plate", units: 5 } })} materials={[item]} plates={[plate]}
+      jobs={[{ id: "physical-job", code: "OI-015", name: "Subitens da placa", status: "queued", product_id: "product", print_plate_id: "plate", planned_quantity: 15, order_item_id: null, inventory_posted_at: null }]} />
+  </QueryClientProvider>);
+  await waitFor(() => expect(screen.getByRole("button", { name: "Salvar vínculo" })).toBeEnabled());
+  fireEvent.click(screen.getByText("Vincular ordens existentes"));fireEvent.click(screen.getByRole("checkbox", { name: "OI-015 · Subitens da placa" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Salvar vínculo" })).toBeEnabled());
+  expect(screen.getByLabelText("Peças nesta impressão")).toHaveValue(15);
+  expect(screen.getByLabelText("Peças na ordem OI-015")).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Salvar vínculo" }));
+  await waitFor(() => expect(rpc).toHaveBeenCalledWith("configure_bambu_production", expect.objectContaining({ p_units: 15, p_allocations: [{ job_id: "physical-job", quantity: 15 }] })));
+});

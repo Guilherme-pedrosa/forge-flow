@@ -26,4 +26,4 @@ export async function readAssemblyStatus(productId: string, quantity: number, it
   if (!Array.isArray(result.components)) throw new Error("Não foi possível conferir os componentes. Atualize para tentar novamente.");
   return result;
 }
-export const assemblyKeys = ["assembly_status", "assembly_jobs", "assembly_history", "assembly_items", "product_print_plates", "product_material_recipe", "products", "inventory_items", "production_preflight", "production_order_jobs", "jobs", "orders", "production_orders"];
+export const assemblyKeys = ["assembly_status", "assembly_jobs", "assembly_history", "assembly_items", "product_print_plates", "product_material_recipe", "products", "inventory_items", "production_preflight", "production_order_jobs", "jobs", "orders", "production_orders", "daily-operations", "filament-planning", "capacity_data", "fila_jobs"];

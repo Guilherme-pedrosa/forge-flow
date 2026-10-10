@@ -508,7 +508,8 @@ Deno.serve(async (req) => {
           await supabase
             .from("printers")
             .update({ status: printerStatus, updated_at: new Date().toISOString() })
-            .eq("id", device.printer_id);
+            .eq("id", device.printer_id)
+            .neq("status", "maintenance");
         }
 
         telemetryResults.push({
