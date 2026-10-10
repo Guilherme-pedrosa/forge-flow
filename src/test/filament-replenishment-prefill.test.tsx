@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Compras from "@/pages/estoque/Compras";
 import Reposicao from "@/pages/estoque/Reposicao";
 import type { FilamentPlanningSnapshot } from "@/lib/filament-planning";
+import { localDate } from "@/lib/finance";
 
 const mock = vi.hoisted(() => ({ rpc: vi.fn(), toast: vi.fn(), unit: "g", plan: null as FilamentPlanningSnapshot | null, items: null as null | { id: string; name: string; category: string; material_code: string; color: string; color_code: string; unit: string }[] }));
 vi.mock("@/lib/filament-planning", async importOriginal => ({ ...await importOriginal<typeof import("@/lib/filament-planning")>(), loadFilamentPlanningSnapshot: () => Promise.resolve(mock.plan) }));
@@ -114,6 +115,39 @@ describe("replenishment review in purchases", () => {
     expect(screen.getByLabelText("Quantidade de estoque de PLA azul · compra em kg")).toHaveValue("1");
     expect(screen.getByLabelText("Previsão de Entrega")).toHaveValue("2099-10-10");
     expect(screen.getByRole("combobox", { name: "Fornecedor da compra" })).toHaveValue("vendor");
+    expect(mock.rpc).not.toHaveBeenCalled();
+  });
+  it("shows the current physical safety risk without another purchase for covered ETA today", async () => {
+    mock.plan = {
+      items: [{ id: "white", name: "PLA branco", unit: "g", current_stock: 200, min_stock: 500, vendor_id: "vendor" }],
+      jobs: [], reservations: [], policies: [], committedDemand: [], vendors: [{ id: "vendor", name: "Fornecedor" }], printers: [],
+      purchases: [{ id: "purchase", code: "CMP", status: "pending", expected_date: localDate(), items: [{ inventory_item_id: "white", stock_quantity: 1000 }] }],
+      spools: [{ id: "spool", item_id: "white", label: "Bobina branca", tare_grams: 200, initial_net_grams: 1000, estimated_remaining_grams: 100, measured_gross_grams: 300, measured_at: null, weight_source: "manual_weighing", location_kind: "storage", location_label: "Depósito", printer_id: null, ams_unit: null, ams_slot: null, needs_weighing: true, is_active: true, updated_at: "" }],
+    };
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><Reposicao /></MemoryRouter></QueryClientProvider>);
+    await screen.findByText("Segurança abaixo do mínimo agora");
+    expect(screen.getByText(/risco permanece até receber/)).toHaveTextContent("0,3 kg");
+    expect(screen.getByText(/diferença de/)).toHaveTextContent("-0,1 kg");
+    expect(screen.getByText(/diferença de/)).toHaveTextContent("1 bobina(s) precisam de pesagem");
+    expect(screen.queryByRole("link", { name: "Revisar compra do fornecedor" })).not.toBeInTheDocument();
+    expect(screen.getByText(/demanda conhecida cabe no saldo registrado/)).toBeInTheDocument();
+    expect(mock.rpc).not.toHaveBeenCalled();
+  });
+  it("keeps a valid color in the supplier purchase when another color has a stale reservation", async () => {
+    mock.items = [
+      { id: "white", name: "PLA branco", category: "filament", material_code: "PLA", color: "Branco", color_code: "WHITE", unit: "g" },
+      { id: "blue", name: "PLA azul", category: "filament", material_code: "PLA", color: "Azul", color_code: "BLUE", unit: "kg" },
+    ];
+    const job = { code: "OI", name: "Peça", status: "queued", secondary_material_id: null, production_snapshot: null, inventory_posted_at: null, print_plate_id: null, due_date: "2099-10-12", est_grams: 600 };
+    mock.plan = { items: mock.items.map(item => ({ ...item, current_stock: 0, min_stock: 0, vendor_id: "vendor" })), jobs: [{ ...job, id: "white-job", material_id: "white" }, { ...job, id: "blue-job", material_id: "blue" }], purchases: [], reservations: [{ id: "stale", job_id: "cancelled-source", item_id: "white", spool_id: null, grams: 600, status: "reserved", released_at: null }], spools: [], policies: [], committedDemand: [], vendors: [{ id: "vendor", name: "Fornecedor" }], printers: [] };
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><Reposicao /></MemoryRouter></QueryClientProvider>);
+    const button = await screen.findByRole("link", { name: "Revisar 1 material(is) sem pendência" });
+    expect(screen.getByText(/PLA branco: reserva sem demanda ativa/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Revise as reservas deste material" })).toBeDisabled();
+    const params = new URL(button.getAttribute("href")!, "https://erp.example.test").searchParams;
+    expect(JSON.parse(params.get("reposicao_itens")!)).toEqual([{ item_id: "blue", kg: 1 }]);
+    expect(params.get("reposicao_fornecedor")).toBe("vendor");
+    expect(screen.getByRole("link", { name: "Revisar só este material" })).toHaveAttribute("href", expect.stringContaining("reposicao_item=blue"));
     expect(mock.rpc).not.toHaveBeenCalled();
   });
 });

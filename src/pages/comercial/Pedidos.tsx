@@ -4,6 +4,8 @@ import { SearchableItemSelect } from "@/components/shared/SearchableItemSelect";
 import { DeleteRecordDialog, type DeleteTarget } from "@/components/shared/DeleteRecordDialog";
 import { prepareOrder, salesOrderTransitions, orderRequest } from "@/lib/sales-order";
 import { operatingDateInput, operatingDateToIso, readSalesWorkflowResult, salesOrderNextAction } from "@/lib/sales-workflow";
+import { deliveryPreparationDay } from "@/lib/order-preparation-deadline";
+import { displayDate } from "@/lib/finance";
 import { readProductionRows } from "@/lib/production-read";
 import { isMissingDatabaseStructure } from "@/lib/database-readiness";
 import { useState, useMemo, useEffect, useRef } from "react";
@@ -39,6 +41,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 
 const fmtCurrency = (v: number | null) => v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
+const preparationDayLabel = (day: string) => `Meta de produção: ${displayDate(day)} (1 dia antes da entrega; horário não combinado)`;
 
 const statusConfig: Record<string, { label: string; color: string }> = {
   draft: { label: "Rascunho", color: "bg-muted text-muted-foreground" },
@@ -275,14 +278,15 @@ export default function Pedidos() {
   };
   const rpc = supabase.rpc.bind(supabase) as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
   const operationalDates = () => {
-    const ship = operatingDateToIso(shipBy, "o prazo de postagem");
-    let target = operatingDateToIso(internalDue, "a meta interna");
+    const original = !createOpen && (editMode || editingDeadlines) ? viewOrder : null;
+    const ship = operatingDateToIso(shipBy, "o prazo de postagem", original?.ship_by_at);
+    let target = operatingDateToIso(internalDue, "a meta interna", original?.internal_due_at);
     if (ship && !target) {
       const hours = Number(bufferHours);
       if (!Number.isFinite(hours) || hours < 0 || hours > 720) throw new Error("Informe uma folga entre 0 e 720 horas.");
       target = new Date(new Date(ship).getTime() - hours * 3_600_000).toISOString();
     }
-    if (target && ship && target > ship) throw new Error("A meta interna deve ser anterior ao prazo de postagem.");
+    if (target && ship && new Date(target).getTime() > new Date(ship).getTime()) throw new Error("A meta interna deve ser anterior ao prazo de postagem.");
     return { ship_by_at: ship, internal_due_at: target };
   };
   const orderPayload = (id: string | null) => {
@@ -373,6 +377,8 @@ export default function Pedidos() {
   const openOrders = orders.filter((o: any) => !["delivered", "cancelled"].includes(o.status)).length;
 
   const viewOrder = viewOrderId ? orders.find((o: any) => o.id === viewOrderId) : null;
+  const viewPreparationDay = viewOrder ? deliveryPreparationDay(viewOrder) : null;
+  const formPreparationDay = createOpen ? deliveryPreparationDay({ due_date: dueDate, ship_by_at: shipBy || null, internal_due_at: internalDue || null, marketplace_order_id: null }) : null;
   const formPending = createMut.isPending || updateOrderMut.isPending || confirmOrder.isPending || updateDeadlines.isPending;
   const localTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const renderOperatingDates = () => workflowAvailable ? <section className="space-y-3 rounded-lg border bg-muted/20 p-3" aria-label="Prazo de postagem">
@@ -380,7 +386,8 @@ export default function Pedidos() {
       <div><Label htmlFor="order-ship-by">Postar até</Label><Input id="order-ship-by" type="datetime-local" value={shipBy} disabled={formPending} onChange={event => setShipBy(event.target.value)} /></div>
       <div><Label htmlFor="order-internal-due">Meta interna (opcional)</Label><Input id="order-internal-due" type="datetime-local" value={internalDue} disabled={formPending} onChange={event => setInternalDue(event.target.value)} /></div>
     </div>
-    {!internalDue && <div className="flex flex-wrap items-center gap-2"><Label htmlFor="order-buffer">Folga antes da postagem (horas)</Label><Input className="w-24" id="order-buffer" type="number" min="0" max="720" value={bufferHours} disabled={formPending} onChange={event => setBufferHours(event.target.value)} /></div>}
+    {!internalDue && shipBy && <div className="flex flex-wrap items-center gap-2"><Label htmlFor="order-buffer">Folga antes da postagem (horas)</Label><Input className="w-24" id="order-buffer" type="number" min="0" max="720" value={bufferHours} disabled={formPending} onChange={event => setBufferHours(event.target.value)} /></div>}
+    {formPreparationDay && <p className="text-sm">{preparationDayLabel(formPreparationDay)}</p>}
     <p className="text-xs text-muted-foreground">Horários em {localTimezone}. A meta interna usa a folga quando não é informada. A data de entrega ao cliente continua separada. <Link className="text-primary underline" to="/planejamento/capacidade">Simule a capacidade antes de prometer o prazo.</Link></p>
   </section> : null;
 
@@ -456,12 +463,13 @@ export default function Pedidos() {
             <TableBody>
               {filtered.map((o: any) => {
                 const cfg = statusConfig[o.status] || statusConfig.draft;
+                const preparationDay = deliveryPreparationDay(o);
                 return (
                   <TableRow key={o.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setViewOrderId(o.id)}>
                     <TableCell className="font-mono text-sm font-medium">{o.code}</TableCell>
                     <TableCell className="text-sm">{o.customers?.name || "—"}</TableCell>
                     <TableCell><span className={cn("inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold", cfg.color)}>{cfg.label}</span></TableCell>
-                    <TableCell className="text-sm">{o.ship_by_at ? <><span className="block">Postar {new Date(o.ship_by_at).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}</span>{o.internal_due_at && <span className="block text-xs text-muted-foreground">Meta {new Date(o.internal_due_at).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}</span>}</> : o.due_date ? `Entrega ${new Date(o.due_date + "T00:00:00").toLocaleDateString("pt-BR")}` : "Prazo a informar"}</TableCell>
+                    <TableCell className="text-sm">{o.ship_by_at ? <><span className="block">Postar {new Date(o.ship_by_at).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}</span>{o.internal_due_at && <span className="block text-xs text-muted-foreground">Meta {new Date(o.internal_due_at).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" })}</span>}</> : o.due_date ? `Entrega ${new Date(o.due_date + "T00:00:00").toLocaleDateString("pt-BR")}` : "Prazo a informar"}{preparationDay && <span className="block text-xs text-muted-foreground">{preparationDayLabel(preparationDay)}</span>}</TableCell>
                     <TableCell className="text-sm">{nextAction(o)}</TableCell>
                     <TableCell className="text-right font-mono text-sm">{fmtCurrency(o.total)}</TableCell>
                     <TableCell>
@@ -659,6 +667,7 @@ export default function Pedidos() {
                 </div>
               </div>
               {(viewOrder as unknown as { ship_by_at?: string }).ship_by_at && <div className="rounded-lg border p-3 text-sm"><p>Postar até: <strong>{new Date((viewOrder as unknown as { ship_by_at: string }).ship_by_at).toLocaleString("pt-BR")}</strong></p>{(viewOrder as unknown as { internal_due_at?: string }).internal_due_at && <p>Meta interna: {new Date((viewOrder as unknown as { internal_due_at: string }).internal_due_at).toLocaleString("pt-BR")}</p>}<p className="mt-1 text-xs text-muted-foreground">Horários em {localTimezone}.</p></div>}
+              {viewPreparationDay && <div className="rounded-lg border p-3 text-sm">{preparationDayLabel(viewPreparationDay)}</div>}
 
               {viewOrder.notes && (
                 <div className="text-sm">

@@ -12,6 +12,28 @@ describe("filament planning", () => {
     const result = calculateFilamentPlan(snapshot({ reservations: [{ id: "r", job_id: "j", item_id: "a", spool_id: null, grams: 600, status: "reserved", released_at: null }] }), "2026-10-10");
     expect(result.materials[0]).toMatchObject({ stockGrams: 1000, reservedGrams: 600, freeGrams: 400, minimumProjectedGrams: 400, suggestedKg: 0 });
   });
+  it("projects a larger reservation once and retains a distinct reserved draft", () => {
+    const reservation = (job_id: string, grams: number) => ({ id: `r-${job_id}`, job_id, item_id: "a", spool_id: null, grams, status: "reserved", released_at: null });
+    const larger = calculateFilamentPlan(snapshot({ reservations: [reservation("j", 900)], committedDemand: [{ id: "next", label: "OP seguinte", due_date: "2026-10-12", lines: [{ item_id: "a", grams: 200 }] }] }), "2026-10-10");
+    expect(larger.materials[0]).toMatchObject({ demandGrams: 1100, minimumProjectedGrams: -100, suggestedKg: 1 });
+    const distinct = calculateFilamentPlan(snapshot({ jobs: [job(), job({ id: "draft", status: "draft" })], reservations: [reservation("draft", 600)] }), "2026-10-10");
+    expect(distinct.materials[0]).toMatchObject({ demandGrams: 1200, reservedGrams: 600, minimumProjectedGrams: -200, suggestedKg: 1 });
+  });
+  it("deduplicates a draft reservation against the same committed residual", () => {
+    const draft = job({ id: "draft", status: "draft" });
+    const input = snapshot({ jobs: [draft], reservations: [{ id: "r", job_id: "draft", item_id: "a", spool_id: null, grams: 600, status: "reserved", released_at: null }], committedDemand: [{ id: "op", label: "OP", due_date: "2026-10-11", lines: [{ item_id: "a", grams: 600 }], draft_job_ids: ["draft"] }] });
+    expect(calculateFilamentPlan(input, "2026-10-10").materials[0]).toMatchObject({ demandGrams: 600, minimumProjectedGrams: 400, suggestedKg: 0 });
+  });
+  it("keeps unknown recipes uncertain even when a known material hold exists", () => {
+    const result = calculateFilamentPlan(snapshot({ jobs: [job({ secondary_material_id: "b" })], reservations: [{ id: "r", job_id: "j", item_id: "a", spool_id: null, grams: 800, status: "reserved", released_at: null }] }), "2026-10-10");
+    expect(result.unknownDemandCount).toBe(1);
+    expect(result.materials[0]).toMatchObject({ demandGrams: 800, reservedGrams: 800 });
+  });
+  it("reports a stale unreleased reservation instead of inventing cancelled production", () => {
+    const result = calculateFilamentPlan(snapshot({ jobs: [], reservations: [{ id: "r", job_id: "cancelled-source-job", item_id: "a", spool_id: null, grams: 600, status: "reserved", released_at: null }] }), "2026-10-10");
+    expect(result).toMatchObject({ staleReservationCount: 1 });
+    expect(result.materials[0]).toMatchObject({ demandGrams: 0, reservedGrams: 0 });
+  });
   it("keeps physical spools outside aggregate stock and exposes a discrepancy", () => {
     const result = calculateFilamentPlan(snapshot({ spools: [{ id: "s", item_id: "a", label: "Bobina 1", tare_grams: 200, initial_net_grams: 1000, estimated_remaining_grams: 850, measured_gross_grams: 1050, measured_at: null, weight_source: "manual_weighing", location_kind: "storage", location_label: "Depósito", printer_id: null, ams_slot: null, ams_unit: null, needs_weighing: false, is_active: true, updated_at: "" }] }), "2026-10-10");
     expect(result.materials[0]).toMatchObject({ stockGrams: 1000, spoolGrams: 850, spoolDifferenceGrams: -150, minimumProjectedGrams: 400 });
@@ -40,6 +62,15 @@ describe("filament planning", () => {
     const result = calculateFilamentPlan(snapshot({ jobs: [job({ est_grams: 1700 })], purchases: [{ id: "p", code: "CMP-1", status: "pending", expected_date: "2026-10-11", items: [{ inventory_item_id: "a", stock_quantity: 1 }] }] }), "2026-10-10");
     expect(result.materials[0]).toMatchObject({ minimumProjectedGrams: 300, suggestedKg: 0 });
   });
+  it("does not reorder covered safety stock with an ETA today while retaining the physical risk", () => {
+    const input = snapshot({ items: [{ ...snapshot().items[0], current_stock: 0.2, min_stock: 0.5 }], jobs: [], purchases: [{ id: "p", code: "CMP-1", status: "pending", expected_date: "2026-10-10", items: [{ inventory_item_id: "a", stock_quantity: 1 }] }] });
+    expect(calculateFilamentPlan(input, "2026-10-10").materials[0]).toMatchObject({ stockGrams: 200, incomingGrams: 1000, currentSafetyGapGrams: 300, minimumProjectedGrams: 1200, shortageDate: null, suggestedKg: 0 });
+    input.jobs = [job({ due_date: "2026-10-10", est_grams: 1000 })];
+    expect(calculateFilamentPlan(input, "2026-10-10").materials[0]).toMatchObject({ minimumProjectedGrams: 200, shortageDate: "2026-10-10", suggestedKg: 1 });
+    input.jobs = [];
+    input.purchases[0].expected_date = "2026-10-09";
+    expect(calculateFilamentPlan(input, "2026-10-10").materials[0]).toMatchObject({ incomingGrams: 0, undatedIncomingGrams: 1000, currentSafetyGapGrams: 300, suggestedKg: 1 });
+  });
   it("does not manufacture incoming mass from purchase package count or overdue ETA", () => {
     const result = calculateFilamentPlan(snapshot({ purchases: [{ id: "p", code: "CMP-1", status: "pending", expected_date: "2026-10-09", items: [{ inventory_item_id: "a", stock_quantity: 1 }] }, { id: "q", code: "CMP-2", status: "pending", expected_date: null, items: [{ inventory_item_id: "a", stock_quantity: null }] }, { id: "r", code: "CMP-3", status: "draft", expected_date: "2026-10-10", items: [{ inventory_item_id: "a", stock_quantity: 5 }] }] }), "2026-10-10");
     expect(result.materials[0]).toMatchObject({ incomingGrams: 0, undatedIncomingGrams: 1000 }); expect(result.undatedPurchaseCount).toBe(1); expect(result.unconvertedPurchaseCount).toBe(1);
@@ -53,6 +84,56 @@ describe("filament planning", () => {
   it("uses the internal target before dispatch/delivery, in the company's timezone", () => {
     expect(operatingDemandDate({ due_date: "2026-10-20", ship_by_at: "2026-10-12T01:00:00Z", internal_due_at: "2026-10-11T01:00:00Z" }, "America/Sao_Paulo")).toBe("2026-10-10");
     expect(operatingDemandDate({ due_date: null, ship_by_at: "2026-10-12T01:00:00Z" }, "America/Sao_Paulo")).toBe("2026-10-11");
+  });
+  it("prepares a known manual delivery one civil day earlier without inventing a channel cutoff", () => {
+    expect(operatingDemandDate({ due_date: "2026-11-01", marketplace_order_id: null })).toBe("2026-10-31");
+    expect(operatingDemandDate({ due_date: "2026-11-01", marketplace_order_id: "external" })).toBe("2026-11-01");
+    expect(operatingDemandDate({ due_date: "2026-11-01", marketplace_order_id: null }, "America/Sao_Paulo", true)).toBe("2026-11-01");
+    expect(operatingDemandDate({ due_date: "2026-11-01" })).toBe("2026-11-01");
+  });
+  it("keeps only OP residual beside a valid active print and merges its draft reservation", async () => {
+    const recipe = { units_per_print: 1, lines: [{ item_id: "a", grams_per_print: 600 }] };
+    const rows: Record<string, Record<string, unknown>[]> = {
+      inventory_items: [{ ...snapshot().items[0], category: "filament", is_active: true }],
+      production_orders: [{ id: "op", code: "OP", status: "released", due_date: "2026-10-11" }],
+      production_order_items: [{ id: "pi", production_order_id: "op", quantity: 2, description: "Peça", production_snapshot: { recipe } }],
+      jobs: [{ ...job({ id: "queued", production_order_id: "op", production_order_item_id: "pi" }) }, { ...job({ id: "draft", status: "draft", production_order_id: "op", production_order_item_id: "pi" }) }],
+      filament_reservations: [{ id: "r", job_id: "draft", item_id: "a", spool_id: null, grams: 600, status: "reserved", released_at: null }],
+    };
+    const client = { from: (table: string) => ({ select() { return this; }, order() { return this; }, range(from: number, to: number) { return Promise.resolve({ data: (rows[table] ?? []).slice(from, to + 1), error: null }); } }) } as unknown as SupabaseClient;
+    const loaded = await loadFilamentPlanningSnapshot(client);
+    expect(loaded.committedDemand[0]).toMatchObject({ lines: [{ item_id: "a", grams: 600 }], draft_job_ids: ["draft"] });
+    expect(calculateFilamentPlan(loaded, "2026-10-10").materials[0]).toMatchObject({ demandGrams: 1200, minimumProjectedGrams: -200, suggestedKg: 1 });
+    rows.filament_reservations = [];
+    const unreserved = await loadFilamentPlanningSnapshot(client);
+    expect(calculateFilamentPlan(unreserved, "2026-10-10").materials[0].demandGrams).toBe(1200);
+    rows.orders = [{ id: "sale", code: "PED", status: "cancelled", source_quote_id: "q", due_date: "2026-10-12" }];
+    rows.production_orders[0].source_quote_id = "q";
+    expect((await loadFilamentPlanningSnapshot(client)).committedDemand).toEqual([]);
+  });
+  it.each(["failed", "ready"])("does not let a %s parent and its whole-plate replacement cover the other draft", async status => {
+    const recipe = { units_per_print: 2, lines: [{ item_id: "a", grams_per_print: 600 }] };
+    const linkage = { production_order_id: "op", production_order_item_id: "pi" };
+    const rows: Record<string, Record<string, unknown>[]> = {
+      inventory_items: [{ ...snapshot().items[0], category: "filament", is_active: true }],
+      production_orders: [{ id: "op", code: "OP", status: "released", due_date: "2026-10-11" }],
+      production_order_items: [{ id: "pi", production_order_id: "op", quantity: 4, description: "Peça", production_snapshot: { recipe } }],
+      jobs: [
+        { ...job({ ...linkage, id: "parent", status, inventory_posted_at: "2026-10-09" }), planned_quantity: 2, produced_quantity: status === "ready" ? 1 : 0 },
+        { ...job({ ...linkage, id: "replacement", status: "reprint", reprint_of: "parent" }), planned_quantity: 2 },
+        { ...job({ ...linkage, id: "draft", status: "draft" }), planned_quantity: 2 },
+      ],
+    };
+    const client = { from: (table: string) => ({ select() { return this; }, order() { return this; }, range(from: number, to: number) { return Promise.resolve({ data: (rows[table] ?? []).slice(from, to + 1), error: null }); } }) } as unknown as SupabaseClient;
+    const loaded = await loadFilamentPlanningSnapshot(client);
+    expect(loaded.committedDemand[0].lines).toEqual([{ item_id: "a", grams: 600 }]);
+    expect(calculateFilamentPlan(loaded, "2026-10-10").materials[0]).toMatchObject({ stockGrams: 1000, demandGrams: 1200, minimumProjectedGrams: -200, suggestedKg: 1 });
+    rows.jobs = rows.jobs.filter(value => value.id !== "replacement");
+    if (status === "failed") {
+      const withoutReplacement = await loadFilamentPlanningSnapshot(client);
+      expect(withoutReplacement.committedDemand[0].lines).toEqual([{ item_id: "a", grams: 1200 }]);
+      expect(calculateFilamentPlan(withoutReplacement, "2026-10-10").materials[0].demandGrams).toBe(1200);
+    }
   });
   it("loads a quote-based production demand once and inherits an operational deadline for jobs", async () => {
     const recipe = { units_per_print: 1, lines: [{ item_id: "a", grams_per_print: 100 }] };
@@ -93,7 +174,7 @@ describe("filament planning", () => {
         job({ id: "qc", status: "quality_check", production_order_id: "cancelled-op" }),
         job({ id: "active" }),
       ],
-      filament_active_reservations: [{ id: "cancelled-reservation", job_id: "derived", item_id: "a", spool_id: null, grams: 600, status: "reserved", released_at: null }],
+      filament_reservations: [{ id: "cancelled-reservation", job_id: "derived", item_id: "a", spool_id: null, grams: 600, status: "reserved", released_at: null }],
     };
     const requests: { table: string; columns: string; from: number }[] = [];
     const client = { from: (table: string) => {
@@ -107,6 +188,7 @@ describe("filament planning", () => {
     expect(loaded.jobs.map(entry => entry.id)).toEqual(["printing", "started", "posted", "qc", "active"]);
     expect(loaded.committedDemand).toEqual([]);
     expect(calculateFilamentPlan(loaded, "2026-10-10").materials[0]).toMatchObject({ demandGrams: 1800, reservedGrams: 0 });
+    expect(calculateFilamentPlan(loaded, "2026-10-10").staleReservationCount).toBe(1);
     expect(requests).toContainEqual(expect.objectContaining({ table: "orders", from: 500 }));
     expect(requests).toContainEqual(expect.objectContaining({ table: "production_orders", from: 500 }));
     expect(requests.find(request => request.table === "jobs")?.columns.split(",")).toContain("started_at");

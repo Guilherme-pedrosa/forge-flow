@@ -10,12 +10,16 @@ const executablePath = process.env.FORGE_CHROMIUM_PATH || (existsSync('/usr/bin/
 const browser = await chromium.launch({ headless: true, ...(executablePath ? { executablePath } : {}) });
 const id = n => `20000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const now = new Date(), later = new Date(now.getTime() + 2 * 86400000).toISOString();
+const deliveryDay = later.slice(0, 10);
+const preparation = new Date(`${deliveryDay}T12:00:00Z`); preparation.setUTCDate(preparation.getUTCDate() - 1);
+const preparationLabel = preparation.toISOString().slice(0, 10).split('-').reverse().join('/');
 const tenant = id(1), product = id(2), material = id(3), machine = id(4), order = id(5), account = id(6);
 const tables = {
   tenants: { id: tenant, name: 'Farm de revisão', timezone: 'America/Sao_Paulo', settings: {} },
   orders: [
     { id: order, tenant_id: tenant, code: 'PED-QA', status: 'in_production', total: 60, due_date: later.slice(0, 10), ship_by_at: later, internal_due_at: null, workflow_issues: [], workflow_checked_at: null, customer_id: id(7), created_at: now.toISOString(), customers: { name: 'Cliente de revisão' } },
     { id: id(8), tenant_id: tenant, code: 'PED-PRONTO', status: 'ready', total: 30, ship_by_at: later, due_date: null, workflow_issues: [] },
+    { id: id(30), tenant_id: tenant, code: 'PED-PARTICULAR-QA', status: 'in_production', total: 30, marketplace_order_id: null, due_date: deliveryDay, ship_by_at: null, internal_due_at: null, workflow_issues: [], created_at: now.toISOString(), customers: { name: 'Venda particular de revisão' } },
   ],
   order_items: [{ id: id(9), order_id: order, tenant_id: tenant, product_id: product, description: 'Produto de revisão', quantity: 2, unit_price: 30, total: 60, material_overrides: [], products: { name: 'Produto de revisão' } }],
   products: [{ id: product, name: 'Produto de revisão', sku: 'QA-3D', category: 'printed_part', is_active: true, sale_price: 30, est_grams: 350, est_time_minutes: 120, prints_per_plate: 2 }],
@@ -63,6 +67,7 @@ try {
     }
     await check('/', 'Hoje', 'hoje', 'PED-QA');
     await expect(page.getByRole('link', { name: /PED-PRONTO/ })).toContainText('Embalar e postar');
+    await expect(page.getByRole('link', { name: /PED-PARTICULAR-QA/ })).toContainText(`Meta de produção (data): ${preparationLabel}`);
     await expect(page.getByRole('link', { name: /PED-QA/ })).toHaveAttribute('href', `/comercial/pedidos?pedido=${order}`);
     await check('/estoque/bobinas', 'Bobinas e filamentos', 'bobinas', 'Bobina QA 01');
     await page.getByRole('button', { name: 'Pesar', exact: true }).click();

@@ -9,6 +9,8 @@ import { assemblyRows } from "@/lib/assembly";
 import { isMissingDatabaseStructure } from "@/lib/database-readiness";
 import { compareOperationalJobs, operationalJobTiming, type OperationalJob } from "@/lib/operational-planning";
 import { localDateKey } from "@/lib/dashboard-metrics";
+import { displayDate } from "@/lib/finance";
+import { deliveryPreparationDay } from "@/lib/order-preparation-deadline";
 import { orderRequest } from "@/lib/sales-order";
 import { planProductPlates, readProductPlates } from "@/lib/production-plates";
 import { ProductionPlatePlan } from "@/components/production/ProductionPlatePlan";
@@ -63,7 +65,7 @@ const statusConfig: Record<JobStatus, { label: string; color: string; icon: any 
 const QUEUE_STATUSES: JobStatus[] = ["queued", "printing", "paused", "post_processing", "quality_check", "failed", "reprint"];
 
 type QueueMarketplaceOrder = { internal_order_id: string | null; shipping_deadline_at: string | null; needs_review: boolean; review_reason: string | null };
-type QueuePlanningJob = Pick<Tables<"jobs">, "id" | "status" | "due_date" | "est_time_minutes" | "priority" | "created_at"> & { planning_deadline?: string | null; planning_internal_deadline?: string | null; planning_marketplace_review?: string | null; planning_order_id?: string | null };
+type QueuePlanningJob = Pick<Tables<"jobs">, "id" | "status" | "due_date" | "est_time_minutes" | "priority" | "created_at"> & { planning_deadline?: string | null; planning_internal_deadline?: string | null; planning_internal_day?: string | null; planning_delivery_day?: string | null; planning_posting_source?: "marketplace" | "order"; planning_marketplace_review?: string | null; planning_order_id?: string | null };
 const earliestQueueDeadline = (values: (string | null | undefined)[]) => values.filter((value): value is string => !!value && value.includes("T") && Number.isFinite(Date.parse(value))).sort((a, b) => Date.parse(a) - Date.parse(b))[0] ?? null;
 const planningJob = (job: QueuePlanningJob): OperationalJob => ({
   id: job.id, status: job.status, deadlineAt: job.planning_deadline === undefined ? job.due_date : job.planning_deadline, internalDeadlineAt: job.planning_internal_deadline, durationMinutes: job.est_time_minutes,
@@ -76,12 +78,15 @@ function JobTiming({ job, unavailable = false }: { job: Parameters<typeof planni
   const displayDay = date && Number.isFinite(date.getTime()) ? localDateKey(date) : deadline;
   const timing = operationalJobTiming({ ...planningJob(job), deadlineAt: displayDay, internalDeadlineAt: null }, localDateKey(new Date()));
   const knownTime = typeof job.est_time_minutes === "number" && Number.isFinite(job.est_time_minutes) && job.est_time_minutes > 0;
-  const label = unavailable ? "Impressora indisponível" : job.planning_marketplace_review ? "Revisão do marketplace" : timing.overdue ? "Prazo vencido" : timing.dueToday ? "Prazo hoje" : !timing.deadlineKnown ? "Sem prazo" : "Previsão a conferir";
+  const label = unavailable ? "Impressora indisponível" : job.planning_marketplace_review ? "Revisão do marketplace" : timing.overdue ? job.planning_internal_day ? "Meta de produção vencida" : "Prazo vencido" : timing.dueToday ? job.planning_internal_day ? "Meta de produção hoje" : "Prazo hoje" : !timing.deadlineKnown ? "Sem prazo" : "Previsão a conferir";
+  const posting = job.planning_deadline?.includes("T") ? new Date(job.planning_deadline) : null;
   return <div className="mt-2 space-y-1 text-xs">
     <div className="flex flex-wrap items-center gap-2">
-      <span className="text-muted-foreground">{timing.deadlineDay ? `${job.planning_internal_deadline ? "Prazo interno" : "Prazo"} ${date && Number.isFinite(date.getTime()) ? date.toLocaleString("pt-BR") : new Date(`${timing.deadlineDay}T12:00:00`).toLocaleDateString("pt-BR")}` : "Prazo não informado"}</span>
+      <span className="text-muted-foreground">{job.planning_internal_day ? `Meta de produção (data): ${displayDate(job.planning_internal_day)} · 1 dia antes da entrega` : timing.deadlineDay ? `${job.planning_internal_deadline ? "Prazo interno" : "Prazo"} ${date && Number.isFinite(date.getTime()) ? date.toLocaleString("pt-BR") : displayDate(timing.deadlineDay)}` : "Prazo não informado"}</span>
       <Badge variant="outline" className={cn("text-xs", unavailable || timing.overdue ? "border-destructive/30 text-destructive" : timing.dueToday ? "border-amber-300 text-amber-700" : "text-muted-foreground")}>{label}</Badge>
     </div>
+    {job.planning_order_id && <p className="text-muted-foreground">{posting && Number.isFinite(posting.getTime()) ? `Postar até: ${posting.toLocaleString("pt-BR")}${job.planning_posting_source === "marketplace" ? " · prazo do canal" : ""}` : "Postagem: horário não informado"}</p>}
+    {job.planning_delivery_day && <p className="text-muted-foreground">Entrega combinada: {displayDate(job.planning_delivery_day)}</p>}
     <p className="text-muted-foreground">{knownTime ? `Impressão prevista: ${job.est_time_minutes} min` : "Tempo de impressão não informado"}{job.status === "printing" && " · restante a conferir"}</p>
     {job.planning_marketplace_review && <p className="text-amber-700">{job.planning_marketplace_review} <Link className="underline" to="/integracoes/marketplaces">Conferir marketplace</Link>{job.planning_order_id && <> · <Link className="underline" to={`/comercial/pedidos?pedido=${encodeURIComponent(job.planning_order_id)}`}>Conferir pedido</Link></>}</p>}
   </div>;
@@ -136,7 +141,7 @@ export default function Fila() {
           .in("status", QUEUE_STATUSES)
           .order("priority", { ascending: true })
           .order("created_at", { ascending: true }).order("id").range(from, to)),
-        assemblyRows<{ id: string; status: string; due_date: string | null; ship_by_at?: string | null; internal_due_at?: string | null }>("orders", "*", { tenant_id: profile!.tenant_id }),
+        assemblyRows<{ id: string; status: string; due_date: string | null; ship_by_at?: string | null; internal_due_at?: string | null; marketplace_order_id?: string | null }>("orders", "*", { tenant_id: profile!.tenant_id }),
         assemblyRows<{ id: string; status: string; source_order_id: string | null }>("production_orders", "*", { tenant_id: profile!.tenant_id }),
         assemblyRows<QueueMarketplaceOrder>("marketplace_orders", "id,internal_order_id,shipping_deadline_at,needs_review,review_reason", { tenant_id: profile!.tenant_id }).catch(error => { if (isMissingDatabaseStructure(error)) return []; throw error; }),
       ]);
@@ -148,7 +153,17 @@ export default function Fila() {
         const linked = marketplaceOrders.filter(row => row.internal_order_id != null && row.internal_order_id === orderId);
         const canonical = earliestQueueDeadline(linked.map(row => row.shipping_deadline_at));
         const review = linked.filter(row => row.needs_review);
-        return { ...job, planning_deadline: linked.length ? canonical : order?.ship_by_at ?? order?.due_date ?? job.due_date, planning_internal_deadline: linked.length ? canonical ? earliestQueueDeadline([order?.internal_due_at, canonical]) : null : order?.internal_due_at ?? null, planning_marketplace_review: review.length ? [...new Set(review.map(row => row.review_reason || "Confira a atualização do marketplace antes de confirmar o prazo."))].join(" · ") : null, planning_order_id: orderId };
+        const preparationDay = order && !["ready", "shipped", "delivered", "cancelled"].includes(order.status) ? deliveryPreparationDay(order, linked.length > 0) : null;
+        return {
+          ...job,
+          planning_deadline: linked.length ? canonical : order?.ship_by_at ?? order?.due_date ?? job.due_date,
+          planning_internal_deadline: linked.length ? canonical ? earliestQueueDeadline([order?.internal_due_at, canonical]) : null : order?.internal_due_at ?? preparationDay,
+          planning_internal_day: preparationDay,
+          planning_delivery_day: order?.due_date ?? null,
+          planning_posting_source: linked.length ? "marketplace" as const : "order" as const,
+          planning_marketplace_review: review.length ? [...new Set(review.map(row => row.review_reason || "Confira a atualização do marketplace antes de confirmar o prazo."))].join(" · ") : null,
+          planning_order_id: orderId,
+        };
       });
     },
     enabled: !!profile,

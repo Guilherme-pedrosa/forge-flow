@@ -2,6 +2,7 @@ import { localDate, validDate } from "./finance";
 import { salesOrderNextAction } from "./sales-workflow";
 import { readProductionRows } from "./production-read";
 import { isMissingDatabaseStructure } from "./database-readiness";
+import { deliveryPreparationDay } from "./order-preparation-deadline";
 
 /** Optional deadlines keep the daily view readable before the workflow migration. */
 export interface DailyOrder {
@@ -11,6 +12,7 @@ export interface DailyOrder {
   due_date?: string | null;
   ship_by_at?: string | null;
   internal_due_at?: string | null;
+  marketplace_order_id?: string | null;
   workflow_issues?: unknown;
   workflow_checked_at?: string | null;
   created_at?: string | null;
@@ -30,7 +32,7 @@ export interface DailySnapshot {
   marketplaceOrders?: DailyMarketplaceOrder[];
 }
 export interface DailyDeadline {
-  kind: "posting" | "internal" | "delivery" | "unknown";
+  kind: "posting" | "internal" | "internal_day" | "delivery" | "unknown";
   value: string | null;
   sortAt: number;
   urgency: "overdue" | "today" | "upcoming" | "unknown";
@@ -65,7 +67,7 @@ export async function readDailyMarketplaceOrders(load: (from: number, to: number
   }
 }
 
-export function dailyOrderDeadline(order: DailyOrder, now = new Date()): DailyDeadline {
+export function dailyOrderDeadline(order: DailyOrder, now = new Date(), hasMarketplaceLink = false): DailyDeadline {
   // An already shipped order needs delivery follow-up, not a stale posting alarm.
   const candidates = order.status === "shipped" ? [] : [
     { kind: "posting" as const, value: order.ship_by_at, at: instant(order.ship_by_at) },
@@ -76,11 +78,12 @@ export function dailyOrderDeadline(order: DailyOrder, now = new Date()): DailyDe
     kind: first.kind, value: first.value!, sortAt: first.at!,
     urgency: first.at! < now.getTime() ? "overdue" : localDate(new Date(first.at!)) === localDate(now) ? "today" : "upcoming",
   };
-  const day = order.due_date;
+  const internalDay = ["ready", "shipped"].includes(order.status) ? null : deliveryPreparationDay(order, hasMarketplaceLink);
+  const day = internalDay ?? order.due_date;
   if (day && validDate(day)) {
     const [year, month, date] = day.split("-").map(Number);
     return {
-      kind: "delivery", value: day,
+      kind: internalDay ? "internal_day" : "delivery", value: day,
       // Sorting only: this instant must never be displayed as a cutoff time.
       sortAt: new Date(year, month - 1, date).getTime(),
       urgency: day < localDate(now) ? "overdue" : day === localDate(now) ? "today" : "upcoming",
@@ -103,10 +106,11 @@ export function summarizeDailyOperations(snapshot: DailySnapshot, now = new Date
     const postingTime = instant(effective.ship_by_at), internalTime = instant(order.internal_due_at);
     return {
       ...order,
-      deadline: dailyOrderDeadline(effective, now),
+      deadline: dailyOrderDeadline(effective, now, inbox != null),
       postingAt: postingTime !== null ? effective.ship_by_at! : null,
       postingSource: inbox ? "marketplace" as const : "order" as const,
       internalAt: internalTime !== null ? order.internal_due_at! : null,
+      internalDay: deliveryPreparationDay(effective, inbox != null),
       internalDeadlineNeedsReview: inbox != null && internalTime !== null && postingTime !== null && internalTime > postingTime,
       deliveryDay: order.due_date && validDate(order.due_date) ? order.due_date : null,
       issues: Array.isArray(order.workflow_issues) ? order.workflow_issues.filter((issue): issue is string => typeof issue === "string" && !!issue.trim()) : [],

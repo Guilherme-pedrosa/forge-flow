@@ -6,6 +6,47 @@ const order = (id: string, fields: Partial<DailyOrder> = {}): DailyOrder => ({ i
 const snapshot = (fields: Partial<DailySnapshot> = {}): DailySnapshot => ({ orders: [], jobs: [], printers: [], materials: [], ...fields });
 
 describe("ações da operação diária", () => {
+  it("antecipa a produção manual para a data anterior à entrega e alerta nesse dia sem criar horário", () => {
+    const manual = order("manual", { status: "in_production", due_date: "2026-10-12", marketplace_order_id: null });
+    const result = summarizeDailyOperations(snapshot({ orders: [manual] }), new Date("2026-10-11T12:00:00Z"));
+    expect(result.orders[0]).toMatchObject({
+      internalDay: "2026-10-11", internalAt: null, postingAt: null, deliveryDay: "2026-10-12",
+      deadline: { kind: "internal_day", value: "2026-10-11", urgency: "today" },
+    });
+    expect(result.dueTodayCount).toBe(1);
+    expect(dailyOrderDeadline(manual, now)).toMatchObject({ kind: "internal_day", urgency: "upcoming" });
+    expect(dailyOrderDeadline(manual, new Date("2026-10-12T12:00:00Z"))).toMatchObject({ kind: "internal_day", urgency: "overdue" });
+    expect(manual.due_date).toBe("2026-10-12");
+  });
+
+  it("preserva meta explícita e não infere uma meta de produção de origem desconhecida ou de canal sem cutoff", () => {
+    const result = summarizeDailyOperations(snapshot({ orders: [
+      order("explicito", { marketplace_order_id: null, due_date: "2026-10-12", internal_due_at: "2026-10-10T15:00:00Z" }),
+      order("canal", { marketplace_order_id: "inbox-1", due_date: "2026-10-12" }),
+      order("origem-a-conferir", { due_date: "2026-10-12" }),
+    ] }), now);
+    expect(result.orders.find(row => row.id === "explicito")).toMatchObject({ internalDay: null, internalAt: "2026-10-10T15:00:00Z", deadline: { kind: "internal" } });
+    for (const id of ["canal", "origem-a-conferir"]) expect(result.orders.find(row => row.id === id)).toMatchObject({ internalDay: null, internalAt: null, deadline: { kind: "delivery", value: "2026-10-12" } });
+  });
+
+  it("um vínculo da inbox sem cutoff bloqueia a meta manual mesmo quando o campo de origem está nulo", () => {
+    const result = summarizeDailyOperations(snapshot({ orders: [order("vinculado", { marketplace_order_id: null, due_date: "2026-10-12" })], marketplaceOrders: [
+      { id: "inbox-1", internal_order_id: "vinculado", shipping_deadline_at: null, needs_review: false, review_reason: null },
+    ] }), new Date("2026-10-11T12:00:00Z"));
+    expect(result.orders[0]).toMatchObject({ internalDay: null, postingAt: null, deadline: { kind: "delivery", value: "2026-10-12", urgency: "upcoming" } });
+    expect(result.dueTodayCount).toBe(0);
+  });
+
+  it("não alerta a meta manual já cumprida de pedidos prontos ou enviados", () => {
+    const result = summarizeDailyOperations(snapshot({ orders: [
+      order("pronto-manual", { status: "ready", marketplace_order_id: null, due_date: "2026-10-11" }),
+      order("enviado-manual", { status: "shipped", marketplace_order_id: null, due_date: "2026-10-11" }),
+    ] }), new Date("2026-10-11T12:00:00Z"));
+    expect(result.overdueCount).toBe(0);
+    expect(result.orders.every(row => row.deadline.kind === "delivery" && row.deadline.urgency === "today")).toBe(true);
+    expect(result.orders.map(row => row.nextAction)).toEqual(["Confirmar entrega", "Embalar e postar"]);
+  });
+
   it("ordena pelo primeiro prazo real e usa entrega apenas como data quando não há horário", () => {
     const result = summarizeDailyOperations(snapshot({ orders: [
       order("sem-prazo"),
