@@ -225,12 +225,24 @@ export default function Produtos() {
   const { data: materials = [], error: materialsError } = useQuery({
     queryKey: ["inventory_items", "product-costs", profile?.tenant_id],
     queryFn: async () => {
-      const { data, error } = await supabase.from("inventory_items").select("id, name, avg_cost, freight_cost, loss_coefficient, unit").eq("tenant_id", profile!.tenant_id).eq("is_active", true).order("name");
+      const { data, error } = await supabase.from("inventory_items").select("id, name, category, avg_cost, freight_cost, loss_coefficient, unit").eq("tenant_id", profile!.tenant_id).eq("is_active", true).order("name");
       if (error) throw error;
       return data;
     },
     enabled: !!profile,
   });
+
+  const referenceMaterialOptions = useMemo(() => {
+    const outputStockIds = new Set(products.map(product => product.stock_item_id).filter(Boolean));
+    return materials.flatMap(material => {
+      const printingMaterial = ["filament", "resin"].includes(material.category)
+        && ["g", "kg"].includes(material.unit) && !outputStockIds.has(material.id);
+      if (!printingMaterial && material.id !== materialId) return [];
+      return [{ id: material.id, label: material.name, legacy: !printingMaterial, description: printingMaterial
+        ? `${fmtCurrency(material.avg_cost)}/${material.unit}`
+        : `Referência atual preservada · não classificada como filamento ou resina de impressão · ${fmtCurrency(material.avg_cost)}/${material.unit || "un"}` }];
+    });
+  }, [materials, products, materialId]);
 
   const { data: printers = [], error: printersError } = useQuery({
     queryKey: ["printers_for_cost", profile?.tenant_id],
@@ -980,7 +992,8 @@ ${selected?.name ? `Perfil: ${selected.name}
       <p className="-mt-2 text-xs leading-relaxed text-muted-foreground">Para produtos sem placas separadas, informe peso, impressão e acabamento da placa inteira. O cálculo divide esses custos pelas peças da placa; extras são cobrados por unidade. Em produtos com várias placas, cadastre cada uma em Arquivos e links de impressão; as referências por unidade se somam para formar o produto completo.</p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div><Label>Material</Label>
-          <SearchableItemSelect label="Material de referência do produto" value={materialId} onChange={setMaterialId} emptyLabel="Selecionar material" options={materials.map(m => ({ id: m.id, label: m.name, description: `${fmtCurrency(m.avg_cost)}/${m.unit || "un"}` }))} />
+          <SearchableItemSelect label="Material de referência do produto" value={materialId} onChange={setMaterialId} emptyLabel="Selecionar filamento ou resina" options={referenceMaterialOptions} />
+          {referenceMaterialOptions.some(option => option.id === materialId && option.legacy) && <p className="mt-1 text-xs text-amber-700">A referência atual foi preservada. Confira a classificação e a unidade em Materiais e insumos antes de trocar o material.</p>}
         </div>
         <div><Label htmlFor="product-grams">Peso por placa (g)</Label><Input id="product-grams" type="number" min="0" step="0.01" value={estGrams} onChange={(e) => setEstGrams(e.target.value)} placeholder="45" /></div>
         <div><Label>Impressora de referência</Label>

@@ -2,7 +2,7 @@ import { SearchableItemSelect } from "@/components/shared/SearchableItemSelect";
 import { orderRequest } from "@/lib/sales-order";
 import { DeleteRecordDialog, type DeleteTarget } from "@/components/shared/DeleteRecordDialog";
 import { Fragment, useState, useMemo, useRef } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { nonNegative, gramsToStockUnit } from "@/lib/production";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
@@ -41,8 +41,8 @@ const fmtCurrency = (v: number | null) =>
 const categoryLabels: Record<string, string> = {
   filament: "Filamento",
   resin: "Resina",
-  part: "Peça/Componente",
-  consumable: "Consumível",
+  part: "Componente comprado",
+  consumable: "Insumo / embalagem",
   maintenance: "Manutenção",
 };
 
@@ -50,6 +50,7 @@ export default function Itens() {
   const { profile } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
+  const navigate = useNavigate();
 
   const saveRequest = useRef<{ signature: string; id: string } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
@@ -82,16 +83,46 @@ export default function Itens() {
   const [currentStock, setCurrentStock] = useState("");
   const [freightCost, setFreightCost] = useState("");
 
-  const { data: items = [], isLoading, error: loadError, refetch } = useQuery({
-    queryKey: ["inventory_items", profile?.tenant_id],
-    queryFn: () => allRows((from, to) => supabase
+  const { data: catalog, isLoading, error: loadError, refetch } = useQuery({
+    queryKey: ["inventory_items", profile?.tenant_id, "catalog-context"],
+    queryFn: async () => {
+      const [items, products] = await Promise.all([
+        allRows((from, to) => supabase
         .from("inventory_items")
         .select("*")
+        .eq("tenant_id", profile!.tenant_id)
         .eq("is_active", true)
         .order("material_type")
         .order("name").order("id").range(from, to)),
+        allRows<{ id: string; name: string; stock_item_id: string | null; is_component: boolean }>((from, to) => supabase
+          .from("products").select("id,name,stock_item_id,is_component").eq("tenant_id", profile!.tenant_id)
+          .order("id").range(from, to).returns<{ id: string; name: string; stock_item_id: string | null; is_component: boolean }[]>()),
+      ]);
+      return { items, owners: new Map(products.filter(product => product.stock_item_id).map(product => [product.stock_item_id!, product])) };
+    },
     enabled: !!profile,
   });
+  const items = catalog?.items ?? [];
+  const owners = useMemo(() => catalog?.owners ?? new Map<string, { id: string; name: string; is_component: boolean }>(), [catalog]);
+  const printingMaterial = category === "filament" || category === "resin";
+  const itemTitle = formMode === "color" ? "Nova cor de material" : category === "filament" ? "Novo filamento" : category === "resin" ? "Nova resina" : "Novo insumo";
+  const changeCategory = (value: string) => {
+    setCategory(value);
+    if (!editItem) {
+      const printing = value === "filament" || value === "resin";
+      if (!currentStock.trim() && !avgCost.trim()) setUnit(printing ? "g" : "un");
+      setDiameter(value === "filament" ? "1.75" : "");
+      setMaterialCode(value === "resin" ? "RESIN" : "");
+      setMaterialType(value === "resin" ? "Resina" : "");
+      setMaterialDescription(""); setColor(""); setColorCode(""); setColorHex("");
+      setLossCoefficient(printing ? "5" : "0"); setFreightCost("");
+    }
+    if (value !== "filament" && value !== "resin") { setFormMode("group"); setParentId(""); }
+  };
+  const openCreate = (value: "filament" | "consumable") => {
+    resetForm(); setCategory(value); setUnit(value === "filament" ? "g" : "un");
+    setDiameter(value === "filament" ? "1.75" : ""); setLossCoefficient(value === "filament" ? "5" : "0"); setCreateOpen(true);
+  };
 
   // Group items: parents (no parent_id) and children (with parent_id)
   const { parentItems, childrenMap, orphanItems } = useMemo(() => {
@@ -100,13 +131,14 @@ export default function Itens() {
     const orphans: any[] = [];
 
     for (const item of items) {
+      if (owners.has(item.id)) { orphans.push(item); continue; }
       const pid = (item as any).parent_id;
-      if (pid) {
+      if (pid && items.some(parent => parent.id === pid) && !owners.has(pid)) {
         if (!children.has(pid)) children.set(pid, []);
         children.get(pid)!.push(item);
       } else {
         // Check if this item has children
-        const hasChildren = items.some((i: any) => (i as any).parent_id === item.id);
+        const hasChildren = items.some((i: any) => (i as any).parent_id === item.id && !owners.has(i.id));
         if (hasChildren) {
           parents.push(item);
         } else {
@@ -115,7 +147,7 @@ export default function Itens() {
       }
     }
     return { parentItems: parents, childrenMap: children, orphanItems: orphans };
-  }, [items]);
+  }, [items, owners]);
 
   // Filter
   const filteredGroups = useMemo(() => {
@@ -128,18 +160,21 @@ export default function Itens() {
       item.color?.toLowerCase().includes(s) || item.material_code?.toLowerCase().includes(s) || item.color_code?.toLowerCase().includes(s);
 
     const filteredParents = parentItems.filter((p) => {
+      if (categoryFilter === "outputs") return false;
       if (categoryFilter !== "all" && p.category !== categoryFilter) return false;
       const kids = childrenMap.get(p.id) || [];
       return matchSearch(p) || kids.some(matchSearch);
     });
 
     const filteredOrphans = orphanItems.filter((o) => {
+      if (categoryFilter === "outputs") return owners.has(o.id) && matchSearch(o);
+      if (categoryFilter !== "all" && owners.has(o.id)) return false;
       if (categoryFilter !== "all" && o.category !== categoryFilter) return false;
       return matchSearch(o);
     });
 
     return { parents: filteredParents, orphans: filteredOrphans };
-  }, [parentItems, orphanItems, childrenMap, categoryFilter, search]);
+  }, [parentItems, orphanItems, childrenMap, categoryFilter, search, owners]);
 
   const toggleGroup = (id: string) => {
     setExpandedGroups((prev) => {
@@ -160,6 +195,8 @@ export default function Itens() {
   };
 
   const openEdit = (item: any) => {
+    const owner = owners.get(item.id);
+    if (owner) { navigate(`/comercial/produtos/${owner.id}`); return; }
     setEditItem(item);
     const isChild = !!item.parent_id;
     setFormMode(isChild ? "color" : "group");
@@ -170,7 +207,7 @@ export default function Itens() {
     setColor(item.color || "");
     setMaterialCode(item.material_code || ""); setMaterialDescription(item.material_description || "");
     setColorCode(item.color_code || ""); setColorHex(item.color_hex || "");
-    setDiameter(item.diameter?.toString() || "1.75");
+    setDiameter(item.diameter?.toString() || (item.category === "filament" ? "1.75" : ""));
     setBrand(item.brand || "");
     setSku(item.sku || "");
     setUnit(item.unit);
@@ -223,7 +260,7 @@ export default function Itens() {
         category,
         material_type: materialType || null,
         ...normalizeMaterialIdentity({ materialCode, description: materialDescription, color, colorCode, colorHex }),
-        diameter: diameter ? parseFloat(diameter) : null,
+        diameter: category === "filament" && diameter ? parseFloat(diameter) : null,
         brand: brand || null,
         sku: sku || null,
         unit,
@@ -243,7 +280,7 @@ export default function Itens() {
       refreshMaterialQueries();
       setCreateOpen(false);
       resetForm();
-      toast({ title: formMode === "color" ? "Cor adicionada ao material" : "Material criado com sucesso" });
+      toast({ title: formMode === "color" ? "Cor adicionada ao material" : "Item de estoque cadastrado" });
     },
     onError: (e: any) => toast({ title: "Erro ao criar item", description: e.message, variant: "destructive" }),
   });
@@ -251,13 +288,14 @@ export default function Itens() {
   const updateMut = useMutation({
     mutationFn: async () => {
       if (!editItem || !profile) return;
+      if (owners.has(editItem.id)) throw new Error("Abra o cadastro do produto ou da peça para alterar este estoque.");
       validateItem();
       const payload: any = {
         name: formMode === "color" ? `${materialType || name} ${color}`.trim() : name,
         category,
         material_type: materialType || null,
         ...normalizeMaterialIdentity({ materialCode, description: materialDescription, color, colorCode, colorHex }),
-        diameter: diameter ? parseFloat(diameter) : null,
+        diameter: category === "filament" ? (diameter ? parseFloat(diameter) : null) : editItem.diameter ?? null,
         brand: brand || null,
         sku: sku || null,
         unit,
@@ -284,6 +322,7 @@ export default function Itens() {
 
   const deleteMut = useMutation({
     mutationFn: async (id: string) => {
+      if (owners.has(id)) throw new Error("Abra o cadastro do produto ou da peça para gerenciar este estoque.");
       const item = items.find(value => value.id === id);
       if (!item || item.current_stock !== 0) throw new Error("Somente itens com saldo zero podem ser arquivados.");
       if (items.some(value => value.parent_id === id)) throw new Error("Arquive as cores vinculadas antes de arquivar o material.");
@@ -317,129 +356,61 @@ export default function Itens() {
   };
 
   const formFields = (
-    <div className="grid gap-4 max-h-[60vh] overflow-y-auto pr-1">
-      {/* Mode selector - only for new items */}
-      {!editItem && (
-        <div>
-          <Label>Tipo de Cadastro</Label>
-          <Select value={formMode} onValueChange={(v: "group" | "color") => { setFormMode(v); if (v === "group") setParentId(""); }}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="group">📦 Novo Material (grupo)</SelectItem>
-              <SelectItem value="color">🎨 Nova Cor (de um material existente)</SelectItem>
-            </SelectContent>
-          </Select>
+    <div className="min-h-0 space-y-5 overflow-y-auto px-1 pb-1">
+      <fieldset className="space-y-3">
+        <legend className="mb-2 font-semibold">Identificação do item</legend>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div><Label htmlFor="inventory-kind">Tipo de item</Label>
+            <Select value={category} onValueChange={changeCategory} disabled={formMode === "color"}>
+              <SelectTrigger id="inventory-kind" aria-label="Tipo de item"><SelectValue /></SelectTrigger>
+              <SelectContent>{Object.entries(categoryLabels).map(([key, label]) => <SelectItem key={key} value={key}>{label}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+          {formMode === "group" && <div><Label htmlFor="inventory-name">Nome do item *</Label><Input id="inventory-name" value={name} onChange={e => setName(e.target.value)} placeholder={printingMaterial ? "Ex.: PLA branco eSUN" : "Ex.: Caixa para presente 15 × 15 cm"} /></div>}
         </div>
-      )}
-
-      {/* Parent selector for color mode */}
-      {formMode === "color" && !editItem && (
-        <div>
-          <Label>Material Pai *</Label>
-          <SearchableItemSelect label="Material pai" value={parentId} emptyLabel="Buscar material" options={[...parentItems, ...orphanItems].filter(p => p.category === "filament" || p.category === "resin").map(p => ({ id: p.id, label: p.name, description: p.material_type || p.category }))} onChange={value => {
+        {formMode === "color" && <div className="space-y-2">
+          {!editItem && <><Label>Material de origem *</Label><SearchableItemSelect label="Material de origem" value={parentId} emptyLabel="Selecionar material existente" options={items.filter(item => !owners.has(item.id) && !item.parent_id && ["filament", "resin"].includes(item.category)).map(item => ({ id: item.id, label: item.name, description: item.brand || categoryLabels[item.category] }))} onChange={value => {
             setParentId(value);
             const parent = items.find(item => item.id === value);
-            if (parent) { setName(parent.name); setCategory(parent.category); setMaterialType(parent.material_type ?? ""); setMaterialCode((parent as any).material_code ?? ""); setMaterialDescription((parent as any).material_description ?? ""); setUnit(parent.unit); setBrand(parent.brand ?? ""); setDiameter(String(parent.diameter ?? 1.75)); setLossCoefficient(String((parent.loss_coefficient ?? 0.05) * 100)); }
-          }} />
+            if (parent) { setName(parent.name); setCategory(parent.category); setMaterialType(parent.material_type ?? ""); setMaterialCode(parent.material_code ?? ""); setMaterialDescription(parent.material_description ?? ""); setUnit(parent.unit); setBrand(parent.brand ?? ""); setDiameter(String(parent.diameter ?? 1.75)); setLossCoefficient(String((parent.loss_coefficient ?? 0.05) * 100)); }
+          }} /></>}
+          <p className="text-xs text-muted-foreground">Cada cor tem seu próprio saldo e custo. O agrupamento facilita encontrar as variações.</p>
+        </div>}
+        {printingMaterial && <div className="grid gap-3 rounded-lg border bg-muted/20 p-3 sm:grid-cols-2">
+          <div><Label htmlFor="inventory-material">Material identificado</Label><Select value={materialCode || "unidentified"} onValueChange={value => { setMaterialCode(value === "unidentified" ? "" : value); if (value !== "unidentified") setMaterialType(MATERIAL_CODES.find(([code]) => code === value)?.[1] ?? ""); }}><SelectTrigger id="inventory-material" aria-label="Material identificado"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="unidentified">Identificar depois</SelectItem>{MATERIAL_CODES.map(([code, label]) => <SelectItem key={code} value={code}>{label}</SelectItem>)}</SelectContent></Select></div>
+          <div><Label htmlFor="inventory-color">Nome da cor{formMode === "color" ? " *" : ""}</Label><Input id="inventory-color" value={color} onChange={e => setColor(e.target.value)} placeholder="Ex.: Branco" /></div>
+          {materialCode === "OTHER" && <div className="sm:col-span-2"><Label htmlFor="inventory-composition">Composição / variante do material</Label><Input id="inventory-composition" value={materialDescription} onChange={e => setMaterialDescription(e.target.value)} placeholder="Informe a composição exata" /></div>}
+          <div><Label htmlFor="inventory-color-code">Código da cor</Label><Input id="inventory-color-code" value={colorCode} onChange={e => setColorCode(e.target.value.toUpperCase())} placeholder="Ex.: WHITE ou código do fabricante" maxLength={64} /></div>
+          <div><Label htmlFor="inventory-color-hex">Amostra visual (opcional)</Label><div className="flex items-center gap-2"><span className="h-8 w-8 shrink-0 rounded-md border" style={{ backgroundColor: materialColorSwatch(colorHex) }} /><Input id="inventory-color-hex" value={colorHex} onChange={e => setColorHex(e.target.value.toUpperCase())} placeholder="#RRGGBB" maxLength={7} /></div></div>
+          <p className="sm:col-span-2 text-xs text-muted-foreground">Tipo e código da cor identificam o material nas receitas e impressões. Você pode registrar o estoque agora e completar a identificação depois.</p>
+        </div>}
+      </fieldset>
+      <fieldset className="space-y-3 border-t pt-4">
+        <legend className="font-semibold">Saldo e custo</legend>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <div><Label>Unidade do saldo</Label><Select value={unit} onValueChange={setUnit} disabled={!!editItem}><SelectTrigger aria-label="Unidade do saldo no estoque"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="g">Gramas (g)</SelectItem><SelectItem value="kg">Quilos (kg)</SelectItem><SelectItem value="un">Unidade (un)</SelectItem><SelectItem value="ml">Mililitros (ml)</SelectItem><SelectItem value="l">Litros (l)</SelectItem><SelectItem value="m">Metros (m)</SelectItem></SelectContent></Select></div>
+          <div><Label htmlFor="inventory-stock">{editItem ? "Estoque atual" : "Estoque inicial"} ({unit})</Label><Input id="inventory-stock" aria-label="Quantidade em estoque" inputMode="decimal" value={currentStock} onChange={e => setCurrentStock(e.target.value)} placeholder="0" /></div>
+          <div><Label htmlFor="inventory-cost">Custo médio (R$/{unit})</Label><Input id="inventory-cost" aria-label="Custo unitário do estoque" inputMode="decimal" value={avgCost} onChange={e => setAvgCost(e.target.value)} placeholder="0,00" /></div>
         </div>
-      )}
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {formMode === "group" ? (
-          <div className="col-span-full">
-            <Label>Nome do Material *</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="PLA eSUN" />
-          </div>
-        ) : <p className="col-span-full text-sm text-muted-foreground">O item terá saldo próprio. Outra cor não substituirá este material nas composições.</p>}
-
-        <div>
-          <Label>Unidade do saldo no estoque</Label>
-          <Select value={unit} onValueChange={setUnit} disabled={!!editItem}>
-            <SelectTrigger aria-label="Unidade do saldo no estoque"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="g">Gramas (g)</SelectItem>
-              <SelectItem value="kg">Quilos (kg)</SelectItem>
-              <SelectItem value="ml">Mililitros (ml)</SelectItem>
-              <SelectItem value="un">Unidade (un)</SelectItem>
-            </SelectContent>
-          </Select>
-          <p className="mt-1 text-xs text-muted-foreground">{["g", "kg"].includes(unit) ? `O rolo é a embalagem da compra. Um rolo com 1 kg de material entra como ${unit === "g" ? "1.000 g" : "1 kg"}; o consumo da produção usa este mesmo saldo.` : "Use a unidade física que será contada nas entradas e saídas."}</p>
-        </div>
-        <div>
-          <Label>Estoque atual ({unit})</Label>
-          <Input aria-label="Quantidade em estoque" inputMode="decimal" value={currentStock} onChange={e => setCurrentStock(e.target.value)} placeholder="0" />
-        </div>
-        <div>
-          <Label>Custo Médio (R$/{unit})</Label>
-          <Input aria-label="Custo unitário do estoque" inputMode="decimal" value={avgCost} onChange={e => setAvgCost(e.target.value)} placeholder="0,00" />
-        </div>
-        <div>
-          <Label>Categoria</Label>
-          <Select value={category} onValueChange={setCategory}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {Object.entries(categoryLabels).map(([k, v]) => (
-                <SelectItem key={k} value={k}>{v}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <details className="col-span-full rounded-lg border p-3"><summary className="cursor-pointer py-2 font-medium">Detalhes do material e impressão (opcional)</summary><div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3">
-        <div>
-          <Label>Material identificado</Label>
-          <Select value={materialCode || "unidentified"} onValueChange={value => { setMaterialCode(value === "unidentified" ? "" : value); if (value !== "unidentified") setMaterialType(MATERIAL_CODES.find(([code]) => code === value)?.[1] ?? ""); }}>
-            <SelectTrigger aria-label="Material identificado"><SelectValue /></SelectTrigger>
-            <SelectContent><SelectItem value="unidentified">Ainda não identificado</SelectItem>{MATERIAL_CODES.map(([code, label]) => <SelectItem key={code} value={code}>{label}</SelectItem>)}</SelectContent>
-          </Select>
-        </div>
-        {materialCode === "OTHER" && <div className="col-span-full"><Label>Composição / variante do material</Label><Input value={materialDescription} onChange={event => setMaterialDescription(event.target.value)} placeholder="Informe a composição exata" /></div>}
-        <div><Label>Nome da cor</Label><Input value={color} onChange={event => setColor(event.target.value)} placeholder="Vermelho / natural / transparente" /></div>
-        <div><Label>Código estável da cor</Label><Input value={colorCode} onChange={event => setColorCode(event.target.value.toUpperCase())} placeholder="RED / NATURAL / código do fabricante" maxLength={64} /></div>
-        <div><Label>Cor visual (opcional)</Label><div className="flex items-center gap-2"><span className="h-8 w-8 shrink-0 rounded-md border" style={{ backgroundColor: materialColorSwatch(colorHex) }} /><Input value={colorHex} onChange={event => setColorHex(event.target.value.toUpperCase())} placeholder="#RRGGBB" maxLength={7} /></div></div>
-        <p className="col-span-full rounded-md bg-muted p-3 text-xs text-muted-foreground">{!materialCode ? `Identificação pendente${materialType ? `; descrição legada: ${materialType}` : ""}. O nome não será usado para adivinhar o material.` : "Confira material e código de cor na embalagem."} Para usar uma composição, informe material, nome e código da cor. Depois de referenciado em uma receita, outro material ou cor exige um novo item de estoque.</p>
-
-        <div>
-          <Label>Diâmetro (mm)</Label>
-          <Input type="number" step="0.01" value={diameter} onChange={(e) => setDiameter(e.target.value)} placeholder="1.75" />
-        </div>
-        <div>
-          <Label>Marca</Label>
-          <Input value={brand} onChange={(e) => setBrand(e.target.value)} placeholder="eSUN" />
-        </div>
-        <div>
-          <Label>SKU</Label>
-          <Input value={sku} onChange={(e) => setSku(e.target.value)} placeholder="PLA-WH-1KG" />
-        </div>
-
-        <div>
-          <Label>Estoque Mínimo</Label>
-          <Input type="number" value={minStock} onChange={(e) => setMinStock(e.target.value)} placeholder="200" />
-        </div>
-
-
-        <div>
-          <Label>Custo Frete (R$/kg)</Label>
-          <Input type="number" step="0.01" value={freightCost} onChange={(e) => setFreightCost(e.target.value)} placeholder="10.00" />
-        </div>
-        <div>
-          <Label>Perda prevista (%)</Label>
-          <Input type="number" min="0" max="100" step="0.01" value={lossCoefficient} onChange={(e) => setLossCoefficient(e.target.value)} placeholder="5" />
-        </div>
-        </div></details>
-      </div>
-      <p className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">Custo e quantidade podem ser informados e corrigidos neste cadastro. As alterações ficam no histórico. Para uma nova aquisição, use <Link className="font-medium text-primary underline" to="/estoque/compras">Compras</Link> ou um ajuste em <Link className="font-medium text-primary underline" to="/estoque/movimentacoes">Movimentações</Link>. O total recebido inclui o frete rateado da compra.</p>
-      <div>
-        <Label>Observações</Label>
-        <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} />
-      </div>
+        <p className="text-xs text-muted-foreground">{printingMaterial && ["g", "kg"].includes(unit) ? `Um rolo de 1 kg corresponde a ${unit === "g" ? "1.000 g" : "1 kg"}. A impressão consome esse saldo; em Bobinas você identifica cada rolo e sua localização.` : "Informe a quantidade física existente e o custo por unidade de estoque."}</p>
+        <p className="text-xs text-muted-foreground">Novas aquisições entram por <Link className="font-medium text-primary underline" to="/estoque/compras">Compras</Link>. Ajustes ficam em <Link className="font-medium text-primary underline" to="/estoque/movimentacoes">Movimentações</Link>.{category === "filament" && <> Veja os rolos em <Link className="font-medium text-primary underline" to="/estoque/bobinas">Bobinas e localização</Link>.</>}</p>
+      </fieldset>
+      <details className="rounded-lg border p-3"><summary className="cursor-pointer font-medium">Outros detalhes</summary><div className="grid gap-3 pt-3 sm:grid-cols-2">
+        <div><Label htmlFor="inventory-brand">Marca</Label><Input id="inventory-brand" value={brand} onChange={e => setBrand(e.target.value)} placeholder={printingMaterial ? "Ex.: eSUN" : "Marca ou fabricante"} /></div>
+        <div><Label htmlFor="inventory-sku">SKU / código interno</Label><Input id="inventory-sku" value={sku} onChange={e => setSku(e.target.value)} /></div>
+        <div><Label htmlFor="inventory-min">Estoque mínimo ({unit})</Label><Input id="inventory-min" inputMode="decimal" value={minStock} onChange={e => setMinStock(e.target.value)} placeholder="0" /></div>
+        {category === "filament" && <div><Label htmlFor="inventory-diameter">Diâmetro (mm)</Label><Input id="inventory-diameter" type="number" step="0.01" value={diameter} onChange={e => setDiameter(e.target.value)} /></div>}
+        {printingMaterial && <><div><Label htmlFor="inventory-freight">Frete de referência (R$/kg)</Label><Input id="inventory-freight" type="number" step="0.01" value={freightCost} onChange={e => setFreightCost(e.target.value)} /></div><div><Label htmlFor="inventory-loss">Perda prevista (%)</Label><Input id="inventory-loss" type="number" min="0" max="100" step="0.01" value={lossCoefficient} onChange={e => setLossCoefficient(e.target.value)} /></div></>}
+        {printingMaterial && !editItem && <label className="sm:col-span-2 flex items-start gap-2 text-sm"><input type="checkbox" checked={formMode === "color"} onChange={e => { setFormMode(e.target.checked ? "color" : "group"); if (!e.target.checked) setParentId(""); }} />Agrupar como outra cor de um material existente</label>}
+        <div className="sm:col-span-2"><Label htmlFor="inventory-notes">Observações</Label><Textarea id="inventory-notes" value={notes} onChange={e => setNotes(e.target.value)} rows={2} /></div>
+      </div></details>
     </div>
   );
-
   const renderItemRow = (item: any, indent = false) => {
     const belowMin = item.min_stock != null && item.current_stock < item.min_stock;
+    const owner = owners.get(item.id);
     return (
-      <TableRow key={item.id} className="cursor-pointer hover:bg-muted/50" onClick={() => setDetailItem(item)}>
+      <TableRow key={item.id} className="cursor-pointer hover:bg-muted/50" onClick={() => owner ? navigate(`/comercial/produtos/${owner.id}`) : setDetailItem(item)}>
         <TableCell>
           <div className={cn("flex items-center gap-2", indent && "pl-8")}>
             {belowMin && <AlertTriangle className="h-3.5 w-3.5 text-destructive flex-shrink-0" />}
@@ -450,11 +421,11 @@ export default function Itens() {
               <p className="font-medium text-sm">{indent ? (item.color || item.name) : item.name}</p>
               {item.brand && !indent && <p className="text-xs text-muted-foreground">{item.brand}</p>}
               {indent && item.sku && <p className="text-xs text-muted-foreground">{item.sku}</p>}
-              {!item.material_identified_at && ["filament", "resin"].includes(item.category) && <p className="text-xs text-amber-700">Material/cor pendente de identificação</p>}
+              {!owner && !item.material_identified_at && ["filament", "resin"].includes(item.category) && <p className="text-xs text-amber-700">Tipo ou cor a completar para a produção</p>}
             </div>
           </div>
         </TableCell>
-        <TableCell className="text-sm">{item.material_type || categoryLabels[item.category] || item.category}</TableCell>
+        <TableCell className="text-sm">{owner ? <span className="rounded-full bg-muted px-2 py-1 text-xs font-medium">{owner.is_component ? "Peça produzida" : "Produto acabado"}</span> : categoryLabels[item.category] || item.category}{!owner && item.material_type && <p className="mt-1 text-xs text-muted-foreground">{item.material_type}</p>}</TableCell>
         <TableCell>
           {item.color && !indent && (
             <span className="inline-flex items-center gap-1.5 text-sm">
@@ -474,20 +445,23 @@ export default function Itens() {
         <TableCell>
           <DropdownMenu>
             <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-              <Button variant="ghost" size="icon" className="h-7 w-7">
+              <Button variant="ghost" size="icon" className="h-7 w-7" aria-label={`Ações de ${item.name}`}>
                 <MoreHorizontal className="h-4 w-4" />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              {owner ? <DropdownMenuItem asChild><Link onClick={e => e.stopPropagation()} to={`/comercial/produtos/${owner.id}`}>Abrir cadastro de {owner.is_component ? "peça" : "produto"}</Link></DropdownMenuItem> : <>
               <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openEdit(item); }}>
                 <Edit className="h-3.5 w-3.5 mr-2" /> Editar
               </DropdownMenuItem>
+              {["filament", "resin"].includes(item.category) && !item.parent_id && <DropdownMenuItem onClick={e => { e.stopPropagation(); openAddColor(item); }}><Palette className="mr-2 h-3.5 w-3.5" />Adicionar outra cor</DropdownMenuItem>}
               <DropdownMenuItem asChild><Link onClick={e => e.stopPropagation()} to={`/estoque/movimentacoes?item=${item.id}`}>Dar entrada no estoque</Link></DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem className="text-destructive" onClick={e => { e.stopPropagation(); setDeleteTarget({ id: item.id, name: item.name, kind: "inventory" }); }}>Excluir item sem uso</DropdownMenuItem>
               <DropdownMenuItem className="text-destructive" onClick={(e) => { e.stopPropagation(); if (window.confirm(`Arquivar ${item.name}? O histórico será preservado.`)) deleteMut.mutate(item.id); }}>
                 <Trash2 className="h-3.5 w-3.5 mr-2" /> Arquivar
               </DropdownMenuItem>
+              </>}
             </DropdownMenuContent>
           </DropdownMenu>
         </TableCell>
@@ -501,20 +475,26 @@ export default function Itens() {
     <div className="space-y-6 animate-in fade-in duration-300">
       <DeleteRecordDialog key={deleteTarget?.id} target={deleteTarget} onClose={() => setDeleteTarget(null)} />
       <PageHeader
-        title="Itens / Materiais"
-        description="Cadastro de filamentos, insumos e componentes agrupados por tipo"
-        breadcrumbs={[{ label: "Estoque", href: "/estoque/itens" }, { label: "Itens" }]}
+        title="Materiais e insumos"
+        description="Filamentos, resinas, embalagens e componentes comprados. O estoque também identifica os produtos e peças que você fabrica."
+        breadcrumbs={[{ label: "Estoque", href: "/estoque/itens" }, { label: "Materiais e insumos" }]}
         actions={
           <div className="flex flex-wrap gap-2">
-            <Button size="sm" variant="outline" onClick={() => { resetForm(); setFormMode("color"); setCreateOpen(true); }}>
-              <Palette className="h-4 w-4 mr-1" /> Nova Cor
+            <Button size="sm" variant="outline" onClick={() => openCreate("consumable")}>
+              <Plus className="h-4 w-4 mr-1" /> Novo insumo
             </Button>
-            <Button size="sm" onClick={() => { resetForm(); setFormMode("group"); setCreateOpen(true); }}>
-              <Plus className="h-4 w-4 mr-1" /> Novo Material
+            <Button size="sm" onClick={() => openCreate("filament")}>
+              <Plus className="h-4 w-4 mr-1" /> Novo filamento
             </Button>
           </div>
         }
       />
+
+      <nav aria-label="Estoque e produção" className="flex flex-wrap gap-2 text-sm">
+        <Button size="sm" variant="outline" asChild><Link to="/estoque/bobinas">Bobinas e localização</Link></Button>
+        <Button size="sm" variant="outline" asChild><Link to="/comercial/produtos">Produtos e composição</Link></Button>
+        <Button size="sm" variant="outline" asChild><Link to="/planejamento/fila">Fila de impressão</Link></Button>
+      </nav>
 
       {/* KPIs */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -539,12 +519,13 @@ export default function Itens() {
           <Input className="pl-9" placeholder="Buscar por nome, SKU, material, cor…" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         <Select value={categoryFilter} onValueChange={(v) => setCategoryFilter(v)}>
-          <SelectTrigger className="w-full sm:w-[180px]"><SelectValue placeholder="Categoria" /></SelectTrigger>
+          <SelectTrigger className="w-full sm:w-[220px]" aria-label="Filtrar tipo de estoque"><SelectValue placeholder="Tipo de item" /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">Todas</SelectItem>
+            <SelectItem value="all">Todos os itens</SelectItem>
             {Object.entries(categoryLabels).map(([k, v]) => (
               <SelectItem key={k} value={k}>{v}</SelectItem>
             ))}
+            <SelectItem value="outputs">Produtos e peças produzidos</SelectItem>
           </SelectContent>
         </Select>
       </div>
@@ -564,8 +545,8 @@ export default function Itens() {
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Material / Cor</TableHead>
-                <TableHead>Tipo</TableHead>
+                <TableHead>Item de estoque</TableHead>
+                <TableHead>Uso do item</TableHead>
                 <TableHead>Cor</TableHead>
                 <TableHead className="text-right">Estoque</TableHead>
                 <TableHead className="text-right">Mínimo</TableHead>
@@ -627,9 +608,9 @@ export default function Itens() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openAddColor(parent); }}>
+                            {["filament", "resin"].includes(parent.category) && <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openAddColor(parent); }}>
                               <Palette className="h-3.5 w-3.5 mr-2" /> Adicionar Cor
-                            </DropdownMenuItem>
+                            </DropdownMenuItem>}
                             <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openEdit(parent); }}>
                               <Edit className="h-3.5 w-3.5 mr-2" /> Editar Material
                             </DropdownMenuItem>
@@ -657,19 +638,19 @@ export default function Itens() {
       </div>
 
       {/* Create Dialog */}
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>{formMode === "color" ? "Adicionar Cor" : "Novo Material"}</DialogTitle>
+      <Dialog open={createOpen} onOpenChange={value => { if (!createMut.isPending) setCreateOpen(value); }}>
+        <DialogContent className="flex max-w-3xl flex-col overflow-hidden" closeDisabled={createMut.isPending}>
+          <DialogHeader className="shrink-0">
+            <DialogTitle>{itemTitle}</DialogTitle>
             <DialogDescription>
               {formMode === "color"
-                ? "Cadastrar uma nova cor/variação de um material existente"
-                : "Cadastrar um novo tipo de material (ex: PLA, PETG)"}
+                ? "Cadastre a variação com saldo próprio, ligada ao material de origem."
+                : printingMaterial ? "Identifique o material usado na impressão e informe seu saldo e custo." : "Cadastre o item consumido ou comprado, com sua unidade, saldo e custo."}
             </DialogDescription>
           </DialogHeader>
           {formFields}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancelar</Button>
+          <DialogFooter className="shrink-0 border-t pt-3">
+            <Button variant="outline" disabled={createMut.isPending} onClick={() => setCreateOpen(false)}>Cancelar</Button>
             <Button
               onClick={() => createMut.mutate()}
               disabled={
@@ -679,22 +660,22 @@ export default function Itens() {
               }
             >
               {createMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
-              {formMode === "color" ? "Adicionar Cor" : "Criar Material"}
+              {formMode === "color" ? "Adicionar cor" : "Criar item"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       {/* Edit Dialog */}
-      <Dialog open={!!editItem} onOpenChange={(o) => { if (!o) { setEditItem(null); resetForm(); } }}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
+      <Dialog open={!!editItem} onOpenChange={(o) => { if (!o && !updateMut.isPending) { setEditItem(null); resetForm(); } }}>
+        <DialogContent className="flex max-w-3xl flex-col overflow-hidden" closeDisabled={updateMut.isPending}>
+          <DialogHeader className="shrink-0">
             <DialogTitle>Editar Item</DialogTitle>
             <DialogDescription>Alterar dados do item "{editItem?.name}"</DialogDescription>
           </DialogHeader>
           {formFields}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => { setEditItem(null); resetForm(); }}>Cancelar</Button>
+          <DialogFooter className="shrink-0 border-t pt-3">
+            <Button variant="outline" disabled={updateMut.isPending} onClick={() => { setEditItem(null); resetForm(); }}>Cancelar</Button>
             <Button onClick={() => updateMut.mutate()} disabled={!name || updateMut.isPending}>
               {updateMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Salvar
             </Button>

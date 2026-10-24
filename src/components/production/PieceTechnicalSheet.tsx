@@ -100,11 +100,12 @@ export function PieceSpecFields({
         name: string;
         material_code: string | null;
         color: string | null;
+        category: string;
         unit: string;
         avg_cost: number;
       }>(
         "inventory_items",
-        "id,name,material_code,color,unit,avg_cost",
+        "id,name,material_code,color,category,unit,avg_cost",
         { tenant_id: tenantId, is_active: true },
         "name",
       ),
@@ -203,13 +204,18 @@ export function PieceSpecFields({
             }}
             emptyLabel="Buscar filamento cadastrado (opcional)"
             options={(materials.data || [])
-              .filter((x) => ["g", "kg"].includes(x.unit))
+              .filter((x) => x.id === m.item_id || (["filament", "resin"].includes(x.category) && ["g", "kg"].includes(x.unit)))
               .map((x) => ({
                 id: x.id,
                 label: x.name,
-                description: x.color || undefined,
+                description: ["filament", "resin"].includes(x.category) && ["g", "kg"].includes(x.unit)
+                  ? x.color || undefined
+                  : "Referência atual preservada · confira a classificação e a unidade em Materiais e insumos",
               }))}
           />
+          {(materials.data || []).some(x => x.id === m.item_id && (!["filament", "resin"].includes(x.category) || !["g", "kg"].includes(x.unit))) && (
+            <p className="text-xs text-amber-700">A referência atual foi preservada. Confira a classificação e a unidade em Materiais e insumos antes de trocar o filamento.</p>
+          )}
           {m.item_id && (
             <Button
               type="button"
