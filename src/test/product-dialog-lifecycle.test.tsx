@@ -22,17 +22,16 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 const mount = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><Produtos /></MemoryRouter></QueryClientProvider>);
-const openProduct = async () => { fireEvent.click(await screen.findByText("Produto de teste")); return screen.findByRole("dialog", { name: "Editar Produto" }); };
+const openProduct = async () => { fireEvent.click(await screen.findByRole("button", { name: "Editar Produto de teste" })); return screen.findByRole("dialog", { name: "Editar Produto" }); };
 
 describe("fechamento do editor do produto", () => {
-  it.each(["Fechar", "Cancelar"])("%s encerra uma composição em edição e reabre o produto sem busy herdado", async action => {
+  it.each(["Fechar", "Cancelar"])("%s fecha o editor e mantém a composição centralizada na página do produto", async action => {
     mount(); let dialog = await openProduct();
-    fireEvent.click(await within(dialog).findByRole("button", { name: "Definir composição" }));
-    await waitFor(() => expect(within(dialog).getByRole("button", { name: "Salvar" })).toBeDisabled());
-    expect(within(dialog).getByRole("status")).toHaveTextContent("Salve ou cancele a composição, fonte ou placa");
+    expect(within(dialog).queryByRole("button", { name: "Definir composição" })).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("link", { name: "Gerenciar peças deste produto" })).toHaveAttribute("href", "/comercial/produtos/product-1?aba=pecas");
     const close = within(dialog).getByRole("button", { name: action }); expect(close).toBeEnabled(); fireEvent.click(close);
     await waitFor(() => expect(screen.queryByRole("dialog", { name: "Editar Produto" })).not.toBeInTheDocument());
-    dialog = await openProduct(); expect(await within(dialog).findByRole("button", { name: "Definir composição" })).toBeEnabled();
+    dialog = await openProduct(); expect(within(dialog).getByRole("link", { name: "Gerenciar peças deste produto" })).toBeInTheDocument();
     await waitFor(() => expect(within(dialog).getByRole("button", { name: "Salvar" })).toBeEnabled());
     expect(within(dialog).getByRole("button", { name: "Cancelar" })).toBeEnabled();
   });
@@ -49,7 +48,7 @@ describe("fechamento do editor do produto", () => {
     expect(mock.rpc.mock.calls.some(call => call[0] === "save_product_with_photos")).toBe(false);
     fireEvent.click(within(dialog).getByRole("button", { name: cancel }));
     await waitFor(() => expect(within(dialog).getByRole("button", { name: "Salvar" })).toBeEnabled());
-    fireEvent.click(within(dialog).getByRole("button", { name: open }));
+    fireEvent.click(within(dialog).getAllByRole("button", { name: open })[0]);
     fireEvent.click(within(dialog).getByRole("button", { name: "Cancelar" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     const reopened = await openProduct();
@@ -57,10 +56,10 @@ describe("fechamento do editor do produto", () => {
     await waitFor(() => expect(within(reopened).getByRole("button", { name: "Salvar" })).toBeEnabled());
   });
   it("mantém cada rascunho independente e não descarta fonte após erro no salvamento", async () => {
-    mount(); const dialog = await openProduct();
-    fireEvent.click(await within(dialog).findByRole("button", { name: "Definir composição" }));
+    mock.hasPlate = true; mount(); const dialog = await openProduct();
+    fireEvent.click(await within(dialog).findByRole("button", { name: "Adicionar placa" }));
     fireEvent.click(within(dialog).getByRole("button", { name: "Adicionar fonte" }));
-    fireEvent.click(within(dialog).getByRole("button", { name: "Cancelar composição" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancelar placa" }));
     expect(within(dialog).getByRole("button", { name: "Salvar" })).toBeDisabled();
     fireEvent.click(within(dialog).getByRole("button", { name: "Salvar fonte" }));
     await waitFor(() => expect(mock.toast).toHaveBeenCalledWith(expect.objectContaining({ title: "Não foi possível salvar o vínculo" })));

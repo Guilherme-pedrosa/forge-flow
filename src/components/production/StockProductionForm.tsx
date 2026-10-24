@@ -14,7 +14,7 @@ const line = () => ({ key: crypto.randomUUID(), product_id: "", quantity: "1" })
 const rpc = supabase.rpc.bind(supabase) as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ data: string | null; error: { message: string } | null }>;
 export function StockProductionForm({ onCreated, onBusy }: { onCreated: (id: string) => void; onBusy: (busy: boolean) => void }) {
   const { profile } = useAuth(); const [items, setItems] = useState([line()]); const [due, setDue] = useState(""); const [notes, setNotes] = useState(""); const request = useRef<{ signature: string; id: string } | null>(null);
-  const products = useQuery({ queryKey: ["stock_production_products", profile?.tenant_id], enabled: !!profile, queryFn: () => allRows((a, b) => supabase.from("products").select("id,name,sku").eq("tenant_id", profile!.tenant_id).eq("is_active", true).neq("category", "service").order("name").order("id").range(a, b)) });
+  const products = useQuery({ queryKey: ["stock_production_products", "finished", profile?.tenant_id], enabled: !!profile, queryFn: () => allRows((a, b) => supabase.from("products").select("id,name,sku").eq("tenant_id", profile!.tenant_id).eq("is_active", true).filter("is_component", "eq", false).neq("category", "service").order("name").order("id").range(a, b)) });
   const create = useMutation({ mutationFn: async () => {
     const payload = { p_items: items.map(item => ({ product_id: item.product_id, quantity: Number(item.quantity) })), p_due_date: due || null, p_notes: notes.trim() || null };
     if (payload.p_items.some(item => !item.product_id || !Number.isInteger(item.quantity) || item.quantity < 1 || item.quantity > 100000)) throw new Error("Selecione os produtos e informe quantidades inteiras entre 1 e 100.000.");

@@ -27,7 +27,7 @@ describe('Cadastro real de produto com custo e estoque',()=>{
   await waitFor(()=>expect(mock.rpc).toHaveBeenCalledWith('save_product_with_photos',expect.objectContaining({p_product:expect.objectContaining({name:'Produto completo',manual_cost:12.5,cost_estimate:12.5,sale_price:25,stock:expect.objectContaining({current_stock:20,avg_cost:12.5,unit:'un'})})})));
  });
  it('permite mudar custo e saldo mesmo com composição configurada, sem sobrescrever pelo cálculo',async()=>{
-  mock.existing=true;mount();fireEvent.click(await screen.findByText('Produto com receita'));
+  mock.existing=true;mount();fireEvent.click(await screen.findByRole('button',{name:'Editar Produto com receita'}));
   const cost=screen.getByLabelText('Preço de custo (R$)');expect(cost).toBeEnabled();expect(cost).toHaveValue('10');
   fireEvent.change(cost,{target:{value:'15,75'}});fireEvent.change(screen.getByLabelText('Quantidade em estoque'),{target:{value:'24'}});
   await waitFor(()=>expect(screen.getByRole('button',{name:'Salvar'})).toBeEnabled());

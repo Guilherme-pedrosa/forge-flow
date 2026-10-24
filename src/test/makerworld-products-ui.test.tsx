@@ -192,7 +192,7 @@ describe("importação MakerWorld no cadastro de produtos", () => {
   });
   it("atualiza detalhes e mescla a galeria do produto existente preservando nome, preço e composição manual", async () => {
     mock.products = [existingProduct]; mock.photos = [{ url: "https://own.example.test/manual-extra.jpg" }, { url: photos[2] }]; mount();
-    fireEvent.click(await screen.findByText(existingProduct.name));
+    fireEvent.click(await screen.findByRole("button", { name: `Editar ${existingProduct.name}` }));
     let editor = await screen.findByRole("dialog", { name: "Editar Produto" });
     const refresh = within(editor).getByRole("button", { name: "Atualizar fotos e detalhes do link" });
     await waitFor(() => expect(refresh).toBeEnabled()); fireEvent.click(refresh);
@@ -223,12 +223,12 @@ describe("importação MakerWorld no cadastro de produtos", () => {
   });
   it("fechar o produto durante atualização descarta a resposta atrasada sem abrir novo cadastro", async () => {
     mock.products = [existingProduct]; let resolveRead!: (value: unknown) => void; mock.get.mockImplementation(() => new Promise(resolve => { resolveRead = resolve; })); mount();
-    fireEvent.click(await screen.findByText(existingProduct.name)); const editor = await screen.findByRole("dialog", { name: "Editar Produto" });
+    fireEvent.click(await screen.findByRole("button", { name: `Editar ${existingProduct.name}` })); const editor = await screen.findByRole("dialog", { name: "Editar Produto" });
     const refresh = within(editor).getByRole("button", { name: "Atualizar fotos e detalhes do link" }); await waitFor(() => expect(refresh).toBeEnabled()); fireEvent.click(refresh);
     await waitFor(() => expect(mock.get).toHaveBeenCalled()); fireEvent.click(within(editor).getByRole("button", { name: "Cancelar" }));
     await act(async () => resolveRead({ data: { status: "ready", payload: rawDesign }, error: null }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument(); expect(savedPayload()).toBeUndefined();
-    fireEvent.click(screen.getByText(existingProduct.name)); const reopened = await screen.findByRole("dialog", { name: "Editar Produto" });
+    fireEvent.click(screen.getByRole("button", { name: `Editar ${existingProduct.name}` })); const reopened = await screen.findByRole("dialog", { name: "Editar Produto" });
     expect(within(reopened).queryByRole("region", { name: "Detalhamento importado do MakerWorld" })).not.toBeInTheDocument();
   });
 });

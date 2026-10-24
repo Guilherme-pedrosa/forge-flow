@@ -34,9 +34,9 @@ import { calculateProductCost, suggestedProductPrice } from "@/lib/product-costs
 import { nonNegative, positiveInteger } from "@/lib/production";
 import { allRows } from "@/lib/finance";
 import { orderRequest } from "@/lib/sales-order";
+import { assemblyRows } from "@/lib/assembly";
 import { productProductionReference } from "@/lib/product-production-reference";
 import ProductPrintSources from "./ProductPrintSources";
-import ProductAssemblySetup from "./PhysicalSubitemSetup";
 import ProductPrintPlates from "./ProductPrintPlates";
 import ProductMaterialRecipe from "./ProductMaterialRecipe";
 import { PieceTechnicalSheet } from "@/components/production/PieceTechnicalSheet";
@@ -70,12 +70,16 @@ const categoryLabels: Record<string, string> = {
 const categoryFilter: string[] = ["all", ...Object.keys(categoryLabels)];
 
 type ExtraItem = { name: string; cost: number; costInput?: string };
+type ProductSubitemLink = { id: string; product_id: string; component_product_id: string; quantity_per_product: number | null };
+type CatalogView = "produtos" | "pecas" | "todos";
 
 export default function Produtos() {
   const location = useLocation(); const navigate = useNavigate();
   const pricingTransfer = useRef<PricingTransfer | null>(null); const receivedPricing = useRef<string | null>(null);
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const requestedProductId = searchParams.get("produto");
+  const requestedLegacyEdit = searchParams.get("editar") === "1";
+  const requestedFormTab = searchParams.get("aba");
   const openedFromLink = useRef<string | null>(null);
   const { profile } = useAuth();
   const { toast } = useToast();
@@ -89,6 +93,12 @@ export default function Produtos() {
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [search, setSearch] = useState("");
   const [showArchived, setShowArchived] = useState(false);
+  const catalogView: CatalogView = searchParams.get("tipo") === "pecas" ? "pecas" : searchParams.get("tipo") === "todos" ? "todos" : "produtos";
+  const changeCatalogView = (view: CatalogView) => {
+    const next = new URLSearchParams(searchParams);
+    if (view === "produtos") next.delete("tipo"); else next.set("tipo", view);
+    setSearchParams(next, { replace: true });
+  };
   const [createOpen, setCreateOpen] = useState(false);
   const [editItem, setEditItem] = useState<any>(null);
   const [bambuImportOpen, setBambuImportOpen] = useState(false);
@@ -148,10 +158,8 @@ export default function Produtos() {
   const [recipeDraft, setRecipeDraft] = useState(false);
   const [manualPlateBusy, setManualPlateBusy] = useState(false);
   const [manualPlateDraft, setManualPlateDraft] = useState(false);
-  const [assemblySetupBusy, setAssemblySetupBusy] = useState(false);
-  const [assemblySetupDraft, setAssemblySetupDraft] = useState(false);
-  const printSourceBusy = sourceBusy || recipeBusy || manualPlateBusy || assemblySetupBusy;
-  const hasProductionDraft = sourceDraft || recipeDraft || manualPlateDraft || assemblySetupDraft;
+  const printSourceBusy = sourceBusy || recipeBusy || manualPlateBusy;
+  const hasProductionDraft = sourceDraft || recipeDraft || manualPlateDraft;
   const reportManualPlateBusy = useCallback((_id: string, value: boolean) => setManualPlateBusy(value), []);
   const reportManualPlateDraft = useCallback((_id: string, value: boolean) => setManualPlateDraft(value), []);
   const photoLoadVersion = useRef(0);
@@ -196,6 +204,23 @@ export default function Produtos() {
     },
     enabled: !!profile,
   });
+
+  const { data: compositionLinks = [], isLoading: linksLoading, error: linksError, refetch: refetchLinks } = useQuery({
+    queryKey: ["products", profile?.tenant_id, "composition-links"],
+    enabled: !!profile,
+    queryFn: () => assemblyRows<ProductSubitemLink>("product_subitems", "id,product_id,component_product_id,quantity_per_product", { tenant_id: profile!.tenant_id }),
+  });
+  const productById = useMemo(() => new Map(products.map(product => [product.id, product])), [products]);
+  const partsByProduct = useMemo(() => {
+    const index = new Map<string, ProductSubitemLink[]>();
+    for (const link of compositionLinks) index.set(link.product_id, [...(index.get(link.product_id) || []), link]);
+    return index;
+  }, [compositionLinks]);
+  const parentsByPart = useMemo(() => {
+    const index = new Map<string, ProductSubitemLink[]>();
+    for (const link of compositionLinks) index.set(link.component_product_id, [...(index.get(link.component_product_id) || []), link]);
+    return index;
+  }, [compositionLinks]);
 
   const { data: materials = [], error: materialsError } = useQuery({
     queryKey: ["inventory_items", "product-costs", profile?.tenant_id],
@@ -316,9 +341,16 @@ export default function Produtos() {
   });
 
   const filtered = useMemo(() => {
-    const s = search.trim().toLowerCase();
-    return products.filter(p => (showArchived || p.is_active) && (!s || p.name.toLowerCase().includes(s) || p.sku?.toLowerCase().includes(s)));
-  }, [products, search, showArchived]);
+    const normalize = (value: string) => value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    const terms = normalize(search.trim()).split(/\s+/).filter(Boolean);
+    return products.filter(product => {
+      if (!showArchived && !product.is_active || catalogView === "produtos" && product.is_component === true || catalogView === "pecas" && product.is_component !== true) return false;
+      const relations = product.is_component ? parentsByPart.get(product.id) || [] : partsByProduct.get(product.id) || [];
+      const related = relations.map(link => productById.get(product.is_component ? link.product_id : link.component_product_id)).filter(Boolean);
+      const searchable = normalize([product.name, product.sku || "", ...related.map(value => `${value!.name} ${value!.sku || ""}`)].join(" "));
+      return terms.every(term => searchable.includes(term));
+    });
+  }, [products, search, showArchived, catalogView, parentsByPart, partsByProduct, productById]);
 
   const resetForm = () => {
     pricingTransfer.current = null;
@@ -330,7 +362,7 @@ export default function Produtos() {
     setPhotosLoading(false);
     setPrintSourceBusy(false); setRecipeBusy(false);
     setSourceDraft(false); setRecipeDraft(false);
-    setAssemblySetupBusy(false); setAssemblySetupDraft(false); setManualPlateDraft(false);
+    setManualPlateDraft(false);
     setFormTab("dados"); setAccessoryCost("0"); setOtherCost("0"); setBarcode(""); setMaxStock("0"); setMarkup(""); setStockQuantity("0"); setStockUnit("un"); setMinStock("0"); setStockEnabled(true);
     setName(""); setDescription(""); setSku(""); setCategory("printed_part"); setMaterialId("");
     setEstGrams(""); setEstTime(""); setPostMinutes(""); setCostEstimate(""); setSalePrice(""); setPhotoUrl(""); setExtraPhotos([]); setNotes(""); setPrinterId(""); setNumColors("1"); setPrintsPerPlate("1"); setExtras([]); setKitComponents([]);
@@ -352,7 +384,7 @@ export default function Produtos() {
     makerImportTarget.current = p.id;
     setPrintSourceBusy(false); setRecipeBusy(false);
     setSourceDraft(false); setRecipeDraft(false);
-    setAssemblySetupBusy(false); setAssemblySetupDraft(false); setManualPlateDraft(false);
+    setManualPlateDraft(false);
     setStockQuantity(String(p.stock?.current_stock ?? 0)); setStockUnit(p.stock?.unit || "un"); setMinStock(String(p.stock?.min_stock ?? 0)); setStockEnabled(p.category !== "service" || !!p.stock_item_id);
     setFormTab("dados"); setAccessoryCost(String(p.catalog_details?.accessory_cost ?? 0)); setOtherCost(String(p.catalog_details?.other_cost ?? 0)); setBarcode(p.catalog_details?.barcode || ""); setMaxStock(String(p.stock?.max_stock ?? 0)); setMarkup("");
     setEditItem(p); setName(p.name); setDescription(p.description || ""); setSku(p.sku || "");
@@ -394,10 +426,22 @@ export default function Produtos() {
   };
 
   useEffect(() => {
-    if (!requestedProductId || openedFromLink.current === requestedProductId) return;
+    if (!requestedProductId) { openedFromLink.current = null; return; }
+    if (!requestedLegacyEdit) {
+      const target = new URLSearchParams();
+      if (requestedFormTab) target.set("aba", requestedFormTab);
+      const targetQuery = target.toString();
+      navigate(`/comercial/produtos/${encodeURIComponent(requestedProductId)}${targetQuery ? `?${targetQuery}` : ""}`, { replace: true });
+      return;
+    }
+    if (openedFromLink.current === requestedProductId) return;
     const product = products.find(product => product.id === requestedProductId);
-    if (product) { openedFromLink.current = requestedProductId; openEdit(product); }
-  }, [requestedProductId, products]);
+    if (product) {
+      openedFromLink.current = requestedProductId;
+      openEdit(product);
+      if (requestedFormTab && ["dados", "valores", "estoque", "fotos", "producao"].includes(requestedFormTab)) setFormTab(requestedFormTab);
+    }
+  }, [requestedProductId, requestedLegacyEdit, requestedFormTab, products, navigate]);
 
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
@@ -766,13 +810,25 @@ ${selected?.name ? `Perfil: ${selected.name}
   });
   const updateMut = useMutation({
     mutationFn: () => saveProduct(editItem?.id ?? null),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["products"] }); qc.invalidateQueries({ queryKey: ["inventory_items"] }); qc.invalidateQueries({ queryKey: ["inventory_movements"] }); setEditItem(null); resetForm(); toast({ title: "Produto atualizado" }); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["products"] }); qc.invalidateQueries({ queryKey: ["inventory_items"] }); qc.invalidateQueries({ queryKey: ["inventory_movements"] }); setEditItem(null); resetForm(); clearLegacyEditorParams(); toast({ title: "Produto atualizado" }); },
     onError: (error: Error) => toast({ title: "Não foi possível salvar", description: error.message, variant: "destructive" }),
   });
   const editWritePending = updateMut.isPending || uploadingPhoto || printSourceBusy;
+  function clearLegacyEditorParams() {
+    openedFromLink.current = null;
+    const returnId = searchParams.get("retorno");
+    if (returnId === searchParams.get("produto") && returnId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(returnId)) {
+      navigate(`/comercial/produtos/${returnId}`, { replace: true });
+      return;
+    }
+    if (!searchParams.has("produto") && !searchParams.has("editar") && !searchParams.has("retorno")) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete("produto"); next.delete("editar"); next.delete("aba"); next.delete("retorno");
+    setSearchParams(next, { replace: true });
+  }
   const closeEditProduct = () => {
     if (editWritePending) return;
-    setEditItem(null); resetForm();
+    setEditItem(null); resetForm(); clearLegacyEditorParams();
   };
   const closeCreateProduct = () => {
     if (createMut.isPending || uploadingPhoto) return;
@@ -789,7 +845,8 @@ ${selected?.name ? `Perfil: ${selected.name}
   });
 
   const allPhotos = [photoUrl, ...extraPhotos].filter(Boolean);
-  const activeProducts = products.filter(product => product.is_active);
+  const activeProducts = products.filter(product => product.is_active && product.is_component !== true);
+  const activeParts = products.filter(product => product.is_active && product.is_component === true);
   const pricedProducts = activeProducts.filter(product => product.sale_price != null);
   const marginProducts = activeProducts.filter(product => product.sale_price != null && product.sale_price > 0 && product.cost_estimate != null);
   const catalogRevenue = marginProducts.reduce((sum, product) => sum + product.sale_price!, 0);
@@ -907,7 +964,7 @@ ${selected?.name ? `Perfil: ${selected.name}
           {productionReference.updatedLabel && <p className="text-xs text-muted-foreground">Atualizada em {productionReference.updatedLabel}</p>}
         </section>
       )}
-      {editItem?.id && !editItem.is_component && profile?.tenant_id && <ProductAssemblySetup key={`subitems-${editItem.id}`} productId={editItem.id} tenantId={profile.tenant_id} onBusyChange={setAssemblySetupBusy} onDraftChange={setAssemblySetupDraft} />}
+      {editItem?.id && <section className="space-y-2 rounded-lg border bg-muted/20 p-4"><h3 className="font-medium">{editItem.is_component ? "Produtos que usam esta peça" : "Peças deste produto"}</h3><p className="text-sm text-muted-foreground">{editItem.is_component ? "Consulte os produtos vinculados e a ficha técnica desta peça na página do cadastro." : "Gerencie a composição e a ficha técnica de cada peça na página do produto."}</p><Button type="button" variant="outline" asChild><RouterLink to={`/comercial/produtos/${encodeURIComponent(editItem.id)}?aba=pecas`}>{editItem.is_component ? "Ver produtos que usam esta peça" : "Gerenciar peças deste produto"}</RouterLink></Button></section>}
       {editItem?.id && profile?.tenant_id && <ProductPrintSources key={editItem.id} productId={editItem.id} tenantId={profile.tenant_id} onBusyChange={setPrintSourceBusy} onDraftChange={setSourceDraft} />}
       {editItem?.id && profile?.tenant_id && <ProductPrintPlates key={`manual-plates-${editItem.id}`} productId={editItem.id} tenantId={profile.tenant_id} sourceId={null} onBusyChange={reportManualPlateBusy} onDraftChange={reportManualPlateDraft} />}
       {editItem?.id && profile?.tenant_id && category !== "kit" && (products.find(product => product.id === editItem.id)?.recipe_plate_count ?? 0) === 0 &&
@@ -1251,10 +1308,28 @@ ${selected?.name ? `Perfil: ${selected.name}
     </Tabs>
   );
 
+  const renderProductRelationships = (product: any) => {
+    if (linksLoading) return <p className="mt-1 text-xs text-muted-foreground">Carregando composição…</p>;
+    if (linksError) return <p className="mt-1 text-xs text-muted-foreground">Vínculos indisponíveis no momento.</p>;
+    const relations = (product.is_component ? parentsByPart.get(product.id) : partsByProduct.get(product.id)) || [];
+    if (!relations.length) return <p className="mt-1 text-xs text-muted-foreground">{product.is_component ? "Sem produto vinculado" : "Produto simples · sem peças vinculadas"}</p>;
+    return <div className="mt-2 space-y-1.5" aria-label={product.is_component ? `Usada em produtos: ${product.name}` : `Composição de ${product.name}`} onClick={event => event.stopPropagation()}>
+      <p className="text-xs text-muted-foreground">{product.is_component ? "Usada em" : `${relations.length} ${relations.length === 1 ? "peça na composição" : "peças na composição"}`}</p>
+      <div className="flex flex-wrap gap-1.5">{relations.map(link => {
+        const relatedId = product.is_component ? link.product_id : link.component_product_id;
+        const related = productById.get(relatedId);
+        if (!related) return null;
+        return <RouterLink key={link.id} to={`/comercial/produtos/${encodeURIComponent(relatedId)}${product.is_component ? "?aba=pecas" : ""}`} className="inline-flex max-w-full items-center rounded-md border bg-muted/30 px-2 py-1 text-xs hover:border-primary/40 hover:text-primary" aria-label={`${product.is_component ? "Abrir produto" : "Abrir peça"} ${related.name}`}>
+          {!product.is_component && <span className="mr-1 font-medium">{link.quantity_per_product == null ? "?" : link.quantity_per_product}×</span>}{related.name}{!related.is_active && <span className="ml-1 text-[10px] text-muted-foreground">(arquivado)</span>}
+        </RouterLink>;
+      })}</div>
+    </div>;
+  };
+
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       <DeleteRecordDialog key={deleteTarget?.id} target={deleteTarget} onClose={() => setDeleteTarget(null)} />
-      <PageHeader title="Produtos" description="Catálogo de produtos e serviços"
+      <PageHeader title="Produtos" description="Produtos completos, peças e suas composições"
         breadcrumbs={[{ label: "Comercial" }, { label: "Produtos" }]}
         actions={
           <div className="flex flex-wrap items-center gap-2">
@@ -1272,16 +1347,25 @@ ${selected?.name ? `Perfil: ${selected.name}
       />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="rounded-xl border bg-card p-4"><p className="text-xs text-muted-foreground">Produtos Ativos</p><p className="text-2xl font-bold text-foreground">{products.filter((p: any) => p.is_active).length}</p></div>
+        <div className="rounded-xl border bg-card p-4"><p className="text-xs text-muted-foreground">Produtos completos ativos</p><p className="text-2xl font-bold text-foreground">{activeProducts.length}</p><p className="mt-1 text-xs text-muted-foreground">{activeParts.length} {activeParts.length === 1 ? "peça com cadastro próprio" : "peças com cadastro próprio"}</p></div>
         <div className="rounded-xl border bg-card p-4"><p className="text-xs text-muted-foreground">Preço médio do catálogo ativo</p><p className="text-2xl font-bold text-foreground">{fmtCurrency(pricedProducts.length ? pricedProducts.reduce((sum, product) => sum + product.sale_price!, 0) / pricedProducts.length : null)}</p></div>
         <div className="rounded-xl border bg-card p-4"><p className="text-xs text-muted-foreground">Margem do catálogo, ponderada por preço</p><p className="text-2xl font-bold text-foreground">{catalogRevenue > 0 ? `${((catalogRevenue - catalogCost) / catalogRevenue * 100).toFixed(1)}%` : "—"}</p><p className="mt-1 text-xs text-muted-foreground">Produtos ativos com preço e custo. Não é margem das vendas.</p></div>
       </div>
 
       {productsError && <div role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 p-4 text-sm">Não foi possível carregar o catálogo.<Button variant="link" onClick={() => void refetchProducts()}>Tentar novamente</Button></div>}
+      {linksError && <div role="alert" className="rounded-lg border bg-muted/20 p-4 text-sm">Não foi possível conferir as peças e os produtos vinculados.<Button variant="link" onClick={() => void refetchLinks()}>Conferir vínculos novamente</Button></div>}
+      <Tabs value={catalogView} onValueChange={value => changeCatalogView(value as CatalogView)}>
+        <TabsList aria-label="Tipo de cadastro no catálogo" className="h-auto max-w-full justify-start gap-1 overflow-x-auto">
+          <TabsTrigger value="produtos" aria-label="Produtos completos" className="whitespace-nowrap px-4 py-2.5">Produtos completos <span aria-hidden="true" className="ml-2 rounded bg-background/70 px-1.5 text-xs">{products.filter(product => (showArchived || product.is_active) && product.is_component !== true).length}</span></TabsTrigger>
+          <TabsTrigger value="pecas" aria-label="Peças e subprodutos" className="whitespace-nowrap px-4 py-2.5">Peças e subprodutos <span aria-hidden="true" className="ml-2 rounded bg-background/70 px-1.5 text-xs">{products.filter(product => (showArchived || product.is_active) && product.is_component === true).length}</span></TabsTrigger>
+          <TabsTrigger value="todos" aria-label="Todos os cadastros" className="whitespace-nowrap px-4 py-2.5">Todos <span aria-hidden="true" className="ml-2 rounded bg-background/70 px-1.5 text-xs">{products.filter(product => showArchived || product.is_active).length}</span></TabsTrigger>
+        </TabsList>
+        <TabsContent value={catalogView} className="mt-4 space-y-4">
+      <p className="text-sm text-muted-foreground">{catalogView === "pecas" ? "Cada peça tem ficha técnica e estoque próprios. Veja em quais produtos ela é usada e abra a composição correspondente." : catalogView === "produtos" ? "Abra um produto para ver suas peças, o estoque e a preparação da produção. O botão de edição permite ajustar dados, valores e fotos." : "Visão geral dos produtos completos e das peças, com os vínculos da composição."}</p>
       <div className="flex flex-wrap items-center gap-3">
         <div className="relative flex-1 max-w-sm">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-          <Input className="pl-9" placeholder="Buscar por nome ou SKU…" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <Input className="pl-9" aria-label="Buscar no catálogo" placeholder={catalogView === "pecas" ? "Buscar peça, SKU ou produto em que é usada…" : "Buscar produto, SKU ou peça da composição…"} value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         <label className="flex min-h-10 items-center gap-2 text-sm text-muted-foreground"><Switch checked={showArchived} onCheckedChange={setShowArchived} />Mostrar arquivados</label>
       </div>
@@ -1291,7 +1375,7 @@ ${selected?.name ? `Perfil: ${selected.name}
           <div className="flex items-center justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
         ) : productsError && products.length === 0 ? null : filtered.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
-            <Package className="h-10 w-10 mb-3 opacity-40" /><p className="font-medium">{search ? "Nenhum produto encontrado" : "Nenhum produto ativo cadastrado"}</p>
+            <Package className="h-10 w-10 mb-3 opacity-40" /><p className="font-medium">{search ? "Nenhum cadastro encontrado para esta busca" : catalogView === "pecas" ? "Nenhuma peça cadastrada" : "Nenhum produto ativo cadastrado"}</p>
           </div>
         ) : (
           <Table>
@@ -1302,7 +1386,7 @@ ${selected?.name ? `Perfil: ${selected.name}
             </TableRow></TableHeader>
             <TableBody>
               {filtered.map((p: any) => (
-                <TableRow key={p.id} className="cursor-pointer hover:bg-muted/50" onClick={() => { openEdit(p); }}>
+                <TableRow key={p.id} className="cursor-pointer hover:bg-muted/50" onClick={() => navigate(`/comercial/produtos/${encodeURIComponent(p.id)}`)}>
                   <TableCell className="w-12">
                     {p.photo_url ? (
                       <img src={p.photo_url} alt="" className="w-10 h-10 rounded object-cover" />
@@ -1313,10 +1397,10 @@ ${selected?.name ? `Perfil: ${selected.name}
                     )}
                   </TableCell>
                   <TableCell>
-                    <div><p className="font-medium text-sm">{p.name}{!p.is_active && <span className="ml-2 rounded bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">Arquivado</span>}</p>{p.sku && <p className="text-xs text-muted-foreground">{p.sku}</p>}</div>
+                    <div className="min-w-48 max-w-lg"><RouterLink to={`/comercial/produtos/${encodeURIComponent(p.id)}`} onClick={event => event.stopPropagation()} className="font-medium text-sm hover:text-primary hover:underline">{p.name}</RouterLink>{!p.is_active && <span className="ml-2 rounded bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">Arquivado</span>}{p.sku && <p className="text-xs text-muted-foreground">{p.sku}</p>}{renderProductRelationships(p)}</div>
                   </TableCell>
                   <TableCell className="text-sm">
-                    {p.is_component ? "Subitem" : categoryLabels[p.category] || p.category}
+                    {p.is_component ? "Peça / subproduto" : categoryLabels[p.category] || p.category}
                     {Array.isArray((p as any).extras) && (p as any).extras.length > 0 && (
                       <span className="ml-1.5 text-[10px] text-muted-foreground">+{(p as any).extras.length} extras</span>
                     )}
@@ -1355,6 +1439,8 @@ ${selected?.name ? `Perfil: ${selected.name}
           </Table>
         )}
       </div>
+        </TabsContent>
+      </Tabs>
 
       {/* Create dialog */}
       <Dialog open={createOpen} onOpenChange={open => { if (open) setCreateOpen(true); else closeCreateProduct(); }}>

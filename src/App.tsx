@@ -36,6 +36,7 @@ const Perdas = lazy(() => import("./pages/producao/Perdas"));
 const Fila = lazy(() => import("./pages/planejamento/Fila"));
 const Capacidade = lazy(() => import("./pages/planejamento/Capacidade"));
 const Produtos = lazy(() => import("./pages/comercial/Produtos"));
+const ProductWorkspace = lazy(() => import("./pages/comercial/ProductWorkspace"));
 const Pedidos = lazy(() => import("./pages/comercial/Pedidos"));
 const Orcamentos = lazy(() => import("./pages/comercial/Orcamentos"));
 const Clientes = lazy(() => import("./pages/comercial/Partners").then(m => ({ default: () => <m.default kind="customer" /> })));
@@ -104,6 +105,7 @@ function AuthenticatedRoutes() {
         <Route path="/planejamento/capacidade" element={<Capacidade />} />
         {/* Comercial */}
         <Route path="/comercial/produtos" element={<Produtos />} />
+        <Route path="/comercial/produtos/:productId" element={<ProductWorkspace />} />
         <Route path="/comercial/precificacao" element={<Precificacao />} />
         <Route path="/comercial/etiquetas" element={<Etiquetas />} />
         <Route path="/comercial/orcamentos" element={<Orcamentos />} />

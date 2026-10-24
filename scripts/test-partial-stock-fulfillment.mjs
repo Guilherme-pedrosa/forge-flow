@@ -145,8 +145,14 @@ try {
     assert.equal(await scalar('SELECT material_id FROM jobs WHERE order_id=$1 LIMIT 1', [result.order_id]), red);
   });
   await test('Stock promised to a released assembly cannot be stolen by a new sale of that part', async () => {
-    const child = await product({ stock: 5 }), parent = await product();
-    await scalar('SELECT save_product_subitem($1,NULL,$2::jsonb,$3)', [parent, JSON.stringify({ component_product_id: child, quantity_per_product: 1 }), next()]);
+    const parent = await product();
+    // Create a physical component explicitly; a sellable catalogue item must
+    // never be silently converted just because an assembly references it.
+    const membership = await scalar('SELECT save_product_subitem($1,NULL,$2::jsonb,$3)', [parent,
+      JSON.stringify({ name: 'Part also sold separately', quantity_per_product: 1, initial_stock: 5, unit_cost: 5 }), next()]);
+    const child = await scalar('SELECT component_product_id FROM product_subitems WHERE id=$1', [membership]);
+    await asOwner(() => db.query('UPDATE products SET material_id=$2,prints_per_plate=2,est_grams=100,est_time_minutes=120,sale_price=20 WHERE id=$1', [child, material]));
+    await recipe(child);
     const op = await scalar('SELECT request_stock_production($1::jsonb,NULL,NULL,$2)', [JSON.stringify([{ product_id: parent, quantity: 4 }]), next()]);
     await scalar('SELECT release_production_order($1)', [op]);
     const result = await confirm(payload(child, {}, 3));
@@ -229,8 +235,10 @@ try {
     assert.equal(await scalar('SELECT status FROM orders WHERE id=$1', [result.order_id]), 'ready');
   });
   await test('A partially stocked assembled product reserves and assembles only the residual finished units', async () => {
-    const parent = await product({ stock: 1 }), child = await product({ stock: 5 });
-    await scalar('SELECT save_product_subitem($1,NULL,$2::jsonb,$3)', [parent, JSON.stringify({ component_product_id: child, quantity_per_product: 2 }), next()]);
+    const parent = await product({ stock: 1 });
+    const membership = await scalar('SELECT save_product_subitem($1,NULL,$2::jsonb,$3)', [parent,
+      JSON.stringify({ name: 'Residual assembly part', quantity_per_product: 2, initial_stock: 5, unit_cost: 5 }), next()]);
+    const child = await scalar('SELECT component_product_id FROM product_subitems WHERE id=$1', [membership]);
     const result = await confirm(payload(parent, {}, 3));
     assert.equal(result.outcome, 'production_queued'); assert.deepEqual(await counts(result.order_id), { titles: 1, ops: 1, jobs: 0 });
     const pi = await scalar('SELECT id FROM production_order_items WHERE production_order_id=$1', [result.production_order_id]);
