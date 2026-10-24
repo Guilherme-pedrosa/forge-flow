@@ -44,6 +44,8 @@ export function PhysicalSubitemWorkspace({
   refresh,
   jobs,
   history,
+  embedded = false,
+  onEditComposition,
 }: {
   data: AssemblyStatus;
   productId: string;
@@ -54,6 +56,8 @@ export function PhysicalSubitemWorkspace({
   refresh: () => Promise<unknown>;
   jobs: ComponentJob[];
   history: AssemblyHistory[];
+  embedded?: boolean;
+  onEditComposition?: () => void;
 }) {
   const { toast } = useToast();
   const [action, setAction] = useState<Action | null>(null);
@@ -201,7 +205,7 @@ export function PhysicalSubitemWorkspace({
     <section className="space-y-4" aria-label="Estoque individual e montagem">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold">{data.name}</h2>
+          <h2 className="text-lg font-semibold">{embedded ? "Estoque e montagem" : data.name}</h2>
           <p className="text-sm text-muted-foreground">
             Controle cada peça separadamente. A composição informa o que será
             consumido para montar o produto final.
@@ -227,11 +231,17 @@ export function PhysicalSubitemWorkspace({
               onChange={(e) => onTarget(e.target.value)}
             />
           </div>
-          <Button variant="outline" asChild>
-            <Link to={`/comercial/produtos?produto=${productId}`}>
-              Editar composição e subitens
-            </Link>
-          </Button>
+          {onEditComposition ? (
+            <Button type="button" variant="outline" onClick={onEditComposition}>
+              Editar peças da composição
+            </Button>
+          ) : (
+            <Button variant="outline" asChild>
+              <Link to={`/comercial/produtos?produto=${productId}`}>
+                Editar composição e subitens
+              </Link>
+            </Button>
+          )}
         </div>
       )}
       {!!data.issues?.length && (

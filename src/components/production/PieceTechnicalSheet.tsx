@@ -84,11 +84,13 @@ export function PieceSpecFields({
   onChange,
   tenantId,
   prefix = "piece",
+  showUnitCount = true,
 }: {
   value: PieceDraft;
   onChange: (v: PieceDraft) => void;
   tenantId: string;
   prefix?: string;
+  showUnitCount?: boolean;
 }) {
   const materials = useQuery({
     queryKey: ["inventory_items", tenantId, "piece-spec"],
@@ -154,7 +156,7 @@ export function PieceSpecFields({
             <option value="plate">Uma placa de peças iguais</option>
           </select>
         </div>
-        {field("units", "Peças iguais por placa (opcional)")}
+        {(showUnitCount || d.basis === "plate") && field("units", "Peças iguais por placa (opcional)")}
       </div>
       <p className="text-xs text-muted-foreground">
         {d.basis === "plate"

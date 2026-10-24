@@ -167,11 +167,10 @@ export default function ProductPrintPlates({ productId, tenantId, sourceId, show
     <Label htmlFor={`plate-${sourceId}-${name}`}>{label}</Label>
     <Input id={`plate-${sourceId}-${name}`} value={draft[name]} onChange={event => setDraft({ ...draft, [name]: event.target.value })} disabled={busy} {...props} />
   </div>;
-  if (!sourceId && !isLoading && !error && !plates.length) return null;
   return <section aria-label="Placas necessárias para o produto" className="border-t pt-3 space-y-3">
     <div className="flex flex-wrap justify-between items-center gap-2">
-      <h4 className="flex items-center gap-1.5 text-sm font-semibold"><Layers3 className="h-4 w-4" /> {sourceId ? "Placas desta fonte" : "Componentes sem arquivo vinculado"}</h4>
-      {!formOpen && sourceId && <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => { reset(); setDraft({ ...initialDraft(), plate_index: String(Math.max(0, ...plates.map(plate => plate.plate_index)) + 1) }); setFormOpen(true); }}><Plus className="mr-1 h-3.5 w-3.5" /> Adicionar placa</Button>}
+      <h4 className="flex items-center gap-1.5 text-sm font-semibold"><Layers3 className="h-4 w-4" /> {sourceId ? "Placas desta fonte" : "Placas cadastradas manualmente"}</h4>
+      {!formOpen && <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => { reset(); setDraft({ ...initialDraft(), plate_index: String(Math.max(0, ...allPlates.map(plate => plate.plate_index)) + 1) }); setFormOpen(true); }}><Plus className="mr-1 h-3.5 w-3.5" /> {sourceId ? "Adicionar placa" : "Adicionar placa manual"}</Button>}
     </div>
     {error && <div role="alert" className="text-xs text-destructive">Não foi possível carregar as placas. <Button type="button" size="sm" variant="ghost" onClick={() => refetch()}>Tentar novamente</Button></div>}
     {isLoading ? <p className="text-xs text-muted-foreground">Carregando placas…</p> : !error && !plates.length && <p className="text-xs text-muted-foreground">Nenhuma placa definida nesta fonte. O arquivo associado não informa sozinho quais placas compõem este SKU.</p>}
