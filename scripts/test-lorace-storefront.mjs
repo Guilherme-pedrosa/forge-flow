@@ -11,7 +11,7 @@ CREATE FUNCTION storage.foldername(text) RETURNS text[] LANGUAGE sql IMMUTABLE A
 ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY; CREATE PUBLICATION supabase_realtime;
 GRANT USAGE ON SCHEMA public,auth,storage TO authenticated,anon;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO authenticated;`);
-for(const name of (await readdir(new URL('../supabase/migrations/',import.meta.url))).filter(n=>n.endsWith('.sql')&&!n.includes('lorace_mercadopago')).sort()){
+for(const name of (await readdir(new URL('../supabase/migrations/',import.meta.url))).filter(n=>n.endsWith('.sql')&&!n.includes('lorace_mercadopago')&&!n.includes('elevare_storefront_brand')).sort()){
  try{await db.exec((await readFile(new URL('../supabase/migrations/'+name,import.meta.url),'utf8')).replace(/CREATE EXTENSION IF NOT EXISTS (pg_cron|pg_net);/g,''));}catch(e){throw new Error(name+': '+e.message);}
 }
 const id=n=>`74000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
@@ -71,6 +71,7 @@ console.log('PASS Lorace: publication, tenant boundary, component privacy, price
 
 await db.exec('RESET ROLE');
 await db.exec(await readFile(new URL('../supabase/migrations/20261024100000_lorace_mercadopago.sql',import.meta.url),'utf8'));
+await db.exec(await readFile(new URL('../supabase/migrations/20261024110000_elevare_storefront_brand.sql',import.meta.url),'utf8'));
 await db.exec('SET ROLE anon');await assert.rejects(submit(payload,id(49)),/permission denied/);
 await db.exec('RESET ROLE; SET ROLE authenticated');
 await db.query("SELECT set_config('request.jwt.claim.sub',$1,false)",[owner]);

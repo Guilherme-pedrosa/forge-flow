@@ -8,7 +8,7 @@ export const navigationGroups = [
     { title: "Bobinas e localização", icon: Package, href: "/estoque/bobinas" },
     { title: "Sugestões de compra", icon: ShoppingCart, href: "/estoque/reposicao" },
     { title: "Mercado Livre e Shopee", icon: Store, href: "/comercial/marketplaces" },
-    { title: "Loja Loracê", icon: Store, href: "/integracoes/lorace" },
+    { title: "Loja Elevare3D", icon: Store, href: "/integracoes/loja" },
   ] },
   { label: "Cadastros", items: [
     { title: "Clientes", icon: Users, href: "/comercial/clientes" },

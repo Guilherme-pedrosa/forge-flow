@@ -3,8 +3,8 @@ import { assertPayment,checkoutUrl,verifySignature } from './mercadopago.ts';
 
 const base=Deno.env.get('SUPABASE_URL')!;
 const service=createClient(base,Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,{auth:{persistSession:false}});
-const site='https://lorace-clone-master.lovable.app';
-const origins=new Set([site,'https://elevare3d.lovable.app','https://id-preview--ce308138-4158-41e3-accd-4d9759ba9cdd.lovable.app','https://preview--lorace-clone-master.lovable.app']);
+const site='https://loja-elevare3d.lovable.app';
+const origins=new Set([site,'https://lorace-clone-master.lovable.app','https://preview--loja-elevare3d.lovable.app','https://elevare3d.lovable.app','https://id-preview--ce308138-4158-41e3-accd-4d9759ba9cdd.lovable.app','https://preview--lorace-clone-master.lovable.app']);
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 class ProviderError extends Error { constructor(public status:number,message:string){super(message);} }
 async function mp(path:string,token:string,init:RequestInit={}){
@@ -77,7 +77,7 @@ Deno.serve(async request=>{
     if(claim.error)throw new Error('Não foi possível preparar o pagamento.');
     if(!claim.data?.length)throw new Error('Estamos recuperando o checkout anterior. Tente novamente em instantes; o pedido não será duplicado.');
     try {
-     preference=await mp('/checkout/preferences',k.access_token,{method:'POST',headers:{'X-Idempotency-Key':external},body:JSON.stringify({external_reference:external,items,back_urls:{success:back,pending:back,failure:back},auto_return:'approved',notification_url:base+'/functions/v1/lorace-payments?webhook=1&store='+encodeURIComponent(slug),expires:true,expiration_date_from:new Date().toISOString(),expiration_date_to:start.data.expires_at,payment_methods:{excluded_payment_types:[{id:'ticket'},{id:'atm'}]},statement_descriptor:'LORACE'})});
+     preference=await mp('/checkout/preferences',k.access_token,{method:'POST',headers:{'X-Idempotency-Key':external},body:JSON.stringify({external_reference:external,items,back_urls:{success:back,pending:back,failure:back},auto_return:'approved',notification_url:base+'/functions/v1/lorace-payments?webhook=1&store='+encodeURIComponent(slug),expires:true,expiration_date_from:new Date().toISOString(),expiration_date_to:start.data.expires_at,payment_methods:{excluded_payment_types:[{id:'ticket'},{id:'atm'}]},statement_descriptor:'ELEVARE3D'})});
     } catch(error) {
      // Only a definitive rejection permits a new POST. Timeouts and 5xx keep
      // the durable claim, so the next request searches instead of charging twice.
