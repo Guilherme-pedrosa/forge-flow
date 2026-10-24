@@ -452,6 +452,13 @@ function CreateJobDialog({
   const [purgeWasteGrams, setPurgeWasteGrams] = useState("");
   const [saving, setSaving] = useState(false);
   const creationRequest = useRef<ReturnType<typeof orderRequest> | null>(null);
+  const outputStockIds = new Set(products.map(product => product.stock_item_id).filter(Boolean));
+  const isPrintingMaterial = (item: InventoryRow) => ["filament", "resin"].includes(item.category)
+    && ["g", "kg"].includes(item.unit) && !outputStockIds.has(item.id);
+  const materialOptions = (selectedId: string) => materials
+    .filter(item => item.id === selectedId || isPrintingMaterial(item))
+    .map(item => ({ id: item.id, label: item.name, description: isPrintingMaterial(item) ? item.color || undefined
+      : "Referência atual preservada · confira a classificação em Materiais e insumos" }));
 
   const PURGE_GRAMS_PER_COLOR_CHANGE = 20;
 
@@ -627,12 +634,14 @@ function CreateJobDialog({
           <div className={cn("grid gap-3", isMultiColor ? "grid-cols-1" : "grid-cols-2")}>
             {!recipe && <div className="grid gap-1.5">
               <Label>{isMultiColor ? "Material principal (cor 1)" : "Material"}</Label>
-              <SearchableItemSelect label="Material da impressão" value={materialId} onChange={setMaterialId} emptyLabel="Buscar material ou cor" options={materials.map(m => ({ id: m.id, label: m.name, description: m.color || undefined }))} />
+              <SearchableItemSelect label="Material da impressão" value={materialId} onChange={setMaterialId} emptyLabel="Buscar filamento ou resina" options={materialOptions(materialId)} />
+              {materials.some(item => item.id === materialId && !isPrintingMaterial(item)) && <p className="mt-1 text-xs text-amber-700">A referência atual foi preservada. Confira a classificação e a unidade em Materiais e insumos.</p>}
             </div>}
             {isMultiColor && (
               <div className="grid gap-1.5">
                 <Label>Material secundário (cor 2+)</Label>
-                <SearchableItemSelect label="Material secundário da impressão" value={secondaryMaterialId} onChange={setSecondaryMaterialId} emptyLabel="Mesmo que principal" options={materials.map(m => ({ id: m.id, label: m.name, description: m.color || undefined }))} />
+                <SearchableItemSelect label="Material secundário da impressão" value={secondaryMaterialId} onChange={setSecondaryMaterialId} emptyLabel="Mesmo que principal" options={materialOptions(secondaryMaterialId)} />
+                {materials.some(item => item.id === secondaryMaterialId && !isPrintingMaterial(item)) && <p className="mt-1 text-xs text-amber-700">A referência atual foi preservada. Confira a classificação e a unidade em Materiais e insumos.</p>}
               </div>
             )}
             {!isMultiColor && (
