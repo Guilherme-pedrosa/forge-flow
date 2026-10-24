@@ -1,4 +1,4 @@
-# Loracê ↔ Forge & Flow
+# Elevare3D ↔ Forge & Flow
 
 ## Plano de execução — 24/10/2026
 
@@ -25,16 +25,18 @@ Referências oficiais: [preferências Checkout Pro](https://www.mercadopago.com.
 
 As telas e SQL não implantam Edge Functions automaticamente. Publicar `lorace-payments` separadamente com `supabase functions deploy lorace-payments --project-ref gaomleftwxpzjivrnzjk --no-verify-jwt`, por um operador com acesso de administração a esse projeto. A função valida a assinatura do webhook e o JWT de cada ação administrativa no próprio código.
 
-No Forge, em Loja Loracê, cadastrar Access Token, segredo do webhook, ambiente, frete e estados atendidos. Configurar o evento Pagamentos no Mercado Pago para `https://gaomleftwxpzjivrnzjk.supabase.co/functions/v1/lorace-payments?webhook=1&store=lorace`. A função precisa estar publicada antes de validar a conta. Nunca inserir secrets no frontend, Git ou chat.
+No Forge, em Loja Elevare3D, cadastrar Access Token, segredo do webhook, ambiente, frete e estados atendidos. Configurar o evento Pagamentos no Mercado Pago para `https://gaomleftwxpzjivrnzjk.supabase.co/functions/v1/lorace-payments?webhook=1&store=lorace`. A função precisa estar publicada antes de validar a conta. Nunca inserir secrets no frontend, Git ou chat.
 
 ## Validação e estado da implantação
 
-- Migrações 20261024090000 e 20261024100000 aplicadas em 24/10/2026. Canal Loracê criado na Elevare3D. Contagens de produtos, clientes, pedidos e recebíveis preservadas.
+- Migrações 20261024090000, 20261024100000 e 20261024110000 aplicadas em 24/10/2026. Canal Elevare3D criado, mantendo o identificador interno `lorace`. Contagens de produtos, clientes, pedidos e recebíveis preservadas.
 - API pública de catálogo responde 200; credenciais e pedidos rejeitam leitura anônima. Checkout permanece indisponível enquanto a conta não estiver validada.
 - Testes: catálogo e banco de pagamentos; assinatura e handler HTTP isolado; 9 testes da loja; 14 cenários de confirmação de venda, 22 de estoque parcial e 13 de montagem. TypeScript e builds dos dois projetos aprovados.
 - A conta recebedora ainda precisa ser definida pelo proprietário e cadastrada no formulário seguro. Não reutilizar credenciais do Selovac sem essa definição.
 - Os dois produtos finais existentes ainda estão sem preço de venda e sem saldo. Definir preço, publicação e, se aplicável, encomenda com prazo antes de ofertar. Nenhum preço, frete ou produto de demonstração foi inventado.
-- A função de pagamentos retorna 404 no endpoint publicado antes de seu deploy. Publicação da função, conexão da conta, configuração de frete/UFs e teste de checkout com webhook continuam pendentes. Não considerar cobrança operacional antes disso.
+- A função de pagamentos foi publicada em 24/10/2026 após autorização expressa do proprietário para uma única mensagem ao agente Lovable, exclusivamente para esse deploy. A autorização foi utilizada; não autoriza novas mensagens. O código da função permaneceu idêntico ao commit revisado `86716d9085968b7d1ddf45c78f49e92a3b7dd1f8`.
+- Verificação no endpoint publicado: `health` retorna HTTP 200 e `ready: true`; conexão administrativa sem autenticação retorna 401; origem não permitida retorna 403. A tela publicada do Forge mostra Loja Elevare3D e o formulário seguro de configuração.
+- Conexão da conta recebedora, configuração de frete/UFs e teste completo de checkout com webhook continuam pendentes. Nenhuma cobrança ou pedido de teste foi criado em produção. Não considerar cobrança operacional antes desses passos.
 
 ## Marca confirmada pelo proprietário
 
