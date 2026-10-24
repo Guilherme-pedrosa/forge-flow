@@ -25,7 +25,7 @@
     "test:makerworld": "node scripts/test-makerworld-import.mjs",
     "test:print-import": "node scripts/test-operational-print-import.mjs",
     "test:variants": "node scripts/test-material-variants.mjs",
-    "test:lorace": "node scripts/test-lorace-storefront.mjs && node scripts/test-lorace-payments-edge.mjs && node scripts/test-lorace-payments-http.mjs && node scripts/test-storefront-cms.mjs"
+    "test:lorace": "node scripts/test-lorace-storefront.mjs && node scripts/test-lorace-payments-edge.mjs && node scripts/test-lorace-payments-http.mjs && node scripts/test-storefront-cms.mjs && node scripts/test-storefront-structure.mjs"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
