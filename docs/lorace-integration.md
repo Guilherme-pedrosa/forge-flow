@@ -35,3 +35,7 @@ No Forge, em Loja Loracê, cadastrar Access Token, segredo do webhook, ambiente,
 - A conta recebedora ainda precisa ser definida pelo proprietário e cadastrada no formulário seguro. Não reutilizar credenciais do Selovac sem essa definição.
 - Os dois produtos finais existentes ainda estão sem preço de venda e sem saldo. Definir preço, publicação e, se aplicável, encomenda com prazo antes de ofertar. Nenhum preço, frete ou produto de demonstração foi inventado.
 - A função de pagamentos retorna 404 no endpoint publicado antes de seu deploy. Publicação da função, conexão da conta, configuração de frete/UFs e teste de checkout com webhook continuam pendentes. Não considerar cobrança operacional antes disso.
+
+## Marca confirmada pelo proprietário
+
+A loja pública se chama **Elevare3D** e usa a logo enviada pelo proprietário. Lorace Builder é a origem do projeto. O identificador interno do canal e da função permanece estável para preservar vínculos; telas, origem dos novos pedidos e identificação do checkout usam Elevare3D. A loja usa o endereço `https://loja-elevare3d.lovable.app` e a gestão no Forge fica em `/integracoes/loja`, preservando o endereço anterior como alias.

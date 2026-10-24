@@ -118,6 +118,7 @@ function AuthenticatedRoutes() {
         <Route path="/integracoes/shopee" element={<Marketplaces />} />
         <Route path="/integracoes/marketplaces" element={<Marketplaces />} />
         <Route path="/integracoes/lorace" element={<Lorace />} />
+        <Route path="/integracoes/loja" element={<Lorace />} />
         {/* Config */}
         <Route path="/configuracoes" element={<Empresa />} />
         <Route path="/configuracoes/usuarios" element={<Usuarios />} />
