@@ -132,24 +132,89 @@ const allowed = makeContent('Links válidos');
 allowed.footerLinks = [{ id: 'tel', label: 'Telefone', href: 'tel:+5511999999999' }, { id: 'hash', label: 'Vitrine', href: '#vitrine' }, { id: 'root', label: 'Início', href: '/' }];
 assert.equal((await save(allowed, 8)).revision, 9);
 
-const objectPath = `${tenant}/${channel}/${id(90)}.webp`;
-await db.query("INSERT INTO storage.objects(bucket_id,name) VALUES('storefront-media',$1)", [objectPath]);
-await as('authenticated', operator);
-await assert.rejects(db.query("INSERT INTO storage.objects(bucket_id,name) VALUES('storefront-media',$1)", [`${tenant}/${channel}/${id(91)}.png`]), /row-level security/);
-assert.equal((await db.query("UPDATE storage.objects SET name=$1 WHERE bucket_id='storefront-media' AND name=$2 RETURNING name", [`${tenant}/${channel}/${id(91)}.png`, objectPath])).rows.length, 0);
-await as('authenticated', foreignOwner);
-await assert.rejects(db.query("INSERT INTO storage.objects(bucket_id,name) VALUES('storefront-media',$1)", [`${tenant}/${channel}/${id(92)}.png`]), /row-level security/);
-await as('authenticated', owner);
-for (const path of [`${otherTenant}/${foreignChannel}/${id(93)}.png`, `${tenant}/${channel}/not-a-uuid.png`, `${tenant}/${channel}/${id(94)}.svg`, `${tenant}/${channel}/../escape.png`]) {
-  await assert.rejects(db.query("INSERT INTO storage.objects(bucket_id,name) VALUES('storefront-media',$1)", [path]), /row-level security/);
+// The image bytes are private; public access is bound to the current publication.
+const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9YGJ7z4AAAAASUVORK5CYII=';
+const upload = (mime = 'image/png', base64 = png, slug = 'cms-qa') => scalar('SELECT storefront_cms_upload($1,$2,$3)', [slug, mime, base64]);
+const image = (mediaId, slug = 'cms-qa') => scalar('SELECT storefront_media_get($1,$2)', [slug, mediaId]);
+const firstImage = await upload();
+assert.equal(firstImage.path, '/cms-media/' + firstImage.id); assert.equal(firstImage.mime, 'image/png');
+assert.equal(firstImage.bytes, Buffer.from(png, 'base64').length);
+assert.deepEqual(Object.keys(firstImage).sort(), ['bytes', 'id', 'mime', 'path']);
+assert.equal((await image(firstImage.id)).base64, png);
+const secondImage = await upload(); assert.notEqual(secondImage.id, firstImage.id);
+await forbidden(() => upload('image/png', png, 'foreign-cms-qa'));
+for (const user of [operator, manager, foreignOwner]) {
+  await as('authenticated', user);
+  await forbidden(() => upload());
+  assert.equal(await image(firstImage.id), null);
 }
-await as('authenticated', owner);
-assert.equal(await scalar("SELECT count(*)::int FROM storage.objects WHERE bucket_id='storefront-media' AND name=$1", [objectPath]), 1);
 await as('anon');
-assert.equal(await scalar("SELECT count(*)::int FROM storage.objects WHERE bucket_id='storefront-media' AND name=$1", [objectPath]), 0);
+await forbidden(() => upload()); assert.equal(await image(firstImage.id), null);
+assert.equal(await image(firstImage.id, 'foreign-cms-qa'), null);
+assert.equal(await image(firstImage.id, 'missing'), null);
+await assert.rejects(db.query('SELECT * FROM erp_private.storefront_media'), /permission denied/);
+await as('authenticated', owner);
+const html = Buffer.from('<html><script>alert(1)</script></html>').toString('base64');
+for (const mime of ['image/png', 'image/jpeg', 'image/webp', 'image/avif', 'image/gif']) {
+  await assert.rejects(upload(mime, html), /conteúdo.*formato/);
+}
+await assert.rejects(upload('image/svg+xml', png), /PNG, JPG/);
+await assert.rejects(upload('text/html', png), /PNG, JPG/);
+await assert.rejects(upload('image/jpeg', png), /conteúdo.*formato/);
+for (const encoded of ['not base64!', png + '\n', 'AAAA=', 'A===', '', null]) await assert.rejects(upload('image/png', encoded), /inválido/);
+await assert.rejects(upload('image/png', 'A'.repeat(7000004)), /limite de 5 MB/);
+const tooLarge = Buffer.alloc(5242881); Buffer.from('89504e470d0a1a0a', 'hex').copy(tooLarge);
+await assert.rejects(upload('image/png', tooLarge.toString('base64')), /limite de 5 MB/);
+assert.equal((await get()).revision, 9);
+
+const withStoryImage = structuredClone(allowed); withStoryImage.values['story.image'] = firstImage.path;
+await save(withStoryImage, 9);
+await as('anon'); assert.equal(await image(firstImage.id), null);
+await as('authenticated', owner); await publish(10);
+await as('anon');
+const publicImage = await image(firstImage.id);
+assert.deepEqual(publicImage, { id: firstImage.id, mime: 'image/png', base64: png, bytes: firstImage.bytes });
+assert.equal(await image(secondImage.id), null);
+assert.equal(await image(firstImage.id, 'foreign-cms-qa'), null);
+for (const user of [operator, manager, foreignOwner]) {
+  await as('authenticated', user);
+  assert.equal((await image(firstImage.id)).base64, png); // A published image is public for every visitor.
+  assert.equal(await image(secondImage.id), null);
+}
+await as('authenticated', admin);
+assert.equal((await image(secondImage.id)).base64, png);
+const secondDraft = structuredClone(withStoryImage); secondDraft.values['story.image'] = secondImage.path;
+await save(secondDraft, 11);
+await as('anon');
+assert.equal(await image(secondImage.id), null); assert.equal((await image(firstImage.id)).base64, png);
+await as('authenticated', owner);
+const nearMatch = structuredClone(secondDraft); nearMatch.values['story.image'] = secondImage.path + '?size=1';
+await save(nearMatch, 12); await publish(13);
+await as('anon'); assert.equal(await image(secondImage.id), null); assert.equal(await image(firstImage.id), null);
+await as('authenticated', owner);
+const allPublishedFields = structuredClone(allowed);
+allPublishedFields.values['logo.url'] = secondImage.path;
+allPublishedFields.values['favicon.url'] = secondImage.path;
+allPublishedFields.banners[0].image = firstImage.path;
+await save(allPublishedFields, 14); await publish(15);
+await as('anon'); assert.equal((await image(firstImage.id)).base64, png); assert.equal((await image(secondImage.id)).base64, png);
+await as('authenticated', foreignOwner);
+const foreignImage = await upload('image/png', png, 'foreign-cms-qa');
+assert.equal(await image(foreignImage.id, 'cms-qa'), null);
+await as('anon'); assert.equal(await image(foreignImage.id, 'foreign-cms-qa'), null);
+await as('authenticated', owner);
+// Validate recognition of each permitted format's signature without accepting HTML.
+const signatureFixtures = [
+  ['image/jpeg', Buffer.from('ffd8ffe00000', 'hex')],
+  ['image/gif', Buffer.from('GIF89a123456', 'ascii')],
+  ['image/webp', Buffer.from('RIFF0000WEBPVP8 ', 'ascii')],
+  ['image/avif', Buffer.from('00000018667479706176696600000000617669666d696631', 'hex')],
+  ['image/avif', Buffer.from('00000018667479706d69663100000000617669666d696631', 'hex')],
+];
+for (const [mime, bytes] of signatureFixtures) assert.equal((await upload(mime, bytes.toString('base64'))).mime, mime);
+await as('anon');
+await assert.rejects(db.query('SELECT * FROM erp_private.storefront_media'), /permission denied/);
 await db.exec('RESET ROLE');
-const bucket = (await db.query("SELECT public,file_size_limit,allowed_mime_types FROM storage.buckets WHERE id='storefront-media'")).rows[0];
-assert.equal(bucket.public, true); assert.equal(Number(bucket.file_size_limit), 5242880); assert.equal(bucket.allowed_mime_types.includes('image/svg+xml'), false);
-assert.deepEqual(bucket.allowed_mime_types.sort(), ['image/png', 'image/jpeg', 'image/webp', 'image/avif', 'image/gif'].sort());
+assert.equal(await scalar("SELECT count(*)::int FROM storage.buckets WHERE id='storefront-media'"), 0);
 await db.close();
-console.log('PASS storefront CMS: owner/admin authorization, tenant boundaries, private drafts, publication/history/restore, concurrency, document/link validation, and media policies.');
+console.log('PASS storefront CMS: owner/admin authorization, tenant boundaries, private drafts, publication/history/restore, concurrency, document/link validation, and private media RPCs.');
