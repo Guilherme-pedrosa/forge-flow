@@ -8,3 +8,7 @@ verify_jwt = true
 
 [functions.shopee-sync]
 verify_jwt = true
+
+[functions.lorace-payments]
+# Public checkout and signed MP webhook; administrative actions validate JWT in code.
+verify_jwt = false

@@ -15,6 +15,7 @@ const Precificacao = lazy(() => import("./pages/comercial/Precificacao"));
 const Etiquetas = lazy(() => import("./pages/comercial/Etiquetas"));
 const BambuLab = lazy(() => import("./pages/integracoes/BambuLab"));
 const Marketplaces = lazy(() => import("./pages/integracoes/Marketplaces"));
+const Lorace = lazy(() => import("./pages/integracoes/Lorace"));
 const ContasPagar = lazy(() => import("./pages/financeiro/ContasPagar"));
 const ContasReceber = lazy(() => import("./pages/financeiro/ContasReceber"));
 const CaixaBancos = lazy(() => import("./pages/financeiro/CaixaBancos"));
@@ -116,6 +117,7 @@ function AuthenticatedRoutes() {
         <Route path="/integracoes/ml" element={<Marketplaces />} />
         <Route path="/integracoes/shopee" element={<Marketplaces />} />
         <Route path="/integracoes/marketplaces" element={<Marketplaces />} />
+        <Route path="/integracoes/lorace" element={<Lorace />} />
         {/* Config */}
         <Route path="/configuracoes" element={<Empresa />} />
         <Route path="/configuracoes/usuarios" element={<Usuarios />} />
