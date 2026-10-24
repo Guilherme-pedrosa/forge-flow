@@ -256,28 +256,88 @@ GRANT EXECUTE ON FUNCTION public.storefront_site(text) TO anon,authenticated;
 GRANT EXECUTE ON FUNCTION public.storefront_cms_get(text),public.storefront_cms_save(text,jsonb,bigint),
   public.storefront_cms_publish(text,bigint),public.storefront_cms_history(text),public.storefront_cms_restore(text,uuid,bigint) TO authenticated;
 
--- Existing Supabase installations already have these metadata columns. IF NOT
--- EXISTS also keeps database-only development harnesses compatible with Storage.
-ALTER TABLE storage.buckets ADD COLUMN IF NOT EXISTS file_size_limit bigint;
-ALTER TABLE storage.buckets ADD COLUMN IF NOT EXISTS allowed_mime_types text[];
-INSERT INTO storage.buckets(id,name,public,file_size_limit,allowed_mime_types)
-  VALUES('storefront-media','storefront-media',true,5242880,ARRAY['image/png','image/jpeg','image/webp','image/avif','image/gif'])
-  ON CONFLICT(id) DO UPDATE SET public=true,file_size_limit=excluded.file_size_limit,allowed_mime_types=excluded.allowed_mime_types;
-CREATE FUNCTION public.storefront_cms_media_allowed(p_name text) RETURNS boolean
-LANGUAGE sql STABLE SECURITY DEFINER SET search_path=public AS $$
-  SELECT p_name ~ '^[0-9a-f-]{36}/[0-9a-f-]{36}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.(png|jpe?g|webp|avif|gif)$'
-    AND EXISTS(SELECT 1 FROM public.storefront_channels c
-      WHERE c.id::text=split_part(p_name,'/',2) AND c.tenant_id::text=split_part(p_name,'/',1)
-      AND public.storefront_cms_can_manage(c.id))
-$$;
-REVOKE ALL ON FUNCTION public.storefront_cms_media_allowed(text) FROM PUBLIC,anon;
-GRANT EXECUTE ON FUNCTION public.storefront_cms_media_allowed(text) TO authenticated;
-CREATE POLICY storefront_media_read ON storage.objects FOR SELECT TO authenticated
-  USING(bucket_id='storefront-media' AND public.storefront_cms_media_allowed(name));
-CREATE POLICY storefront_media_insert ON storage.objects FOR INSERT TO authenticated
-  WITH CHECK(bucket_id='storefront-media' AND public.storefront_cms_media_allowed(name));
-CREATE POLICY storefront_media_update ON storage.objects FOR UPDATE TO authenticated
-  USING(bucket_id='storefront-media' AND public.storefront_cms_media_allowed(name))
-  WITH CHECK(bucket_id='storefront-media' AND public.storefront_cms_media_allowed(name));
-CREATE POLICY storefront_media_delete ON storage.objects FOR DELETE TO authenticated
-  USING(bucket_id='storefront-media' AND public.storefront_cms_media_allowed(name));
+-- CMS media uses its own private table and the same owner/admin authorization.
+-- Files become publicly readable only through exact references in a publication.
+CREATE TABLE erp_private.storefront_media (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  channel_id uuid NOT NULL REFERENCES public.storefront_channels(id) ON DELETE CASCADE,
+  tenant_id uuid NOT NULL REFERENCES public.tenants(id),
+  mime text NOT NULL CHECK(mime IN ('image/png','image/jpeg','image/webp','image/avif','image/gif')),
+  data bytea NOT NULL CHECK(octet_length(data) BETWEEN 1 AND 5242880),
+  created_by uuid REFERENCES auth.users(id) ON DELETE SET NULL,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX storefront_media_channel ON erp_private.storefront_media(channel_id,created_at DESC);
+REVOKE ALL ON erp_private.storefront_media FROM PUBLIC,anon,authenticated;
+
+CREATE FUNCTION erp_private.storefront_media_image_signature(p_mime text,p_data bytea) RETURNS boolean
+LANGUAGE plpgsql IMMUTABLE SET search_path=public AS $$
+DECLARE box_size bigint; brand bytea; position integer;
+BEGIN
+  CASE p_mime
+    WHEN 'image/png' THEN RETURN encode(substring(p_data FROM 1 FOR 8),'hex')='89504e470d0a1a0a';
+    WHEN 'image/jpeg' THEN RETURN encode(substring(p_data FROM 1 FOR 3),'hex')='ffd8ff';
+    WHEN 'image/gif' THEN RETURN encode(substring(p_data FROM 1 FOR 6),'hex') IN ('474946383761','474946383961');
+    WHEN 'image/webp' THEN RETURN octet_length(p_data)>=12
+      AND encode(substring(p_data FROM 1 FOR 4),'hex')='52494646'
+      AND encode(substring(p_data FROM 9 FOR 4),'hex')='57454250';
+    WHEN 'image/avif' THEN
+      IF octet_length(p_data)<16 OR encode(substring(p_data FROM 5 FOR 4),'hex')<>'66747970' THEN RETURN false; END IF;
+      box_size:=get_byte(p_data,0)::bigint*16777216+get_byte(p_data,1)::bigint*65536+get_byte(p_data,2)::bigint*256+get_byte(p_data,3);
+      IF box_size<16 OR box_size>octet_length(p_data) OR box_size>1024 OR box_size%4<>0 THEN RETURN false; END IF;
+      brand:=substring(p_data FROM 9 FOR 4);
+      IF encode(brand,'hex') IN ('61766966','61766973') THEN RETURN true; END IF;
+      FOR position IN 17..(box_size::integer-3) BY 4 LOOP
+        IF encode(substring(p_data FROM position FOR 4),'hex') IN ('61766966','61766973') THEN RETURN true; END IF;
+      END LOOP;
+      RETURN false;
+    ELSE RETURN false;
+  END CASE;
+END $$;
+REVOKE ALL ON FUNCTION erp_private.storefront_media_image_signature(text,bytea) FROM PUBLIC,anon,authenticated;
+
+CREATE FUNCTION public.storefront_cms_upload(p_slug text,p_mime text,p_base64 text) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+DECLARE channel public.storefront_channels:=erp_private.storefront_cms_channel(p_slug); payload bytea; media_id uuid;
+BEGIN
+  IF p_mime IS NULL OR p_mime NOT IN ('image/png','image/jpeg','image/webp','image/avif','image/gif') THEN
+    RAISE EXCEPTION 'Envie uma imagem PNG, JPG, WebP, AVIF ou GIF.' USING ERRCODE='22023';
+  END IF;
+  IF p_base64 IS NULL OR length(p_base64) NOT BETWEEN 4 AND 7000000 OR length(p_base64)%4<>0
+    OR p_base64 !~ '^[A-Za-z0-9+/]*={0,2}$' THEN
+    RAISE EXCEPTION 'O arquivo de imagem é inválido ou excede o limite de 5 MB.' USING ERRCODE='22023';
+  END IF;
+  BEGIN payload:=decode(p_base64,'base64');
+  EXCEPTION WHEN OTHERS THEN RAISE EXCEPTION 'O arquivo de imagem é inválido.' USING ERRCODE='22023'; END;
+  IF octet_length(payload) NOT BETWEEN 1 AND 5242880 OR replace(encode(payload,'base64'),E'\n','')<>p_base64 THEN
+    RAISE EXCEPTION 'O arquivo de imagem é inválido ou excede o limite de 5 MB.' USING ERRCODE='22023';
+  END IF;
+  IF NOT erp_private.storefront_media_image_signature(p_mime,payload) THEN
+    RAISE EXCEPTION 'O conteúdo do arquivo não corresponde ao formato de imagem informado.' USING ERRCODE='22023';
+  END IF;
+  INSERT INTO erp_private.storefront_media(channel_id,tenant_id,mime,data,created_by)
+    VALUES(channel.id,channel.tenant_id,p_mime,payload,auth.uid()) RETURNING id INTO media_id;
+  RETURN jsonb_build_object('id',media_id,'path','/cms-media/'||media_id::text,'mime',p_mime,'bytes',octet_length(payload));
+END $$;
+
+CREATE FUNCTION public.storefront_media_get(p_slug text,p_media_id uuid) RETURNS jsonb
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=public AS $$
+DECLARE channel public.storefront_channels; media erp_private.storefront_media; media_path text; is_public boolean;
+BEGIN
+  SELECT * INTO channel FROM public.storefront_channels WHERE slug=p_slug;
+  IF channel.id IS NULL THEN RETURN NULL; END IF;
+  SELECT * INTO media FROM erp_private.storefront_media WHERE id=p_media_id AND channel_id=channel.id AND tenant_id=channel.tenant_id;
+  IF media.id IS NULL THEN RETURN NULL; END IF;
+  media_path:='/cms-media/'||media.id::text;
+  SELECT EXISTS(SELECT 1 FROM erp_private.storefront_content c WHERE c.channel_id=channel.id AND c.tenant_id=channel.tenant_id AND (
+    c.published->'values'->>'logo.url'=media_path
+    OR c.published->'values'->>'favicon.url'=media_path
+    OR c.published->'values'->>'story.image'=media_path
+    OR EXISTS(SELECT 1 FROM jsonb_array_elements(coalesce(c.published->'banners','[]'::jsonb)) banner WHERE banner->>'image'=media_path)
+  )) INTO is_public;
+  IF NOT is_public AND NOT public.storefront_cms_can_manage(channel.id) THEN RETURN NULL; END IF;
+  RETURN jsonb_build_object('id',media.id,'mime',media.mime,'base64',replace(encode(media.data,'base64'),E'\n',''),'bytes',octet_length(media.data));
+END $$;
+REVOKE ALL ON FUNCTION public.storefront_cms_upload(text,text,text),public.storefront_media_get(text,uuid) FROM PUBLIC,anon,authenticated;
+GRANT EXECUTE ON FUNCTION public.storefront_cms_upload(text,text,text) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.storefront_media_get(text,uuid) TO anon,authenticated;
