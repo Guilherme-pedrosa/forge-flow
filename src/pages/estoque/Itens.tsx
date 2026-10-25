@@ -1,4 +1,5 @@
 import { SearchableItemSelect } from "@/components/shared/SearchableItemSelect";
+import { MaterialColorPicker } from "@/components/estoque/MaterialColorPicker";
 import { orderRequest } from "@/lib/sales-order";
 import { DeleteRecordDialog, type DeleteTarget } from "@/components/shared/DeleteRecordDialog";
 import { Fragment, useState, useMemo, useRef } from "react";
@@ -378,7 +379,7 @@ export default function Itens() {
           <div><Label htmlFor="inventory-color">Nome da cor{formMode === "color" ? " *" : ""}</Label><Input id="inventory-color" value={color} onChange={e => setColor(e.target.value)} placeholder="Ex.: Branco" /></div>
           {materialCode === "OTHER" && <div className="sm:col-span-2"><Label htmlFor="inventory-composition">Composição / variante do material</Label><Input id="inventory-composition" value={materialDescription} onChange={e => setMaterialDescription(e.target.value)} placeholder="Informe a composição exata" /></div>}
           <div><Label htmlFor="inventory-color-code">Código da cor</Label><Input id="inventory-color-code" value={colorCode} onChange={e => setColorCode(e.target.value.toUpperCase())} placeholder="Ex.: WHITE ou código do fabricante" maxLength={64} /></div>
-          <div><Label htmlFor="inventory-color-hex">Amostra visual (opcional)</Label><div className="flex items-center gap-2"><span className="h-8 w-8 shrink-0 rounded-md border" style={{ backgroundColor: materialColorSwatch(colorHex) }} /><Input id="inventory-color-hex" value={colorHex} onChange={e => setColorHex(e.target.value.toUpperCase())} placeholder="#RRGGBB" maxLength={7} /></div></div>
+          <div><Label htmlFor="inventory-color-hex">Cor visual (opcional)</Label><MaterialColorPicker id="inventory-color-hex" value={{ hex: colorHex, name: color, code: colorCode }} onChange={value => { setColorHex(value.hex); setColor(value.name); setColorCode(value.code); }} /></div>
           <p className="sm:col-span-2 text-xs text-muted-foreground">Tipo e código da cor identificam o material nas receitas e impressões. Você pode registrar o estoque agora e completar a identificação depois.</p>
         </div>}
       </fieldset>
