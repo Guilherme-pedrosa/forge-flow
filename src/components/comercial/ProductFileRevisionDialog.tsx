@@ -63,7 +63,7 @@ export default function ProductFileRevisionDialog({ productId, tenantId, open, o
       const result = await rpc("apply_product_file_revision", { ...args, p_request_id: submission.current.id });
       if (result.error) throw new Error(result.error.message);
       if (typeof result.data !== "string") throw new Error("A revisão não foi confirmada. Confira as fontes antes de tentar novamente.");
-      await Promise.all(["product_print_sources", "product_print_plates", "product_material_recipe", "product_print_plate_preparation", "product_file_revision_context", "assembly_status", "products", "product_piece_specs", "product_workspace", "piece_spec", "product_plate_learning"].map(key => qc.invalidateQueries({ queryKey: [key] })));
+      await Promise.all(["product_print_sources", "product_print_plates", "product_material_recipe", "product_print_plate_preparation", "product_file_revision_context", "product_pricing_preview", "assembly_status", "products", "product_piece_specs", "product_workspace", "piece_spec", "product_plate_learning"].map(key => qc.invalidateQueries({ queryKey: [key] })));
       toast({ title: "Ficha de impressão atualizada", description: "A revisão anterior ficou no histórico. Os produtos, as peças e seus estoques foram preservados." });
       onOpenChange(false);
     } catch (err) { setError(err instanceof Error ? err.message : "Não foi possível aplicar a revisão."); }
