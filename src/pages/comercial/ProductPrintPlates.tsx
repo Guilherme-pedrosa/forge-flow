@@ -1,5 +1,5 @@
 import { SearchableItemSelect } from "@/components/shared/SearchableItemSelect";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import ProductMaterialRecipe, { fetchProductMaterialRecipe, fetchProductPlatePreparation } from "./ProductMaterialRecipe";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -9,6 +9,9 @@ import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
+import { PieceTechnicalSummary, type BambuLearningReference } from "@/components/production/PieceTechnicalSheet";
+import type { PieceMaterial } from "@/lib/piece-technical";
 import { useToast } from "@/hooks/use-toast";
 import { allRows } from "@/lib/finance";
 import { positiveInteger } from "@/lib/production";
@@ -22,8 +25,14 @@ type Plate = ProductPrintPlateValues & {
   actual_source: string | null; actual_updated_at: string | null; model_id: string | null; profile_id: string | null;
   imported_plate_metadata?: unknown; imported_filaments?: unknown;
 };
+type FileSource = { id: string; tenant_id: string; product_id: string; file_sha256: string | null; file_name: string | null; profile_id: string | null; is_active: boolean };
+type ExecutionBinding = { id: string; tenant_id: string; plate_id: string; source_id: string; file_sha256: string | null; remote_plate_index: number; confirmation: string; confirmed_at: string };
 type PlatesDatabase = { public: {
-  Tables: { product_print_plates: { Row: Plate; Insert: Partial<Plate>; Update: Partial<Plate>; Relationships: [] } };
+  Tables: {
+    product_print_plates: { Row: Plate; Insert: Partial<Plate>; Update: Partial<Plate>; Relationships: [] };
+    product_print_sources: { Row: FileSource; Insert: Partial<FileSource>; Update: Partial<FileSource>; Relationships: [] };
+    product_print_execution_bindings: { Row: ExecutionBinding; Insert: Partial<ExecutionBinding>; Update: Partial<ExecutionBinding>; Relationships: [] };
+  };
   Views: Record<string, never>; Functions: Record<string, never>; Enums: Record<string, never>; CompositeTypes: Record<string, never>;
 } };
 const db = supabase as unknown as SupabaseClient<PlatesDatabase>;
@@ -31,6 +40,34 @@ const rpc = supabase.rpc.bind(supabase) as unknown as (name: string, args: Recor
 const currency = (value: number | null) => value == null ? "Não informado" : value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const grams = (value: number | null) => value == null ? "Não informado" : `${value.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} g`;
 const initialDraft = () => ({ plate_index: "1", label: "", units_per_plate: "", material_id: "", printer_id: "", est_grams: "", est_time_minutes: "", est_cost_per_unit: "", model_id: "", profile_id: "" });
+
+function fileIdentity(plate: Plate | undefined, source?: FileSource) {
+  const metadata = plate?.imported_plate_metadata && typeof plate.imported_plate_metadata === "object" && !Array.isArray(plate.imported_plate_metadata)
+    ? plate.imported_plate_metadata as Record<string, unknown> : {};
+  const local = [source?.profile_id, metadata.file_profile_id, metadata.local_file_hash].filter((value): value is string => typeof value === "string" && value.startsWith("local:"));
+  const reported = typeof metadata.file_sha256 === "string" ? metadata.file_sha256.toLowerCase() : null;
+  const hash = source?.file_sha256?.toLowerCase() || null;
+  const required = !!hash || local.length > 0 || !!reported;
+  const valid = hash != null && /^[a-f0-9]{64}$/.test(hash) && (!reported || reported === hash) && local.every(value => value.slice(6).toLowerCase() === hash);
+  return { required, hash: valid ? hash : null, name: source?.file_name || "Arquivo desta fonte" };
+}
+
+type PlateLearning = BambuLearningReference & { source: "bambu"; grams: number | null; print_seconds: number | null; estimated_cost: number | null; materials: PieceMaterial[] };
+function PlateLearningReference({ tenantId, plateId, enabled, fallback }: { tenantId: string; plateId: string; enabled: boolean; fallback?: ReactNode }) {
+  const query = useQuery({ queryKey: ["product_plate_learning", tenantId, plateId], enabled,
+    queryFn: async () => {
+      const { data, error } = await rpc("product_plate_learning", { p_plate_id: plateId });
+      if (error) throw new Error(error.message);
+      const value = data as unknown as PlateLearning | null;
+      if (value != null && (typeof value !== "object" || value.source !== "bambu" || !Array.isArray(value.materials))) throw new Error("Referência de produção inválida.");
+      return value;
+    } });
+  if (!enabled) return fallback;
+  if (query.isLoading) return <p className="text-xs text-muted-foreground">Conferindo referências das impressões aprovadas…</p>;
+  if (query.error) return <><p role="alert" className="text-xs text-destructive">Não foi possível conferir a referência Bambu. <button type="button" className="underline" onClick={() => query.refetch()}>Tentar novamente</button></p>{fallback}</>;
+  if (!query.data) return fallback || <p className="text-xs text-muted-foreground">A referência Bambu aparece após apuração e aprovação na qualidade de uma execução deste arquivo e placa.</p>;
+  return <div className="rounded-md border bg-muted/30 p-3"><PieceTechnicalSummary spec={{ ...query.data, revision: null, learned_reference: query.data }} /></div>;
+}
 
 function PlatePreparationCosts({ tenantId, plateId }: { tenantId: string; plateId: string }) {
   const query = useQuery({ queryKey: ["product_print_plate_preparation", tenantId, plateId], queryFn: () => fetchProductPlatePreparation(plateId) });
@@ -72,6 +109,7 @@ export default function ProductPrintPlates({ productId, tenantId, sourceId, show
   const [bindingPlate, setBindingPlate] = useState<string | null>(null);
   const [taskId, setTaskId] = useState("");
   const [taskSearch, setTaskSearch] = useState("");
+  const [fileConfirmed, setFileConfirmed] = useState(false);
   const [recipeBusy, setRecipeBusy] = useState<Record<string, boolean>>({});
   const reportRecipeBusy = useCallback((id: string, busy: boolean) => setRecipeBusy(previous => previous[id] === busy ? previous : { ...previous, [id]: busy }), []);
   const [recipeDraft, setRecipeDraft] = useState<Record<string, boolean>>({});
@@ -82,7 +120,19 @@ export default function ProductPrintPlates({ productId, tenantId, sourceId, show
     queryFn: () => allRows((from, to) => db.from("product_print_plates").select("*").eq("tenant_id", tenantId).eq("product_id", productId).eq("is_active", true).order("plate_index").order("id").range(from, to)),
   });
   const plates = allPlates.filter(plate => plate.source_id === sourceId);
-  const total = sumProductPlateReferences(allPlates);
+  const sourcesQuery = useQuery({ queryKey: ["product_print_sources", tenantId, productId, "file-binding"], enabled: !!sourceId,
+    queryFn: () => allRows((from, to) => db.from("product_print_sources").select("id,tenant_id,product_id,file_sha256,file_name,profile_id,is_active").eq("tenant_id", tenantId).eq("product_id", productId).eq("is_active", true).order("id").range(from, to)) });
+  const sources = sourcesQuery.data || [];
+  const bindingsQuery = useQuery({ queryKey: ["product_print_execution_bindings", tenantId, productId], enabled: allPlates.length > 0,
+    queryFn: () => allRows((from, to) => db.from("product_print_execution_bindings").select("id,tenant_id,plate_id,source_id,file_sha256,remote_plate_index,confirmation,confirmed_at").eq("tenant_id", tenantId).in("plate_id", allPlates.map(plate => plate.id)).order("confirmed_at", { ascending: false }).order("id").range(from, to)) });
+  const total = sumProductPlateReferences(allPlates.map(plate => fileIdentity(plate, sources.find(source => source.id === plate.source_id)).required ? { ...plate, actual_sample_units: 0 } : plate));
+  const boundPlate = allPlates.find(plate => plate.id === bindingPlate);
+  const boundSource = sources.find(source => source.id === boundPlate?.source_id);
+  const boundFile = fileIdentity(boundPlate, boundSource);
+  const sourcePending = !!boundPlate?.source_id && sourcesQuery.isPending;
+  const sourceUnavailable = !!boundPlate?.source_id && !sourcePending && (!!sourcesQuery.error || !boundSource);
+  useEffect(() => { setFileConfirmed(false); }, [bindingPlate, boundFile.hash]);
+  useEffect(() => { setBindingPlate(null); setTaskId(""); setTaskSearch(""); setFileConfirmed(false); }, [productId, sourceId, tenantId]);
   const recipePreview = useQuery({ queryKey: ["product_material_recipe", tenantId, productId], queryFn: () => fetchProductMaterialRecipe(productId) });
   const { data: materials = [], error: materialError } = useQuery({
     queryKey: ["print_plate_materials", tenantId],
@@ -107,6 +157,9 @@ export default function ProductPrintPlates({ productId, tenantId, sourceId, show
       qc.invalidateQueries({ queryKey: ["product_print_plate_preparation", tenantId] }),
       qc.invalidateQueries({ queryKey: ["assembly_status", tenantId, productId] }),
       qc.invalidateQueries({ queryKey: ["products"] }),
+      qc.invalidateQueries({ queryKey: ["piece_spec", tenantId] }),
+      qc.invalidateQueries({ queryKey: ["product_plate_learning", tenantId] }),
+      qc.invalidateQueries({ queryKey: ["product_print_execution_bindings", tenantId] }),
     ]);
   };
   const save = useMutation({
@@ -132,8 +185,9 @@ export default function ProductPrintPlates({ productId, tenantId, sourceId, show
     },
     onSuccess: id => {
       const alreadyBound = !!editing?.model_id && !!editing?.profile_id;
-      reset(); void refresh(); setBindingPlate(alreadyBound || !sourceId ? null : id); setTaskId(""); setTaskSearch("");
-      toast({ title: "Placa salva", description: alreadyBound ? "Dados atualizados. O vínculo com a impressão foi preservado." : sourceId ? "Vincule a impressão Bambu correspondente a esta placa." : "Prepare os materiais e o rendimento do componente. O arquivo pode ser vinculado depois." });
+      const fileBased = !!sources.find(source => source.id === sourceId)?.file_sha256;
+      reset(); void refresh(); setBindingPlate(alreadyBound || fileBased || !sourceId ? null : id); setTaskId(""); setTaskSearch(""); setFileConfirmed(false);
+      toast({ title: "Placa salva", description: fileBased ? "Dados atualizados. Confirme a execução Bambu quando ela estiver disponível." : alreadyBound ? "Dados atualizados. O vínculo com a impressão foi preservado." : sourceId ? "Vincule a impressão Bambu correspondente a esta placa." : "Prepare os materiais e o rendimento do componente. O arquivo pode ser vinculado depois." });
     },
     onError: (err: Error) => toast({ title: "Não foi possível salvar a placa", description: err.message, variant: "destructive" }),
   });
@@ -147,13 +201,17 @@ export default function ProductPrintPlates({ productId, tenantId, sourceId, show
   });
   const bind = useMutation({
     mutationFn: async () => {
-      if (!bindingPlate || !selectedTask) throw new Error("Selecione a impressão Bambu desta placa.");
-      const { data, error: bindError } = await rpc("bind_product_print_plate", { p_plate_id: bindingPlate, p_task_id: selectedTask.id });
+      if (!bindingPlate || !boundPlate || !selectedTask) throw new Error("Selecione a impressão Bambu desta placa.");
+      if (sourcePending || sourceUnavailable) throw new Error("Confira a fonte ativa antes de confirmar esta impressão.");
+      if (boundFile.required && (!boundFile.hash || !fileConfirmed)) throw new Error("Confirme que esta impressão usou o arquivo ativo e esta placa.");
+      const { data, error: bindError } = boundFile.required
+        ? await rpc("bind_file_plate_execution", { p_plate_id: bindingPlate, p_task_id: selectedTask.id, p_file_sha256: boundFile.hash })
+        : await rpc("bind_product_print_plate", { p_plate_id: bindingPlate, p_task_id: selectedTask.id });
       if (bindError) throw new Error(bindError.message);
       if (!data) throw new Error("O vínculo não foi confirmado. Atualize a lista antes de tentar novamente.");
     },
-    onSuccess: () => { void refresh(); setBindingPlate(null); setTaskId(""); toast({ title: "Impressão vinculada à placa" }); },
-    onError: (err: Error) => toast({ title: "Não foi possível vincular esta placa", description: err.message, variant: "destructive" }),
+    onSuccess: () => { void refresh(); setBindingPlate(null); setTaskId(""); setFileConfirmed(false); toast({ title: "Impressão vinculada à placa" }); },
+    onError: (err: Error) => { void sourcesQuery.refetch(); void refetch(); toast({ title: "Não foi possível vincular esta placa", description: err.message, variant: "destructive" }); },
   });
   const busy = save.isPending || archive.isPending || bind.isPending || Object.values(recipeBusy).some(Boolean);
   useEffect(() => { onBusyChange?.(sourceId || "manual", busy); return () => onBusyChange?.(sourceId || "manual", false); }, [busy, onBusyChange, sourceId]);
@@ -191,25 +249,32 @@ export default function ProductPrintPlates({ productId, tenantId, sourceId, show
       const recipe = recipePreview.data?.plates.find(value => value.id === plate.id)?.recipe;
       const filaments = importedPlateFilaments(plate.imported_filaments);
       const observed = observedPlateFilaments(plate.imported_plate_metadata);
+      const file = fileIdentity(plate, sources.find(source => source.id === plate.source_id));
+      const confirmations = (bindingsQuery.data || []).filter(value => value.plate_id === plate.id && value.source_id === plate.source_id && (!file.required || !!file.hash && value.file_sha256?.toLowerCase() === file.hash));
       return <article key={plate.id} className="rounded-lg border bg-background p-3 space-y-2">
         <div className="flex items-start justify-between gap-2"><div className="min-w-0"><p className="text-sm font-medium break-words">Placa {plate.plate_index} · {plate.label || "Sem nome"}</p>{plate.units_per_plate == null ? <p className="text-xs text-amber-800 dark:text-amber-300">Em preparação · rendimento por impressão pendente</p> : <p className="text-xs text-muted-foreground">Cada impressão atende {plate.units_per_plate} {plate.units_per_plate === 1 ? "unidade" : "unidades"} do produto.</p>}</div>
           <div className="flex shrink-0"><Button type="button" size="icon" variant="ghost" className="h-11 w-11" aria-label={`Editar placa ${plate.plate_index}`} disabled={busy} onClick={() => editPlate(plate)}><Pencil className="h-3.5 w-3.5" /></Button><Button type="button" size="icon" variant="ghost" className="h-11 w-11" aria-label={`Arquivar placa ${plate.plate_index}`} disabled={busy} onClick={() => archive.mutate(plate.id)}><Archive className="h-3.5 w-3.5" /></Button></div>
         </div>
         <p className="flex flex-wrap gap-x-3 gap-y-1 text-sm font-medium"><span>{grams(plate.est_grams)}</span><span>{formatProductionSeconds(plate.est_time_seconds)}</span><span className="text-xs font-normal text-muted-foreground">por impressão</span></p>
-        {[{ label: "Material do arquivo", rows: filaments }, { label: "Material usado nesta impressão", rows: observed }].filter(group => group.rows.length > 0).map(group => <div key={group.label} className="space-y-1"><p className="text-xs text-muted-foreground">{group.label}</p><div className="flex flex-wrap gap-1.5">{group.rows.map((filament, index) => <span key={index} className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md bg-muted/50 px-2 py-1 text-xs"><span aria-hidden="true" className="h-3 w-3 shrink-0 rounded-full border" style={{ backgroundColor: importedColorHex(filament.color) || "transparent" }} /><span className="break-words">{importedFilamentLabel(filament)}</span><span className="shrink-0 tabular-nums">{filament.grams == null ? "— g" : grams(filament.grams)}</span></span>)}</div></div>)}
+        {[{ label: "Material do arquivo", rows: filaments }, { label: "Material informado pelo Bambu", rows: observed }].filter(group => group.rows.length > 0).map(group => <div key={group.label} className="space-y-1"><p className="text-xs text-muted-foreground">{group.label}</p><div className="flex flex-wrap gap-1.5">{group.rows.map((filament, index) => <span key={index} className="inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md bg-muted/50 px-2 py-1 text-xs"><span aria-hidden="true" className="h-3 w-3 shrink-0 rounded-full border" style={{ backgroundColor: importedColorHex(filament.color) || "transparent" }} /><span className="break-words">{importedFilamentLabel(filament)}</span><span className="shrink-0 tabular-nums">{filament.grams == null ? "— g" : grams(filament.grams)}</span></span>)}</div></div>)}
         <PlateRecipe productId={productId} tenantId={tenantId} plateId={plate.id} importedFilaments={plate.imported_filaments} importedPlateMetadata={plate.imported_plate_metadata} onBusy={reportRecipeBusy} onDraft={reportRecipeDraft} />
         <details className="text-xs"><summary className="cursor-pointer py-1 text-muted-foreground">Custos, impressora e histórico</summary><div className="mt-2 space-y-3">
         <p className="text-muted-foreground">{printers.find(printer => printer.id === plate.printer_id)?.name || (plate.printer_id ? "Impressora arquivada" : "Impressora a definir")}</p>
         <p>{recipe ? "Custo atual da composição / unidade" : "Estimativa anterior / unidade"}: <strong>{currency(recipe ? (recipePreview.error ? null : recipe.cost_per_unit) : plate.est_cost_per_unit)}</strong></p>
         {(filaments.length > 0 || !!plate.imported_plate_metadata) && <PlatePreparationCosts tenantId={tenantId} plateId={plate.id} />}
-        {actual && <div className="rounded-md bg-muted/40 p-2.5 text-xs space-y-1"><p className="font-medium">Referência da produção desta placa · {actual.sampleUnits.toLocaleString("pt-BR")} unidades contabilizadas</p><p>{actual.gramsLabel} · {actual.durationLabel} de tempo decorrido · {actual.costLabel} por unidade do produto</p><p className="text-muted-foreground">{actual.materialSource}</p>{actual.updatedLabel && <p className="text-muted-foreground">Atualizada em {actual.updatedLabel}</p>}</div>}
-        <Button type="button" size="sm" variant="outline" className="h-auto min-h-9 max-w-full whitespace-normal py-2 text-left" disabled={busy} onClick={() => { setBindingPlate(plate.id); setTaskId(""); setTaskSearch(""); }}><Printer className="mr-1 h-3.5 w-3.5 shrink-0" /> Vincular impressão desta placa</Button>
+        <PlateLearningReference tenantId={tenantId} plateId={plate.id} enabled={file.required || !!actual} fallback={!file.required && actual && <div className="rounded-md bg-muted/40 p-2.5 text-xs space-y-1"><p className="font-medium">Referência da produção desta placa · {actual.sampleUnits.toLocaleString("pt-BR")} unidades contabilizadas</p><p>{actual.gramsLabel} · {actual.durationLabel} de tempo decorrido · {actual.costLabel} por unidade do produto</p><p className="text-muted-foreground">{actual.materialSource}</p>{actual.updatedLabel && <p className="text-muted-foreground">Atualizada em {actual.updatedLabel}</p>}</div>} />
+        {confirmations.length > 0 && <div className="rounded-md border p-3 text-xs"><p className="font-medium">{file.required ? "Arquivo e placa confirmados com o Bambu" : "Configuração Bambu confirmada"}</p>{confirmations.map(value => <p key={value.id}>Placa Bambu {value.remote_plate_index}{value.confirmed_at && Number.isFinite(new Date(value.confirmed_at).getTime()) ? ` · ${new Date(value.confirmed_at).toLocaleString("pt-BR")}` : ""}</p>)}</div>}
+        {bindingsQuery.error && <p role="alert" className="text-xs text-destructive">Não foi possível conferir as confirmações Bambu. <button type="button" className="underline" onClick={() => bindingsQuery.refetch()}>Tentar novamente</button></p>}
+        <Button type="button" size="sm" variant="outline" className="h-auto min-h-9 max-w-full whitespace-normal py-2 text-left" disabled={busy} onClick={() => { setBindingPlate(plate.id); setTaskId(""); setTaskSearch(""); setFileConfirmed(false); }}><Printer className="mr-1 h-3.5 w-3.5 shrink-0" /> Vincular impressão desta placa</Button>
         {bindingPlate === plate.id && <div className="border-t pt-3 space-y-2">
           <div className="flex items-center justify-between gap-2"><p className="text-xs font-medium">Escolha uma execução desta placa</p><Button type="button" size="icon" variant="ghost" className="h-11 w-11" aria-label="Fechar vínculo da placa" disabled={bind.isPending} onClick={() => { setBindingPlate(null); setTaskId(""); setTaskSearch(""); }}><X className="h-4 w-4" /></Button></div>
-          <div><Label htmlFor={`plate-search-${plate.id}`}>Buscar impressão</Label><Input id={`plate-search-${plate.id}`} value={taskSearch} onChange={event => { setTaskSearch(event.target.value); setTaskId(""); }} disabled={busy} placeholder="Nome, impressora ou ID Bambu" /></div>
-          {tasksError ? <p role="alert" className="text-xs text-destructive">Não foi possível carregar o histórico. <Button type="button" size="sm" variant="ghost" onClick={() => refetchTasks()}>Tentar novamente</Button></p> : <div><Label htmlFor={`plate-task-${plate.id}`}>Impressão Bambu da placa {plate.plate_index}</Label><select id={`plate-task-${plate.id}`} className="h-11 w-full min-w-0 rounded-md border bg-background px-3 text-sm" value={taskId} onChange={event => setTaskId(event.target.value)} disabled={busy || tasksLoading}><option value="">{tasksLoading ? "Carregando…" : "Selecione a impressão desta placa"}</option>{filteredTasks.map(task => <option key={task.id} value={task.id}>{task.design_title || "Sem título"} · {task.start_time ? new Date(task.start_time).toLocaleDateString("pt-BR") : "Sem data"} · {task.bambu_devices?.name || "Impressora"} · #{task.bambu_task_id}</option>)}</select></div>}
+          <div><Label htmlFor={`plate-search-${plate.id}`}>Buscar impressão</Label><Input id={`plate-search-${plate.id}`} value={taskSearch} onChange={event => { setTaskSearch(event.target.value); setTaskId(""); setFileConfirmed(false); }} disabled={busy} placeholder="Nome, impressora ou ID Bambu" /></div>
+          {tasksError ? <p role="alert" className="text-xs text-destructive">Não foi possível carregar o histórico. <Button type="button" size="sm" variant="ghost" onClick={() => refetchTasks()}>Tentar novamente</Button></p> : <div><Label htmlFor={`plate-task-${plate.id}`}>Impressão Bambu da placa {plate.plate_index}</Label><select id={`plate-task-${plate.id}`} className="h-11 w-full min-w-0 rounded-md border bg-background px-3 text-sm" value={taskId} onChange={event => { setTaskId(event.target.value); setFileConfirmed(false); }} disabled={busy || tasksLoading}><option value="">{tasksLoading ? "Carregando…" : "Selecione a impressão desta placa"}</option>{filteredTasks.map(task => <option key={task.id} value={task.id}>{task.design_title || "Sem título"} · {task.start_time ? new Date(task.start_time).toLocaleDateString("pt-BR") : "Sem data"} · {task.bambu_devices?.name || "Impressora"} · #{task.bambu_task_id}</option>)}</select></div>}
           {selectedTask && <p className="text-xs leading-relaxed text-muted-foreground">{selectedTask.design_title || "Sem título"} · #{selectedTask.bambu_task_id}. Confirme que esta execução corresponde à placa {plate.plate_index}. O vínculo identifica a placa; consumo e quantidade continuam sujeitos à apuração.</p>}
-          <Button type="button" size="sm" className="h-auto min-h-9 max-w-full whitespace-normal py-2 text-left" disabled={busy || !selectedTask || !!tasksError} onClick={() => bind.mutate()}>{bind.isPending && <Loader2 className="mr-1 h-4 w-4 shrink-0 animate-spin" />} Confirmar vínculo desta placa</Button>
+          {sourcePending && <p className="text-xs text-muted-foreground">Conferindo o arquivo ativo desta placa…</p>}
+          {sourceUnavailable && <p role="alert" className="text-xs text-destructive">Não foi possível conferir a fonte ativa desta placa. <button type="button" className="underline" onClick={() => sourcesQuery.refetch()}>Tentar novamente</button></p>}
+          {boundFile.required && !sourcePending && !sourceUnavailable && (boundFile.hash ? <div className="space-y-2 rounded-md border p-3"><p className="break-all text-xs">{boundFile.name} · placa {plate.plate_index}</p><div className="flex items-start gap-2"><Checkbox id={`confirm-file-${plate.id}`} className="mt-1 shrink-0" checked={fileConfirmed} onCheckedChange={value => setFileConfirmed(value === true)} disabled={busy || !selectedTask} /><Label htmlFor={`confirm-file-${plate.id}`} className="min-w-0 text-sm leading-relaxed">Esta impressão foi feita com este arquivo e esta placa</Label></div></div> : <p role="alert" className="text-xs text-destructive">O arquivo ativo ainda não está verificado ou mudou de revisão. Atualize o arquivo desta fonte antes de confirmar a impressão.</p>)}
+          <Button type="button" size="sm" className="h-auto min-h-9 max-w-full whitespace-normal py-2 text-left" disabled={busy || !selectedTask || !!tasksError || sourcePending || sourceUnavailable || boundFile.required && (!boundFile.hash || !fileConfirmed)} onClick={() => bind.mutate()}>{bind.isPending && <Loader2 className="mr-1 h-4 w-4 shrink-0 animate-spin" />} Confirmar vínculo desta placa</Button>
         </div>}
         <p className="text-muted-foreground">Gramas e tempos importados são previsões do fatiamento. A apuração registra o consumo e a duração da execução.</p></div></details>
       </article>;
@@ -227,7 +292,7 @@ export default function ProductPrintPlates({ productId, tenantId, sourceId, show
         {field("est_time_minutes", "Tempo estimado por impressão (min)", { type: "number", min: 0, step: "0.01" })}
         {field("est_cost_per_unit", "Custo estimado por unidade do produto (R$)", { type: "number", min: 0, step: "0.01" })}
       </div>
-      <details className="rounded-lg border p-3 text-xs space-y-2"><summary className="cursor-pointer font-medium">Detalhes técnicos do vínculo Bambu</summary><p className="text-muted-foreground">Preenchidos a partir da impressão vinculada.</p>{(draft.model_id || draft.profile_id) && <dl className="grid grid-cols-1 gap-2 sm:grid-cols-2"><div><dt className="text-muted-foreground">Model ID da placa</dt><dd className="break-all font-mono">{draft.model_id || "Não vinculado"}</dd></div><div><dt className="text-muted-foreground">Profile ID da placa</dt><dd className="break-all font-mono">{draft.profile_id || "Não vinculado"}</dd></div></dl>}</details>
+      <details className="rounded-lg border p-3 text-xs space-y-2"><summary className="cursor-pointer font-medium">{fileIdentity(editing || undefined, sources.find(source => source.id === sourceId)).required ? "Identificação da placa importada" : "Detalhes técnicos do vínculo Bambu"}</summary><p className="text-muted-foreground">{fileIdentity(editing || undefined, sources.find(source => source.id === sourceId)).required ? "As execuções confirmadas aparecem no histórico da placa." : "Preenchidos a partir da impressão vinculada."}</p>{(draft.model_id || draft.profile_id) && <dl className="grid grid-cols-1 gap-2 sm:grid-cols-2"><div><dt className="text-muted-foreground">Model ID da placa</dt><dd className="break-all font-mono">{draft.model_id || "Não vinculado"}</dd></div><div><dt className="text-muted-foreground">Profile ID da placa</dt><dd className="break-all font-mono">{draft.profile_id || "Não vinculado"}</dd></div></dl>}</details>
       <div className="flex flex-wrap justify-end gap-2"><Button type="button" size="sm" className="min-h-11" variant="outline" disabled={save.isPending} onClick={reset}>Cancelar placa</Button><Button type="button" size="sm" className="min-h-11" disabled={busy} onClick={() => save.mutate()}>{save.isPending && <Loader2 className="mr-1 h-4 w-4 animate-spin" />} Salvar placa</Button></div>
     </div>}
   </section>;
