@@ -22,4 +22,6 @@ jobs:
       - run: npm run test:database
       - run: npm run test:assembly
       - run: npm run test:lorace
+      - run: npm run test:slicer
+      - run: npm run build:worker
       - run: npm run build
