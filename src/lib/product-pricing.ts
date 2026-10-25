@@ -108,10 +108,16 @@ export async function previewProductPricing(productId: string, quantity: number,
   return result;
 }
 export async function saveProductPricingPlan(productId: string, plan: PricingPlan, revision: string, requestId: string) {
-  return rpc("save_product_pricing_plan", { p_product_id: productId, p_plan: plan, p_expected_revision: revision, p_request_id: requestId });
+  const result = await rpc("save_product_pricing_plan", { p_product_id: productId, p_plan: plan, p_expected_revision: revision, p_request_id: requestId });
+  return confirmedWrite(result);
 }
 export async function applyProductPricing(productId: string, quantity: number, overrides: PricingPlan, revision: string, price: number, requestId: string) {
-  return rpc("apply_product_pricing", { p_product_id: productId, p_quantity: quantity, p_overrides: overrides, p_expected_revision: revision, p_unit_price: price, p_request_id: requestId });
+  const result = await rpc("apply_product_pricing", { p_product_id: productId, p_quantity: quantity, p_overrides: overrides, p_expected_revision: revision, p_unit_price: price, p_request_id: requestId });
+  return confirmedWrite(result);
+}
+function confirmedWrite(result: unknown): string {
+  if (typeof result !== "string" || !result.trim()) throw new Error("O salvamento da precificação não foi confirmado. Tente novamente.");
+  return result;
 }
 
 /** A child product may have its own plates; preserve the tree's individual rates. */

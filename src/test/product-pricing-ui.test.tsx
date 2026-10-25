@@ -134,4 +134,51 @@ describe("pricing from the saved product structure", () => {
     fireEvent.click(screen.getByRole("button", { name: "Atualizar prévia" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Aplicar custo e preço ao cadastro" })).toBeEnabled());
   });
+  it.each([
+    ["save_product_pricing_plan", "Salvar tempos e insumos do produto", "Plano salvo.", "empty"],
+    ["apply_product_pricing", "Aplicar custo e preço ao cadastro", "Custo e preço aplicados", "empty"],
+    ["save_product_pricing_plan", "Salvar tempos e insumos do produto", "Plano salvo.", "network"],
+    ["apply_product_pricing", "Aplicar custo e preço ao cadastro", "Custo e preço aplicados", "network"],
+  ])("recovers an uncertain %s response (%s) with one server acceptance", async (operation, label, success, failure) => {
+    mount(); await screen.findByText("Peças e placas que formam Maçã");
+    const original = mock.rpc.getMockImplementation()!;
+    const accepted = new Set<string>();
+    let attempts = 0;
+    mock.rpc.mockImplementation(async (name: string, args: Record<string, unknown>) => {
+      if (name !== operation) return original(name, args);
+      accepted.add(args.p_request_id as string);
+      if (operation === "save_product_pricing_plan") mock.saved = args.p_plan as Record<string, unknown>;
+      attempts++;
+      if (attempts === 1 && failure === "network") throw new Error("Conexão interrompida após confirmar no servidor.");
+      return { data: attempts === 1 ? null : "00000000-0000-4000-8000-000000000099", error: null };
+    });
+    fireEvent.click(screen.getByRole("button", { name: label }));
+    await screen.findByText(failure === "network" ? "Conexão interrompida após confirmar no servidor." : "O salvamento da precificação não foi confirmado. Tente novamente.");
+    expect(screen.queryByText(new RegExp(success))).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: label }));
+    await screen.findByText(new RegExp(success));
+    const writes = mock.rpc.mock.calls.filter(([name]) => name === operation);
+    expect(writes).toHaveLength(2);
+    expect(writes[0][1].p_request_id).toBe(writes[1][1].p_request_id);
+    expect(writes[0][1].p_expected_revision).toBe(writes[1][1].p_expected_revision);
+    expect(accepted.size).toBe(1);
+  });
+  it("starts a new acceptance when the price changes after an uncertain attempt", async () => {
+    mount(); await screen.findByText("Peças e placas que formam Maçã");
+    const original = mock.rpc.getMockImplementation()!;
+    let attempts = 0;
+    mock.rpc.mockImplementation((name: string, args: Record<string, unknown>) => {
+      if (name !== "apply_product_pricing") return original(name, args);
+      attempts++;
+      return Promise.resolve({ data: attempts === 1 ? null : "00000000-0000-4000-8000-000000000099", error: null });
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Aplicar custo e preço ao cadastro" }));
+    await screen.findByText("O salvamento da precificação não foi confirmado. Tente novamente.");
+    set("Preço alvo por unidade (R$)", "31");
+    fireEvent.click(screen.getByRole("button", { name: "Aplicar custo e preço ao cadastro" }));
+    await screen.findByText("Custo e preço aplicados ao cadastro do produto.");
+    const writes = mock.rpc.mock.calls.filter(([name]) => name === "apply_product_pricing");
+    expect(writes[0][1].p_request_id).not.toBe(writes[1][1].p_request_id);
+    expect(writes[1][1].p_unit_price).toBe(31);
+  });
 });

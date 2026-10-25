@@ -50,4 +50,9 @@ describe("saved-product pricing contract", () => {
     expect(mock.rpc).toHaveBeenLastCalledWith("apply_product_pricing", { p_product_id: "product", p_quantity: 2, p_overrides: { cost_basis: "unit" }, p_expected_revision: "quote-1", p_unit_price: 20, p_request_id: "request-apply" });
     expect(mock.rpc.mock.calls.map(([name]) => name)).toEqual(["product_pricing_preview", "save_product_pricing_plan", "apply_product_pricing"]);
   });
+  it.each([null, undefined, "", "  ", 0, {}])("rejects missing or invalid write confirmations (%j) for both pricing operations", async data => {
+    mock.rpc.mockResolvedValue({ data, error: null });
+    await expect(saveProductPricingPlan("product", {}, "plan-1", "request-plan")).rejects.toThrow(/não foi confirmado/);
+    await expect(applyProductPricing("product", 2, {}, "preview-1", 20, "request-apply")).rejects.toThrow(/não foi confirmado/);
+  });
 });

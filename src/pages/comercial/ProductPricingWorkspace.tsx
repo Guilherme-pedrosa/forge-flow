@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { allRows } from "@/lib/finance";
 import { priceChannel } from "@/lib/channel-pricing";
 import { readPricingSettings } from "@/lib/pricing-policy";
+import { orderRequest } from "@/lib/sales-order";
 import {
   applyProductPricing, costLabels, previewProductPricing, pricingNumber, pricingProductionRows,
   readProductPricingPlan, saveProductPricingPlan,
@@ -61,6 +62,8 @@ function ProductPricingSession({ productId }: { productId: string }) {
   const [message, setMessage] = useState("");
   const [target, setTarget] = useState("");
   const [channel, setChannel] = useState("factory");
+  const saveRequest = useRef<ReturnType<typeof orderRequest> | null>(null);
+  const applyRequest = useRef<ReturnType<typeof orderRequest> | null>(null);
   const [channelInputs, setChannelInputs] = useState({ commissionPercent: "0", taxPercent: "0", fixedFeePerOrder: "0", sellerShippingPerOrder: "0", advertisingPerOrder: "0", otherCostPerOrder: "0", variableUnitCost: "" });
   const quantity = /^\d+$/.test(quantityInput) ? Number(quantityInput) : 0;
   const validQuantity = quantity >= 1 && quantity <= 10000;
@@ -112,7 +115,9 @@ function ProductPricingSession({ productId }: { productId: string }) {
   const savePlan = useMutation({
     mutationFn: async () => {
       if (!plan.data || fieldError || !validPlan) throw new Error("Confira os parâmetros antes de salvar.");
-      await saveProductPricingPlan(productId, { ...effectivePlan, cost_basis: basis }, plan.data.revision, crypto.randomUUID());
+      const payload = { tenant, productId, plan: { ...effectivePlan, cost_basis: basis }, revision: plan.data.revision };
+      saveRequest.current = orderRequest(saveRequest.current, JSON.stringify(payload));
+      await saveProductPricingPlan(productId, payload.plan, payload.revision, saveRequest.current.id);
       const saved = await readProductPricingPlan(productId);
       qc.setQueryData(["product_pricing_plan", tenant, productId], saved);
       setChanges({});
@@ -124,7 +129,9 @@ function ProductPricingSession({ productId }: { productId: string }) {
   const apply = useMutation({
     mutationFn: async () => {
       if (!canApply || !result || selectedPrice == null) throw new Error("Atualize a prévia e resolva as pendências antes de aplicar.");
-      await applyProductPricing(productId, quantity, overrides, result.revision, selectedPrice, crypto.randomUUID());
+      const payload = { tenant, productId, quantity, overrides, revision: result.revision, price: selectedPrice };
+      applyRequest.current = orderRequest(applyRequest.current, JSON.stringify(payload));
+      await applyProductPricing(productId, quantity, overrides, result.revision, selectedPrice, applyRequest.current.id);
       await Promise.all([qc.invalidateQueries({ queryKey: ["product_pricing_plan", tenant, productId] }), invalidatePricing()]);
     },
     onSuccess: () => setMessage("Custo e preço aplicados ao cadastro do produto."),
