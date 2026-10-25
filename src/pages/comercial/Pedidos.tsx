@@ -505,7 +505,7 @@ export default function Pedidos() {
 
       {/* CREATE ORDER DIALOG */}
       <Dialog open={createOpen} onOpenChange={open => { if (!formPending) setCreateOpen(open); }}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-hidden flex flex-col w-[95vw] sm:w-auto">
+        <DialogContent className="flex max-h-[90dvh] w-[96vw] max-w-3xl flex-col overflow-hidden">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2"><ShoppingCart className="h-5 w-5 text-primary" /> Novo pedido</DialogTitle>
             <DialogDescription>{workflowAvailable ? "Informe os itens e o prazo. Confirme para usar estoque pronto ou organizar a produção; você também pode salvar um rascunho." : "Informe os itens e salve o rascunho. Depois, siga as ações de aprovação e produção do pedido."}</DialogDescription>
@@ -595,7 +595,7 @@ export default function Pedidos() {
 
       {/* VIEW / EDIT ORDER DIALOG */}
       <Dialog open={!!viewOrderId} onOpenChange={(o) => { if (!o && !formPending) { setViewOrderId(null); setEditMode(false); setEditingDeadlines(false); } }}>
-        <DialogContent className={cn("w-[95vw] sm:w-auto", editMode ? "max-w-3xl max-h-[90vh] overflow-hidden flex flex-col" : "max-w-2xl max-h-[90dvh] overflow-y-auto")}>
+        <DialogContent className={cn("w-[96vw]", editMode ? "max-w-3xl max-h-[90dvh] overflow-hidden flex flex-col" : "max-w-2xl max-h-[90dvh] overflow-y-auto")}>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <FileText className="h-5 w-5 text-primary" />
@@ -634,7 +634,7 @@ export default function Pedidos() {
                           }
                         }}
                       >
-                        <SelectTrigger className="w-[220px]" disabled={updateStatusMut.isPending}>
+                        <SelectTrigger className="w-full sm:w-[220px]" disabled={updateStatusMut.isPending}>
                           <SelectValue placeholder="Selecione o status" />
                         </SelectTrigger>
                         <SelectContent>

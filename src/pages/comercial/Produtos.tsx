@@ -849,7 +849,7 @@ ${selected?.name ? `Perfil: ${selected.name}
   const tabClass = "m-0 space-y-5 data-[state=inactive]:hidden";
   const formFields = (
     <Tabs value={formTab} onValueChange={setFormTab} className="flex min-h-0 flex-1 flex-col gap-4 md:flex-row">
-      <TabsList aria-label="Cadastro do produto" className="h-auto shrink-0 justify-start gap-1 overflow-x-auto bg-muted/40 p-2 md:w-44 md:flex-col md:items-stretch md:self-start">
+      <TabsList aria-label="Cadastro do produto" className="h-auto w-full min-w-0 max-w-full shrink-0 justify-start gap-1 overflow-x-auto bg-muted/40 p-2 md:w-44 md:flex-col md:items-stretch md:self-start">
         {[['dados','Dados'],['valores','Valores'],['estoque','Estoque'],['embalagem','Embalagem para envio'],['fotos','Fotos'],['producao','Composição / produção']].map(([value,label]) => <TabsTrigger className="justify-start whitespace-nowrap px-4 py-3 md:whitespace-normal" key={value} value={value}>{label}</TabsTrigger>)}
       </TabsList>
       <div ref={formScrollRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto px-1 pb-4">
@@ -873,7 +873,7 @@ ${selected?.name ? `Perfil: ${selected.name}
       </TabsContent>
       <TabsContent forceMount value="valores" className={tabClass}>
         <div><h3 className="text-lg font-semibold">Custo e preço de venda</h3><p className="text-sm text-muted-foreground">Informe o custo pago, acrescente despesas e defina o valor de venda.</p></div>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div><Label htmlFor="product-cost">Preço de custo (R$)</Label><Input id="product-cost" inputMode="decimal" value={costEstimate} onChange={e => setCostEstimate(e.target.value)} placeholder="0,00" />{editItem?.recipe_cost != null && <p className="mt-1 text-xs text-muted-foreground">Custo calculado da composição: {fmtCurrency(editItem.recipe_cost)}. <button type="button" className="underline text-primary" onClick={() => setCostEstimate(String(editItem.recipe_cost))}>Usar este valor</button></p>}</div>
         <div><Label htmlFor="product-price">Preço unitário (R$)</Label><Input id="product-price" inputMode="decimal" value={salePrice} onChange={(e) => setSalePrice(e.target.value)} placeholder="39.90" /></div>
       </div>
@@ -884,8 +884,8 @@ ${selected?.name ? `Perfil: ${selected.name}
         <div className="grid gap-3 sm:grid-cols-2"><div><Label htmlFor="product-markup">Lucro sobre o custo (%)</Label><Input id="product-markup" inputMode="decimal" value={markup} onChange={e => setMarkup(e.target.value)} placeholder="Ex.: 50"/></div><Button type="button" variant="outline" className="self-end" onClick={() => { try { const percent = nonNegative(markup, "Lucro"); setSalePrice((finalProductCost * (1 + percent / 100)).toFixed(2)); } catch (e) { toast({title:(e as Error).message,variant:"destructive"}); } }}>Calcular preço de venda</Button></div>
         <p className="text-sm">Lucro por unidade: <strong>{fmtCurrency(toNumber(salePrice) - finalProductCost)}</strong> · Margem sobre a venda: <strong>{toNumber(salePrice) > 0 ? ((toNumber(salePrice)-finalProductCost)/toNumber(salePrice)*100).toFixed(1) : '0'}%</strong></p>
       </TabsContent>
-      <TabsContent forceMount value="estoque" className={tabClass}>      <section className="rounded-lg border p-4 space-y-3" aria-label="Estoque do produto"><div className="flex items-center justify-between"><h3 className="font-medium">Estoque</h3><label className="flex items-center gap-2 text-sm"><Switch checked={stockEnabled} onCheckedChange={setStockEnabled} disabled={!!editItem?.stock_item_id} />Controlar estoque</label></div>
-        {stockEnabled && <><div className="grid grid-cols-2 sm:grid-cols-3 gap-3"><div><Label htmlFor="product-stock">{editItem?.stock_item_id ? "Quantidade em estoque" : "Estoque inicial"}</Label><Input id="product-stock" inputMode="decimal" value={stockQuantity} onChange={e => setStockQuantity(e.target.value)} /></div><div><Label htmlFor="product-unit">Unidade</Label><select id="product-unit" className="h-10 w-full rounded-md border bg-background px-3" value={stockUnit} onChange={e => setStockUnit(e.target.value)}>{["un", "kg", "g", "m", "l", "ml"].map(u => <option key={u} value={u}>{u}</option>)}</select></div><div><Label htmlFor="product-min-stock">Estoque mínimo</Label><Input id="product-min-stock" inputMode="decimal" value={minStock} onChange={e => setMinStock(e.target.value)} /></div><div><Label htmlFor="product-max-stock">Estoque máximo</Label><Input id="product-max-stock" inputMode="decimal" value={maxStock} onChange={e => setMaxStock(e.target.value)} /></div></div><p className="text-xs text-muted-foreground">O saldo é salvo junto com o produto e fica disponível nas compras e nas movimentações. Alterações de quantidade ficam no histórico.</p>
+      <TabsContent forceMount value="estoque" className={tabClass}>      <section className="rounded-lg border p-4 space-y-3" aria-label="Estoque do produto"><div className="flex flex-wrap items-center justify-between gap-3"><h3 className="font-medium">Estoque</h3><label className="flex min-h-11 items-center gap-2 text-sm"><Switch checked={stockEnabled} onCheckedChange={setStockEnabled} disabled={!!editItem?.stock_item_id} />Controlar estoque</label></div>
+        {stockEnabled && <><div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3"><div><Label htmlFor="product-stock">{editItem?.stock_item_id ? "Quantidade em estoque" : "Estoque inicial"}</Label><Input id="product-stock" inputMode="decimal" value={stockQuantity} onChange={e => setStockQuantity(e.target.value)} /></div><div><Label htmlFor="product-unit">Unidade</Label><select id="product-unit" className="h-10 w-full rounded-md border bg-background px-3" value={stockUnit} onChange={e => setStockUnit(e.target.value)}>{["un", "kg", "g", "m", "l", "ml"].map(u => <option key={u} value={u}>{u}</option>)}</select></div><div><Label htmlFor="product-min-stock">Estoque mínimo</Label><Input id="product-min-stock" inputMode="decimal" value={minStock} onChange={e => setMinStock(e.target.value)} /></div><div><Label htmlFor="product-max-stock">Estoque máximo</Label><Input id="product-max-stock" inputMode="decimal" value={maxStock} onChange={e => setMaxStock(e.target.value)} /></div></div><p className="text-xs text-muted-foreground">O saldo é salvo junto com o produto e fica disponível nas compras e nas movimentações. Alterações de quantidade ficam no histórico.</p>
         {editItem?.stock_item_id && <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" size="sm" asChild><RouterLink to={`/estoque/movimentacoes?item=${editItem.stock_item_id}`}>Registrar entrada / saída</RouterLink></Button><Button type="button" variant="outline" size="sm" asChild><RouterLink to={`/estoque/movimentacoes?item=${editItem.stock_item_id}&historico=1`}>Ver movimentações</RouterLink></Button></div>}</>}
       </section>
 </TabsContent>
@@ -1150,7 +1150,7 @@ ${selected?.name ? `Perfil: ${selected.name}
               <div className="rounded-md border bg-background p-3 space-y-2">
                 <p className="text-xs font-medium text-muted-foreground mb-1">Configurar Taxas por Canal</p>
                 {channelConfig.map((ch, idx) => (
-                  <div key={ch.key} className="grid grid-cols-[1fr_70px_auto_auto] gap-2 items-center text-xs">
+                  <div key={ch.key} className="grid min-w-0 grid-cols-1 gap-3 rounded-md border p-3 text-xs sm:grid-cols-[minmax(0,1fr)_70px_auto_auto] sm:items-center sm:border-0 sm:p-0 [&>*]:min-w-0">
                     <span className="font-medium">{ch.name}</span>
                     <div className="flex items-center gap-1">
                       <Input
@@ -1428,7 +1428,7 @@ ${selected?.name ? `Perfil: ${selected.name}
                 </Button>
               </div>
               <div className="rounded-lg border bg-muted/30 p-2 space-y-2">
-                <div className="grid grid-cols-[1fr_70px_110px_110px_auto] gap-2 px-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                <div className="hidden grid-cols-[minmax(0,1fr)_70px_110px_110px_auto] gap-2 px-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider md:grid">
                   <span>Produto</span>
                   <span className="text-center">Qtd</span>
                   <span className="text-right">Custo</span>
@@ -1440,20 +1440,21 @@ ${selected?.name ? `Perfil: ${selected.name}
                   const unitCost = (prod as any)?.cost_estimate || 0;
                   const unitPrice = (prod as any)?.sale_price || 0;
                   return (
-                    <div key={idx} className="grid grid-cols-[1fr_70px_110px_110px_auto] gap-2 items-center">
-                      <SearchableItemSelect label={`Produto do kit ${idx + 1}`} value={ki.productId} onChange={value => { const updated = [...kitItems]; updated[idx] = { ...updated[idx], productId: value }; setKitItems(updated); }} emptyLabel="Selecionar produto" searchPlaceholder="Digite nome ou SKU do produto…" options={products.filter(p => p.is_active && p.category !== "kit").map(p => ({ id: p.id, label: p.name, description: p.sku || undefined }))} />
+                    <div key={idx} className="grid min-w-0 grid-cols-2 gap-3 rounded-lg border bg-card p-3 md:grid-cols-[minmax(0,1fr)_70px_110px_110px_auto] md:items-center md:gap-2 md:border-0 md:bg-transparent md:p-0">
+                      <div className="col-span-2 min-w-0 md:col-span-1"><SearchableItemSelect label={`Produto do kit ${idx + 1}`} value={ki.productId} onChange={value => { const updated = [...kitItems]; updated[idx] = { ...updated[idx], productId: value }; setKitItems(updated); }} emptyLabel="Selecionar produto" searchPlaceholder="Digite nome ou SKU do produto…" options={products.filter(p => p.is_active && p.category !== "kit").map(p => ({ id: p.id, label: p.name, description: p.sku || undefined }))} /></div>
+                      <label className="min-w-0"><span className="mb-1 block text-xs md:hidden">Quantidade</span>
                       <Input
-                        type="number" min={1} className="h-8 text-xs text-center bg-background"
+                        aria-label={`Quantidade do produto do kit ${idx + 1}`} type="number" min={1} className="h-11 min-w-0 bg-background text-center md:h-8 md:text-xs"
                         value={ki.qty}
                         onChange={(e) => {
                           const updated = [...kitItems];
                           updated[idx] = { ...updated[idx], qty: Math.max(1, parseInt(e.target.value) || 1) };
                           setKitItems(updated);
                         }}
-                      />
-                      <span className="text-xs font-mono text-muted-foreground text-right">{fmtCurrency(unitCost * ki.qty)}</span>
-                      <span className="text-xs font-mono text-foreground text-right">{fmtCurrency(unitPrice * ki.qty)}</span>
-                      <Button type="button" variant="ghost" size="sm" className="h-8 w-8 p-0 text-destructive hover:text-destructive" onClick={() => setKitItems(kitItems.filter((_, i) => i !== idx))}>
+                      /></label>
+                      <span className="min-w-0 break-words text-xs font-mono text-muted-foreground md:text-right"><span className="mb-1 block font-sans md:hidden">Custo</span>{fmtCurrency(unitCost * ki.qty)}</span>
+                      <span className="min-w-0 break-words text-xs font-mono text-foreground md:text-right"><span className="mb-1 block font-sans md:hidden">Preço</span>{fmtCurrency(unitPrice * ki.qty)}</span>
+                      <Button type="button" aria-label={`Remover produto do kit ${idx + 1}`} variant="ghost" size="sm" className="ml-auto h-11 w-11 p-0 text-destructive hover:text-destructive md:h-8 md:w-8" onClick={() => setKitItems(kitItems.filter((_, i) => i !== idx))}>
                         <Trash2 className="h-3.5 w-3.5" />
                       </Button>
                     </div>

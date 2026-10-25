@@ -370,7 +370,7 @@ export default function Fila() {
         <Button variant="outline" asChild><Link to="/producao/jobs">Abrir ordens e apurar custos</Link></Button>
       </div>
       {/* KPI strip */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Card className="p-4">
           <div className="text-xs text-muted-foreground">Aguardando</div>
           <div className="text-2xl font-bold">{totals.queued}</div>

@@ -402,8 +402,10 @@
 @media (max-width: 767px) {
   :root input:not([type="checkbox"]):not([type="radio"]), :root select, :root textarea { font-size: 16px; }
   .sidebar-item { min-height: 44px; }
-  [role="dialog"] { max-width: calc(100vw - 1rem); max-height: calc(100dvh - 1rem); }
-  main { padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+  .forge-dialog { max-width: calc(100vw - 1rem); max-height: calc(100dvh - 2rem); }
+  :where([role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"]) { min-height: 44px; }
+  .app-main { padding-left: max(1rem, env(safe-area-inset-left)); padding-right: max(1rem, env(safe-area-inset-right)); padding-bottom: max(1rem, env(safe-area-inset-bottom)); }
+  [data-radix-popper-content-wrapper] { max-width: 100vw; }
 }
 
 @media (prefers-reduced-motion: reduce) {

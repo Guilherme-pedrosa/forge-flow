@@ -860,7 +860,7 @@ export default function Compras() {
               </div>
               <div className="space-y-2">
                 {manualItems.map((item, idx) => (
-                  <div key={idx} className="grid grid-cols-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_90px_105px_105px_32px] gap-2 items-end rounded-lg border p-3 sm:border-0 sm:p-0">
+                  <div key={idx} className="grid min-w-0 grid-cols-1 gap-3 items-end rounded-lg border p-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_90px_105px_105px_44px] xl:gap-2 xl:border-0 xl:p-0 [&>*]:min-w-0">
                     <div>
                       <Label className="text-xs">Descrição</Label>
                       <Input aria-label={`Descrição do item ${idx + 1}`} value={item.description} onChange={(e) => updateManualItem(idx, "description", e.target.value)} placeholder="Material..." />
@@ -879,7 +879,7 @@ export default function Compras() {
                       <Input aria-label={`Preço unitário do item ${idx + 1}`} type="number" step="0.01" value={item.unitPrice} onChange={(e) => updateManualItem(idx, "unitPrice", e.target.value)} />
                     </div>
                     <div className="pb-2 text-right"><Label className="text-xs">Subtotal</Label><p className="font-medium">{fmtCurrency(Number(item.quantity.replace(",",".")) * Number(item.unitPrice.replace(",",".")))}</p><span className="text-xs text-muted-foreground">{inventoryItems.find(inv => inv.id === item.inventoryItemId)?.unit || "un"}</span></div>
-                    <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => removeManualItem(idx)} disabled={manualItems.length <= 1}>
+                    <Button aria-label={`Remover item da compra ${idx + 1}`} variant="ghost" size="icon" className="h-11 w-11 justify-self-end" onClick={() => removeManualItem(idx)} disabled={manualItems.length <= 1}>
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
                     <div className="col-span-full"><Button type="button" size="sm" variant="link" className="h-8 px-0" disabled={createMut.isPending} onClick={() => setQuickItemRow(idx)}>+ Cadastrar item</Button></div>
@@ -890,7 +890,7 @@ export default function Compras() {
               <p className="text-sm mt-2">Total da compra: <strong>{fmtCurrency(manualTotal)}</strong></p>
             </div>
 
-            <div className="grid grid-cols-2 gap-3"><div><Label htmlFor="purchase-shipping">Frete (R$)</Label><Input id="purchase-shipping" inputMode="decimal" value={shipping} onChange={e => setShipping(e.target.value)} placeholder="0,00" /></div><div><Label htmlFor="purchase-discount">Desconto (R$)</Label><Input id="purchase-discount" inputMode="decimal" value={discount} onChange={e => setDiscount(e.target.value)} placeholder="0,00" /></div></div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><div><Label htmlFor="purchase-shipping">Frete (R$)</Label><Input id="purchase-shipping" inputMode="decimal" value={shipping} onChange={e => setShipping(e.target.value)} placeholder="0,00" /></div><div><Label htmlFor="purchase-discount">Desconto (R$)</Label><Input id="purchase-discount" inputMode="decimal" value={discount} onChange={e => setDiscount(e.target.value)} placeholder="0,00" /></div></div>
             <div><Label htmlFor="purchase-taxes">Impostos e outras despesas (R$)</Label><Input id="purchase-taxes" inputMode="decimal" value={taxes} onChange={e => setTaxes(e.target.value)}/></div>
             <section className="space-y-3"><h3 className="font-semibold">Condição de pagamento</h3>              <div>
                 <Label>Forma de Pagamento</Label>
@@ -1005,7 +1005,7 @@ export default function Compras() {
           )}
 
           {nfeData && (
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <Label className="mb-2 block">Parcelas</Label>
                 <Select value={nfeInstallments} onValueChange={setNfeInstallments}>
@@ -1019,7 +1019,7 @@ export default function Compras() {
                 <Label className="mb-2 block">Vencimento 1ª parcela</Label>
                 <Input type="date" value={nfeDueDate} onChange={(e) => setNfeDueDate(e.target.value)} />
               </div>
-              <p className="text-xs text-muted-foreground col-span-2">Parcelas mensais no mesmo dia, ajustado ao último dia do mês</p>
+              <p className="text-xs text-muted-foreground col-span-full">Parcelas mensais no mesmo dia, ajustado ao último dia do mês</p>
             </div>
           )}
 
@@ -1347,7 +1347,7 @@ export default function Compras() {
                     <div className="rounded-xl border p-4 space-y-3">
                       <p className="text-sm font-medium">Revise os dados extraídos antes de importar</p>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3"><div><Label>Fornecedor</Label><Input aria-label="Fornecedor extraído" value={p.vendor_name || ""} onChange={e => updateMarketplace("vendor_name", e.target.value)} /></div><div><Label>Data da compra</Label><Input aria-label="Data extraída" type="date" value={p.order_date || ""} onChange={e => updateMarketplace("order_date", e.target.value)} /></div></div>
-                      <div className="grid grid-cols-3 gap-3">{[["shipping", "Frete"], ["discount", "Desconto"], ["total", "Total da compra"]].map(([field, label]) => <div key={field}><Label>{label} (R$)</Label><Input aria-label={label} type="number" min="0" step="0.01" value={p[field] ?? 0} onChange={e => updateMarketplace(field, e.target.value)} /></div>)}</div>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">{[["shipping", "Frete"], ["discount", "Desconto"], ["total", "Total da compra"]].map(([field, label]) => <div key={field}><Label>{label} (R$)</Label><Input aria-label={label} type="number" min="0" step="0.01" value={p[field] ?? 0} onChange={e => updateMarketplace(field, e.target.value)} /></div>)}</div>
                       <p className="text-xs text-muted-foreground">Corrija também quantidade e preço de cada item abaixo. O total da compra deve conferir com a soma dos itens, frete e desconto.</p>
                     </div>
                     <div>
@@ -1355,7 +1355,7 @@ export default function Compras() {
                       <SearchableItemSelect label="Forma de pagamento da importação" value={marketplacePaymentMethodId} onChange={setMarketplacePaymentMethodId} emptyLabel="Selecionar forma de pagamento" options={paymentMethods.map(pm => ({ id: pm.id, label: pm.name }))} /><Button type="button" variant="link" size="sm" className="px-0" onClick={() => setNewMethod("marketplace")}>Cadastrar forma de pagamento</Button>
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                       <div>
                         <Label className="mb-2 block">Parcelas</Label>
                         <Select value={marketplaceInstallments || String(parseInstallmentCount(p.payment_installments))} onValueChange={setMarketplaceInstallments}>
