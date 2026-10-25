@@ -6,15 +6,34 @@ param(
   [switch]$RegisterStartup
 )
 $ErrorActionPreference = 'Stop'
+# PowerShell 7 exports module paths incompatible with Windows PowerShell 5.
+# Restrict only this installer process to the built-in Windows module directory.
+if ($PSVersionTable.PSEdition -eq 'Desktop') { $env:PSModulePath = [System.IO.Path]::Combine($PSHOME, 'Modules') }
 $workerOrigin = 'https://gaomleftwxpzjivrnzjk.supabase.co'
 $installDir = Join-Path $env:LOCALAPPDATA 'Elevare3D\ForgeSlicer'
+if (!(Test-Path -LiteralPath $EnginePath -PathType Leaf) -or !(Test-Path -LiteralPath $NodePath -PathType Leaf)) {
+  throw 'Instale o Bambu Studio oficial 2.8.2.61 e o Node.js 22 ou mais recente.'
+}
+
+# Local ACLs are set before writing any token or transferred model to this folder.
+New-Item -ItemType Directory -Path $installDir -Force | Out-Null
+# Resolve MSIX/AppX filesystem redirection now: a logon task runs outside the
+# installer host and must use physical paths rather than virtual LOCALAPPDATA.
+$pathProbe = @'
+const fs=require('node:fs'),path=require('node:path');
+const base=fs.realpathSync(process.argv[1]),install=fs.realpathSync(process.argv[2]);
+const relative=path.relative(base,install).replaceAll('\\','/');
+if(!/^(?:Packages\/[^/]+\/LocalCache\/Local\/)?Elevare3D\/ForgeSlicer$/.test(relative))throw new Error('Install directory outside the intended local application folder.');
+console.log(JSON.stringify({install_dir:install,node_path:fs.realpathSync(process.execPath),engine_path:fs.realpathSync(process.argv[3])}));
+'@
+$physicalJson = & $NodePath -e $pathProbe $env:LOCALAPPDATA $installDir $EnginePath
+if ($LASTEXITCODE -ne 0) { throw 'Não foi possível resolver a pasta física privada do fatiador.' }
+$physical = $physicalJson | ConvertFrom-Json
+$installDir = $physical.install_dir; $NodePath = $physical.node_path; $EnginePath = $physical.engine_path
 $workerScript = Join-Path $installDir 'forge-slicer-worker.mjs'
 $configPath = Join-Path $installDir 'connection.private.json'
 $profileDir = Join-Path $installDir 'profiles'
 $jobsDir = Join-Path $installDir 'jobs'
-
-# Local ACLs are set before writing any token or transferred model to this folder.
-New-Item -ItemType Directory -Path $installDir -Force | Out-Null
 $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 & icacls.exe $installDir '/inheritance:r' '/grant:r' "*${currentSid}:(OI)(CI)F" '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
 if ($LASTEXITCODE -ne 0) { throw 'Não foi possível proteger a pasta privada do fatiador.' }
@@ -23,9 +42,6 @@ $connection = Get-Content -LiteralPath $ConnectionFile -Raw | ConvertFrom-Json
 if ($connection.api_origin -cne $workerOrigin -or $connection.worker_id -notmatch '^[0-9a-f-]{36}$' -or
     $connection.worker_token -notmatch '^[0-9a-f]{64}$' -or $connection.public_key.Length -lt 20) {
   throw 'Arquivo de conexão inválido. Gere uma conexão nova dentro do Forge.'
-}
-if (!(Test-Path -LiteralPath $EnginePath -PathType Leaf) -or !(Test-Path -LiteralPath $NodePath -PathType Leaf)) {
-  throw 'Instale o Bambu Studio oficial 2.8.2.61 e o Node.js 22 ou mais recente.'
 }
 $nodeVersion = & $NodePath --version
 if ($LASTEXITCODE -ne 0 -or $nodeVersion -notmatch '^v(\d+)\.' -or [int]$Matches[1] -lt 22) { throw 'Use Node.js 22 ou mais recente.' }
@@ -58,20 +74,19 @@ if ($LASTEXITCODE -ne 0) {
 $verificationResult = $verification | ConvertFrom-Json
 if ($verificationResult.engine_version -cne '02.08.02.61') { throw 'Versão inesperada do motor de fatiamento.' }
 
-# Paths cannot inject additional process arguments. Tokens never enter command lines.
-if (($workerScript + $configPath + $NodePath) -match '["\r\n]') { throw 'Caminho de instalação inválido.' }
-$workerArgs = '"' + $workerScript + '" --config "' + $configPath + '"'
+# The installer can use Bypass for this process only. Startup never loads a .ps1.
+. (Join-Path $PSScriptRoot 'slicer-startup-command.ps1')
+$startup = New-ForgeSlicerStartupCommand -NodePath $NodePath -WorkerScript $workerScript -ConfigPath $configPath -InstallDir $installDir
 $launcherPath = Join-Path $installDir 'start-forge-slicer.ps1'
-$launcher = "Start-Process -FilePath '" + $NodePath.Replace("'", "''") + "' -ArgumentList '" + $workerArgs.Replace("'", "''") + "' -WindowStyle Hidden -WorkingDirectory '" + $installDir.Replace("'", "''") + "' -RedirectStandardOutput '" + (Join-Path $installDir 'worker.log').Replace("'", "''") + "' -RedirectStandardError '" + (Join-Path $installDir 'worker-error.log').Replace("'", "''") + "' | Out-Null"
-[System.IO.File]::WriteAllText($launcherPath, $launcher, [System.Text.UTF8Encoding]::new($false))
+[System.IO.File]::WriteAllText($launcherPath, $startup.Command, [System.Text.UTF8Encoding]::new($false))
 if ($RegisterStartup) {
-  $action = New-ScheduledTaskAction -Execute (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') -Argument ('-NoProfile -WindowStyle Hidden -File "' + $launcherPath + '"')
+  $action = New-ScheduledTaskAction -Execute (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') -Argument $startup.Arguments
   $trigger = New-ScheduledTaskTrigger -AtLogOn -User ([System.Security.Principal.WindowsIdentity]::GetCurrent().Name)
   $settings = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
   Register-ScheduledTask -TaskName 'Elevare3D Forge Slicer' -Action $action -Trigger $trigger -Settings $settings -RunLevel Limited -Force | Out-Null
 }
 if ($Start) {
-  & $launcherPath
+  & ([scriptblock]::Create($startup.Command))
 }
 Write-Output 'Fatiador local configurado. A chave está somente no arquivo privado de conexão.'
 Write-Output 'O arquivo de conexão baixado pode ser removido depois da instalação.'

@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "build:worker": "node scripts/build-slicer-worker.mjs",
-    "test:slicer": "node scripts/test-slicer-queue.mjs && node scripts/test-slicer-worker.mjs",
+    "test:slicer": "node scripts/test-slicer-queue.mjs && node scripts/test-slicer-worker.mjs && node scripts/test-slicer-startup.mjs",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",

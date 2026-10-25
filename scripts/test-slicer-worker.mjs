@@ -115,6 +115,12 @@ try {
     await assert.rejects(safeRemoveJob(jobs, path.join(jobs, id)), /fora da área/);
     assert.equal(await readFile(path.join(outside, 'keep'), 'utf8'), 'keep');
     await rm(path.join(jobs, id));
+    const alias = path.join(root, 'trusted-root-alias');
+    await symlink(jobs, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    await mkdir(path.join(jobs, id)); await writeFile(path.join(jobs, id, 'temporary'), 'simulation');
+    await safeRemoveJob(alias, path.join(alias, id));
+    await assert.rejects(readFile(path.join(jobs, id, 'temporary')), /ENOENT/);
+    await rm(alias);
   });
   console.log(`Slicer worker: ${passed} sandbox/integrity/real-metrics scenarios passed.`);
 } finally { await rm(root, { recursive: true, force: true }); }

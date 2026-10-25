@@ -6,4 +6,5 @@ await build({ entryPoints: [new URL('./forge-slicer-worker.mjs', import.meta.url
   bundle: true, platform: 'node', format: 'esm', target: 'node22', sourcemap: false,
   banner: { js: 'import { createRequire } from "node:module"; const require = createRequire(import.meta.url);' } });
 await copyFile(new URL('./setup-forge-slicer.ps1', import.meta.url), new URL('../dist/worker/setup-forge-slicer.ps1', import.meta.url));
+await copyFile(new URL('./slicer-startup-command.ps1', import.meta.url), new URL('../dist/worker/slicer-startup-command.ps1', import.meta.url));
 console.log('Fatiador local preparado em dist/worker.');

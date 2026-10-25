@@ -10,12 +10,16 @@ O navegador envia STL/3MF para uma fila privada da empresa. O worker local execu
 4. No computador com o Bambu Studio oficial 2.8.2.61 e Node.js 22+, executar:
 
 ```powershell
-powershell -NoProfile -File .\dist\worker\setup-forge-slicer.ps1 -ConnectionFile 'C:\caminho\forge-slicer-conexao.private.json' -Start -RegisterStartup
+powershell -NoProfile -ExecutionPolicy Bypass -File .\dist\worker\setup-forge-slicer.ps1 -ConnectionFile 'C:\caminho\forge-slicer-conexao.private.json' -Start -RegisterStartup
 ```
 
 Se o Node não estiver no PATH, passar `-NodePath 'C:\caminho\node.exe'`. A instalação protege `%LOCALAPPDATA%\Elevare3D\ForgeSlicer` por ACL (usuário atual, SYSTEM e administradores), resolve os perfis oficiais A1 0,4 / Generic PLA / 0,20 mm, grava os hashes e fatia um cubo sintético offline para confirmar a versão real do motor. O launcher oficial não expõe ProductVersion no Windows.
 
-O worker e a tarefa de inicialização rodam ocultos e sem elevação. Para iniciar novamente, executar o `start-forge-slicer.ps1` dessa pasta. Os logs locais mostram somente IDs de simulação e falhas sem credenciais. Depois da instalação, remover a cópia baixada do arquivo de conexão. Para revogar o acesso, usar `revoke_slicer_worker({p_worker: '<UUID>'})` com conta de proprietário/administrador.
+Em hosts MSIX/AppX, o instalador resolve o diretório físico antes de gravar os caminhos usados pelo worker e pela tarefa. O redirecionamento do diretório pai é permitido; links no diretório de uma simulação continuam sendo rejeitados. Instalador e comando de startup usam os módulos internos do Windows PowerShell no próprio processo, evitando herdar módulos incompatíveis do PowerShell7.
+
+O Bypass acima vale somente para o processo de instalação; não altera a política persistente do Windows. A tarefa de inicialização executa um comando de lançamento oculto com `-EncodedCommand`, contendo apenas caminhos, sem ler arquivo `.ps1` nem colocar o token em argumentos. Isso funciona também com a política Restricted. Para iniciar novamente, usar `Start-ScheduledTask -TaskName 'Elevare3D Forge Slicer'`; o helper manual pode ser executado com Bypass no processo, se necessário. [Referência Microsoft](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_execution_policies?view=powershell-5.1).
+
+O worker e a tarefa de inicialização rodam ocultos e sem elevação. Os logs locais mostram somente IDs de simulação e falhas sem credenciais. Depois da instalação, remover a cópia baixada do arquivo de conexão. Para revogar o acesso, usar `revoke_slicer_worker({p_worker: '<UUID>'})` com conta de proprietário/administrador.
 
 ## Isolamento e resultados
 
