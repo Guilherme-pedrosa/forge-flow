@@ -134,11 +134,13 @@ export default function ModelFileInput({
   current,
   onChange,
   onBusyChange,
+  onFileReady,
   disabled = false,
 }: {
   current?: ImportedComposition;
   onChange: (value: ImportedComposition) => void;
   onBusyChange?: (busy: boolean) => void;
+  onFileReady?: (file: File) => void;
   disabled?: boolean;
 }) {
   const [model, setModel] = useState<ModelFile | null>(null);
@@ -183,6 +185,7 @@ export default function ModelFileInput({
         loaded = null;
         return;
       }
+      onFileReady?.(file);
       if (activeModel.current) disposeModel(activeModel.current.group);
       activeModel.current = loaded;
       setModel(loaded);

@@ -111,8 +111,14 @@ ALTER FUNCTION erp_private.persist_source_plate_import(uuid,jsonb,uuid) RENAME T
 REVOKE ALL ON FUNCTION erp_private.persist_source_before_sliced_file(uuid,jsonb,uuid) FROM PUBLIC,anon,authenticated;
 CREATE FUNCTION public.persist_source_plate_import(p_source_id uuid,p_reference jsonb,p_task_id uuid DEFAULT NULL) RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
-DECLARE t uuid:=erp_private.actor(); result jsonb; p product_print_plates;
+DECLARE t uuid:=erp_private.actor(); result jsonb; p product_print_plates; product uuid;
 BEGIN
+ SELECT product_id INTO product FROM product_print_sources WHERE id=p_source_id AND tenant_id=t AND is_active;
+ IF EXISTS(SELECT 1 FROM product_print_plates WHERE product_id=product AND tenant_id=t AND is_active AND imported_plate_metadata->>'explicit_file_revision'='true') THEN
+  IF p_task_id IS NOT NULL THEN RAISE EXCEPTION 'Há uma revisão 3MF ativa. Vincule a impressão à placa dessa revisão, preservando o arquivo anterior.'; END IF;
+  RETURN jsonb_build_object('source_id',p_source_id,'product_id',product,'created',0,'updated',0,'pending_yield',0,'unresolved_materials',0,'file_revision_preserved',true,
+   'plate_ids',(SELECT coalesce(jsonb_agg(id ORDER BY plate_index),'[]') FROM product_print_plates WHERE product_id=product AND tenant_id=t AND is_active));
+ END IF;
  result:=erp_private.persist_source_before_sliced_file(p_source_id,p_reference,p_task_id);
  FOR p IN SELECT * FROM product_print_plates WHERE source_id=p_source_id AND tenant_id=t AND is_active
   AND imported_plate_metadata->>'file_sha256'~'^[0-9a-f]{64}$'
