@@ -35,4 +35,12 @@ describe("existing product file revision", () => {
     fireEvent.change(screen.getByLabelText("Placa 1 · Folha"), { target: { value: "subitem" } }); fireEvent.click(screen.getByRole("button", { name: "Aplicar revisão" }));
     await screen.findByText("Falha no upload"); expect(mocks.rpc.mock.calls.some(([name]) => name === "apply_product_file_revision")).toBe(false); expect(mocks.close).not.toHaveBeenCalled();
   });
+  it("retries an uncertain save with the same request and uploaded artifact", async () => {
+    let writes = 0; mocks.rpc.mockImplementation(async (name: string) => name === "product_file_revision_context" ? { data: context, error: null } : ++writes === 1 ? { data: null, error: { message: "Resposta interrompida" } } : { data: "new-source", error: null });
+    mount(); await load(); fireEvent.change(screen.getByLabelText("Placa 1 · Folha"), { target: { value: "subitem" } });
+    fireEvent.click(screen.getByRole("button", { name: "Aplicar revisão" })); await screen.findByText("Resposta interrompida");
+    fireEvent.click(screen.getByRole("button", { name: "Aplicar revisão" })); await waitFor(() => expect(mocks.close).toHaveBeenCalledWith(false));
+    const writesArgs = mocks.rpc.mock.calls.filter(([name]) => name === "apply_product_file_revision").map(([, args]) => args);
+    expect(writesArgs).toHaveLength(2); expect(writesArgs[0]).toEqual(writesArgs[1]); expect(mocks.upload).toHaveBeenCalledTimes(1);
+  });
 });
