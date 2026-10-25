@@ -50,30 +50,21 @@ beforeEach(() => {
   mock.rpc.mockResolvedValue({ data: "created-item", error: null });
 });
 afterEach(cleanup);
-function Location() { return <output aria-label="Página atual">{useLocation().pathname}</output>; }
+function Location() { const location = useLocation(); return <output aria-label="Página atual">{location.pathname + location.search}</output>; }
 function mount() {
   return render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><Itens /><Location /></MemoryRouter></QueryClientProvider>);
 }
 
 describe("contexto do cadastro de materiais e insumos", () => {
-  it("cadastra filamento com identidade física, custo e saldo no mesmo item", async () => {
+  it("leva o cadastro de filamento direto ao formulário único de filamento e bobina", async () => {
     mount();
-    fireEvent.click(await screen.findByRole("button", { name: "Novo filamento" }));
-    const dialog = screen.getByRole("dialog");
-    fireEvent.change(within(dialog).getByLabelText("Nome do item *"), { target: { value: "PLA branco" } });
-    fireEvent.change(within(dialog).getByRole("combobox", { name: "Material identificado" }), { target: { value: "PLA" } });
-    fireEvent.change(within(dialog).getByLabelText("Nome da cor"), { target: { value: "Branco" } });
-    fireEvent.change(within(dialog).getByLabelText("Código da cor"), { target: { value: "WHITE" } });
-    fireEvent.change(within(dialog).getByLabelText("Quantidade em estoque"), { target: { value: "1000" } });
-    fireEvent.change(within(dialog).getByLabelText("Custo unitário do estoque"), { target: { value: "0,075" } });
-    fireEvent.click(within(dialog).getByRole("button", { name: /Cadastrar filamento|Criar item|Salvar item/ }));
-    await waitFor(() => expect(mock.rpc).toHaveBeenCalledWith("save_inventory_catalog", expect.objectContaining({
-      p_item_id: null,
-      p_item: expect.objectContaining({ name: "PLA branco", category: "filament", unit: "g", material_code: "PLA", color: "Branco", color_code: "WHITE", current_stock: 1000, avg_cost: 0.075, parent_id: null }),
-    })));
-    expect(mock.rpc.mock.calls.map(call => call[0])).toEqual(["save_inventory_catalog"]);
+    const entry = await screen.findByRole("link", { name: "Novo filamento e bobina" });
+    expect(entry).toHaveAttribute("href", "/estoque/bobinas?novo=1");
+    fireEvent.click(entry);
+    expect(screen.getByLabelText("Página atual")).toHaveTextContent("/estoque/bobinas?novo=1");
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(mock.rpc).not.toHaveBeenCalled();
   });
-
   it("cadastra embalagem por unidade sem herdar campos de impressão", async () => {
     mount();
     fireEvent.click(await screen.findByRole("button", { name: "Novo insumo" }));
@@ -113,7 +104,8 @@ describe("contexto do cadastro de materiais e insumos", () => {
 
   it("troca o tipo de um rascunho sem transferir identidade e diâmetro de filamento para um insumo", async () => {
     mount();
-    fireEvent.click(await screen.findByRole("button", { name: "Novo filamento" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Novo insumo" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Tipo de item" }), { target: { value: "filament" } });
     const dialog = screen.getByRole("dialog");
     fireEvent.change(within(dialog).getByRole("combobox", { name: "Material identificado" }), { target: { value: "PLA" } });
     fireEvent.change(within(dialog).getByLabelText("Nome da cor"), { target: { value: "Branco" } });
@@ -130,7 +122,8 @@ describe("contexto do cadastro de materiais e insumos", () => {
 
   it("preserva unidade, quantidade e custo já informados ao mudar o tipo do rascunho", async () => {
     mount();
-    fireEvent.click(await screen.findByRole("button", { name: "Novo filamento" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Novo insumo" }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Tipo de item" }), { target: { value: "filament" } });
     const dialog = screen.getByRole("dialog");
     fireEvent.change(within(dialog).getByLabelText("Quantidade em estoque"), { target: { value: "1000" } });
     fireEvent.change(within(dialog).getByLabelText("Custo unitário do estoque"), { target: { value: "0,075" } });

@@ -6,7 +6,7 @@ import { isMissingDatabaseStructure } from "./database-readiness";
 
 export interface FilamentMaterial {
   id: string; name: string; unit: string; current_stock: number; min_stock: number | null;
-  vendor_id: string | null; material_code?: string | null; color?: string | null; color_code?: string | null;
+  vendor_id: string | null; material_code?: string | null; color?: string | null; color_code?: string | null; avg_cost?: number | null;
 }
 export interface FilamentSpool {
   id: string; item_id: string; label: string; tare_grams: number; initial_net_grams: number;
@@ -287,7 +287,7 @@ export async function loadFilamentPlanningSnapshot(client: SupabaseClient): Prom
     catch (error) { if (isMissingDatabaseStructure(error)) return []; throw error; }
   };
   const [items, jobs, purchases, purchaseItems, reservations, spools, policies, vendors, printers, orders, orderItems, productionOrders, productionItems, tenants, links] = await Promise.all([
-    read<FilamentMaterial & { category: string; is_active: boolean }>("inventory_items", "id,name,unit,current_stock,min_stock,vendor_id,material_code,color,color_code,category,is_active"),
+    read<FilamentMaterial & { category: string; is_active: boolean }>("inventory_items", "id,name,unit,current_stock,min_stock,vendor_id,material_code,color,color_code,avg_cost,category,is_active"),
     read<FilamentJob>("jobs", "id,code,name,status,due_date,est_grams,material_id,secondary_material_id,print_plate_id,production_snapshot,started_at,inventory_posted_at,order_id,order_item_id,production_order_id,production_order_item_id,reprint_of"),
     read<Omit<FilamentPurchase, "items">>("purchase_orders", "id,code,status,expected_date"),
     read<FilamentPurchase["items"][number] & { purchase_order_id: string }>("purchase_order_items", "id,purchase_order_id,inventory_item_id,stock_quantity"),
