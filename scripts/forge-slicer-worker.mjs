@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir, rm, realpath, open } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rm, realpath, open, lstat } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash, randomUUID } from 'node:crypto';
@@ -217,7 +217,11 @@ export async function safeRemoveJob(root, job) {
   if (!UUID.test(path.basename(job))) fail('Diretório de trabalho inválido.');
   const resolvedRoot = await realpath(root), resolved = await realpath(job).catch(() => null);
   if (!resolved) return;
-  if (path.dirname(resolved).toLowerCase() !== resolvedRoot.toLowerCase() || path.resolve(job).toLowerCase() !== resolved.toLowerCase()) fail('Diretório de trabalho fora da área privada.');
+  // Windows AppX can virtualize LOCALAPPDATA to another real parent. Allow that
+  // trusted root mapping, but never a junction/symlink at the job itself.
+  if (path.dirname(path.resolve(job)).toLowerCase() !== path.resolve(root).toLowerCase()
+    || path.dirname(resolved).toLowerCase() !== resolvedRoot.toLowerCase()
+    || (await lstat(job)).isSymbolicLink()) fail('Diretório de trabalho fora da área privada.');
   await rm(resolved, { recursive: true, force: true });
 }
 
