@@ -24,6 +24,7 @@ interface AuthState {
 const AuthContext = createContext<AuthState>({ session: null, user: null, profile: null, loading: true, profileError: null, retryProfile: async () => {}, signOut: async () => {} });
 export const useAuth = () => useContext(AuthContext);
 const PUBLIC_ROUTES = ["/login", "/signup"];
+const AUTH_READ_TIMEOUT_MS = 15000;
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
@@ -33,15 +34,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const sessionRef = useRef<Session | null>(null);
   const profileRef = useRef<Profile | null>(null);
   const generation = useRef(0);
+  const sessionRead = useRef(0);
   const mounted = useRef(false);
+  const deferredLoads = useRef(new Set<ReturnType<typeof setTimeout>>());
+  const pendingReads = useRef(new Set<() => void>());
   const qc = useQueryClient();
   const navigate = useNavigate();
   const location = useLocation();
 
   const clearCache = useCallback(() => { void qc.cancelQueries(); qc.clear(); }, [qc]);
+  // The SDK can leave a refresh or REST request pending without rejecting. Bound
+  // the UI wait without deleting its session or trusting a stored profile.
+  const boundedRead = useCallback(<T,>(operation: PromiseLike<T>, timeoutMessage: string): Promise<T> => new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const finish = (complete: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      pendingReads.current.delete(cancel);
+      complete();
+    };
+    const cancel = () => finish(() => reject(new Error("Consulta interrompida.")));
+    const timer = setTimeout(() => finish(() => reject(new Error(timeoutMessage))), AUTH_READ_TIMEOUT_MS);
+    pendingReads.current.add(cancel);
+    Promise.resolve(operation).then(value => finish(() => resolve(value)), error => finish(() => reject(error)));
+  }), []);
   const loadProfile = useCallback(async (userId: string, request: number) => {
     try {
-      const { data, error } = await supabase.from("profiles").select("*").eq("user_id", userId).maybeSingle();
+      const { data, error } = await boundedRead(supabase.from("profiles").select("*").eq("user_id", userId).maybeSingle(),
+        "A consulta do perfil demorou mais que o esperado. Tente novamente.");
       if (!mounted.current || generation.current !== request || sessionRef.current?.user.id !== userId) return;
       if (error) throw error;
       // Only a successful empty result means onboarding is needed.
@@ -56,22 +77,66 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       if (mounted.current && generation.current === request) setLoading(false);
     }
-  }, []);
+  }, [boundedRead]);
+
+  const applySession = useCallback((newSession: Session | null, event: string) => {
+    if (!mounted.current) return;
+    const previousUser = sessionRef.current?.user.id;
+    const nextUser = newSession?.user.id;
+    sessionRef.current = newSession;
+    setSession(newSession);
+    if (previousUser !== nextUser) {
+      clearCache(); profileRef.current = null; setProfile(null);
+    }
+    if (!newSession) {
+      ++generation.current;
+      profileRef.current = null; setProfile(null); setProfileError(null); setLoading(false);
+      return;
+    }
+    if (previousUser === nextUser && profileRef.current?.user_id === nextUser && event !== "USER_UPDATED") {
+      setProfileError(null); setLoading(false); return;
+    }
+    const request = ++generation.current;
+    setLoading(true); setProfileError(null);
+    // Supabase auth callbacks must return before another auth-backed request.
+    const timer = setTimeout(() => {
+      deferredLoads.current.delete(timer);
+      if (mounted.current && generation.current === request && sessionRef.current?.user.id === nextUser) void loadProfile(nextUser!, request);
+    }, 0);
+    deferredLoads.current.add(timer);
+  }, [clearCache, loadProfile]);
+
+  const readSession = useCallback(async () => {
+    const attempt = ++sessionRead.current;
+    const request = ++generation.current;
+    setLoading(true); setProfileError(null);
+    try {
+      const { data, error } = await boundedRead(supabase.auth.getSession(),
+        "A consulta da sessão demorou mais que o esperado. Tente novamente.");
+      if (!mounted.current || sessionRead.current !== attempt || generation.current !== request) return;
+      if (error) throw error;
+      applySession(data.session, "INITIAL_SESSION");
+    } catch (error) {
+      if (!mounted.current || sessionRead.current !== attempt || generation.current !== request) return;
+      setProfileError(error instanceof Error ? error.message : "Não foi possível recuperar a sessão. Tente novamente.");
+      setLoading(false);
+    }
+  }, [applySession, boundedRead]);
 
   const retryProfile = useCallback(async () => {
     const current = sessionRef.current;
     if (!current) {
-      setProfileError(null);
-      navigate("/login", { replace: true });
+      await readSession();
       return;
     }
     const request = ++generation.current;
     setLoading(true); setProfileError(null);
     await loadProfile(current.user.id, request);
-  }, [loadProfile, navigate]);
+  }, [loadProfile, readSession]);
 
   const signOut = useCallback(async () => {
     const request = ++generation.current;
+    ++sessionRead.current;
     profileRef.current = null;
     setProfile(null); setLoading(true); setProfileError(null); clearCache();
     try {
@@ -90,44 +155,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     mounted.current = true;
     let authEventSeen = false;
-    const timers = new Set<ReturnType<typeof setTimeout>>();
-    const applySession = (newSession: Session | null, event: string) => {
-      if (!mounted.current) return;
-      const previousUser = sessionRef.current?.user.id;
-      const nextUser = newSession?.user.id;
-      sessionRef.current = newSession;
-      setSession(newSession);
-      if (previousUser !== nextUser) {
-        clearCache(); profileRef.current = null; setProfile(null);
-      }
-      if (!newSession) {
-        ++generation.current;
-        profileRef.current = null; setProfile(null); setProfileError(null); setLoading(false);
-        return;
-      }
-      if (previousUser === nextUser && profileRef.current?.user_id === nextUser && event !== "USER_UPDATED") return;
-      const request = ++generation.current;
-      setLoading(true); setProfileError(null);
-      // Supabase auth callbacks must return before executing another auth-backed request.
-      const timer = setTimeout(() => { timers.delete(timer); void loadProfile(nextUser!, request); }, 0);
-      timers.add(timer);
-    };
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, newSession) => {
+      if (!mounted.current) return;
       authEventSeen = true;
+      ++sessionRead.current;
       applySession(newSession, event);
     });
-    supabase.auth.getSession().then(({ data, error }) => {
-      if (!mounted.current || authEventSeen) return;
-      if (error) { setProfileError("Não foi possível recuperar a sessão. Tente entrar novamente."); setLoading(false); return; }
-      applySession(data.session, "INITIAL_SESSION");
-    }).catch(() => {
-      if (mounted.current && !authEventSeen) { setProfileError("Não foi possível recuperar a sessão."); setLoading(false); }
-    });
+    if (!authEventSeen) void readSession();
     return () => {
-      mounted.current = false; ++generation.current;
-      timers.forEach(clearTimeout); subscription.unsubscribe();
+      mounted.current = false; ++generation.current; ++sessionRead.current;
+      deferredLoads.current.forEach(clearTimeout); deferredLoads.current.clear();
+      pendingReads.current.forEach(cancel => cancel()); pendingReads.current.clear();
+      subscription.unsubscribe();
     };
-  }, [clearCache, loadProfile]);
+  }, [applySession, readSession]);
 
   useEffect(() => {
     if (loading || profileError) return;
