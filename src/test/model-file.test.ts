@@ -64,6 +64,29 @@ describe("local printable project", () => {
     });
     disposeModel(file.group);
   });
+  it("counts only printable same-scale instances, preserving copies after translation and rotation", () => {
+    const file = parseModelFile(zip(`<object id="1">${mesh}</object>`, '<item objectid="1"/><item objectid="1" transform="0 1 0 -1 0 0 0 0 1 30 0 0"/><item objectid="1" printable="0"/>', {
+      "Metadata/model_settings.config": '<config><object id="1"><metadata key="name" value="Leaf"/></object><plate><metadata key="plater_id" value="1"/>' + [0, 1, 2].map(index => `<model_instance><metadata key="object_id" value="1"/><metadata key="instance_id" value="${index}"/></model_instance>`).join("") + '</plate></config>',
+    }), "leaves.3mf");
+    expect(file.group.children).toHaveLength(2);
+    expect(file.composition.plates[0].parts).toMatchObject([{ name: "Folha", quantity_per_plate: 2, quantity_per_product: null }]);
+    disposeModel(file.group);
+  });
+  it("separates differently scaled or mirrored instances instead of dividing their plate totals as equal pieces", () => {
+    const config = '<config><object id="1"><metadata key="name" value="Leaf"/></object><plate><metadata key="plater_id" value="1"/>' + [0, 1, 2].map(index => `<model_instance><metadata key="object_id" value="1"/><metadata key="instance_id" value="${index}"/></model_instance>`).join("") + '</plate></config>';
+    const file = parseModelFile(zip(`<object id="1">${mesh}</object>`, '<item objectid="1"/><item objectid="1" transform="2 0 0 0 2 0 0 0 2 30 0 0"/><item objectid="1" transform="-1 0 0 0 1 0 0 0 1 50 0 0"/>', { "Metadata/model_settings.config": config }), "leaves.3mf");
+    expect(file.composition.plates[0].parts).toHaveLength(3);
+    expect(file.composition.plates[0].parts.map(part => part.quantity_per_plate)).toEqual([1, 1, 1]);
+    expect(new Set(file.composition.plates[0].parts.map(part => part.source_key)).size).toBe(3);
+    expect(file.group.children.map(child => child.userData.partKey)).toEqual(file.composition.plates[0].parts.map(part => part.source_key));
+    disposeModel(file.group);
+  });
+  it("rejects duplicated or missing physical membership instead of reporting the wrong yield", () => {
+    const config = '<config><object id="1"><metadata key="name" value="Leaf"/></object><plate><metadata key="plater_id" value="1"/><model_instance><metadata key="object_id" value="1"/><metadata key="instance_id" value="0"/></model_instance><model_instance><metadata key="object_id" value="1"/><metadata key="instance_id" value="0"/></model_instance></plate></config>';
+    const create = (cfg: string) => parseModelFile(zip(`<object id="1">${mesh}</object>`, '<item objectid="1"/><item objectid="1"/>', { "Metadata/model_settings.config": cfg }), "leaves.3mf");
+    expect(() => create(config)).toThrow(/repete a mesma/);
+    expect(() => create(config.replace(/<model_instance>[\s\S]*?<\/model_instance>/, ""))).toThrow(/todas as instâncias/);
+  });
   it("rejects cycles, missing components, invalid triangles and external entity XML", () => {
     expect(() =>
       parseModelFile(
