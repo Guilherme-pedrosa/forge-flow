@@ -2,6 +2,7 @@ param(
   [Parameter(Mandatory=$true)][string]$ConnectionFile,
   [string]$EnginePath = 'C:\Program Files\Bambu Studio\bambu-studio.exe',
   [string]$NodePath = (Get-Command node -ErrorAction Stop).Source,
+  [string]$InstallDirectory = '',
   [switch]$Start,
   [switch]$RegisterStartup
 )
@@ -10,7 +11,7 @@ $ErrorActionPreference = 'Stop'
 # Restrict only this installer process to the built-in Windows module directory.
 if ($PSVersionTable.PSEdition -eq 'Desktop') { $env:PSModulePath = [System.IO.Path]::Combine($PSHOME, 'Modules') }
 $workerOrigin = 'https://gaomleftwxpzjivrnzjk.supabase.co'
-$installDir = Join-Path $env:LOCALAPPDATA 'Elevare3D\ForgeSlicer'
+$installDir = if ($InstallDirectory) { $InstallDirectory } else { Join-Path $env:LOCALAPPDATA 'Elevare3D\ForgeSlicer' }
 if (!(Test-Path -LiteralPath $EnginePath -PathType Leaf) -or !(Test-Path -LiteralPath $NodePath -PathType Leaf)) {
   throw 'Instale o Bambu Studio oficial 2.8.2.61 e o Node.js 22 ou mais recente.'
 }
@@ -21,10 +22,11 @@ New-Item -ItemType Directory -Path $installDir -Force | Out-Null
 # installer host and must use physical paths rather than virtual LOCALAPPDATA.
 $pathProbe = @'
 const fs=require('node:fs'),path=require('node:path');
-const base=fs.realpathSync(process.argv[1]),install=fs.realpathSync(process.argv[2]);
+const canonical=fs.realpathSync.native;
+const base=canonical(process.argv[1]),install=canonical(process.argv[2]);
 const relative=path.relative(base,install).replaceAll('\\','/');
 if(!/^(?:Packages\/[^/]+\/LocalCache\/Local\/)?Elevare3D\/ForgeSlicer$/.test(relative))throw new Error('Install directory outside the intended local application folder.');
-console.log(JSON.stringify({install_dir:install,node_path:fs.realpathSync(process.execPath),engine_path:fs.realpathSync(process.argv[3])}));
+console.log(JSON.stringify({install_dir:install,node_path:canonical(process.execPath),engine_path:canonical(process.argv[3])}));
 '@
 $physicalJson = & $NodePath -e $pathProbe $env:LOCALAPPDATA $installDir $EnginePath
 if ($LASTEXITCODE -ne 0) { throw 'Não foi possível resolver a pasta física privada do fatiador.' }
