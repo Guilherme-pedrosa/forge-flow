@@ -49,6 +49,7 @@ export const navigationGroups = [
   { label: "Administração", items: [
     { title: "Bambu Lab", icon: Link2, href: "/integracoes/bambu" },
     { title: "Empresa e parâmetros", icon: Building, href: "/configuracoes" },
+    { title: "Custos e precificação", icon: BarChart3, href: "/configuracoes/precificacao" },
     { title: "Usuários e acesso", icon: UserCog, href: "/configuracoes/usuarios" },
     { title: "Histórico de atividades", icon: FileText, href: "/configuracoes/logs" },
   ] },

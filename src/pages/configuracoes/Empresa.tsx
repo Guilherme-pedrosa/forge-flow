@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -10,7 +11,7 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { RegistrationLookupInput } from "@/components/comercial/RegistrationLookupInput";
 import { cleanDocument, cleanCep, formatDocument, formatCep, lookupCnpjRegistration, lookupCepAddress, type RegistrationAddress, type CnpjRegistration } from "@/lib/brazil-registration";
-import { productionSetting, validateCompanyLogo } from "@/lib/company-settings";
+import { validateCompanyLogo } from "@/lib/company-settings";
 
 export default function Empresa() {
   const { profile } = useAuth();
@@ -21,10 +22,6 @@ export default function Empresa() {
   const [name, setName] = useState("");
   const [currency, setCurrency] = useState("BRL");
   const [timezone, setTimezone] = useState("America/Sao_Paulo");
-  const [energyCostKwh, setEnergyCostKwh] = useState("");
-  const [laborCostHour, setLaborCostHour] = useState("");
-  const [overheadPercent, setOverheadPercent] = useState("");
-  const [targetMargin, setTargetMargin] = useState("");
 
   // Company details stored in settings
   const [cnpj, setCnpj] = useState("");
@@ -69,10 +66,6 @@ export default function Empresa() {
         } catch { /* Preserve the existing saved URL if a legacy value is malformed. */ }
       }
       const s = (tenant.settings as any) || {};
-      setEnergyCostKwh(String(s.energy_cost_kwh ?? 0));
-      setLaborCostHour(String(s.labor_cost_hour ?? 0));
-      setOverheadPercent(String(s.overhead_percent ?? 0));
-      setTargetMargin(String(s.target_margin ?? 40));
       setCnpj(s.cnpj || "");
       setPhone(s.phone || "");
       setEmail(s.email || "");
@@ -129,12 +122,8 @@ export default function Empresa() {
       if (!name.trim()) throw new Error("Informe o nome da empresa.");
       if (currency.trim().toUpperCase() !== "BRL") throw new Error("A apuração financeira deste ERP utiliza BRL. Informe BRL como moeda.");
       try { new Intl.DateTimeFormat("pt-BR", { timeZone: timezone.trim() }).format(); } catch { throw new Error("Informe um fuso horário válido, como America/Sao_Paulo."); }
-      const productionCosts = {
-        energy_cost_kwh: productionSetting(energyCostKwh, "custo de energia"),
-        labor_cost_hour: productionSetting(laborCostHour, "custo de mão de obra"),
-        overhead_percent: productionSetting(overheadPercent, "overhead"),
-        target_margin: productionSetting(targetMargin, "margem alvo", true),
-      };
+      const latest = await supabase.from("tenants").select("settings,updated_at").eq("id", profile.tenant_id).single();
+      if (latest.error || !latest.data) throw new Error("Não foi possível conferir os parâmetros atuais. Tente novamente.");
 
       let logo_url = tenant?.logo_url || null;
 
@@ -150,8 +139,7 @@ export default function Empresa() {
       }
 
       const settings = {
-        ...((tenant?.settings as any) || {}),
-        ...productionCosts,
+        ...((latest.data.settings as any) || {}),
         cnpj,
         phone,
         email,
@@ -161,10 +149,11 @@ export default function Empresa() {
         .from("tenants")
         .update({ name: name.trim(), currency: currency.trim().toUpperCase(), timezone: timezone.trim(), settings, logo_url })
         .eq("id", profile.tenant_id)
+        .eq("updated_at", latest.data.updated_at)
         .select("id")
         .maybeSingle();
       if (error) throw error;
-      if (!data) throw new Error("Sem permissão para salvar configurações da empresa.");
+      if (!data) throw new Error("As configurações mudaram ou sua conta não pode salvá-las. Atualize a página para conferir.");
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["tenant"] });
@@ -235,15 +224,10 @@ export default function Empresa() {
           </div>
         </div>
 
-        {/* Production costs */}
         <div className="rounded-xl border bg-card p-6 space-y-4">
-          <h3 className="text-sm font-semibold text-foreground">Custos de Produção</h3>
-          <div className="grid grid-cols-2 gap-4">
-            <div><Label>Custo Energia (R$/kWh)</Label><Input type="number" step="0.01" value={energyCostKwh} onChange={(e) => setEnergyCostKwh(e.target.value)} placeholder="0.85" /></div>
-            <div><Label>Custo Mão de Obra (R$/h)</Label><Input type="number" step="0.01" value={laborCostHour} onChange={(e) => setLaborCostHour(e.target.value)} placeholder="25.00" /></div>
-            <div><Label>Overhead (%)</Label><Input type="number" step="0.1" value={overheadPercent} onChange={(e) => setOverheadPercent(e.target.value)} placeholder="15" /></div>
-            <div><Label>Margem Alvo (%)</Label><Input type="number" step="0.1" value={targetMargin} onChange={(e) => setTargetMargin(e.target.value)} placeholder="40" /></div>
-          </div>
+          <h3 className="text-sm font-semibold text-foreground">Custos e precificação</h3>
+          <p className="text-sm text-muted-foreground">Configure hora da máquina, manipulação, energia, insumos e margem na tela de precificação.</p>
+          <Button variant="outline" asChild><Link to="/configuracoes/precificacao">Configurar custos e margem</Link></Button>
         </div>
       </div>
     </div>

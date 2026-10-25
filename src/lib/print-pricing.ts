@@ -19,27 +19,31 @@ export type PricingInput = {
   }[];
   extras: { name: string; cost: string | number; basis: "lot" | "unit" }[];
 };
+const confirmed = (value: string | number, label: string) => {
+  if (typeof value === "string" && !value.trim()) throw new Error(`Confirme ${label}, inclusive zero quando não houver custo.`);
+  return nonNegative(value, label);
+};
 export function pricePrint(input: PricingInput) {
   const quantity = positiveInteger(input.quantity, "Quantidade do lote", 10000);
   const materials = input.materials.reduce(
-    (total, m) =>
-      total +
-      (nonNegative(m.grams, "Gramas") * nonNegative(m.kgPrice, "Preço do kg")) /
-        1000,
+    (total, m) => {
+      const grams = nonNegative(m.grams, "Gramas");
+      return total + (grams * (grams > 0 ? confirmed(m.kgPrice, `o preço do kg de ${m.name || "filamento"}`) : nonNegative(m.kgPrice, "Preço do kg"))) / 1000;
+    },
     0,
   );
   const hours = nonNegative(input.hours, "Horas de impressão");
   const energy =
-    ((hours * nonNegative(input.watts, "Potência")) / 1000) *
-    nonNegative(input.kwh, "Energia");
+    ((hours * (hours > 0 ? confirmed(input.watts, "a potência da impressora") : nonNegative(input.watts, "Potência"))) / 1000) *
+    (hours > 0 ? confirmed(input.kwh, "a tarifa de energia") : nonNegative(input.kwh, "Energia"));
   const machine =
-    hours * nonNegative(input.machineHour, "Custo da máquina por hora");
+    hours * (hours > 0 ? confirmed(input.machineHour, "a hora-máquina") : nonNegative(input.machineHour, "Custo da máquina por hora"));
+  const laborMinutes = nonNegative(input.laborMinutes, "Minutos de trabalho");
   const labor =
-    (nonNegative(input.laborMinutes, "Minutos de trabalho") / 60) *
-    nonNegative(input.laborHour, "Mão de obra");
+    (laborMinutes / 60) * (laborMinutes > 0 ? confirmed(input.laborHour, "a tarifa de mão de obra") : nonNegative(input.laborHour, "Mão de obra"));
   const overhead =
     ((materials + energy + machine + labor) *
-      nonNegative(input.overhead, "Despesas indiretas")) /
+      confirmed(input.overhead, "as despesas indiretas")) /
     100;
   const failureRate = nonNegative(input.failure, "Reserva de falhas");
   if (failureRate > 100)
@@ -49,7 +53,7 @@ export function pricePrint(input: PricingInput) {
   const extras = input.extras.reduce(
     (total, e) =>
       total +
-      nonNegative(e.cost, "Custo extra") * (e.basis === "unit" ? quantity : 1),
+      confirmed(e.cost, "o custo do extra") * (e.basis === "unit" ? quantity : 1),
     0,
   );
   const lot =
@@ -57,7 +61,7 @@ export function pricePrint(input: PricingInput) {
   const unit = lot / quantity;
   const suggested = Math.max(0,
     Math.ceil(
-      (suggestedProductPrice(unit, nonNegative(input.margin, "Margem")) -
+      (suggestedProductPrice(unit, confirmed(input.margin, "a margem sobre a venda")) -
         1e-9) *
         100,
     ) / 100);

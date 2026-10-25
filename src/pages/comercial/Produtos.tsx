@@ -30,7 +30,6 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-import { calculateProductCost, suggestedProductPrice } from "@/lib/product-costs";
 import { nonNegative, positiveInteger } from "@/lib/production";
 import { allRows } from "@/lib/finance";
 import { orderRequest } from "@/lib/sales-order";
@@ -88,6 +87,7 @@ export default function Produtos() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const formScrollRef = useRef<HTMLDivElement>(null);
   const createAnother = useRef(false);
+  const pricingAfterSave = useRef(false);
   const productRequest = useRef<{ signature: string; id: string } | null>(null);
   const kitRequest = useRef<{ signature: string; id: string } | null>(null);
 
@@ -265,17 +265,6 @@ export default function Produtos() {
     enabled: !!profile,
   });
 
-  const { data: tenant, error: tenantError } = useQuery({
-    queryKey: ["tenant", profile?.tenant_id],
-    queryFn: async () => {
-      if (!profile) return null;
-      const { data, error } = await supabase.from("tenants").select("*").eq("id", profile.tenant_id).single();
-      if (error) throw error;
-      return data;
-    },
-    enabled: !!profile,
-  });
-
   const toNumber = (v: unknown) => {
     if (typeof v === "string") {
       const n = Number(v.includes(",") ? v.replace(/\./g, "").replace(",", ".") : v);
@@ -285,41 +274,6 @@ export default function Produtos() {
     return Number.isFinite(n) ? n : 0;
   };
 
-  const tenantSettings = useMemo(() => {
-    const s = (tenant?.settings as any) || {};
-    const settingValue = (value: unknown) => value == null ? 0 : Number(String(value).replace(",", "."));
-    return {
-      energy_cost_kwh: settingValue(s.energy_cost_kwh),
-      labor_cost_hour: settingValue(s.labor_cost_hour),
-      overhead_percent: settingValue(s.overhead_percent),
-      target_margin: s.target_margin == null ? 40 : settingValue(s.target_margin),
-    };
-  }, [tenant]);
-
-  // Weight, print time and finishing time are per plate. Extras are per unit.
-  const costBreakdown = useMemo(() => {
-    try {
-      return { ...calculateProductCost({
-        grams: estGrams, printHours: estTime, postMinutes, printsPerPlate,
-        material: materials.find(material => material.id === materialId),
-        printer: printers.find(printer => printer.id === printerId),
-        settings: tenantSettings, extras,
-      }), error: null as string | null };
-    } catch (error) {
-      return { materialCost: 0, energyCost: 0, machineCost: 0, laborCost: 0, overhead: 0,
-        totalPerPiece: 0, total: 0, extrasCost: 0, totalPlate: 0, printsPerPlate: 1,
-        suggestedPrice: 0, selectedPrinterName: null, hasMachineRate: false,
-        error: error instanceof Error ? error.message : "Revise os parâmetros de custo." };
-    }
-  }, [estGrams, estTime, postMinutes, printsPerPlate, materialId, printerId, materials, printers, tenantSettings, extras]);
-  const applyCalculatedCost = () => {
-    if (materialsError || printersError || tenantError || !tenant) { toast({ title: "Parâmetros indisponíveis", description: "Aguarde o carregamento ou atualize a página antes de calcular.", variant: "destructive" }); return; }
-    if (costBreakdown.error) { toast({ title: "Não foi possível calcular", description: costBreakdown.error, variant: "destructive" }); return; }
-    setCostEstimate(costBreakdown.total.toFixed(2));
-    if (!salePrice || toNumber(salePrice) === 0) {
-      setSalePrice(costBreakdown.suggestedPrice.toFixed(2));
-    }
-  };
 
   // Fetch Bambu tasks for import
   const { data: bambuTasks = [], isLoading: bambuTasksLoading } = useQuery({
@@ -371,6 +325,7 @@ export default function Produtos() {
   }, [products, search, showArchived, catalogView, parentsByPart, partsByProduct, productById]);
 
   const resetForm = () => {
+    pricingAfterSave.current = false;
     importedModelFile.current = null; uploadedModelFile.current = null;
     pricingTransfer.current = null;
     setPhotoLink("");
@@ -829,11 +784,13 @@ ${selected?.name ? `Perfil: ${selected.name}
   const createMut = useMutation({
     mutationFn: () => saveProduct(null),
     onSuccess: async result => {
+      const goPricing = pricingAfterSave.current; pricingAfterSave.current = false;
       const transfer = pricingTransfer.current; pricingTransfer.current = null;
       setCreateOpen(createAnother.current && !result.imported); resetForm();
       if (createAnother.current && !result.imported) requestAnimationFrame(() => document.getElementById("product-name")?.focus());
       await qc.invalidateQueries({ queryKey: ["products"] });
       await qc.invalidateQueries({ queryKey: ["inventory_items"] });
+      if (goPricing) { navigate(`/comercial/precificacao?produto=${result.id}`); return; }
       if (transfer?.quote) { navigate("/comercial/orcamentos", { state: { pricingQuote: { product_id: result.id, quantity: transfer.quantity, unit_price: nonNegative(salePrice, "Preço") } } }); return; }
       if (result.imported) {
         const refreshed = await refetchProducts(); const product = refreshed.data?.find(product => product.id === result.id);
@@ -841,12 +798,12 @@ ${selected?.name ? `Perfil: ${selected.name}
         toast({ title: "Produto e composição cadastrados", description: "Fotos, descrição e componentes foram gravados juntos. Confira os dados de produção ainda não informados pela fonte." });
       } else toast({ title: "Produto criado" });
     },
-    onError: (error: Error) => toast({ title: "Não foi possível salvar", description: error.message, variant: "destructive" }),
+    onError: (error: Error) => { pricingAfterSave.current = false; toast({ title: "Não foi possível salvar", description: error.message, variant: "destructive" }); },
   });
   const updateMut = useMutation({
     mutationFn: () => saveProduct(editItem?.id ?? null),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["products"] }); qc.invalidateQueries({ queryKey: ["inventory_items"] }); qc.invalidateQueries({ queryKey: ["inventory_movements"] }); setEditItem(null); resetForm(); clearLegacyEditorParams(); toast({ title: "Produto atualizado" }); },
-    onError: (error: Error) => toast({ title: "Não foi possível salvar", description: error.message, variant: "destructive" }),
+    onSuccess: result => { const goPricing = pricingAfterSave.current; pricingAfterSave.current = false; qc.invalidateQueries({ queryKey: ["products"] }); qc.invalidateQueries({ queryKey: ["inventory_items"] }); qc.invalidateQueries({ queryKey: ["inventory_movements"] }); setEditItem(null); resetForm(); if (goPricing) navigate(`/comercial/precificacao?produto=${result.id}`); else clearLegacyEditorParams(); toast({ title: "Produto atualizado" }); },
+    onError: (error: Error) => { pricingAfterSave.current = false; toast({ title: "Não foi possível salvar", description: error.message, variant: "destructive" }); },
   });
   const editWritePending = updateMut.isPending || uploadingPhoto || printSourceBusy;
   function clearLegacyEditorParams() {
@@ -1011,10 +968,9 @@ ${selected?.name ? `Perfil: ${selected.name}
       {editItem?.id && profile?.tenant_id && <ProductPrintSources key={editItem.id} productId={editItem.id} tenantId={profile.tenant_id} onBusyChange={setPrintSourceBusy} onDraftChange={setSourceDraft} />}
       {editItem?.id && profile?.tenant_id && <ProductPrintPlates key={`manual-plates-${editItem.id}`} productId={editItem.id} tenantId={profile.tenant_id} sourceId={null} onBusyChange={reportManualPlateBusy} onDraftChange={reportManualPlateDraft} />}
       {editItem?.id && profile?.tenant_id && category !== "kit" && (products.find(product => product.id === editItem.id)?.recipe_plate_count ?? 0) === 0 &&
-        <ProductMaterialRecipe key={`recipe-${editItem.id}`} productId={editItem.id} tenantId={profile.tenant_id} onBusyChange={setRecipeBusy} onDraftChange={setRecipeDraft}
-          suggestedNonMaterialCost={!costBreakdown.error ? Math.max(0, costBreakdown.total - costBreakdown.materialCost) : null} />}
+        <ProductMaterialRecipe key={`recipe-${editItem.id}`} productId={editItem.id} tenantId={profile.tenant_id} onBusyChange={setRecipeBusy} onDraftChange={setRecipeDraft} />}
       {!editItem && !compositionImport && category !== "kit" && <p className="rounded-lg border bg-muted/30 p-3 text-sm">Importe o link do modelo na aba Dados para preencher a composição ou salve para cadastrar manualmente.</p>}
-      {(materialsError || printersError || tenantError) && <p role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm">Não foi possível carregar todos os parâmetros de custo. Atualize a página antes de aplicar o cálculo.</p>}
+      {(materialsError || printersError) && <p role="alert" className="rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm">Não foi possível carregar os materiais ou as impressoras. Atualize a página para conferir a referência de produção.</p>}
       {(externalImport || legacyMakerWorldUrl(notes)) && <div className="space-y-3">
         {editItem && <Button type="button" variant="outline" className="min-h-11 w-full whitespace-normal" disabled={makerWorldLoading || photosLoading} onClick={refreshMakerWorld}>{makerWorldLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CloudDownload className="mr-2 h-4 w-4" />}Atualizar fotos e detalhes do link</Button>}
         {externalImport && <MakerWorldReference value={externalImport} />}
@@ -1029,9 +985,6 @@ ${selected?.name ? `Perfil: ${selected.name}
         <div><Label htmlFor="product-grams">Peso por placa (g)</Label><Input id="product-grams" type="number" min="0" step="0.01" value={estGrams} onChange={(e) => setEstGrams(e.target.value)} placeholder="45" /></div>
         <div><Label>Impressora de referência</Label>
           <SearchableItemSelect label="Impressora de referência do produto" value={printerId} onChange={setPrinterId} emptyLabel="Selecionar para calcular" options={printers.map(p => ({ id: p.id, label: p.name }))} />
-          {!printerId && costBreakdown.selectedPrinterName && (
-            <p className="mt-1 text-[11px] text-muted-foreground">Usando {costBreakdown.selectedPrinterName} como referência de custo de máquina.</p>
-          )}
         </div>
         <div><Label htmlFor="product-hours">Impressão por placa (h)</Label><Input id="product-hours" type="number" min="0" step="0.1" value={estTime} onChange={(e) => setEstTime(e.target.value)} placeholder="2.5" /></div>
         <div><Label htmlFor="product-post">Acabamento por placa (min)</Label><Input id="product-post" type="number" min="0" value={postMinutes} onChange={(e) => setPostMinutes(e.target.value)} placeholder="15" /></div>
@@ -1101,11 +1054,6 @@ ${selected?.name ? `Perfil: ${selected.name}
             <Button type="button" variant="outline" size="sm" className="h-7 text-xs w-full" onClick={() => {
               const totalExtras = extras.reduce((s, e) => s + (e.cost || 0), 0);
               setCostEstimate((kitTotalCost + totalExtras).toFixed(2));
-              if (!salePrice || toNumber(salePrice) === 0) {
-                const total = kitTotalCost + totalExtras;
-                try { setSalePrice(suggestedProductPrice(total, tenantSettings.target_margin).toFixed(2)); }
-                catch (error) { toast({ title: "Revise a margem desejada", description: (error as Error).message, variant: "destructive" }); return; }
-              }
               toast({ title: "Custo do kit aplicado" });
             }}>
               <Calculator className="h-3 w-3 mr-1" /> Aplicar Custo do Kit
@@ -1179,55 +1127,7 @@ ${selected?.name ? `Perfil: ${selected.name}
         )}
       </div>
 
-      {/* Cost breakdown */}
-      {(parseFloat(estGrams) > 0 || parseFloat(estTime) > 0 || extras.length > 0) && (
-        <div className="rounded-lg border border-dashed bg-muted/30 p-3 space-y-2">
-          <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-              <Calculator className="h-3.5 w-3.5" /> Composição de Custo Total
-            </p>
-            <Button type="button" variant="outline" size="sm" className="h-9 text-xs" onClick={applyCalculatedCost} disabled={!!costBreakdown.error}>
-              Aplicar Custo Calculado
-            </Button>
-          </div>
-          {costBreakdown.error && <p role="alert" className="rounded-md bg-warning/10 p-3 text-xs leading-relaxed text-amber-800">{costBreakdown.error}</p>}
-          {!costBreakdown.error && <>
-          {costBreakdown.printsPerPlate > 1 && (
-            <p className="text-[11px] text-primary font-medium">📐 Custo impressão por peça (÷ {costBreakdown.printsPerPlate} peças/prato) — Prato total: {fmtCurrency(costBreakdown.totalPlate)}</p>
-          )}
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs">
-            <span className="text-muted-foreground">Material{costBreakdown.printsPerPlate > 1 ? " /peça" : ""}</span>
-            <span className="text-right font-mono">{fmtCurrency(costBreakdown.materialCost)}</span>
-            <span className="text-muted-foreground">Energia{costBreakdown.printsPerPlate > 1 ? " /peça" : ""}</span>
-            <span className="text-right font-mono">{fmtCurrency(costBreakdown.energyCost)}</span>
-            <span className="text-muted-foreground">Máquina{costBreakdown.printsPerPlate > 1 ? " /peça" : ""}</span>
-            <span className="text-right font-mono">{fmtCurrency(costBreakdown.machineCost)}</span>
-            <span className="text-muted-foreground">Mão de Obra{costBreakdown.printsPerPlate > 1 ? " /peça" : ""}</span>
-            <span className="text-right font-mono">{fmtCurrency(costBreakdown.laborCost)}</span>
-            <span className="text-muted-foreground">Overhead ({tenantSettings.overhead_percent}%)</span>
-            <span className="text-right font-mono">{fmtCurrency(costBreakdown.overhead)}</span>
-            {costBreakdown.extrasCost > 0 && (
-              <>
-                <span className="text-muted-foreground border-t pt-1 mt-1">Subtotal Impressão</span>
-                <span className="text-right font-mono border-t pt-1 mt-1">{fmtCurrency(costBreakdown.totalPerPiece)}</span>
-                <span className="text-muted-foreground">Extras / Acompanhamentos</span>
-                <span className="text-right font-mono">{fmtCurrency(costBreakdown.extrasCost)}</span>
-              </>
-            )}
-            <span className="font-semibold text-foreground border-t pt-1 mt-1">Custo Total por Unidade</span>
-            <span className="text-right font-mono font-semibold text-foreground border-t pt-1 mt-1">{fmtCurrency(costBreakdown.total)}</span>
-            <span className="text-muted-foreground">Preço Sugerido ({tenantSettings.target_margin}% margem)</span>
-            <span className="text-right font-mono text-primary">{fmtCurrency(costBreakdown.suggestedPrice)}</span>
-          </div>
-          {tenantSettings.energy_cost_kwh === 0 && tenantSettings.labor_cost_hour === 0 && (
-            <p className="text-[11px] text-muted-foreground">⚠ Configure custos de energia/mão de obra em Configurações → Empresa</p>
-          )}
-          {!costBreakdown.hasMachineRate && parseFloat(estTime) > 0 && (
-            <p className="text-[11px] text-muted-foreground">⚠ Para calcular depreciação, preencha custo de aquisição e vida útil da impressora.</p>
-          )}
-          </>}
-        </div>
-      )}
+      <div className="space-y-2 rounded-lg border bg-primary/5 p-4"><h3 className="flex items-center gap-2 font-medium"><Calculator className="h-4 w-4" />Formação do preço</h3><p className="text-sm text-muted-foreground">Salve e precifique para reunir os consumos das peças e placas, hora da máquina, energia, manipulação, montagem, insumos e margem. As tarifas ficam em Configurações → Custos e precificação.</p></div>
 
       {/* Marketplace fee simulator */}
       {toNumber(salePrice) > 0 && finalProductCost > 0 && (() => {
@@ -1465,6 +1365,7 @@ ${selected?.name ? `Perfil: ${selected.name}
                   <TableCell>
                     <div className="flex items-center justify-end gap-1" onClick={e => e.stopPropagation()}>
                       <Button variant="ghost" size="icon" title="Editar produto" aria-label={`Editar ${p.name}`} onClick={() => openEdit(p)}><Edit className="h-4 w-4"/></Button>
+                      <Button variant="ghost" size="icon" title="Precificar produto" aria-label={`Precificar ${p.name}`} asChild><RouterLink to={`/comercial/precificacao?produto=${p.id}`}><Calculator className="h-4 w-4" /></RouterLink></Button>
                       {p.stock_item_id && <Button variant="ghost" size="icon" title="Movimentar estoque" aria-label={`Movimentar estoque de ${p.name}`} asChild><RouterLink to={`/estoque/movimentacoes?item=${p.stock_item_id}`}><Package className="h-4 w-4"/></RouterLink></Button>}
                       <Button variant="ghost" size="icon" title="Excluir produto" aria-label={`Excluir ${p.name}`} onClick={() => setDeleteTarget({id:p.id,name:p.name,kind:"product"})}><Trash2 className="h-4 w-4 text-destructive"/></Button>
                     <DropdownMenu>
@@ -1490,7 +1391,7 @@ ${selected?.name ? `Perfil: ${selected.name}
       <Dialog open={createOpen} onOpenChange={open => { if (open) setCreateOpen(true); else closeCreateProduct(); }}>
         <DialogContent className="flex h-[94dvh] w-[96vw] max-w-6xl flex-col gap-4 p-4 sm:p-6" closeDisabled={createMut.isPending || uploadingPhoto}><DialogHeader className="pr-10"><DialogTitle>Novo Produto</DialogTitle><DialogDescription>Dados, valores, estoque e fotos em um único cadastro.</DialogDescription></DialogHeader>
           {formFields}
-          <DialogFooter className="gap-2"><Button type="button" className="min-h-11" variant="outline" disabled={createMut.isPending || uploadingPhoto} onClick={closeCreateProduct}>Cancelar</Button><Button type="button" className="min-h-11" onClick={() => { createAnother.current = false; createMut.mutate(); }} disabled={!name.trim() || createMut.isPending || uploadingPhoto || photosLoading || makerWorldLoading || translatingDescription}>{createMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Criar</Button><Button type="button" variant="outline" disabled={!name.trim() || createMut.isPending || uploadingPhoto || photosLoading || makerWorldLoading || translatingDescription} onClick={() => { createAnother.current = true; createMut.mutate(); }}>Salvar e cadastrar outro</Button></DialogFooter>
+          <DialogFooter className="gap-2"><Button type="button" className="min-h-11" variant="outline" disabled={createMut.isPending || uploadingPhoto} onClick={closeCreateProduct}>Cancelar</Button><Button type="button" variant="outline" disabled={!name.trim() || createMut.isPending || uploadingPhoto || photosLoading || makerWorldLoading || translatingDescription || readingImportFile} onClick={() => { pricingAfterSave.current = true; createAnother.current = false; createMut.mutate(); }}><Calculator className="mr-2 h-4 w-4" />Salvar e precificar</Button><Button type="button" className="min-h-11" onClick={() => { createAnother.current = false; createMut.mutate(); }} disabled={!name.trim() || createMut.isPending || uploadingPhoto || photosLoading || makerWorldLoading || translatingDescription}>{createMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Criar</Button><Button type="button" variant="outline" disabled={!name.trim() || createMut.isPending || uploadingPhoto || photosLoading || makerWorldLoading || translatingDescription} onClick={() => { createAnother.current = true; createMut.mutate(); }}>Salvar e cadastrar outro</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -1500,7 +1401,7 @@ ${selected?.name ? `Perfil: ${selected.name}
           {formFields}
           {printSourceBusy && <p role="status" className="text-xs text-muted-foreground">Salvando composição ou fonte de impressão. Aguarde a confirmação.</p>}
           {hasProductionDraft && !printSourceBusy && <p role="status" className="text-xs text-amber-800 dark:text-amber-300">Salve ou cancele a composição, fonte ou placa em edição antes de salvar o cadastro. Fechar ou cancelar o produto descarta esses rascunhos.</p>}
-          <DialogFooter className="gap-2"><Button type="button" className="min-h-11" variant="outline" disabled={editWritePending} onClick={closeEditProduct}>Cancelar</Button><Button type="button" className="min-h-11" onClick={() => updateMut.mutate()} disabled={!name.trim() || editWritePending || hasProductionDraft || photosLoading || makerWorldLoading || translatingDescription}>{updateMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} {photosLoading ? "Carregando fotos..." : "Salvar"}</Button></DialogFooter>
+          <DialogFooter className="gap-2"><Button type="button" className="min-h-11" variant="outline" disabled={editWritePending} onClick={closeEditProduct}>Cancelar</Button><Button type="button" variant="outline" disabled={!name.trim() || editWritePending || hasProductionDraft || photosLoading || makerWorldLoading || translatingDescription || readingImportFile} onClick={() => { pricingAfterSave.current = true; updateMut.mutate(); }}><Calculator className="mr-2 h-4 w-4" />Salvar e precificar</Button><Button type="button" className="min-h-11" onClick={() => updateMut.mutate()} disabled={!name.trim() || editWritePending || hasProductionDraft || photosLoading || makerWorldLoading || translatingDescription}>{updateMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} {photosLoading ? "Carregando fotos..." : "Salvar"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 

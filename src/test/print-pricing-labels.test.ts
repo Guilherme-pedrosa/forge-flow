@@ -65,6 +65,16 @@ describe("precificação reutilizável", () => {
       }),
     ).toThrow();
   });
+  it("requires missing monetary rates only when used and preserves explicitly confirmed zero", () => {
+    expect(() => pricePrint({ ...input, machineHour: "" })).toThrow(/Confirme a hora-máquina/);
+    expect(() => pricePrint({ ...input, kwh: "" })).toThrow(/tarifa de energia/);
+    expect(() => pricePrint({ ...input, laborHour: "" })).toThrow(/mão de obra/);
+    expect(() => pricePrint({ ...input, materials: [{ name: "PLA", grams: 10, kgPrice: "" }] })).toThrow(/preço do kg/);
+    expect(pricePrint({ ...input, machineHour: 0, kwh: 0, laborHour: 0 }).machine).toBe(0);
+    expect(pricePrint({ ...input, hours: 0, laborMinutes: 0, machineHour: "", kwh: "", watts: "", laborHour: "" }).unit).toBeGreaterThan(0);
+    expect(() => pricePrint({ ...input, overhead: "" })).toThrow(/despesas indiretas/);
+    expect(() => pricePrint({ ...input, margin: "" })).toThrow(/margem sobre a venda/);
+  });
   it("validates transfers before filling a new product", () => {
     expect(
       readPricingTransfer({
