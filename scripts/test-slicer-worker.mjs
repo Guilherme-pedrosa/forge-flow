@@ -43,6 +43,7 @@ try {
   await test('User imports are never repaired and cannot load DTDs, external relationships or post-processing scripts', async () => {
     assert.throws(() => validateArchive(readZip(archive()), true), /XML inválido/);
     assert.throws(() => parseXml(Buffer.from('<!DOCTYPE model [<!ENTITY x "boom">]><model>&x;</model>')), /DTD/);
+    assert.throws(() => parseXml(Buffer.from('<component xmlns:p="urn:production" xmlns:other="urn:other" p:path="file:///private.model" other:path="/3D/safe.model"/>')), /externa/);
     const unsafe = [member('_rels/.rels', '<Relationships><Relationship TargetMode="External" Target="https://invalid.test/file"/></Relationships>'),
       member('Metadata/project_settings.config', '{"nested":{"post_process":["run.exe"]}}'),
       member('Metadata/Slic3r_PE.config', 'post_process = run.exe'), member('Metadata/x.config', '<config><metadata key="post_process" value="run.exe"/></config>')];

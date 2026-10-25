@@ -94,6 +94,13 @@ export function parseXml(bytes, onOpen = () => {}, onClose = () => {}) {
   parser.on('error', () => fail('O 3MF contém XML inválido.'));
   parser.on('doctype', () => fail('Declarações DTD não são permitidas no 3MF.'));
   parser.on('opentag', tag => {
+    // Inspect every namespaced attribute before making a convenience map: a
+    // second namespace must not shadow p:path/href/Target during validation.
+    for (const attribute of Object.values(tag.attributes)) {
+      if (attribute.local === 'TargetMode' && attribute.value.toLowerCase() === 'external') fail('Referência externa não permitida no 3MF.');
+      if (['path', 'href', 'src', 'Target'].includes(attribute.local)
+        && /^(?:[a-z]+:|\\\\|\/\/)|(?:^|\/)\.\.(?:\/|$)/i.test(attribute.value)) fail('Referência externa não permitida no 3MF.');
+    }
     const attrs = Object.fromEntries(Object.values(tag.attributes).map(a => [a.local, a.value]));
     if (attrs.TargetMode?.toLowerCase() === 'external' || (tag.local === 'Relationship' && /^(?:[a-z]+:|\/\/)/i.test(attrs.Target ?? ''))) fail('Referência externa não permitida no 3MF.');
     onOpen(tag.local, attrs);
