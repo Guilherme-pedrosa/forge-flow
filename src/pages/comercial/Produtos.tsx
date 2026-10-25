@@ -49,6 +49,7 @@ import { normalizePrintSourceUrl } from "@/lib/product-print-source";
 import { importedComposition, importProductPhotos, selectedImportVariant, validateImportedComposition, type ImportedComposition } from "@/lib/imported-composition";
 import { ImportedCompositionPreview } from "@/components/comercial/ImportedCompositionPreview";
 import { ImportedModelImage } from "@/components/comercial/ImportedModelImage";
+import { emptyShippingPackageDraft, prepareShippingPackage, readShippingPackageDraft, shippingPackageDraftComplete, shippingPackageFields, type ShippingPackageDraft } from "@/lib/product-shipping";
 
 const fmtCurrency = (v: number | null) => v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
 const ModelFileInput = lazy(() => import("@/components/comercial/ModelFileInput"));
@@ -147,6 +148,7 @@ export default function Produtos() {
   const [stockUnit, setStockUnit] = useState("un");
   const [minStock, setMinStock] = useState("0");
   const [stockEnabled, setStockEnabled] = useState(true);
+  const [shippingPackage, setShippingPackage] = useState<ShippingPackageDraft>(emptyShippingPackageDraft);
   const [salePrice, setSalePrice] = useState("");
   const [photoUrl, setPhotoUrl] = useState("");
   const [extraPhotos, setExtraPhotos] = useState<string[]>([]);
@@ -376,6 +378,7 @@ export default function Produtos() {
     setSourceDraft(false); setRecipeDraft(false);
     setManualPlateDraft(false);
     setFormTab("dados"); setAccessoryCost("0"); setOtherCost("0"); setBarcode(""); setMaxStock("0"); setMarkup(""); setStockQuantity("0"); setStockUnit("un"); setMinStock("0"); setStockEnabled(true);
+    setShippingPackage(emptyShippingPackageDraft());
     setName(""); setDescription(""); setSku(""); setCategory("printed_part"); setMaterialId("");
     setEstGrams(""); setEstTime(""); setPostMinutes(""); setCostEstimate(""); setSalePrice(""); setPhotoUrl(""); setExtraPhotos([]); setNotes(""); setPrinterId(""); setNumColors("1"); setPrintsPerPlate("1"); setExtras([]); setKitComponents([]);
   };
@@ -398,6 +401,7 @@ export default function Produtos() {
     setSourceDraft(false); setRecipeDraft(false);
     setManualPlateDraft(false);
     setStockQuantity(String(p.stock?.current_stock ?? 0)); setStockUnit(p.stock?.unit || "un"); setMinStock(String(p.stock?.min_stock ?? 0)); setStockEnabled(p.category !== "service" || !!p.stock_item_id);
+    setShippingPackage(readShippingPackageDraft(p.shipping_package));
     setFormTab("dados"); setAccessoryCost(String(p.catalog_details?.accessory_cost ?? 0)); setOtherCost(String(p.catalog_details?.other_cost ?? 0)); setBarcode(p.catalog_details?.barcode || ""); setMaxStock(String(p.stock?.max_stock ?? 0)); setMarkup("");
     setEditItem(p); setName(p.name); setDescription(p.description || ""); setSku(p.sku || "");
     setCategory(p.category); setMaterialId(p.material_id || ""); setEstGrams(p.est_grams?.toString() || "");
@@ -451,7 +455,7 @@ export default function Produtos() {
     if (product) {
       openedFromLink.current = requestedProductId;
       openEdit(product);
-      if (requestedFormTab && ["dados", "valores", "estoque", "fotos", "producao"].includes(requestedFormTab)) setFormTab(requestedFormTab);
+      if (requestedFormTab && ["dados", "valores", "estoque", "embalagem", "fotos", "producao"].includes(requestedFormTab)) setFormTab(requestedFormTab);
     }
   }, [requestedProductId, requestedLegacyEdit, requestedFormTab, products, navigate]);
 
@@ -780,6 +784,7 @@ ${selected?.name ? `Perfil: ${selected.name}
         est_time_minutes: Math.round(nonNegative(estTime, "Tempo por placa") * 60),
         post_process_minutes: nonNegative(postMinutes, "Pós-processo por placa"),
         cost_estimate: cost, manual_cost: cost, sale_price: price,
+        shipping_package: prepareShippingPackage(shippingPackage),
         catalog_details: { base_cost: baseCost, accessory_cost: nonNegative(accessoryCost, "Despesas acessórias"), other_cost: nonNegative(otherCost, "Outras despesas"), barcode: barcode.trim() },
         ...(stockEnabled ? { stock: {
           unit: stockUnit, min_stock: nonNegative(minStock, "Estoque mínimo"), max_stock: nonNegative(maxStock, "Estoque máximo"),
@@ -870,7 +875,7 @@ ${selected?.name ? `Perfil: ${selected.name}
   const formFields = (
     <Tabs value={formTab} onValueChange={setFormTab} className="flex min-h-0 flex-1 flex-col gap-4 md:flex-row">
       <TabsList aria-label="Cadastro do produto" className="h-auto shrink-0 justify-start gap-1 overflow-x-auto bg-muted/40 p-2 md:w-44 md:flex-col md:items-stretch md:self-start">
-        {[['dados','Dados'],['valores','Valores'],['estoque','Estoque'],['fotos','Fotos'],['producao','Composição / produção']].map(([value,label]) => <TabsTrigger className="justify-start whitespace-nowrap px-4 py-3 md:whitespace-normal" key={value} value={value}>{label}</TabsTrigger>)}
+        {[['dados','Dados'],['valores','Valores'],['estoque','Estoque'],['embalagem','Embalagem para envio'],['fotos','Fotos'],['producao','Composição / produção']].map(([value,label]) => <TabsTrigger className="justify-start whitespace-nowrap px-4 py-3 md:whitespace-normal" key={value} value={value}>{label}</TabsTrigger>)}
       </TabsList>
       <div ref={formScrollRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto px-1 pb-4">
       <TabsContent forceMount value="dados" className={tabClass}>
@@ -909,6 +914,14 @@ ${selected?.name ? `Perfil: ${selected.name}
         {editItem?.stock_item_id && <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" size="sm" asChild><RouterLink to={`/estoque/movimentacoes?item=${editItem.stock_item_id}`}>Registrar entrada / saída</RouterLink></Button><Button type="button" variant="outline" size="sm" asChild><RouterLink to={`/estoque/movimentacoes?item=${editItem.stock_item_id}&historico=1`}>Ver movimentações</RouterLink></Button></div>}</>}
       </section>
 </TabsContent>
+      <TabsContent forceMount value="embalagem" className={tabClass}>
+        <section aria-label="Embalagem para envio" className="space-y-4">
+          <div><h3 className="text-lg font-semibold">Embalagem para envio</h3><p className="mt-1 text-sm text-muted-foreground">Informe as medidas externas da caixa e o peso de uma unidade do produto pronta para despachar, incluindo embalagem e proteção.</p></div>
+          <div className="grid gap-4 sm:grid-cols-2">{shippingPackageFields.map(([key, label]) => <div key={key}><Label htmlFor={`product-shipping-${key}`}>{label}</Label><Input id={`product-shipping-${key}`} inputMode="decimal" value={shippingPackage[key]} onChange={event => setShippingPackage(current => ({ ...current, [key]: event.target.value }))} placeholder={key === "weight_grams" ? "Ex.: 350" : "Ex.: 20"} /></div>)}</div>
+          <p className={`rounded-lg border p-3 text-sm ${shippingPackageDraftComplete(shippingPackage) ? "border-primary/30 bg-primary/5" : "bg-muted/30 text-muted-foreground"}`} role="status">{shippingPackageDraftComplete(shippingPackage) ? "As quatro medidas estão preenchidas para a cotação de frete." : "Você pode salvar o cadastro e completar depois. O cálculo de frete precisa das três dimensões e do peso total embalado."}</p>
+          <p className="text-xs leading-relaxed text-muted-foreground">Meça o produto completo embalado, incluindo todas as peças do conjunto. O peso de filamento e o tamanho do modelo 3D são informações de produção; o transporte usa a caixa e o peso final para envio.</p>
+        </section>
+      </TabsContent>
       <TabsContent forceMount value="fotos" className={tabClass}>      {/* Photos gallery */}
       <div>
         <Label className="mb-2 block">Fotos do Produto</Label>
