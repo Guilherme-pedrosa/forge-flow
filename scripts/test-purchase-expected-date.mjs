@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 
 // An isolated PostgreSQL contract test; never connects to a tenant database.
 const db = new PGlite();
+// CURRENT_DATE in fixtures must use the same calendar as the test companies.
+await db.exec("SET TIME ZONE 'America/Sao_Paulo'");
 await db.exec(`CREATE ROLE authenticated; CREATE ROLE anon; CREATE ROLE service_role;
  CREATE SCHEMA auth; CREATE TABLE auth.users(id uuid PRIMARY KEY,email text);
  CREATE FUNCTION auth.uid() RETURNS uuid LANGUAGE sql STABLE AS $$ SELECT nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;
