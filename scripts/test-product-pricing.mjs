@@ -56,6 +56,12 @@ try{
   assert.equal(await scalar('SELECT depreciation_per_hour::float FROM printers WHERE id=$1',[printer]),2);
  });
  const simple=await fileProduct();await savePlan(simple,{consumables:[{item_id:magnet,quantity:2}]});
+ await test('Current commercial labor tariff supersedes legacy zero sheet rates while keeping the sheet finishing time',async()=>{
+  await scalar('SELECT save_product_piece_spec($1,$2::jsonb,$3)',[simple,JSON.stringify({materials:[],finishing_seconds:120,labor_hour_cost:0}),next()]);
+  const result=await preview(simple);assert.equal(result.complete,true,JSON.stringify(result.missing));assert.equal(result.breakdown.finishing,1);
+  assert.equal((await preview(simple,1,{labor_cost_hour:90})).breakdown.finishing,3);
+  assert.equal(await scalar("SELECT spec->>'labor_hour_cost' FROM product_piece_specs WHERE product_id=$1",[simple]),'0');
+ });
  await test('Unit pricing divides one plate once; handling, finishing, final assembly, extras and sales margin remain distinct',async()=>{
   const p=await preview(simple);assert.equal(p.complete,true,JSON.stringify(p.missing));assert.equal(p.cost_basis,'unit');
   assert.equal(p.breakdown.material,2.5);assert.equal(p.breakdown.energy,.05);assert.equal(p.breakdown.machine,1);assert.equal(p.breakdown.handling,.75);assert.equal(p.breakdown.finishing,1);assert.equal(p.breakdown.assembly,2);assert.equal(p.breakdown.extras,1.35);assert.equal(p.breakdown.overhead,.73);assert.equal(p.breakdown.unit_cost,9.38);assert.equal(p.suggested_unit_price,15.64);
@@ -67,6 +73,8 @@ try{
  await test('Mixed component plate is costed once using its limiting physical yield, never plate plus component sheets',async()=>{
   const p=await fileProduct(true);const result=await preview(p);assert.equal(result.complete,true,JSON.stringify(result.missing));assert.equal(result.components.length,2);assert.equal(result.plates.length,1);assert.equal(result.breakdown.material,5);assert.equal(result.breakdown.machine,2);assert.equal(result.breakdown.handling,1.5);assert.equal(result.breakdown.finishing,2);assert.equal(result.breakdown.assembly,2);assert.equal(result.breakdown.unit_cost,14.36);assert.equal(result.runs[0].required_runs,.5);
   assert.deepEqual(result.runs[0].outputs.map(x=>x.surplus_units).sort(),[1,3]);
+  for(const component of result.components)await scalar('SELECT save_product_piece_spec($1,$2::jsonb,$3)',[component.component_product_id,JSON.stringify({materials:[],finishing_seconds:120,labor_hour_cost:0}),next()]);
+  const legacy=await preview(p);assert.equal(legacy.complete,true,JSON.stringify(legacy.missing));assert.equal(legacy.breakdown.finishing,2);assert.equal(legacy.breakdown.unit_cost,14.36);
  });
  await test('Unknown costs stay incomplete, zero is accepted only when confirmed, and stock availability does not block pricing',async()=>{
   assert.equal((await preview(simple)).complete,true);assert.equal(await scalar('SELECT current_stock::float FROM inventory_items WHERE id=$1',[material]),0);
@@ -92,8 +100,8 @@ try{
   const before=await scalar('SELECT snapshot FROM product_pricing_acceptances LIMIT 1'),old=await settings(),key=next();
   const saved=await saveSettings({...policy,energy_cost_kwh:2,labor_cost_hour:60},key,old.revision);
   assert.equal(await scalar("SELECT settings->>'energy_cost_kwh' FROM tenants WHERE id=$1",[tenant]),'2');
-  assert.equal((await preview(simple)).breakdown.energy,.1);assert.equal((await preview(simple)).breakdown.handling,1.5);
-  assert.deepEqual(await scalar('SELECT snapshot FROM product_pricing_acceptances LIMIT 1'),before);assert.equal(before.breakdown.energy,.05);
+  assert.equal((await preview(simple)).breakdown.energy,.1);assert.equal((await preview(simple)).breakdown.handling,1.5);assert.equal((await preview(simple)).breakdown.finishing,2);
+  assert.deepEqual(await scalar('SELECT snapshot FROM product_pricing_acceptances LIMIT 1'),before);assert.equal(before.breakdown.energy,.05);assert.equal(before.breakdown.finishing,1);
   assert.equal(await saveSettings({...policy,energy_cost_kwh:2,labor_cost_hour:60},key,old.revision),saved);
   await assert.rejects(saveSettings({...policy,energy_cost_kwh:9},next(),old.revision),/mudaram/);assert.equal(await scalar("SELECT settings->>'energy_cost_kwh' FROM tenants WHERE id=$1",[tenant]),'2');
   await saveSettings({...policy,energy_cost_kwh:null});assert.equal((await settings()).energy_cost_kwh,null);assert.equal(await scalar("SELECT settings->>'energy_cost_kwh' FROM tenants WHERE id=$1",[tenant]),'2');assert.equal((await preview(simple)).complete,false);

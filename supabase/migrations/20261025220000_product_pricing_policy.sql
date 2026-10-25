@@ -206,7 +206,9 @@ DECLARE p products; stored jsonb; cfg jsonb; c record; pp product_print_plates; 
     IF c.quantity_per_plate IS NULL THEN missing:=missing||jsonb_build_array('Confirme as cópias por placa de '||c.name||'.'); CONTINUE; END IF;
     runs:=req::numeric/c.quantity_per_plate; run_map:=jsonb_set(run_map,ARRAY[c.plate_id::text],to_jsonb(greatest(coalesce((run_map->>c.plate_id::text)::numeric,0),runs)));
     finish_seconds:=CASE WHEN (coalesce(stored->'plan','{}')||p_overrides) ? 'finishing_minutes_per_piece' THEN (cfg->>'finishing_minutes_per_piece')::numeric*60 ELSE coalesce((spec->>'finishing_seconds')::numeric,(cfg->>'finishing_minutes_per_piece')::numeric*60) END;
-    labor_rate:=CASE WHEN (coalesce(stored->'plan','{}')||p_overrides) ? 'labor_cost_hour' THEN (cfg->>'labor_cost_hour')::numeric ELSE coalesce((spec->>'labor_hour_cost')::numeric,(cfg->>'labor_cost_hour')::numeric) END;
+    -- A technical sheet supplies time and consumption, never a historical
+    -- tariff to this new commercial calculation. Current policy/plan wins.
+    labor_rate:=(cfg->>'labor_cost_hour')::numeric;
     IF finish_seconds IS NULL OR labor_rate IS NULL THEN missing:=missing||jsonb_build_array('Confirme o acabamento por peça e mão de obra de '||c.name||'.'); ELSE finishing:=finishing+finish_seconds/3600*labor_rate*req; END IF;
     piece_extras:=piece_extras+coalesce((spec->>'extra_cost')::numeric,0)*req;
    ELSE
@@ -263,7 +265,7 @@ DECLARE p products; stored jsonb; cfg jsonb; c record; pp product_print_plates; 
   spec:=erp_private.read_piece_spec(p.id,p_tenant);
   piece_extras:=piece_extras+coalesce((spec->>'extra_cost')::numeric,0)*p_quantity;
   finish_seconds:=CASE WHEN (coalesce(stored->'plan','{}')||p_overrides) ? 'finishing_minutes_per_piece' THEN (cfg->>'finishing_minutes_per_piece')::numeric*60 ELSE coalesce((spec->>'finishing_seconds')::numeric,(cfg->>'finishing_minutes_per_piece')::numeric*60) END;
-  labor_rate:=CASE WHEN (coalesce(stored->'plan','{}')||p_overrides) ? 'labor_cost_hour' THEN (cfg->>'labor_cost_hour')::numeric ELSE coalesce((spec->>'labor_hour_cost')::numeric,(cfg->>'labor_cost_hour')::numeric) END;
+  labor_rate:=(cfg->>'labor_cost_hour')::numeric;
   IF finish_seconds IS NULL OR labor_rate IS NULL THEN missing:=missing||jsonb_build_array('Confirme o acabamento por peça e mão de obra.'); ELSE finishing:=p_quantity*finish_seconds/3600*labor_rate; END IF;
  END IF;
  FOR k IN SELECT jsonb_object_keys(run_map) LOOP
