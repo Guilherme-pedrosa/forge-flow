@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, QueryObserver } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { webcrypto } from "node:crypto";
 import ProductFileRevisionDialog from "./ProductFileRevisionDialog";
@@ -11,7 +11,7 @@ vi.mock("./ModelFileInput", () => ({ default: ({ onChange, onFileReady, onBusyCh
   onFileReady(file); onChange({ profile_id: "local:9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08", enabled: true, plates: [{ index: 1, label: "Folhas", weight_grams: 4, time_seconds: 300, parts: [{ source_key: "object:1", name: "Folha", quantity_per_plate: 4 }] }] });
 }}>Carregar arquivo de teste</button><button onClick={() => onBusyChange(true)}>Abrir outro arquivo</button></> }));
 const context = { revision: "revision", can_target_product: false, blocked_reason: null, active_plates: [], components: [{ id: "subitem", component_product_id: "component-product", name: "Folha cadastrada", sku: "FOLHA" }] };
-const mount = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><ProductFileRevisionDialog productId="product" tenantId="tenant" open onOpenChange={mocks.close} /></QueryClientProvider>);
+const mount = (client = new QueryClient({ defaultOptions: { queries: { retry: false } } })) => render(<QueryClientProvider client={client}><ProductFileRevisionDialog productId="product" tenantId="tenant" open onOpenChange={mocks.close} /></QueryClientProvider>);
 beforeEach(() => { vi.clearAllMocks(); Object.defineProperty(globalThis, "crypto", { value: webcrypto, configurable: true }); mocks.upload.mockResolvedValue({ error: null }); mocks.rpc.mockImplementation(async (name: string) => name === "product_file_revision_context" ? { data: context, error: null } : { data: "new-source", error: null }); });
 afterEach(cleanup);
 async function load() { fireEvent.click(await screen.findByRole("button", { name: "Carregar arquivo de teste" })); }
@@ -42,5 +42,21 @@ describe("existing product file revision", () => {
     fireEvent.click(screen.getByRole("button", { name: "Aplicar revisão" })); await waitFor(() => expect(mocks.close).toHaveBeenCalledWith(false));
     const writesArgs = mocks.rpc.mock.calls.filter(([name]) => name === "apply_product_file_revision").map(([, args]) => args);
     expect(writesArgs).toHaveLength(2); expect(writesArgs[0]).toEqual(writesArgs[1]); expect(mocks.upload).toHaveBeenCalledTimes(1);
+  });
+  it("updates already-open technical and learned references immediately after applying the revision",async()=>{
+    const client=new QueryClient({defaultOptions:{queries:{retry:false,staleTime:Infinity}}});
+    let applied=false; mocks.rpc.mockImplementation(async(name:string)=>{
+      if(name==="product_file_revision_context")return{data:context,error:null};
+      applied=true; return{data:"new-source",error:null};
+    });
+    const piece=new QueryObserver(client,{queryKey:["piece_spec","tenant","component-product"],queryFn:async()=>({grams:applied?1:null})});
+    const learning=new QueryObserver(client,{queryKey:["product_plate_learning","tenant","plate"],queryFn:async()=>({revision:applied?"new":"old"})});
+    const stopPiece=piece.subscribe(()=>{}),stopLearning=learning.subscribe(()=>{});
+    try{
+      await waitFor(()=>expect(piece.getCurrentResult().data).toEqual({grams:null}));
+      mount(client); await load(); fireEvent.change(screen.getByLabelText("Placa 1 · Folha"),{target:{value:"subitem"}}); fireEvent.click(screen.getByRole("button",{name:"Aplicar revisão"}));
+      await waitFor(()=>expect(piece.getCurrentResult().data).toEqual({grams:1}));
+      expect(learning.getCurrentResult().data).toEqual({revision:"new"});
+    }finally{stopPiece();stopLearning();}
   });
 });
