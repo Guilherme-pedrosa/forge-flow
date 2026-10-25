@@ -98,7 +98,8 @@ export default function Itens() {
           .from("products").select("id,name,stock_item_id,is_component").eq("tenant_id", profile!.tenant_id)
           .order("id").range(from, to).returns<{ id: string; name: string; stock_item_id: string | null; is_component: boolean }[]>()),
       ]);
-      return { items, owners: new Map(products.filter(product => product.stock_item_id).map(product => [product.stock_item_id!, product])) };
+      const owners = new Map(products.filter(product => product.stock_item_id).map(product => [product.stock_item_id!, product]));
+      return { items: items.filter(item => !owners.has(item.id)), owners };
     },
     enabled: !!profile,
   });
@@ -131,7 +132,6 @@ export default function Itens() {
     const orphans: any[] = [];
 
     for (const item of items) {
-      if (owners.has(item.id)) { orphans.push(item); continue; }
       const pid = (item as any).parent_id;
       if (pid && items.some(parent => parent.id === pid) && !owners.has(pid)) {
         if (!children.has(pid)) children.set(pid, []);
@@ -160,15 +160,12 @@ export default function Itens() {
       item.color?.toLowerCase().includes(s) || item.material_code?.toLowerCase().includes(s) || item.color_code?.toLowerCase().includes(s);
 
     const filteredParents = parentItems.filter((p) => {
-      if (categoryFilter === "outputs") return false;
       if (categoryFilter !== "all" && p.category !== categoryFilter) return false;
       const kids = childrenMap.get(p.id) || [];
       return matchSearch(p) || kids.some(matchSearch);
     });
 
     const filteredOrphans = orphanItems.filter((o) => {
-      if (categoryFilter === "outputs") return owners.has(o.id) && matchSearch(o);
-      if (categoryFilter !== "all" && owners.has(o.id)) return false;
       if (categoryFilter !== "all" && o.category !== categoryFilter) return false;
       return matchSearch(o);
     });
@@ -476,7 +473,7 @@ export default function Itens() {
       <DeleteRecordDialog key={deleteTarget?.id} target={deleteTarget} onClose={() => setDeleteTarget(null)} />
       <PageHeader
         title="Materiais e insumos"
-        description="Filamentos, resinas, embalagens e componentes comprados. O estoque também identifica os produtos e peças que você fabrica."
+        description="Cadastre e controle filamentos, resinas, embalagens e componentes comprados usados na produção."
         breadcrumbs={[{ label: "Estoque", href: "/estoque/itens" }, { label: "Materiais e insumos" }]}
         actions={
           <div className="flex flex-wrap gap-2">
@@ -525,7 +522,6 @@ export default function Itens() {
             {Object.entries(categoryLabels).map(([k, v]) => (
               <SelectItem key={k} value={k}>{v}</SelectItem>
             ))}
-            <SelectItem value="outputs">Produtos e peças produzidos</SelectItem>
           </SelectContent>
         </Select>
       </div>

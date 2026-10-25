@@ -91,17 +91,22 @@ describe("contexto do cadastro de materiais e insumos", () => {
     })));
   });
 
-  it("identifica saldo de produto e peça sem abrir cadastro genérico de material", async () => {
-    const stock = { category: "consumable", unit: "un", is_active: true, current_stock: 4, avg_cost: 5, min_stock: 0, parent_id: null };
-    mock.items = [{ ...stock, id: "finished-stock", name: "Maçã completa" }, { ...stock, id: "piece-stock", name: "Caule impresso" }];
+  it("exclui estoque de produtos e peças da lista, pesquisa e indicadores de materiais", async () => {
+    const stock = { category: "consumable", unit: "un", is_active: true, current_stock: 4, avg_cost: 5, min_stock: 10, parent_id: null };
+    mock.items = [{ ...stock, id: "finished-stock", name: "Maçã completa" }, { ...stock, id: "piece-stock", name: "Caule impresso" }, { ...stock, id: "supply", name: "Caixa kraft", current_stock: 3, avg_cost: 1, min_stock: 1 }];
     mock.products = [{ id: "finished-product", name: "Maçã completa", stock_item_id: "finished-stock", is_component: false }, { id: "piece-product", name: "Caule impresso", stock_item_id: "piece-stock", is_component: true }];
     mount();
-    expect(await screen.findByText("Produto acabado")).toBeInTheDocument();
-    expect(screen.getByText("Peça produzida")).toBeInTheDocument();
-    fireEvent.click(screen.getByText("Maçã completa"));
-    expect(screen.getByLabelText("Página atual")).toHaveTextContent("/comercial/produtos/finished-product");
-    fireEvent.click(screen.getByText("Caule impresso"));
-    expect(screen.getByLabelText("Página atual")).toHaveTextContent("/comercial/produtos/piece-product");
+    expect(await screen.findByText("Caixa kraft")).toBeInTheDocument();
+    expect(screen.queryByText("Maçã completa")).not.toBeInTheDocument();
+    expect(screen.queryByText("Caule impresso")).not.toBeInTheDocument();
+    expect(screen.queryByText("Produto acabado")).not.toBeInTheDocument();
+    expect(screen.queryByText("Peça produzida")).not.toBeInTheDocument();
+    expect(screen.getByText("Itens Cadastrados").parentElement).toHaveTextContent("1");
+    expect(screen.getByText("Abaixo do Mínimo").parentElement).toHaveTextContent("0");
+    expect(screen.getByText("Valor Total em Estoque").parentElement).toHaveTextContent("R$ 3,00");
+    expect(screen.queryByRole("option", { name: "Produtos e peças produzidos" })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByPlaceholderText("Buscar por nome, SKU, material, cor…"), { target: { value: "Maçã" } });
+    expect(screen.getByText("Nenhum item encontrado")).toBeInTheDocument();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(mock.rpc).not.toHaveBeenCalled();
   });
