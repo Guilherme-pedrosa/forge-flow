@@ -21,6 +21,8 @@ fica congelada no registro. Mudar o arquivo exige nova conferência.
 `product_plate_learning(p_plate_id)` lê a referência atual, quando existe.
 `product_piece_spec` e o BOM usam essa referência automaticamente somente
 quando a placa tem um único SKU físico confirmado e nenhuma peça desconhecida.
+O próprio SKU de um arquivo simples também pode usar `product_file_piece_links`,
+sem criar subitem, composição ou produto adicional.
 Precisam existir associação vigente, apuração concluída e qualidade de todas
 as saídas decidida. São consideradas apenas as unidades aprovadas; nenhuma
 média atravessa perfis Bambu diferentes. Sem dados confiáveis, permanece a

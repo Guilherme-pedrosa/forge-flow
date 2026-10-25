@@ -155,5 +155,14 @@ await test('A completely rejected physical run never promotes a learned piece sp
  const x=await filePlate();const b=await onePart(x);const t=await task();await confirm(x,t);await configure(t,x.p,{plate:x.plate,units:2});const r=await account(t);await approve(x,r,b,0);
  assert.equal(await learning(x),null);assert.notEqual((await scalar('SELECT product_piece_spec($1)',[b.component_product_id])).source,'bambu');
 });
+await test('A standalone file-linked SKU learns after quality without creating subitems or a BOM',async()=>{
+ const x=await filePlate();
+ const sourcePart=await owner(()=>scalar("INSERT INTO product_print_plate_parts(tenant_id,product_id,plate_id,source_key,name,quantity_per_product,quantity_per_plate,name_source) VALUES($1,$2,$3,'own-file-piece','Own SKU',1,2,'file') RETURNING id",[tenant,x.p,x.plate]));
+ await owner(()=>db.query('INSERT INTO product_file_piece_links(product_id,tenant_id,plate_id,source_part_id,quantity_per_plate) VALUES($1,$2,$3,$4,2)',[x.p,tenant,x.plate,sourcePart]));
+ const t=await task();await confirm(x,t);await configure(t,x.p,{plate:x.plate,units:2});const r=await account(t);
+ assert.equal(await learning(x),null);await scalar("SELECT transition_job($1,'ready')",[r.job_ids[0]]);
+ const sheet=await scalar('SELECT product_piece_spec($1)',[x.p]);assert.equal(sheet.source,'bambu');assert.equal(Number(sheet.grams),50);assert.equal(Number(sheet.print_seconds),70);assert.equal(sheet.pieces_per_plate,2);
+ assert.equal(await scalar('SELECT count(*)::int FROM product_subitems WHERE product_id=$1',[x.p]),0);
+});
 console.log('Validated '+passed+' execution identity and learning scenarios.');
 await db.close();

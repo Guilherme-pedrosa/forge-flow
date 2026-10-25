@@ -153,9 +153,11 @@ CREATE FUNCTION erp_private.read_plate_learning(p_plate uuid,p_tenant uuid) RETU
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=public AS $$
 DECLARE result jsonb;
 BEGIN
- IF (SELECT count(*) FROM product_subitems WHERE plate_id=p_plate AND tenant_id=p_tenant)>1
+ IF (SELECT count(*) FROM (SELECT component_product_id FROM product_subitems WHERE plate_id=p_plate AND tenant_id=p_tenant
+  UNION SELECT product_id FROM product_file_piece_links WHERE plate_id=p_plate AND tenant_id=p_tenant) sku)>1
  OR EXISTS(SELECT 1 FROM product_print_plate_parts part WHERE part.plate_id=p_plate
-  AND NOT EXISTS(SELECT 1 FROM product_subitems sub WHERE sub.source_part_id=part.id AND sub.tenant_id=p_tenant)) THEN RETURN NULL; END IF;
+  AND NOT EXISTS(SELECT 1 FROM product_subitems sub WHERE sub.source_part_id=part.id AND sub.tenant_id=p_tenant)
+  AND NOT EXISTS(SELECT 1 FROM product_file_piece_links ref WHERE ref.source_part_id=part.id AND ref.tenant_id=p_tenant)) THEN RETURN NULL; END IF;
  WITH eligible AS (
  SELECT r.*,a.units AS accepted_units,a.total_grams AS accepted_grams,a.elapsed_seconds AS accepted_seconds,
  a.total_cost AS accepted_cost,greatest(0,r.material_cost-coalesce((SELECT sum(q.material_cost) FROM bambu_quality_rejections q WHERE q.task_id=r.task_id AND q.tenant_id=r.tenant_id),0)) AS accepted_material_cost,
@@ -169,11 +171,16 @@ BEGIN
  AND r.execution_binding_fingerprint=b.source_fingerprint
  AND b.source_fingerprint=erp_private.print_plate_source_fingerprint(p_plate,p_tenant)
  AND b.bambu_device_id=task.bambu_device_id AND b.project_key=erp_private.bambu_project_key(task.raw_data)
- AND ((NOT EXISTS(SELECT 1 FROM product_subitems sub WHERE sub.plate_id=p_plate AND sub.tenant_id=p_tenant)
+ AND ((NOT EXISTS(SELECT 1 FROM product_subitems sub WHERE sub.plate_id=p_plate AND sub.tenant_id=p_tenant
+ UNION ALL SELECT 1 FROM product_file_piece_links ref WHERE ref.plate_id=p_plate AND ref.tenant_id=p_tenant)
  AND r.material_snapshot->>'individual_stock' IS DISTINCT FROM 'true')
+ OR (r.material_snapshot->>'individual_stock' IS DISTINCT FROM 'true'
+ AND EXISTS(SELECT 1 FROM product_file_piece_links ref WHERE ref.plate_id=p_plate AND ref.tenant_id=p_tenant AND ref.product_id=r.product_id))
  OR (jsonb_array_length(coalesce(r.material_snapshot->'physical_outputs','[]'))=1
  AND EXISTS(SELECT 1 FROM product_subitems sub WHERE sub.plate_id=p_plate AND sub.tenant_id=p_tenant
-  AND sub.component_product_id::text=r.material_snapshot->'physical_outputs'->0->>'component_product_id')))
+  AND sub.component_product_id::text=r.material_snapshot->'physical_outputs'->0->>'component_product_id'
+  UNION ALL SELECT 1 FROM product_file_piece_links ref WHERE ref.plate_id=p_plate AND ref.tenant_id=p_tenant
+  AND ref.product_id::text=r.material_snapshot->'physical_outputs'->0->>'component_product_id')))
  AND EXISTS(SELECT 1 FROM bambu_production_allocations alloc WHERE alloc.task_id=r.task_id AND alloc.tenant_id=r.tenant_id)
  AND NOT EXISTS(SELECT 1 FROM bambu_production_allocations alloc JOIN jobs j ON j.id=alloc.job_id AND j.tenant_id=alloc.tenant_id
   WHERE alloc.task_id=r.task_id AND (j.status NOT IN ('ready','completed','shipped','failed')
@@ -201,26 +208,31 @@ END $$;
 ALTER FUNCTION erp_private.read_piece_spec(uuid,uuid,uuid) RENAME TO read_piece_spec_before_execution_learning;
 CREATE FUNCTION erp_private.read_piece_spec(p_product uuid,p_tenant uuid,p_subitem uuid DEFAULT NULL) RETURNS jsonb
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path=public AS $$
-DECLARE previous jsonb; b product_subitems; learned jsonb; subitems integer;
+DECLARE previous jsonb; b product_subitems; ref product_file_piece_links; learned jsonb; subitems integer; target_plate uuid; pieces integer;
 BEGIN
  previous:=erp_private.read_piece_spec_before_execution_learning(p_product,p_tenant,p_subitem);
  -- A manual sheet always remains the operative reference, even if incomplete.
  IF EXISTS(SELECT 1 FROM product_piece_specs WHERE product_id=p_product AND tenant_id=p_tenant) THEN RETURN previous; END IF;
+ SELECT f.* INTO ref FROM product_file_piece_links f JOIN product_print_plates pp ON pp.id=f.plate_id AND pp.tenant_id=f.tenant_id
+ JOIN product_print_plate_parts part ON part.id=f.source_part_id AND part.plate_id=pp.id AND part.product_id=f.product_id AND part.tenant_id=f.tenant_id
+ WHERE f.product_id=p_product AND f.tenant_id=p_tenant AND pp.product_id=p_product AND pp.is_active;
+ IF ref.product_id IS NOT NULL THEN target_plate:=ref.plate_id; pieces:=ref.quantity_per_plate;
+ ELSE
  IF p_subitem IS NOT NULL THEN SELECT * INTO b FROM product_subitems WHERE id=p_subitem AND component_product_id=p_product AND tenant_id=p_tenant;
  ELSE
   SELECT count(*) INTO subitems FROM product_subitems WHERE component_product_id=p_product AND tenant_id=p_tenant;
   IF subitems=1 THEN SELECT * INTO b FROM product_subitems WHERE component_product_id=p_product AND tenant_id=p_tenant; END IF;
  END IF;
- IF b.id IS NULL OR b.plate_id IS NULL OR b.quantity_per_plate IS NULL
- OR (SELECT count(*) FROM product_subitems WHERE plate_id=b.plate_id AND tenant_id=p_tenant)<>1
- OR EXISTS(SELECT 1 FROM product_print_plate_parts part WHERE part.plate_id=b.plate_id
-  AND NOT EXISTS(SELECT 1 FROM product_subitems sub WHERE sub.source_part_id=part.id AND sub.tenant_id=p_tenant)) THEN RETURN previous; END IF;
- learned:=erp_private.read_plate_learning(b.plate_id,p_tenant);
+ IF b.id IS NULL THEN RETURN previous; END IF;
+ target_plate:=b.plate_id; pieces:=b.quantity_per_plate;
+ END IF;
+ IF target_plate IS NULL OR pieces IS NULL THEN RETURN previous; END IF;
+ learned:=erp_private.read_plate_learning(target_plate,p_tenant);
  IF learned IS NULL THEN RETURN previous; END IF;
- RETURN previous||learned||jsonb_build_object('revision',NULL,'pieces_per_plate',b.quantity_per_plate,
+ RETURN previous||learned||jsonb_build_object('revision',NULL,'pieces_per_plate',pieces,
  'notes','Referência por peça de execuções confirmadas, apuradas e aprovadas na qualidade. Ajustes manuais têm prioridade.',
  'learned_reference',learned-'materials','plate',coalesce(previous->'plate','{}'::jsonb)||jsonb_build_object(
-  'grams',(learned->>'grams')::numeric*b.quantity_per_plate,'seconds',(learned->>'print_seconds')::numeric*b.quantity_per_plate));
+  'grams',(learned->>'grams')::numeric*pieces,'seconds',(learned->>'print_seconds')::numeric*pieces));
 END $$;
 
 CREATE FUNCTION public.product_plate_learning(p_plate_id uuid) RETURNS jsonb
