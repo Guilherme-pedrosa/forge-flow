@@ -173,7 +173,7 @@
     -moz-osx-font-smoothing: grayscale;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
     margin: 0;
-    min-width: 320px;
+    min-width: 0;
   }
 
   #root { min-height: 100dvh; width: 100%; }

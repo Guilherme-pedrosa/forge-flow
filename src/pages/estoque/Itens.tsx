@@ -481,8 +481,8 @@ export default function Itens() {
             <Button size="sm" variant="outline" onClick={() => openCreate("consumable")}>
               <Plus className="h-4 w-4 mr-1" /> Novo insumo
             </Button>
-            <Button size="sm" onClick={() => openCreate("filament")}>
-              <Plus className="h-4 w-4 mr-1" /> Novo filamento
+            <Button size="sm" asChild>
+              <Link to="/estoque/bobinas?novo=1"><Plus className="h-4 w-4 mr-1" /> Novo filamento e bobina</Link>
             </Button>
           </div>
         }
