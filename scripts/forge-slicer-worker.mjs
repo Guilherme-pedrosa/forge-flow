@@ -279,7 +279,10 @@ export async function processJob(config, rpc, job, { signal, onChild, simulate =
   const started = Date.now();
   const checkDeadline = () => { if (Date.now() - started >= 600000) fail('A simulação ultrapassou dez minutos.'); };
   let progress = 5, heartbeatBusy = false, lost = false;
-  const beat = async () => { if (heartbeatBusy) return; heartbeatBusy = true; try { await rpc('slicer_worker_heartbeat', { ...scope, p_progress: progress }); } catch { lost = true; } finally { heartbeatBusy = false; } };
+  const beat = async () => { if (heartbeatBusy) return; heartbeatBusy = true; try {
+    await rpc('slicer_worker_hello', { p_profiles: [PROFILE], p_engine_version: ENGINE_VERSION });
+    await rpc('slicer_worker_heartbeat', { ...scope, p_progress: progress });
+  } catch { lost = true; } finally { heartbeatBusy = false; } };
   const timer = setInterval(beat, 25000); timer.unref();
   try {
     await beat(); if (lost) fail('A conexão desta simulação foi interrompida.');
