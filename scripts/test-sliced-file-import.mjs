@@ -28,6 +28,8 @@ const save=(data,product=null,key=next())=>scalar("SELECT save_product_with_phot
 const plates=p=>rows('SELECT * FROM product_print_plates WHERE product_id=$1 ORDER BY plate_index',[p]);
 const parts=p=>rows('SELECT * FROM product_subitems WHERE product_id=$1 ORDER BY id',[p]);
 const spec=p=>scalar('SELECT product_piece_spec($1)',[p]);
+const revision=p=>scalar('SELECT product_file_revision_context($1)',[p]);
+const apply=async(p,composition,mapping,expected=null,key=next())=>scalar('SELECT apply_product_file_revision($1,$2::jsonb,$3::jsonb,$4,$5)',[p,JSON.stringify(composition),JSON.stringify(mapping),expected??(await revision(p)).revision,key]);
 async function test(name,fn) { try { await fn(); passed++; console.log('PASS '+name); } catch(error) { console.error('FAIL '+name+': '+error.message,error.where??''); throw error; } }
 await db.query("INSERT INTO auth.users VALUES($1,'owner@qa.invalid'),($2,'other@qa.invalid'),($3,'viewer@qa.invalid')",[owner,otherOwner,viewer]);
 await db.query("INSERT INTO tenants(id,name,slug) VALUES($1,'Slicer QA','slicer-qa'),($2,'Other','slicer-other')",[tenant,otherTenant]);
@@ -126,6 +128,90 @@ try {
   await login(viewer); await assert.rejects(save(local()),/permissão/);
   await assert.rejects(db.query("SELECT erp_private.file_slicer_filaments('{}',$1)",[tenant]),/permission denied/);
   await login(owner); await assert.rejects(db.query("UPDATE product_print_plates SET imported_filaments='[]' WHERE product_id=$1",[p]),/permission denied/);
+ });
+ await test('An existing physical SKU receives an explicit homogeneous file revision without recapturing cost, price or stock',async()=>{
+  const p=await save({name:'Existing physical SKU',sku:'SAME-SKU',manual_cost:12,sale_price:30,stock:{unit:'un',current_stock:7,avg_cost:5}});
+  const oldSource=await scalar('SELECT save_product_print_source(NULL,$1,$2::jsonb)',[p,JSON.stringify({label:'Original execution identity',profile_id:'original-profile',model_id:'original-model'})]);
+  const oldPlate=await scalar('SELECT save_product_print_plate(NULL,$1,$2,$3::jsonb)',[p,oldSource,JSON.stringify({plate_index:1,label:'Old plan',units_per_plate:1,est_grams:9,est_time_seconds:600})]);
+  const before=(await rows('SELECT p.name,p.sku,p.stock_item_id,p.manual_cost_override,p.cost_estimate,p.sale_price,i.current_stock,i.avg_cost FROM products p JOIN inventory_items i ON i.id=p.stock_item_id WHERE p.id=$1',[p]))[0];
+  const composition=local().file_composition; composition.plates[0].parts[0].quantity_per_plate=3;
+  const state=await revision(p),key=next(); assert.equal(state.can_target_product,true); assert.equal(state.revision.length,32);
+  const source=await apply(p,composition,{target:'product',parts:[]},state.revision,key);
+  const after=(await rows('SELECT p.name,p.sku,p.stock_item_id,p.manual_cost_override,p.cost_estimate,p.sale_price,i.current_stock,i.avg_cost FROM products p JOIN inventory_items i ON i.id=p.stock_item_id WHERE p.id=$1',[p]))[0]; assert.deepEqual(after,before);
+  const [old,newPlate]=await plates(p); assert.equal(await scalar('SELECT is_active FROM product_print_plates WHERE id=$1',[oldPlate]),false);
+  const active=(await plates(p)).filter(x=>x.is_active); assert.equal(active.length,1); assert.equal(active[0].source_id,source); assert.equal(active[0].units_per_plate,3);
+  const s=await spec(p); assert.equal(s.source,'plate'); assert.equal(s.grams,1.21); assert.ok(Math.abs(s.print_seconds-1351/3)<1e-9); assert.equal(s.materials[0].material,'PLA');
+  assert.equal(await scalar('SELECT model_id FROM product_print_sources WHERE id=$1',[oldSource]),'original-model'); assert.equal(await scalar('SELECT profile_id FROM product_print_sources WHERE id=$1',[oldSource]),'original-profile');
+  assert.equal(await apply(p,composition,{target:'product',parts:[]},state.revision,key),source);
+  assert.equal(await apply(p,composition,{target:'product',parts:[]}),source); assert.equal((await plates(p)).filter(x=>x.is_active).length,1);
+ });
+ await test('Explicit component destinations preserve catalogue and stock IDs, existing BOM quantities and manual sheets',async()=>{
+  const old=local(); old.file_composition.plates=[slicedPlate(1),slicedPlate(2)]; old.file_composition.plates[1].parts[0].name='Leaf';
+  const p=await save(old),members=await parts(p),byPlate=new Map(members.map(b=>[b.plate_id,b]));
+  const ordered=(await plates(p)).map(pl=>byPlate.get(pl.id));
+  await scalar('SELECT save_product_piece_spec($1,$2::jsonb,$3)',[ordered[1].component_product_id,JSON.stringify({materials:[{item_id:material,grams:9}],print_seconds:333}),next()]);
+  const catalogueBefore=await rows('SELECT p.id,p.stock_item_id,p.name,i.current_stock,i.avg_cost FROM products p JOIN inventory_items i ON i.id=p.stock_item_id WHERE p.id=ANY($1::uuid[]) ORDER BY p.id',[members.map(b=>b.component_product_id)]);
+  const composition=local().file_composition; composition.file_sha256='b'.repeat(64); composition.profile_id='local:'+composition.file_sha256;
+  composition.plates=[slicedPlate(2),slicedPlate(1)]; composition.plates[0].parts[0].name='Unrelated title A'; composition.plates[0].parts[0].quantity_per_plate=20; composition.plates[1].parts[0].name='Unrelated title B'; composition.plates[1].parts[0].quantity_per_plate=10;
+  const mapping={target:'components',parts:[{plate_index:1,source_key:'file-object:1',subitem_id:ordered[0].id},{plate_index:2,source_key:'file-object:2',subitem_id:ordered[1].id}]};
+  await apply(p,composition,mapping);
+  const catalogueAfter=await rows('SELECT p.id,p.stock_item_id,p.name,i.current_stock,i.avg_cost FROM products p JOIN inventory_items i ON i.id=p.stock_item_id WHERE p.id=ANY($1::uuid[]) ORDER BY p.id',[members.map(b=>b.component_product_id)]); assert.deepEqual(catalogueAfter,catalogueBefore);
+  const after=await parts(p); for(const b of members) { const mapped=after.find(x=>x.id===b.id); assert.equal(mapped.component_product_id,b.component_product_id); assert.equal(mapped.quantity_per_product,b.quantity_per_product); }
+  assert.equal(after.find(x=>x.id===ordered[0].id).quantity_per_plate,10); assert.equal(after.find(x=>x.id===ordered[1].id).quantity_per_plate,20);
+  assert.ok(Math.abs((await spec(ordered[0].component_product_id)).grams-0.363)<1e-12); assert.equal((await spec(ordered[1].component_product_id)).grams,9);
+  assert.equal((await plates(p)).filter(pl=>pl.is_active).length,2); assert.equal((await plates(p)).filter(pl=>!pl.is_active).length,2);
+ });
+ await test('Mixed existing components retain full plate totals without invented per-piece allocation',async()=>{
+  const data=local(); data.file_composition.plates[0].parts.push({source_key:'second',name:'Second',name_source:'file',quantity_per_plate:2,quantity_per_product:1});
+  const p=await save(data),members=await parts(p); const comp=local().file_composition; comp.plates[0].parts.push({...comp.plates[0].parts[0],source_key:'second',name:'Second',quantity_per_plate:2});
+  await apply(p,comp,{target:'components',parts:members.map((b,index)=>({plate_index:1,source_key:index===0?'file-object:1':'second',subitem_id:b.id}))});
+  for(const b of members) { const s=await spec(b.component_product_id); assert.equal(s.source,'unknown'); assert.equal(s.grams,null); assert.equal(s.plate.grams,3.63); assert.equal(s.plate.seconds,1351); }
+ });
+ await test('Existing-file apply rejects stale previews, unmapped old pieces, foreign destinations and unsafe attachments atomically',async()=>{
+  const p=await save({name:'Stale physical SKU'}),comp=local().file_composition,state=await revision(p); await save({name:'Edited elsewhere'},p);
+  await assert.rejects(apply(p,comp,{target:'product',parts:[]},state.revision),/mudaram|Atualize/); assert.equal((await plates(p)).length,0);
+  await assert.rejects(apply(p,comp,{target:'product',parts:[],file_path:otherTenant+'/foreign.3mf'}),/Arquivo não encontrado/); assert.equal((await plates(p)).length,0);
+  const composite=local(); composite.file_composition.plates.push(slicedPlate(2)); const parent=await save(composite),members=await parts(parent),before=(await plates(parent)).map(p=>p.id).sort();
+  await assert.rejects(apply(parent,comp,{target:'components',parts:[{plate_index:1,source_key:'file-object:1',subitem_id:members[0].id}]}),/sem impressão/);
+  await assert.rejects(apply(parent,comp,{target:'components',parts:[{plate_index:1,source_key:'file-object:1',subitem_id:next()}]}),/não pertence/);
+  assert.deepEqual((await plates(parent)).map(p=>p.id).sort(),before); assert.ok((await plates(parent)).every(p=>p.is_active));
+ });
+ await test('A manual sheet remains authoritative after applying a file to an existing individual SKU',async()=>{
+  const p=await save({name:'Existing manually specified SKU'});
+  await scalar('SELECT save_product_piece_spec($1,$2::jsonb,$3)',[p,JSON.stringify({materials:[{item_id:material,grams:7}],print_seconds:77}),next()]);
+  await apply(p,local().file_composition,{target:'product',parts:[]}); const s=await spec(p); assert.equal(s.source,'manual'); assert.equal(s.grams,7); assert.equal(s.print_seconds,77);
+ });
+ await test('Existing revision context/apply enforce tenant, viewer, anonymous and private-link permissions',async()=>{
+  const p=await save({name:'Protected existing SKU'}),comp=local().file_composition,state=await revision(p);
+  await login(otherOwner); await assert.rejects(revision(p),/não encontrado/); await assert.rejects(apply(p,comp,{target:'product',parts:[]},state.revision),/não encontrado/);
+  await login(viewer); await revision(p); await assert.rejects(apply(p,comp,{target:'product',parts:[]},state.revision),/permissão/);
+  await db.exec('SET ROLE anon'); await assert.rejects(revision(p),/permission denied/); await db.exec('SET ROLE authenticated'); await login(owner);
+  await assert.rejects(db.query('UPDATE product_file_piece_links SET quantity_per_plate=999 WHERE product_id=$1',[p]),/permission denied/);
+ });
+ await test('Successive revisions preserve historical sources and ordinary MakerWorld edits cannot reactivate an old layout',async()=>{
+  const reference=external(),p=await save({name:'MakerWorld SKU to revise',external_import:reference});
+  const comp=local().file_composition,first=await apply(p,comp,{target:'product',parts:[]});
+  await save({name:'Commercial edit',external_import:reference},p); assert.deepEqual((await plates(p)).filter(pl=>pl.is_active).map(pl=>pl.source_id),[first]);
+  const second=structuredClone(comp); second.file_sha256='c'.repeat(64); second.profile_id='local:'+second.file_sha256; second.plates[0].weight_grams=9; second.plates[0].time_seconds=300; second.plates[0].slicer_estimates.filaments[0].weight_grams=9;
+  const nextSource=await apply(p,second,{target:'product',parts:[]}); assert.notEqual(nextSource,first);
+  const s=await spec(p); assert.equal(s.grams,9); assert.equal(s.print_seconds,300); assert.equal((await plates(p)).filter(pl=>pl.is_active).length,1);
+  assert.equal(await scalar('SELECT count(*)::integer FROM product_print_sources WHERE product_id=$1',[p]),3);
+  assert.equal(await scalar('SELECT count(*)::integer FROM product_print_plates WHERE product_id=$1 AND NOT is_active',[p]),2);
+ });
+ await test('Pending physical work and released OPs block existing-file apply, while accepted retries still recover their result',async()=>{
+  const p=await save({name:'Physical work in flight'}),comp=local().file_composition,state=await revision(p),key=next();
+  const source=await apply(p,comp,{target:'product',parts:[]},state.revision,key),[plate]=(await plates(p)).filter(pl=>pl.is_active);
+  await scalar("SELECT save_product_material_recipe($1,$2,'per_print',$3::jsonb,NULL,$4,0)",[p,plate.id,JSON.stringify([{item_id:material,grams:3.63}]),next()]);
+  await db.exec('RESET ROLE'); await db.query("INSERT INTO jobs(tenant_id,code,name,status,product_id,print_plate_id) VALUES($1,'REVISION-PENDING','Pending revision work','draft',$2,$3)",[tenant,p,plate.id]); await db.exec('SET ROLE authenticated');
+  assert.match((await revision(p)).blocked_reason,/produção pendente/); await assert.rejects(apply(p,comp,{target:'product',parts:[]}),/produção pendente/);
+  assert.equal(await apply(p,comp,{target:'product',parts:[]},state.revision,key),source);
+  const opProduct=await save({name:'Released OP product'});
+  await db.exec('RESET ROLE');
+  const quote=await scalar("INSERT INTO sales_quotes(tenant_id,code) VALUES($1,'REVISION-OP-QUOTE') RETURNING id",[tenant]);
+  const op=await scalar("INSERT INTO production_orders(tenant_id,code,source_quote_id,status) VALUES($1,'REVISION-OP',$2,'released') RETURNING id",[tenant,quote]);
+  await db.query("INSERT INTO production_order_items(tenant_id,production_order_id,product_id,description,quantity,line_index) VALUES($1,$2,$3,'Pending physical output',1,1)",[tenant,op,opProduct]); await db.exec('SET ROLE authenticated');
+  assert.match((await revision(opProduct)).blocked_reason,/ordem de produção/); await assert.rejects(apply(opProduct,comp,{target:'product',parts:[]}),/ordem de produção/);
+  assert.equal((await plates(opProduct)).length,0);
  });
  console.log(`Validated ${passed} sliced-file persistence scenarios.`);
 } finally { await db.close(); }

@@ -16,7 +16,8 @@ describe("direct 3MF upload", () => {
     vi.stubGlobal("crypto", webcrypto);
     const onChange = vi.fn();
     const onBusy = vi.fn();
-    render(<ModelFileInput onChange={onChange} onBusyChange={onBusy} />);
+    const onFileReady = vi.fn();
+    render(<ModelFileInput onChange={onChange} onBusyChange={onBusy} onFileReady={onFileReady} />);
     const bytes = zipSync({
       "Metadata/slice_info.config": strToU8(ImportedSlice),
       "Metadata/model_settings.config": strToU8('<config><object id="1"><metadata key="name" value="Cube.stl"/></object><plate><metadata key="plater_id" value="1"/><model_instance><metadata key="object_id" value="1"/></model_instance></plate></config>'),
@@ -28,8 +29,10 @@ describe("direct 3MF upload", () => {
     await screen.findByText(/3.63 g · 23 min · estimativa do fatiador para a placa inteira/);
     expect(screen.getByText(/Filamento 1: PLA #00AE42 · 3.63 g/)).toBeInTheDocument();
     expect(onChange).not.toHaveBeenCalled();
+    expect(onFileReady).toHaveBeenLastCalledWith(file);
     fireEvent.click(screen.getByRole("button", { name: "Usar estas peças no produto" }));
     expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onFileReady).toHaveBeenCalledTimes(1);
     const applied = onChange.mock.calls[0][0];
     expect(applied.file_sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(applied.profile_id).toBe(`local:${applied.file_sha256}`);
