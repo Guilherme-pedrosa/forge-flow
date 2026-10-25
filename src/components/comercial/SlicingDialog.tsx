@@ -157,6 +157,7 @@ export function SlicingDialog({ open, file, onOpenChange, onSliced }: Props) {
         </select>
       </label>
       <p className="text-sm text-muted-foreground">Bambu Studio {selected?.engine_version ?? '2.8.2.61'} · {selected?.available ? 'Fatiador conectado' : 'Fatiador local desconectado'}</p>
+      {file?.name.toLowerCase().endsWith('.3mf') && <p className="text-sm text-muted-foreground">Mantém as placas, cópias e cores do projeto 3MF. Neste perfil, todos os filamentos do arquivo precisam ser PLA; os materiais configurados no projeto são preservados.</p>}
       {!selected?.available && <p className="rounded-md bg-muted p-3 text-sm">Deixe o computador com o fatiador conectado ligado para processar a simulação.</p>}
       {job && <div className="space-y-2 rounded-lg border p-3" aria-live="polite">
         <p className="font-medium">{statusLabel[job.status]}</p>

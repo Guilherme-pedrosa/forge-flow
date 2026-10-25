@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, writeFile, rm, symlink } from 'node:fs/promis
 import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
-import { API_ORIGIN, PROFILE, ENGINE_VERSION, CHUNK_BYTES, sha256, readZip, writeZip, parseXml, normalizeOutput, validateArchive, readMetrics, runSimulation, processJob, createRpc, safeRemoveJob } from './forge-slicer-worker.mjs';
+import { API_ORIGIN, PROFILE, ENGINE_VERSION, CHUNK_BYTES, sha256, readZip, writeZip, parseXml, normalizeOutput, validateArchive, nativeProjectLayout, verifyNativeProject, readMetrics, runSimulation, processJob, createRpc, safeRemoveJob } from './forge-slicer-worker.mjs';
 
 const root = await mkdtemp(path.join(os.tmpdir(), 'forge-slicer-test-'));
 let passed = 0;
@@ -56,12 +56,57 @@ try {
     assert.throws(() => readMetrics(entries.filter(e => !e.name.includes('slice_info')), report), /tempos e consumo/);
     assert.throws(() => readMetrics(entries, { ...report, sliced_plates: [{ ...report.sliced_plates[0], total_predication: 900 }] }), /não conferem/);
   });
+  const nativeSource = await readFile(new URL('./fixtures/slicer/two-plate-native-mono.3mf', import.meta.url));
+  const nativeEntries = readZip(nativeSource), nativeLayout = nativeProjectLayout(nativeEntries);
+  const nativeMetrics = { plates: [1,2].map(id => ({ plate_index: id, filaments: [{ id: 1, material_code: 'PLA', color_hex: '#00AE42' }] })) };
+  const editConfig = change => nativeEntries.map(e => e.name === 'Metadata/model_settings.config' ? member(e.name, change(e.data.toString())) : e);
+  await test('Genuine two-plate project preserves exact plate/copy/slot identities and rejects merged or reassigned output', async () => {
+    assert.deepEqual(nativeLayout.plates.map(({ index, instances }) => ({ index, instances })), [{ index: 1, instances: ['2:0','2:1'] }, { index: 2, instances: ['4:0','4:1','4:2'] }]);
+    assert.deepEqual(verifyNativeProject(nativeLayout, nativeEntries, nativeMetrics), { plates_verified: true, copies_verified: true, slots_verified: true });
+    const mergedOutput = await readFile(new URL('./fixtures/slicer/merged-output-model-settings.xml', import.meta.url), 'utf8');
+    assert.throws(() => verifyNativeProject(nativeLayout, editConfig(() => mergedOutput), nativeMetrics), /alterou placas|vinculadas/);
+    assert.throws(() => verifyNativeProject(nativeLayout, nativeEntries, { plates: [nativeMetrics.plates[0]] }), /todas as placas/);
+    assert.throws(() => verifyNativeProject(nativeLayout, nativeEntries, { plates: nativeMetrics.plates.map(p => ({ ...p, filaments: [{ id: 1, material_code: 'PLA', color_hex: '#FF0000' }] })) }), /cor de um slot/);
+    const differentMaterial = nativeEntries.map(e => e.name === 'Metadata/project_settings.config' ? member(e.name, JSON.stringify({ ...JSON.parse(e.data), filament_type: ['PETG'] })) : e);
+    assert.throws(() => nativeProjectLayout(differentMaterial), /somente projetos com filamentos PLA/);
+  });
+  await test('Native ID renumbering is accepted only when physical geometry, names, copy counts and color slots agree', async () => {
+    const colorEntries = readZip(await readFile(new URL('./fixtures/slicer/two-plate-native-color.3mf', import.meta.url)));
+    const sparseEntries = readZip(await readFile(new URL('./fixtures/slicer/nonsequential-ids-source.3mf', import.meta.url)));
+    const sparseLayout = nativeProjectLayout(sparseEntries), colors = ['#FF0000', '#00FF00'];
+    const metrics = { plates: [1,2].map(id => ({ plate_index: id, filaments: [{ id, material_code: 'PLA', color_hex: colors[id - 1] }] })) };
+    assert.equal(sparseLayout.objects[0].id, '101');
+    assert.deepEqual(verifyNativeProject(sparseLayout, colorEntries, metrics), { plates_verified: true, copies_verified: true, slots_verified: true });
+    const geometryChanged = colorEntries.map(e => e.name === '3D/Objects/object_1.model' ? member(e.name, e.data.toString().replace('x="-10"', 'x="-9"')) : e);
+    assert.throws(() => verifyNativeProject(sparseLayout, geometryChanged, metrics), /alterou placas/);
+    const slotChanged = colorEntries.map(e => e.name === 'Metadata/model_settings.config' ? member(e.name, e.data.toString().replace('key="extruder" value="2"', 'key="extruder" value="1"')) : e);
+    assert.throws(() => verifyNativeProject(sparseLayout, slotChanged, metrics), /alterou placas/);
+    for (const scale of ['2', '-1']) {
+      const instanceChanged = colorEntries.map(e => e.name === '3D/3dmodel.model' ? member(e.name, e.data.toString().replace(/(<item[^>]+transform=")1 /, '$1' + scale + ' ')) : e);
+      assert.throws(() => verifyNativeProject(sparseLayout, instanceChanged, metrics), /alterou placas/);
+    }
+    const three = nativeProjectLayout(readZip(await readFile(new URL('./fixtures/slicer/three-plate-two-color.3mf', import.meta.url))));
+    assert.deepEqual(three.plates.map(p => p.physical_instances.length), [2,3,4]);
+  });
   const profileDir = path.join(root, 'profiles'); await mkdir(profileDir);
   const hashes = {};
   for (const kind of ['machine', 'process', 'filament']) {
     const bytes = Buffer.from(JSON.stringify(kind === 'process' ? { compatible_printers: officialArgs[0], print_extruder_variant: officialArgs[1] } : {}));
     await writeFile(path.join(profileDir, kind + '.json'), bytes); hashes[kind] = sha256(bytes);
   }
+  await test('Native 3MF execution disables rearrangement and keeps embedded PLA instead of remapping all slots', async () => {
+    const twoPlateInfo = '<config><header><header_item key="X-BBL-Client-Version" value="02.08.02.61"/></header>' + [1,2].map(id => '<plate><metadata key="index" value="' + id + '"/><metadata key="prediction" value="100"/><metadata key="weight" value="2.1"/><filament id="1" type="PLA" color="#00AE42" used_g="2.1" used_m="0.7"/></plate>').join('') + '</config>';
+    const raw = writeZip([...nativeEntries.filter(e => e.name !== 'Metadata/slice_info.config'), member('Metadata/slice_info.config', twoPlateInfo)]);
+    const workspace = path.join(root, 'native-project');
+    const result = await runSimulation({ enginePath: '/official', profileDir, profileHashes: hashes, source: nativeSource, extension: '3mf', workspace,
+      spawnProcess(_exe, args) {
+        assert.equal(args[args.indexOf('--orient') + 1], '0'); assert.equal(args[args.indexOf('--arrange') + 1], '0'); assert.ok(!args.includes('--load-filaments'));
+        const child = new EventEmitter(); child.kill = () => {};
+        void Promise.all([writeFile(path.join(workspace, 'output', 'simulation.3mf'), raw), writeFile(path.join(workspace, 'output', 'result.json'), JSON.stringify({ ...report, sliced_plates: [1,2].map(id => ({ ...report.sliced_plates[0], id })) }))]).then(() => child.emit('exit', 0));
+        return child;
+      } });
+    assert.equal(result.stats.filament_source, '3mf_embedded_pla'); assert.equal(result.stats.plates.length, 2); assert.equal(result.stats.preservation.copies_verified, true);
+  });
   await test('Native execution uses fixed arguments, isolated data, no shell, hidden window and verified official profiles', async () => {
     let invoked = false;
     const workspace = path.join(root, 'sandbox');

@@ -136,6 +136,144 @@ export function validateArchive(entries, source = false) {
   }
 }
 
+function projectGeometry(entries) {
+  const documents = new Map();
+  const number = value => { const n = Number(value); if (!Number.isFinite(n)) fail('Coordenada inválida no 3MF.'); return String(Math.round(n * 1e6) / 1e6); };
+  for (const entry of entries.filter(e => e.name.endsWith('.model'))) {
+    const objects = new Map(); let current = null, hash = null, unit = 'millimeter';
+    parseXml(entry.data, (tag, attrs) => {
+      if (tag === 'model') unit = attrs.unit ?? 'millimeter';
+      if (tag === 'object') { current = { components: [], mesh: null }; objects.set(attrs.id, current); }
+      if (tag === 'mesh' && current) hash = createHash('sha256').update('unit:' + unit + '\n');
+      if (tag === 'vertex' && hash) hash.update('v:' + [attrs.x, attrs.y, attrs.z].map(number).join(',') + '\n');
+      if (tag === 'triangle' && hash) hash.update('t:' + Object.keys(attrs).sort().filter(k => attrs[k] !== '').map(k => k + ':' + attrs[k]).join(',') + '\n');
+      if (tag === 'component' && current) {
+        const matrix = (attrs.transform ?? '1 0 0 0 1 0 0 0 1 0 0 0').trim().split(/\s+/).map(Number);
+        if (matrix.length !== 12 || matrix.some(n => !Number.isFinite(n))) fail('Transformação de componente inválida no 3MF.');
+        current.components.push({ file: attrs.path ? path.posix.resolve(path.posix.dirname('/' + entry.name), attrs.path).slice(1) : entry.name, id: attrs.objectid, matrix });
+      }
+    }, tag => {
+      if (tag === 'mesh' && current) { current.mesh = hash.digest('hex'); hash = null; }
+      if (tag === 'object') current = null;
+    });
+    documents.set(entry.name, objects);
+  }
+  const cache = new Map();
+  function fingerprint(file, id, seen = new Set()) {
+    const key = file + ':' + id;
+    if (cache.has(key)) return cache.get(key);
+    if (seen.has(key) || seen.size > 64) fail('Componente 3MF cíclico ou muito profundo.');
+    const node = documents.get(file)?.get(id);
+    if (!node) fail('Não foi possível conferir a geometria de uma peça do 3MF.');
+    const next = new Set([...seen, key]);
+    let result = node.mesh;
+    if (node.components.length) {
+      const minimum = [9,10,11].map(axis => Math.min(...node.components.map(c => c.matrix[axis])));
+      // Native export can re-center a model and renumber resources. Normalize a
+      // shared translation while retaining relative component positions/rotation.
+      const components = node.components.map(c => JSON.stringify({ mesh: fingerprint(c.file, c.id, next),
+        linear: c.matrix.slice(0,9).map(number), translation: c.matrix.slice(9).map((n, i) => number(n - minimum[i])) })).sort();
+      result = sha256(Buffer.from(JSON.stringify({ mesh: result, components })));
+    }
+    if (!result) fail('Peça sem geometria verificável no 3MF.');
+    cache.set(key, result); return result;
+  }
+  return { fingerprint, part(objectId, partId) {
+    const node = documents.get('3D/3dmodel.model')?.get(objectId);
+    const targets = node?.components.filter(c => c.id === partId) ?? [];
+    if (targets.length === 1) {
+      const target = targets[0], minimum = [9,10,11].map(axis => Math.min(...node.components.map(c => c.matrix[axis])));
+      return sha256(Buffer.from(JSON.stringify({ mesh: fingerprint(target.file, target.id), linear: target.matrix.slice(0,9).map(number),
+        translation: target.matrix.slice(9).map((n, i) => number(n - minimum[i])) })));
+    }
+    if (node?.mesh && objectId === partId) return fingerprint('3D/3dmodel.model', objectId);
+    fail('Não foi possível conferir a geometria de uma parte do projeto 3MF.');
+  } };
+}
+
+export function nativeProjectLayout(entries) {
+  const config = entries.find(e => e.name === 'Metadata/model_settings.config');
+  const settings = entries.find(e => e.name === 'Metadata/project_settings.config');
+  if (!config || !settings) fail('Para simular um 3MF, salve-o como projeto completo no Bambu Studio. A importação de um arquivo já fatiado continua disponível.');
+  if (settings.data.length > 8 * 1024 * 1024) fail('Configuração 3MF acima do limite.');
+  let project;
+  try { project = JSON.parse(settings.data.toString('utf8')); } catch { fail('Configuração do projeto 3MF inválida.'); }
+  const types = project.filament_type, colors = project.filament_colour;
+  if (!Array.isArray(types) || !types.length || types.length > 32 || !Array.isArray(colors) || colors.length !== types.length
+    || types.some(type => typeof type !== 'string' || type.trim().toUpperCase() !== 'PLA')
+    || colors.some(color => typeof color !== 'string' || !/^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/i.test(color))) {
+    fail('O perfil A1/PLA aceita somente projetos com filamentos PLA e cores definidas em todos os slots. Use um perfil compatível no Bambu Studio ou importe o 3MF já fatiado.');
+  }
+  const objects = new Map(), plates = []; let object = null, plate = null, instance = null, part = null;
+  parseXml(config.data, (tag, attrs) => {
+    if (tag === 'object') { object = { id: attrs.id, name: '', extruder: '', parts: [] }; objects.set(attrs.id, object); }
+    if (tag === 'part' && object) { part = { id: attrs.id, extruder: '', role: attrs.subtype ?? 'normal_part' }; object.parts.push(part); }
+    if (tag === 'plate') { plate = { index: 0, instances: [] }; plates.push(plate); }
+    if (tag === 'model_instance' && plate) { instance = {}; plate.instances.push(instance); }
+    if (tag === 'metadata') {
+      if (instance && ['object_id', 'instance_id'].includes(attrs.key)) instance[attrs.key] = attrs.value;
+      else if (plate && attrs.key === 'plater_id') plate.index = Number(attrs.value);
+      else if (part && attrs.key === 'extruder') part.extruder = attrs.value;
+      else if (object && !part && ['name', 'extruder'].includes(attrs.key)) object[attrs.key] = attrs.value;
+    }
+  }, tag => { if (tag === 'part') part = null; if (tag === 'object') object = null; if (tag === 'model_instance') instance = null; if (tag === 'plate') plate = null; });
+  const model = entries.find(e => e.name === '3D/3dmodel.model');
+  if (!model) fail('Geometria principal do 3MF não encontrada.');
+  const builds = new Map(), nextInstance = new Map();
+  parseXml(model.data, (tag, attrs) => {
+    if (tag !== 'item') return;
+    const index = nextInstance.get(attrs.objectid) ?? 0; nextInstance.set(attrs.objectid, index + 1);
+    const matrix = (attrs.transform ?? '1 0 0 0 1 0 0 0 1 0 0 0').trim().split(/\s+/).map(Number);
+    if (matrix.length !== 12 || matrix.some(n => !Number.isFinite(n))) fail('Transformação de cópia inválida no 3MF.');
+    builds.set(attrs.objectid + ':' + index, { printable: attrs.printable !== '0' && attrs.printable !== 'false', linear: matrix.slice(0,9).map(n => Math.round(n * 1e6) / 1e6) });
+  });
+  const assigned = new Set(), usedObjects = new Set(), usedIndices = new Set();
+  const result = plates.map(p => {
+    const instances = p.instances.filter(i => builds.get(i.object_id + ':' + i.instance_id)?.printable);
+    if (!instances.length) return null;
+    if (!Number.isInteger(p.index) || p.index < 1 || usedIndices.has(p.index)) fail('Identificação de placa inválida no 3MF.');
+    usedIndices.add(p.index);
+    const keys = instances.map(i => {
+      const key = i.object_id + ':' + i.instance_id;
+      if (!objects.has(i.object_id) || assigned.has(key) || !/^\d+$/.test(i.instance_id ?? '')) fail('Vínculo de cópia inválido no 3MF.');
+      assigned.add(key); usedObjects.add(i.object_id); return key;
+    }).sort();
+    return { index: p.index, instances: keys };
+  }).filter(Boolean).sort((a, b) => a.index - b.index);
+  if (!result.length || [...builds].some(([key, item]) => item.printable && !assigned.has(key))) fail('Todas as cópias imprimíveis precisam estar vinculadas às placas do projeto 3MF.');
+  const selectedObjects = [...usedObjects].sort().map(id => ({ ...objects.get(id), parts: [...objects.get(id).parts].sort((a, b) => a.id.localeCompare(b.id)) }));
+  const geometry = projectGeometry(entries), physicalKeys = new Map();
+  for (const obj of selectedObjects) {
+    for (const slot of [obj.extruder, ...obj.parts.map(p => p.extruder)].filter(Boolean)) {
+      if (!/^\d+$/.test(slot) || Number(slot) > types.length) fail('Slot de filamento inválido na composição 3MF.');
+    }
+    const parentSlot = Number(obj.extruder) || 1;
+    obj.geometry_sha256 = geometry.fingerprint('3D/3dmodel.model', obj.id);
+    const parts = obj.parts.map(p => JSON.stringify({ geometry_sha256: geometry.part(obj.id, p.id), slot: Number(p.extruder) || parentSlot, role: p.role })).sort();
+    obj.physical_key = sha256(Buffer.from(JSON.stringify({ name: obj.name, geometry_sha256: obj.geometry_sha256, slot: parentSlot, parts })));
+    physicalKeys.set(obj.id, obj.physical_key);
+  }
+  for (const p of result) p.physical_instances = p.instances.map(key => sha256(Buffer.from(JSON.stringify({ object: physicalKeys.get(key.split(':')[0]), linear: builds.get(key).linear })))).sort();
+  return { plates: result, objects: selectedObjects, colors: colors.map(c => c.toUpperCase()), materials: types.map(t => t.trim().toUpperCase()) };
+}
+
+export function verifyNativeProject(source, entries, metrics) {
+  const output = nativeProjectLayout(entries);
+  const physicalPlates = layout => layout.plates.map(p => ({ index: p.index, physical_instances: p.physical_instances }));
+  if (JSON.stringify(physicalPlates(source)) !== JSON.stringify(physicalPlates(output))
+    || JSON.stringify(source.colors) !== JSON.stringify(output.colors)
+    || JSON.stringify(source.materials) !== JSON.stringify(output.materials)) {
+    fail('O fatiador alterou placas, cópias ou slots do projeto 3MF. O resultado não foi aplicado.');
+  }
+  if (JSON.stringify(source.plates.map(p => p.index)) !== JSON.stringify(metrics.plates.map(p => p.plate_index).sort((a, b) => a - b))) fail('As métricas não correspondem a todas as placas do projeto.');
+  for (const plate of metrics.plates) for (const filament of plate.filaments) {
+    const slot = filament.id - 1;
+    if (!Number.isInteger(slot) || slot < 0 || slot >= source.colors.length || filament.material_code?.toUpperCase() !== source.materials[slot]
+      || filament.color_hex?.toUpperCase().slice(0, 7) !== source.colors[slot].slice(0, 7)) fail('O fatiador alterou o material ou a cor de um slot do projeto 3MF.');
+  }
+  return { plates_verified: true, copies_verified: true, slots_verified: true };
+}
+
 export function normalizeOutput(raw, compatiblePrinters, extruderVariant) {
   if (JSON.stringify(compatiblePrinters) !== '["Bambu Lab A1 0.4 nozzle"]' || JSON.stringify(extruderVariant) !== '["Direct Drive Standard"]') fail('O perfil oficial não corresponde à normalização autorizada.');
   const entries = readZip(raw), normalizations = [];
@@ -227,7 +365,8 @@ export async function safeRemoveJob(root, job) {
 
 export async function runSimulation({ enginePath, profileDir, profileHashes, source, extension, workspace, timeoutMs = 600000, signal, onChild = () => {}, spawnProcess = spawn }) {
   if (!['stl', '3mf'].includes(extension) || !source.length || source.length > MAX_FILE_BYTES) fail('Arquivo de simulação inválido.');
-  if (extension === '3mf') validateArchive(readZip(source), true);
+  let nativeLayout = null;
+  if (extension === '3mf') { const entries = readZip(source); validateArchive(entries, true); nativeLayout = nativeProjectLayout(entries); }
   await mkdir(workspace, { recursive: false });
   const outputDir = path.join(workspace, 'output'), dataDir = path.join(workspace, 'isolated-data');
   await mkdir(outputDir); await mkdir(dataDir);
@@ -239,7 +378,7 @@ export async function runSimulation({ enginePath, profileDir, profileHashes, sou
   }
   const input = path.join(workspace, 'source.' + extension); await writeFile(input, source, { mode: 0o600 });
   const args = ['--datadir', dataDir, '--debug', '3', '--load-settings', path.join(workspace, 'machine.json') + ';' + path.join(workspace, 'process.json'),
-    '--load-filaments', path.join(workspace, 'filament.json'), '--curr-bed-type', 'Textured PEI Plate', '--orient', '1', '--arrange', '1', '--slice', '0',
+    ...(nativeLayout ? [] : ['--load-filaments', path.join(workspace, 'filament.json')]), '--curr-bed-type', 'Textured PEI Plate', '--orient', nativeLayout ? '0' : '1', '--arrange', nativeLayout ? '0' : '1', '--slice', '0',
     '--export-slicedata', path.join(outputDir, 'slice-data'), '--export-3mf', 'simulation.3mf', '--outputdir', outputDir, input];
   const env = { ...process.env, APPDATA: dataDir, LOCALAPPDATA: dataDir, USERPROFILE: dataDir, HOME: dataDir };
   const started = Date.now();
@@ -254,10 +393,12 @@ export async function runSimulation({ enginePath, profileDir, profileHashes, sou
   const report = JSON.parse(await readFile(path.join(outputDir, 'result.json'), 'utf8'));
   const { output, entries, normalizations } = normalizeOutput(raw, profiles.process.compatible_printers, profiles.process.print_extruder_variant);
   const metrics = readMetrics(entries, report);
+  const preservation = nativeLayout ? verifyNativeProject(nativeLayout, entries, metrics) : null;
   await writeFile(path.join(outputDir, 'simulation-valid.3mf'), output, { mode: 0o600 });
   const stats = { engine: 'Bambu Studio', engine_version: ENGINE_VERSION, profile_id: PROFILE, ...metrics,
     input_sha256: sha256(source), raw_output_size: raw.length, raw_output_sha256: sha256(raw), output_sha256: sha256(output), normalizations,
-    profile_hashes: profileHashes, elapsed_seconds: Math.round((Date.now() - started) / 10) / 100, estimates_only: true };
+    profile_hashes: profileHashes, filament_source: nativeLayout ? '3mf_embedded_pla' : 'official_generic_pla', ...(preservation ? { preservation } : {}),
+    elapsed_seconds: Math.round((Date.now() - started) / 10) / 100, estimates_only: true };
   await writeFile(path.join(outputDir, 'forge-result.json'), JSON.stringify(stats, null, 2), { mode: 0o600 });
   return { raw, output, stats };
 }

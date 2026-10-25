@@ -2,6 +2,8 @@
 
 O navegador envia STL/3MF para uma fila privada da empresa. O worker local executa o Bambu Studio oficial, devolve o 3MF fatiado e as estimativas nativas de tempo/filamento por placa. O componente `SlicingDialog` entrega um `File` validado para o fluxo de importação existente. Esse fluxo decide quando aplicar a composição ao produto.
 
+STL usa orientação/organização automáticas e o Generic PLA oficial. Projetos 3MF completos preservam suas placas, cópias, slots e cores, com orientação/organização desabilitadas. Nesse caso o perfil inicial A1/PLA usa os filamentos PLA embutidos e registra `filament_source=3mf_embedded_pla`; qualquer outro material falha antes de abrir o EXE. A importação direta de um 3MF já fatiado continua independente dessa restrição da simulação. Pós-condições conferem placas, cópias e slots após o CLI e recusam qualquer alteração inesperada.
+
 ## Instalação no Windows
 
 1. Aplicar a migration `20261024200000_slicer_queue.sql` e publicar o frontend que usa `SlicingDialog`.
