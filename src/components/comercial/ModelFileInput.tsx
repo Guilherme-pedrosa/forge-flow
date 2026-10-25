@@ -185,6 +185,12 @@ export default function ModelFileInput({
       loaded.composition.file_sha256 = Array.from(new Uint8Array(hash))
         .map(byte => byte.toString(16).padStart(2, "0")).join("");
       if (!current) loaded.composition.profile_id = `local:${loaded.composition.file_sha256}`;
+      const singlePlate = loaded.composition.plates.length === 1 ? loaded.composition.plates[0] : null;
+      const singlePart = singlePlate?.parts.length === 1 ? singlePlate.parts[0] : null;
+      if (!current && !loaded.composition.enabled && singlePlate?.slicer_estimates && singlePart?.quantity_per_plate) {
+        singlePlate.units_per_plate = singlePart.quantity_per_plate;
+        singlePart.quantity_per_product = 1;
+      }
       if (version !== sequence.current) {
         disposeModel(loaded.group);
         loaded = null;

@@ -61,7 +61,7 @@ describe("direct 3MF upload", () => {
     const applied = onChange.mock.calls[0][0];
     expect(applied.file_sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(applied.profile_id).toBe(`local:${applied.file_sha256}`);
-    expect(applied.plates[0]).toMatchObject({ weight_grams: 3.63, time_seconds: 1351, units_per_plate: null, parts: [{ quantity_per_product: null }] });
+    expect(applied.plates[0]).toMatchObject({ weight_grams: 3.63, time_seconds: 1351, units_per_plate: 1, parts: [{ quantity_per_product: 1 }] });
     await waitFor(() => expect(onBusy).toHaveBeenLastCalledWith(false));
     const broken = new File([new Uint8Array([1])], "invalid.3mf");
     Object.defineProperty(broken, "arrayBuffer", { value: async () => new Uint8Array([1]).buffer });
