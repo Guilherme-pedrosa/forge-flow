@@ -6,7 +6,7 @@ import { ImportedModelImage } from "./ImportedModelImage";
 import type { ImportedComposition } from "@/lib/imported-composition";
 import { useEffect, useRef, useState } from "react";
 
-export function ImportedCompositionPreview({ value, onChange, onBusyChange }: { value: ImportedComposition; onChange: (value: ImportedComposition) => void; onBusyChange?: (busy: boolean) => void }) {
+export function ImportedCompositionPreview({ value, onChange, onBusyChange, onFileReady }: { value: ImportedComposition; onChange: (value: ImportedComposition) => void; onBusyChange?: (busy: boolean) => void; onFileReady?: (file: File) => void }) {
   const [fileError, setFileError] = useState("");
   const [reading, setReading] = useState(false);
   const [fileName, setFileName] = useState("");
@@ -41,7 +41,7 @@ export function ImportedCompositionPreview({ value, onChange, onBusyChange }: { 
         const next = loaded.composition;
         disposeModel(loaded.group);
         next.file_sha256 = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))).map(byte => byte.toString(16).padStart(2, "0")).join("");
-        if (alive.current) { onChange(next); setFileName(file.name); }
+        if (alive.current) { onFileReady?.(file); onChange(next); setFileName(file.name); }
       } catch (error) { if (alive.current) setFileError((error as Error).message); } finally { if (alive.current) setReading(false); event.target.value = ""; }
     }} /><p className="text-xs text-muted-foreground">Quando o link não expõe as peças, o projeto baixado do mesmo perfil permite preencher todas de uma vez. A leitura acontece neste navegador.</p>{reading && <p role="status" className="text-sm">Lendo peças e placas…</p>}{fileName && <p role="status" className="text-sm text-emerald-700">Peças carregadas de {fileName}. Confira abaixo antes de salvar.</p>}{fileError && <p role="alert" className="text-sm text-destructive">{fileError}</p>}</details>}
     {value.plates.every(p => p.parts.every(part => part.quantity_per_plate != null)) && <div className="space-y-2 rounded-lg border p-3"><p className="text-sm">Se todas as peças deste arquivo, juntas, formam uma unidade do produto, confirme abaixo para preencher as quantidades de uma vez.</p><Button type="button" variant="outline" className="h-auto min-h-10 whitespace-normal" onClick={() => onChange({ ...value, plates: value.plates.map(p => ({ ...p, units_per_plate: 1, parts: p.parts.map(part => ({ ...part, quantity_per_product: part.quantity_per_plate })) })) })}>Esta composição forma 1 produto</Button></div>}
