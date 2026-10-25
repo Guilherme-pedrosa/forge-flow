@@ -6,11 +6,26 @@ export type ImportedPart = {
   quantity_per_product: number | null; quantity_per_plate: number | null;
   name_source: "source" | "file" | "manual" | "unknown";
 };
+/** Slicer plan for the entire plate, never a measurement of a finished print. */
+export type ImportedSlicerEstimates = {
+  source: "3mf_slice_info";
+  slicer_version: string | null;
+  printer_model_id: string | null;
+  nozzle_diameters: string | null;
+  filaments: {
+    id: number;
+    material_code: string | null;
+    color_hex: string | null;
+    weight_grams: number | null;
+    length_meters: number | null;
+  }[];
+};
 export type ImportedComponent = {
   index: number; label: string; photo_url: string | null; units_per_plate: number | null;
   weight_grams: number | null; time_seconds: number | null; parts: ImportedPart[];
+  slicer_estimates?: ImportedSlicerEstimates;
 };
-export type ImportedComposition = { profile_id: string; enabled: boolean; plates: ImportedComponent[] };
+export type ImportedComposition = { profile_id: string; enabled: boolean; plates: ImportedComponent[]; file_sha256?: string };
 
 export function selectedImportVariant(reference: ProductExternalImport): MakerWorldVariant | null {
   const profile = reference.profiles.find(p => p.instance_id === reference.selected_profile_id);

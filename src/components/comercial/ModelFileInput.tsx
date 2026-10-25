@@ -159,6 +159,41 @@ export default function ModelFileInput({
     onBusyChange?.(busy);
     return () => onBusyChange?.(false);
   }, [busy, onBusyChange]);
+  // Shared entry point for a selected file and a future authenticated slicer
+  // result. Both paths verify the same complete file before applying its plan.
+  const loadFile = async (file: File) => {
+    const version = ++sequence.current;
+    setBusy(true);
+    setError("");
+    setUsed(false);
+    setModel(null);
+    setSelected("");
+    let loaded: ModelFile | null = null;
+    try {
+      if (file.size > 80 * 1024 * 1024) throw new Error("Use um arquivo de até 80 MB.");
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      if (version !== sequence.current) return;
+      loaded = parseModelFile(bytes, file.name, current);
+      const hash = await crypto.subtle.digest("SHA-256", bytes);
+      loaded.composition.file_sha256 = Array.from(new Uint8Array(hash))
+        .map(byte => byte.toString(16).padStart(2, "0")).join("");
+      if (!current) loaded.composition.profile_id = `local:${loaded.composition.file_sha256}`;
+      if (version !== sequence.current) {
+        disposeModel(loaded.group);
+        loaded = null;
+        return;
+      }
+      if (activeModel.current) disposeModel(activeModel.current.group);
+      activeModel.current = loaded;
+      setModel(loaded);
+      loaded = null;
+    } catch (error) {
+      if (loaded) disposeModel(loaded.group);
+      if (version === sequence.current) setError((error as Error).message);
+    } finally {
+      if (version === sequence.current) setBusy(false);
+    }
+  };
   return (
     <section
       className="space-y-3 rounded-lg border p-3"
@@ -174,47 +209,17 @@ export default function ModelFileInput({
         type="file"
         accept={current ? ".3mf" : ".3mf,.stl"}
         disabled={busy || disabled}
-        onChange={async (event) => {
+        onChange={(event) => {
           const file = event.target.files?.[0];
           event.target.value = "";
-          if (!file) return;
-          const version = ++sequence.current;
-          setBusy(true);
-          setError("");
-          setUsed(false);
-          try {
-            if (file.size > 80 * 1024 * 1024)
-              throw new Error("Use um arquivo de até 80 MB.");
-            const bytes = new Uint8Array(await file.arrayBuffer());
-            if (version !== sequence.current) return;
-            const loaded = parseModelFile(bytes, file.name, current);
-            if (!current) {
-              const hash = await crypto.subtle.digest("SHA-256", bytes);
-              loaded.composition.profile_id = `local:${Array.from(
-                new Uint8Array(hash),
-              )
-                .map((b) => b.toString(16).padStart(2, "0"))
-                .join("")}`;
-            }
-            if (version !== sequence.current) {
-              disposeModel(loaded.group);
-              return;
-            }
-            if (activeModel.current) disposeModel(activeModel.current.group);
-            activeModel.current = loaded;
-            setModel(loaded);
-            setSelected("");
-          } catch (e) {
-            if (version === sequence.current) setError((e as Error).message);
-          } finally {
-            if (version === sequence.current) setBusy(false);
-          }
+          if (file) void loadFile(file);
         }}
       />
       <p className="text-xs text-muted-foreground">
         Leitura local. Arraste para girar, use a roda para aproximar e clique em
         uma peça. Cores são agrupadas no mesmo objeto físico. Arquivos STL não
-        informam placas, rendimento ou nomes internos.
+        informam consumo ou tempo: esses dados vêm do fatiamento. Um 3MF já
+        fatiado traz os gramas, o tempo e os filamentos de cada placa.
       </p>
       {busy && <p role="status">Lendo geometria e composição…</p>}
       {error && (
@@ -244,6 +249,17 @@ export default function ModelFileInput({
               )),
             )}
           </div>
+          <div className="space-y-2" aria-label="Dados de fatiamento por placa">
+            {model.composition.plates.map(plate => <div key={plate.index} className="rounded-lg border p-3 text-sm">
+              <p className="font-medium">Placa {plate.index} · {plate.label}</p>
+              {plate.slicer_estimates ? <>
+                <p>{plate.weight_grams == null ? "Peso não informado" : `${plate.weight_grams} g`} · {plate.time_seconds == null ? "Tempo não informado" : `${Math.round(plate.time_seconds / 60)} min`} · estimativa do fatiador para a placa inteira</p>
+                {plate.slicer_estimates.filaments.map(filament => <p key={filament.id} className="text-muted-foreground">
+                  Filamento {filament.id}: {filament.material_code || "Material não informado"} {filament.color_hex || ""} · {filament.weight_grams == null ? "Peso não informado" : `${filament.weight_grams} g`}
+                </p>)}
+              </> : <p className="text-muted-foreground">Este arquivo ainda não contém dados de fatiamento.{plate.weight_grams != null || plate.time_seconds != null ? " Os valores do perfil importado foram preservados." : " Peso e tempo continuam sem estimativa."}</p>}
+            </div>)}
+          </div>
           <Button
             type="button"
             disabled={busy || used}
@@ -256,8 +272,8 @@ export default function ModelFileInput({
           </Button>
           {used && (
             <p role="status" className="text-sm">
-              Composição aplicada ao formulário. Confira as quantidades por
-              produto e salve o cadastro.
+              Peças e dados de fatiamento aplicados ao formulário. Confira as
+              quantidades por produto e salve o cadastro.
             </p>
           )}
         </>

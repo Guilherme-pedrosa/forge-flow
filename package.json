@@ -13,7 +13,7 @@
     "test:database": "node scripts/test-erp-database.mjs",
     "test:operations": "node scripts/test-physical-execution-integrity.mjs && node scripts/test-confirm-sales-workflow.mjs && node scripts/test-filament-spools.mjs && node scripts/test-marketplace-inbox.mjs && node scripts/test-marketplace-edge.mjs && node scripts/test-shopee-credentials.mjs && node scripts/test-shopee-edge.mjs && node scripts/test-marketplace-workflow.mjs && node scripts/test-partial-stock-fulfillment.mjs && node scripts/test-marketplace-settlements.mjs && node scripts/test-marketplace-binding-review.mjs && node scripts/test-stock-identity-and-cancelled-supply.mjs && node scripts/test-filament-planning-confidence.mjs && node scripts/test-purchase-expected-date.mjs",
     "test:operations:ui": "node scripts/test-operations-ui.mjs",
-    "test:assembly": "node scripts/test-component-assembly.mjs && node scripts/test-individual-subitems.mjs && node scripts/test-product-workspace.mjs",
+    "test:assembly": "node scripts/test-component-assembly.mjs && node scripts/test-individual-subitems.mjs && node scripts/test-product-workspace.mjs && node scripts/test-sliced-file-import.mjs",
     "test:assembly:ui": "node scripts/test-component-assembly-ui.mjs",
     "test:catalog:ui": "node scripts/test-catalog-search-ui.mjs",
     "test:pdf:ui": "node scripts/test-commercial-pdf-ui.mjs",

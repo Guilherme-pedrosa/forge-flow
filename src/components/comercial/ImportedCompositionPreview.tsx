@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { ImportedModelImage } from "./ImportedModelImage";
 import type { ImportedComposition } from "@/lib/imported-composition";
 import { useEffect, useRef, useState } from "react";
-import { compositionFrom3mf } from "@/lib/three-mf-composition";
 
 export function ImportedCompositionPreview({ value, onChange, onBusyChange }: { value: ImportedComposition; onChange: (value: ImportedComposition) => void; onBusyChange?: (busy: boolean) => void }) {
   const [fileError, setFileError] = useState("");
@@ -22,6 +21,7 @@ export function ImportedCompositionPreview({ value, onChange, onBusyChange }: { 
     <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-3">{value.plates.map(plate => <article key={plate.index} className="min-w-0 rounded-lg border bg-background p-3">
       <ImportedModelImage src={plate.photo_url} alt={`Peças da placa ${plate.index}`} className="h-32 w-full rounded-md bg-muted object-contain" />
       <p className="my-2 text-xs text-muted-foreground">Placa {plate.index} · {plate.weight_grams == null ? "Peso não informado" : `${plate.weight_grams} g`} · {plate.time_seconds == null ? "Tempo não informado" : `${Math.round(plate.time_seconds / 60)} min`}</p>
+      {plate.slicer_estimates && <div className="mb-3 text-xs text-muted-foreground"><p>Estimativa do fatiador para a placa inteira{plate.slicer_estimates.slicer_version ? ` · ${plate.slicer_estimates.slicer_version}` : ""}.</p>{plate.slicer_estimates.filaments.map(filament => <p key={filament.id}>Filamento {filament.id}: {filament.material_code || "Material não informado"} {filament.color_hex || ""} · {filament.weight_grams == null ? "Peso não informado" : `${filament.weight_grams} g`}</p>)}</div>}
       <Label htmlFor={`import-plate-${plate.index}`}>Nome da placa</Label><Input id={`import-plate-${plate.index}`} value={plate.label} onChange={e => update(plate.index, { label: e.target.value })} />
       <div className="mt-3 space-y-3">{plate.parts.map((part, index) => <div key={part.source_key} className="grid grid-cols-[minmax(0,1fr)_6rem] gap-2">
         <div><Label htmlFor={`import-part-${plate.index}-${index}`}>Peça {index + 1}</Label><Input id={`import-part-${plate.index}-${index}`} value={part.name} onChange={e => update(plate.index, { parts: plate.parts.map((p, i) => i === index ? { ...p, name: e.target.value, name_source: "manual" } : p) })} />{part.quantity_per_plate != null && <p className="mt-1 text-xs text-muted-foreground">{part.quantity_per_plate} peça(s) nesta placa do arquivo.</p>}</div>
@@ -35,7 +35,12 @@ export function ImportedCompositionPreview({ value, onChange, onBusyChange }: { 
       setReading(true); setFileError(""); setFileName("");
       try {
         if (!/\.3mf$/i.test(file.name) || file.size > 80 * 1024 * 1024) throw new Error("Selecione um projeto 3MF de até 80 MB.");
-        const next = compositionFrom3mf(new Uint8Array(await file.arrayBuffer()), value);
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const { parseModelFile, disposeModel } = await import("@/lib/model-file");
+        const loaded = parseModelFile(bytes, file.name, value);
+        const next = loaded.composition;
+        disposeModel(loaded.group);
+        next.file_sha256 = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes))).map(byte => byte.toString(16).padStart(2, "0")).join("");
         if (alive.current) { onChange(next); setFileName(file.name); }
       } catch (error) { if (alive.current) setFileError((error as Error).message); } finally { if (alive.current) setReading(false); event.target.value = ""; }
     }} /><p className="text-xs text-muted-foreground">Quando o link não expõe as peças, o projeto baixado do mesmo perfil permite preencher todas de uma vez. A leitura acontece neste navegador.</p>{reading && <p role="status" className="text-sm">Lendo peças e placas…</p>}{fileName && <p role="status" className="text-sm text-emerald-700">Peças carregadas de {fileName}. Confira abaixo antes de salvar.</p>}{fileError && <p role="alert" className="text-sm text-destructive">{fileError}</p>}</details>

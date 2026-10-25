@@ -5,7 +5,8 @@ import {
   sourcePartName,
   type ImportedComposition,
 } from "./imported-composition";
-import { compositionFrom3mf } from "./three-mf-composition";
+import { compositionFrom3mf, type ThreeMfBuildInstances } from "./three-mf-composition";
+import { slicedCompositionFrom3mf } from "./three-mf-slice-info";
 
 export type ModelFile = {
   group: THREE.Group;
@@ -260,11 +261,38 @@ export function parseModelFile(
       if (!items.length || items.length > 1000)
         throw new Error("Quantidade de objetos não suportada.");
       const fallbackParts = new Map<string, ReturnType<typeof part>>();
-      for (const item of items) {
+      // The same mesh can be placed at different scales. Only repeated,
+      // printable instances with equal linear geometry share a physical SKU.
+      // Gram matrices ignore rotation/translation but retain scale and shear.
+      const variants = new Map<string, Map<string, number>>();
+      const placements = items.map(item => {
         const id = item.getAttribute("objectid")!;
+        const printable = item.getAttribute("printable");
+        if (printable != null && !["0", "1", "false", "true"].includes(printable)) throw new Error("Estado de impressão inválido no 3MF.");
+        const matrix = transform(item.getAttribute("transform"));
+        const e = matrix.elements;
+        const vectors = [[e[0], e[1], e[2]], [e[4], e[5], e[6]], [e[8], e[9], e[10]]];
+        const gram = [[0, 0], [1, 1], [2, 2], [0, 1], [0, 2], [1, 2]].map(([a, b]) => vectors[a].reduce((sum, value, axis) => sum + value * vectors[b][axis], 0));
+        if (gram.some(value => !Number.isFinite(value)) || !Number.isFinite(matrix.determinant()) || matrix.determinant() === 0) throw new Error("Escala inválida no 3MF.");
+        const shape = gram.map(value => Math.round(value * 1_000_000) / 1_000_000).join(",") + (matrix.determinant() < 0 ? ",mirror" : "");
+        const print = printable !== "0" && printable !== "false";
+        const byShape = variants.get(id) || new Map<string, number>();
+        if (print && !byShape.has(shape)) byShape.set(shape, byShape.size + 1);
+        variants.set(id, byShape);
+        return { item, id, matrix, shape, print };
+      });
+      const instances: ThreeMfBuildInstances = new Map();
+      for (const { id, matrix, shape, print } of placements) {
+        const shapes = variants.get(id)!;
+        const variant = shapes.get(shape);
+        const suffix = shapes.size > 1 && print ? ` (variação ${variant})` : "";
+        const key = `file-object:${id}` + (suffix ? `:variant:${variant}` : "");
+        const instance = { source_key: key, printable: print, suffix };
+        instances.set(id, [...(instances.get(id) || []), instance]);
+        if (!print) continue;
         const object = buildObject(rootPath, id);
-        object.applyMatrix4(transform(item.getAttribute("transform")));
-        object.userData.partKey = `file-object:${id}`;
+        object.applyMatrix4(matrix);
+        object.userData.partKey = key;
         group.add(object);
         const definition = [
           ...root.querySelectorAll("resources > object"),
@@ -274,18 +302,15 @@ export function parseModelFile(
           [...config.querySelectorAll("config > object")].find(
             (n) => n.getAttribute("id") === id,
           );
-        const old = fallbackParts.get(id);
+        const old = fallbackParts.get(key);
         if (old) old.quantity_per_plate++;
-        else
+        else {
+          const draft = part(id, (label && metadata(label, "name")) || definition?.getAttribute("name") || `Objeto ${id}`);
           fallbackParts.set(
-            id,
-            part(
-              id,
-              (label && metadata(label, "name")) ||
-                definition?.getAttribute("name") ||
-                `Objeto ${id}`,
-            ),
+            key,
+            { ...draft, name: (draft.name + suffix).slice(0, 200), source_key: key },
           );
+        }
       }
       const unit = root.documentElement.getAttribute("unit") || "millimeter";
       const scale = (
@@ -319,6 +344,7 @@ export function parseModelFile(
             enabled: plates.length > 1,
             plates,
           },
+          instances,
         );
       } else {
         if (current)
@@ -340,6 +366,7 @@ export function parseModelFile(
             },
           ],
         };
+        composition = slicedCompositionFrom3mf(bytes, composition);
       }
     } else throw new Error("Selecione um arquivo STL ou 3MF.");
     const box = new THREE.Box3().setFromObject(group);
