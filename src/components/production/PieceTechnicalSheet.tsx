@@ -25,6 +25,26 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
+export type BambuLearningReference = NonNullable<PieceTechnical["learned_reference"]>;
+
+export function BambuLearnedCaption({ reference }: { reference?: BambuLearningReference }) {
+  const count = (value: number | undefined) => value != null && Number.isFinite(value) && value > 0 ? value.toLocaleString("pt-BR") : null;
+  const units = count(reference?.sample_units), runs = count(reference?.sample_runs);
+  const updated = reference?.updated_at ? new Date(reference.updated_at) : null;
+  const weight = reference?.consumption_source === "measured" ? "Consumo medido na apuração."
+    : reference?.consumption_source === "slicer_completed" ? "Peso informado pelo fatiador Bambu em impressões concluídas."
+    : reference?.consumption_source === "mixed" ? "Referência combina consumos medidos e pesos informados pelo Bambu." : null;
+  const time = reference?.time_source === "elapsed_start_end" ? "Tempo decorrido entre início e fim."
+    : reference?.time_source === "confirmed_elapsed" ? "Tempo decorrido confirmado na apuração."
+    : reference?.time_source === "mixed" ? "Tempo decorrido de registros confirmados." : null;
+  return <div className="space-y-1 text-xs text-muted-foreground">
+    <p className="font-medium text-foreground">Referência Bambu de impressões aprovadas no QC</p>
+    {units && runs && <p>{units} {reference?.sample_units === 1 ? "peça" : "peças"} em {runs} {reference?.sample_runs === 1 ? "impressão" : "impressões"}.</p>}
+    {weight && <p>{weight}</p>}{time && <p>{time}</p>}
+    {updated && Number.isFinite(updated.getTime()) && <p>Atualizada em {updated.toLocaleString("pt-BR")}.</p>}
+  </div>;
+}
+
 export function PieceTechnicalSummary({ spec }: { spec?: PieceTechnical }) {
   return (
     <div className="space-y-2 text-sm">
@@ -65,9 +85,11 @@ export function PieceTechnicalSummary({ spec }: { spec?: PieceTechnical }) {
       )}
       {spec?.source === "plate" && (
         <p className="text-xs text-muted-foreground">
-          Estimativa automática: total da placa ÷ peças iguais na placa.
+          Estimativa do plano de impressão: total da placa ÷ peças iguais na placa.
         </p>
       )}
+      {spec?.source === "manual" && <p className="text-xs text-muted-foreground">Ficha técnica informada manualmente para este SKU.</p>}
+      {spec?.source === "bambu" && <BambuLearnedCaption reference={spec.learned_reference} />}
       {spec?.source === "unknown" && spec.plate && (
         <p className="text-xs text-muted-foreground">
           Total de {spec.plate.label}: {pieceNumber(spec.plate.grams, " g")} /{" "}
