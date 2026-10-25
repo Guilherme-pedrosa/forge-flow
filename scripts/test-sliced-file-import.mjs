@@ -46,6 +46,7 @@ const variant=extra=>({profile_id:null,printer_model:null,printer_code:null,nozz
 const external=()=>({schema_version:1,provider:'makerworld',id:'1169522',design_id:'1169522',model_id:'PUBLIC-MODEL',source_url:'https://makerworld.com/pt/models/1169522-project#profileId-1177581',title:'Modular organizer',description:'Description',description_html:'<p>Description</p>',images:[],gallery:[],tags:[],categories:[],files:[],accessories:[],documentation:[],warnings:[],
  profiles:[{...variant({profile_id:'241221531',weight_grams:100,time_seconds:6000,plates:1,plate_details:[{index:1,name:'Placa 1',weight_grams:100,time_seconds:6000,filaments:[{id:'1',type:'PETG',color:'#FFFFFF',grams:100}],images:[],objects:[],warnings:[]}]}),instance_id:'1177581',name:'All parts',variants:[]}],selected_profile_id:'1177581',selected_variant_profile_id:'241221531',metadata_complete:true});
 const manualPlate=(plate,grams,seconds)=>scalar('SELECT save_product_print_plate($1,$2,$3,$4::jsonb)',[plate.id,plate.product_id,plate.source_id,JSON.stringify({plate_index:plate.plate_index,label:plate.label,units_per_plate:plate.units_per_plate,material_id:plate.material_id,printer_id:plate.printer_id,est_grams:grams,est_time_seconds:seconds,est_cost_per_unit:plate.est_cost_per_unit})]);
+const attachment=async name=>{const path=tenant+'/qa/'+name; await db.exec('RESET ROLE'); await db.query("INSERT INTO storage.objects(bucket_id,name) VALUES('attachments',$1)",[path]); await db.exec('SET ROLE authenticated'); return path;};
 
 try {
  await test('A real sliced-file plan survives atomic save and re-open without changing measured print usage or stock',async()=>{
@@ -212,6 +213,33 @@ try {
   await db.query("INSERT INTO production_order_items(tenant_id,production_order_id,product_id,description,quantity,line_index) VALUES($1,$2,$3,'Pending physical output',1,1)",[tenant,op,opProduct]); await db.exec('SET ROLE authenticated');
   assert.match((await revision(opProduct)).blocked_reason,/ordem de produção/); await assert.rejects(apply(opProduct,comp,{target:'product',parts:[]}),/ordem de produção/);
   assert.equal((await plates(opProduct)).length,0);
+ });
+ await test('A new standalone sliced SKU fills its physical yield and own technical sheet and keeps its downloadable file and manual cost',async()=>{
+  const data=local(); data.name='Standalone sliced physical SKU'; data.manual_cost=9; data.sale_price=20; data.file_composition.enabled=false;
+  data.file_composition.plates[0].parts[0].quantity_per_plate=4; data.file_composition.file_path=await attachment('standalone.3mf'); data.file_composition.file_name='standalone.3mf';
+  const key=next(),p=await save(data,null,key),[plate]=await plates(p); assert.equal(plate.units_per_plate,4); assert.ok(plate.source_id); assert.equal((await parts(p)).length,0);
+  assert.equal(await scalar('SELECT prints_per_plate FROM products WHERE id=$1',[p]),4); assert.equal(Number(await scalar('SELECT cost_estimate FROM products WHERE id=$1',[p])),9); assert.equal(Number(await scalar('SELECT sale_price FROM products WHERE id=$1',[p])),20);
+  const source=(await rows('SELECT * FROM product_print_sources WHERE id=$1',[plate.source_id]))[0]; assert.equal(source.file_path,data.file_composition.file_path); assert.equal(source.file_name,'standalone.3mf'); assert.equal(source.file_sha256,fileHash);
+  const sheet=await spec(p); assert.equal(sheet.source,'plate'); assert.equal(sheet.grams,0.9075); assert.equal(sheet.print_seconds,337.75); assert.equal(sheet.pieces_per_plate,4);
+  assert.equal(await scalar('SELECT quantity_per_product FROM product_print_plate_parts WHERE plate_id=$1',[plate.id]),1);
+  assert.equal(await save(data,null,key),p); assert.equal(await scalar('SELECT count(*)::integer FROM product_print_sources WHERE product_id=$1',[p]),1);
+ });
+ await test('Completing MakerWorld with a local file keeps source and component IDs and preserves previous file references in audit history',async()=>{
+  const reference=external(),data={name:'MakerWorld file attachment',external_import:reference,import_composition:{profile_id:reference.selected_variant_profile_id,file_sha256:fileHash,enabled:true,plates:[slicedPlate()]}};
+  const p=await save(data),[before]=await plates(p),[member]=await parts(p),identity=(await rows('SELECT id,source_url,design_id,instance_id,model_id,profile_id FROM product_print_sources WHERE id=$1',[before.source_id]))[0];
+  data.import_composition.file_path=await attachment('makerworld-first.3mf'); data.import_composition.file_name='makerworld-first.3mf'; await save(data,p);
+  const firstPath=data.import_composition.file_path;
+  data.import_composition.file_path=await attachment('makerworld-second.3mf'); data.import_composition.file_name='makerworld-second.3mf'; data.import_composition.file_sha256='d'.repeat(64); await save(data,p);
+  const [after]=await plates(p),[sameMember]=await parts(p); assert.equal(after.id,before.id); assert.equal(sameMember.id,member.id); assert.equal(sameMember.component_product_id,member.component_product_id);
+  assert.deepEqual((await rows('SELECT id,source_url,design_id,instance_id,model_id,profile_id FROM product_print_sources WHERE id=$1',[after.source_id]))[0],identity);
+  assert.equal(await scalar('SELECT file_path FROM product_print_sources WHERE id=$1',[after.source_id]),data.import_composition.file_path);
+  assert.equal(await scalar("SELECT metadata->>'previous_file_path' FROM audit_log WHERE record_id=$1 AND action='attach_composition_file' ORDER BY created_at DESC LIMIT 1",[after.source_id]),firstPath);
+ });
+ await test('New-product attachments reject foreign paths or mismatched hashes; raw geometry and composed products do not invent standalone yields',async()=>{
+  const bad=local(); bad.file_composition.file_path=otherTenant+'/bad.3mf'; const count=await scalar('SELECT count(*)::integer FROM products'); await assert.rejects(save(bad),/Arquivo não encontrado/); assert.equal(await scalar('SELECT count(*)::integer FROM products'),count);
+  bad.file_composition.file_path=await attachment('bad-hash.3mf'); bad.file_composition.file_sha256='b'.repeat(64); await assert.rejects(save(bad),/SHA-256/);
+  const raw=local(); raw.file_composition.enabled=false; delete raw.file_composition.plates[0].slicer_estimates; const p=await save(raw),[plate]=await plates(p); assert.equal(plate.units_per_plate,null); assert.equal((await spec(p)).source,'unknown');
+  const composed=await save(local()); assert.equal((await spec(composed)).source,'unknown'); assert.equal((await plates(composed))[0].units_per_plate,null);
  });
  console.log(`Validated ${passed} sliced-file persistence scenarios.`);
 } finally { await db.close(); }

@@ -25,7 +25,7 @@ export type ImportedComponent = {
   weight_grams: number | null; time_seconds: number | null; parts: ImportedPart[];
   slicer_estimates?: ImportedSlicerEstimates;
 };
-export type ImportedComposition = { profile_id: string; enabled: boolean; plates: ImportedComponent[]; file_sha256?: string };
+export type ImportedComposition = { profile_id: string; enabled: boolean; plates: ImportedComponent[]; file_sha256?: string; file_path?: string; file_name?: string };
 
 export function selectedImportVariant(reference: ProductExternalImport): MakerWorldVariant | null {
   const profile = reference.profiles.find(p => p.instance_id === reference.selected_profile_id);

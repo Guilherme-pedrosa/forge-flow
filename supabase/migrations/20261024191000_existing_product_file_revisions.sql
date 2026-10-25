@@ -1,15 +1,5 @@
 -- Explicitly reviewed file revisions can update an existing SKU without
 -- replacing its catalogue identity, stock, BOM quantities or measured usage.
-CREATE TABLE public.product_file_piece_links (
- product_id uuid PRIMARY KEY REFERENCES products(id),tenant_id uuid NOT NULL REFERENCES tenants(id),
- plate_id uuid NOT NULL REFERENCES product_print_plates(id),source_part_id uuid NOT NULL REFERENCES product_print_plate_parts(id),
- quantity_per_plate integer NOT NULL CHECK(quantity_per_plate BETWEEN 1 AND 10000),updated_at timestamptz NOT NULL DEFAULT now()
-);
-ALTER TABLE product_file_piece_links ENABLE ROW LEVEL SECURITY;
-REVOKE ALL ON product_file_piece_links FROM PUBLIC,anon,authenticated;
-GRANT SELECT ON product_file_piece_links TO authenticated;
-CREATE POLICY tenant_read ON product_file_piece_links FOR SELECT TO authenticated USING(tenant_id=get_user_tenant_id());
-
 CREATE FUNCTION erp_private.file_revision_context(p_product uuid,p_tenant uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE SET search_path=public AS $$
 DECLARE p products; plates jsonb; components jsonb; sources jsonb; blocked text; state jsonb;
@@ -96,7 +86,7 @@ BEGIN
     SELECT value INTO mapping FROM jsonb_array_elements(p_mapping->'parts') x WHERE x->>'plate_index'=idx::text AND x->>'source_key'=part->>'source_key';
     IF mapping IS NULL OR (SELECT count(*) FROM jsonb_array_elements(p_mapping->'parts') x WHERE x->>'plate_index'=idx::text AND x->>'source_key'=part->>'source_key')<>1 THEN RAISE EXCEPTION 'Escolha uma peça existente para cada objeto do arquivo.'; END IF;
     SELECT b.* INTO stored FROM product_subitems b JOIN products c ON c.id=b.component_product_id AND c.tenant_id=t AND c.is_active
-     WHERE b.id=(mapping->>'subitem_id')::uuid AND b.product_id=product.id AND b.tenant_id=t FOR UPDATE OF b;
+     WHERE b.id=(mapping->>'subitem_id')::uuid AND b.product_id=product.id AND b.tenant_id=t FOR UPDATE OF b,c;
     IF NOT FOUND OR stored.id=ANY(mapped) THEN RAISE EXCEPTION 'A peça escolhida não pertence a este produto ou já foi usada em outro objeto.'; END IF;
     mapped:=array_append(mapped,stored.id);
    END IF;

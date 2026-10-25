@@ -1,5 +1,15 @@
 -- A sliced 3MF supplies a plan for each physical plate, never measured usage
 -- or an inventory transaction. Keep its file/version separate from Bambu jobs.
+CREATE TABLE public.product_file_piece_links (
+ product_id uuid PRIMARY KEY REFERENCES products(id),tenant_id uuid NOT NULL REFERENCES tenants(id),
+ plate_id uuid NOT NULL REFERENCES product_print_plates(id),source_part_id uuid NOT NULL REFERENCES product_print_plate_parts(id),
+ quantity_per_plate integer NOT NULL CHECK(quantity_per_plate BETWEEN 1 AND 10000),updated_at timestamptz NOT NULL DEFAULT now()
+);
+ALTER TABLE product_file_piece_links ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON product_file_piece_links FROM PUBLIC,anon,authenticated;
+GRANT SELECT ON product_file_piece_links TO authenticated;
+CREATE POLICY tenant_read ON product_file_piece_links FOR SELECT TO authenticated USING(tenant_id=get_user_tenant_id());
+
 CREATE FUNCTION erp_private.file_slicer_filaments(p_slicer jsonb,p_tenant uuid) RETURNS jsonb
 LANGUAGE plpgsql STABLE SET search_path=public AS $$
 DECLARE f jsonb; k text; n numeric; ids integer[]:='{}'; result jsonb:='[]'; ident integer;
@@ -38,6 +48,36 @@ BEGIN
 END $$;
 REVOKE ALL ON FUNCTION erp_private.file_slicer_filaments(jsonb,uuid) FROM PUBLIC,anon,authenticated;
 
+CREATE FUNCTION erp_private.attach_composition_file(p_product uuid,p_tenant uuid,p_composition jsonb,p_reference jsonb) RETURNS void
+LANGUAGE plpgsql SET search_path=public AS $$
+DECLARE hash text:=p_composition->>'file_sha256'; source uuid; sources uuid[]; previous product_print_sources; local_file boolean:=p_composition->>'profile_id' LIKE 'local:%';
+BEGIN
+ IF p_composition->>'file_path' IS NULL THEN RETURN; END IF;
+ IF jsonb_typeof(p_composition->'file_path') IS DISTINCT FROM 'string' OR hash IS NULL OR hash!~'^[0-9a-f]{64}$'
+ OR (local_file AND p_composition->>'profile_id' IS DISTINCT FROM 'local:'||hash) THEN RAISE EXCEPTION 'O arquivo anexado deve corresponder ao SHA-256 da composição.'; END IF;
+ IF p_composition->>'file_name' IS NOT NULL AND (jsonb_typeof(p_composition->'file_name')<>'string' OR length(p_composition->>'file_name')>240 OR p_composition->>'file_name'~'[/\\[:cntrl:]]') THEN RAISE EXCEPTION 'Nome de arquivo inválido.'; END IF;
+ IF local_file THEN
+  source:=public.save_product_print_source(NULL,p_product,jsonb_build_object('label','Arquivo local · '||left(hash,12),'profile_id','local:'||hash,
+   'file_path',p_composition->>'file_path','file_name',coalesce(p_composition->>'file_name','arquivo-'||left(hash,12)||'.3mf'),'file_sha256',hash));
+  UPDATE product_print_plates SET source_id=source WHERE product_id=p_product AND tenant_id=p_tenant AND is_active AND imported_plate_metadata->>'local_file_hash'=p_composition->>'profile_id';
+ ELSE
+  SELECT array_agg(DISTINCT p.source_id) INTO sources FROM product_print_plates p JOIN product_print_sources s ON s.id=p.source_id AND s.tenant_id=p_tenant
+   WHERE p.product_id=p_product AND p.tenant_id=p_tenant AND p.is_active AND p.imported_plate_metadata->>'profile_id'=p_composition->>'profile_id' AND s.design_id=p_reference->>'design_id';
+  IF coalesce(cardinality(sources),0)<>1 THEN RAISE EXCEPTION 'O arquivo não identificou uma fonte única do perfil escolhido.'; END IF;
+  SELECT * INTO previous FROM product_print_sources WHERE id=sources[1] AND tenant_id=p_tenant FOR UPDATE;
+  IF previous.file_path IS DISTINCT FROM p_composition->>'file_path' AND EXISTS(SELECT 1 FROM jobs j JOIN product_print_plates p ON p.id=j.print_plate_id
+    WHERE p.source_id=previous.id AND j.tenant_id=p_tenant AND j.inventory_posted_at IS NULL AND j.status NOT IN('ready','completed','shipped','failed')) THEN
+   RAISE EXCEPTION 'Conclua a produção pendente antes de substituir o arquivo desta fonte.';
+  END IF;
+  source:=public.save_product_print_source(previous.id,p_product,jsonb_build_object('label',previous.label,'source_url',previous.source_url,
+   'file_path',p_composition->>'file_path','file_name',coalesce(p_composition->>'file_name',previous.file_name,'arquivo-'||left(hash,12)||'.3mf'),'file_sha256',hash,
+   'design_id',previous.design_id,'instance_id',previous.instance_id,'model_id',previous.model_id,'profile_id',previous.profile_id,'plate_index',previous.plate_index));
+ END IF;
+ INSERT INTO audit_log(tenant_id,user_id,action,table_name,record_id,metadata) VALUES(p_tenant,auth.uid(),'attach_composition_file','product_print_sources',source,
+  jsonb_build_object('product_id',p_product,'file_sha256',hash,'file_path',p_composition->>'file_path','previous_file_path',previous.file_path,'previous_file_sha256',previous.file_sha256));
+END $$;
+REVOKE ALL ON FUNCTION erp_private.attach_composition_file(uuid,uuid,jsonb,jsonb) FROM PUBLIC,anon,authenticated;
+
 ALTER FUNCTION public.save_product_with_photos(uuid,jsonb,jsonb,uuid) SET SCHEMA erp_private;
 ALTER FUNCTION erp_private.save_product_with_photos(uuid,jsonb,jsonb,uuid) RENAME TO save_product_before_sliced_file;
 REVOKE ALL ON FUNCTION erp_private.save_product_before_sliced_file(uuid,jsonb,jsonb,uuid) FROM PUBLIC,anon,authenticated;
@@ -45,7 +85,7 @@ CREATE FUNCTION public.save_product_with_photos(p_product_id uuid,p_product json
 LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
 DECLARE t uuid:=erp_private.actor(); result uuid; composition jsonb; pl jsonb; k text; n numeric; hash text;
  local_file boolean; stored product_print_plates; matches uuid[]; ids integer[]:='{}'; idx integer;
- grams numeric; seconds numeric; old_grams numeric; old_seconds numeric; filaments jsonb;
+ grams numeric; seconds numeric; old_grams numeric; old_seconds numeric; filaments jsonb; physical_part uuid; physical_count integer;
 BEGIN
  result:=erp_private.begin_request(t,p_request_id,'product',jsonb_build_array(p_product_id,p_product,p_photos));
  IF result IS NOT NULL THEN RETURN result; END IF;
@@ -99,6 +139,33 @@ BEGIN
     'slicer_estimates',pl->'slicer_estimates','slicer_weight_grams',nullif((pl->>'weight_grams')::numeric,0),'slicer_time_seconds',nullif((pl->>'time_seconds')::numeric,0)),updated_at=now()
    WHERE id=stored.id;
  END LOOP;
+ -- An explicitly identified homogeneous plate of one standalone SKU describes
+ -- its own unit yield. It is not a BOM or a guess about a composed product.
+ IF composition->>'enabled'='false' AND jsonb_array_length(composition->'plates')=1 AND jsonb_array_length(composition->'plates'->0->'parts')=1
+  AND composition->'plates'->0->'slicer_estimates'->>'source'='3mf_slice_info'
+  AND NOT EXISTS(SELECT 1 FROM product_subitems WHERE product_id=result AND tenant_id=t)
+  AND (SELECT assembly_enabled FROM products WHERE id=result AND tenant_id=t)=false THEN
+  pl:=composition->'plates'->0; idx:=(pl->>'index')::integer; physical_count:=(pl->'parts'->0->>'quantity_per_plate')::integer;
+  IF physical_count BETWEEN 1 AND 10000 THEN
+   SELECT p.* INTO stored FROM product_print_plates p WHERE p.product_id=result AND p.tenant_id=t AND p.is_active AND p.plate_index=idx
+    AND CASE WHEN local_file THEN p.imported_plate_metadata->>'local_file_hash'=composition->>'profile_id' ELSE p.imported_plate_metadata->>'profile_id'=composition->>'profile_id' END;
+   IF stored.id IS NOT NULL AND (SELECT count(*) FROM product_print_plate_parts WHERE plate_id=stored.id)=1 THEN
+    SELECT id INTO physical_part FROM product_print_plate_parts WHERE plate_id=stored.id AND source_key=pl->'parts'->0->>'source_key';
+    IF physical_part IS NOT NULL THEN
+     IF stored.units_per_plate IS DISTINCT FROM physical_count THEN PERFORM public.save_product_print_plate(stored.id,result,stored.source_id,
+      jsonb_build_object('plate_index',idx,'label',stored.label,'units_per_plate',physical_count,'material_id',stored.material_id,'printer_id',stored.printer_id,
+       'est_grams',stored.est_grams,'est_time_seconds',stored.est_time_seconds,'est_cost_per_unit',stored.est_cost_per_unit)); END IF;
+     UPDATE product_print_plate_parts SET quantity_per_product=1 WHERE id=physical_part;
+     INSERT INTO product_file_piece_links(product_id,tenant_id,plate_id,source_part_id,quantity_per_plate) VALUES(result,t,stored.id,physical_part,physical_count)
+      ON CONFLICT(product_id) DO UPDATE SET plate_id=excluded.plate_id,source_part_id=excluded.source_part_id,quantity_per_plate=excluded.quantity_per_plate,updated_at=now();
+     UPDATE products SET prints_per_plate=physical_count WHERE id=result AND tenant_id=t;
+     PERFORM erp_private.update_product_print_actuals(result);
+    END IF;
+   END IF;
+  END IF;
+ END IF;
+ PERFORM erp_private.attach_composition_file(result,t,composition,p_product->'external_import');
+ UPDATE products SET cost_estimate=manual_cost_override WHERE id=result AND tenant_id=t AND manual_cost_override IS NOT NULL;
  RETURN result;
 END $$;
 REVOKE ALL ON FUNCTION public.save_product_with_photos(uuid,jsonb,jsonb,uuid) FROM PUBLIC,anon;
