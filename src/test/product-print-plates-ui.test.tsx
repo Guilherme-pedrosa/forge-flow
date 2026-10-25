@@ -5,7 +5,7 @@ import ProductPrintPlates from "@/pages/comercial/ProductPrintPlates";
 import { supabase } from "@/integrations/supabase/client";
 import { productionQueryKeys } from "@/lib/production-api";
 
-const mock = vi.hoisted(() => ({ rpc: vi.fn(), toast: vi.fn(), plates: [] as Record<string, unknown>[], sources: [] as Record<string, unknown>[], bindings: [] as Record<string, unknown>[], learned: null as Record<string, unknown> | null }));
+const mock = vi.hoisted(() => ({ rpc: vi.fn(), toast: vi.fn(), plates: [] as Record<string, unknown>[], sources: [] as Record<string, unknown>[], sourceError: false, bindings: [] as Record<string, unknown>[], learned: null as Record<string, unknown> | null }));
 vi.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: mock.toast }) }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {
   rpc: mock.rpc,
@@ -15,17 +15,17 @@ vi.mock("@/integrations/supabase/client", () => ({ supabase: {
       then: (resolve: (result: unknown) => unknown, reject: (err: unknown) => unknown) => Promise.resolve({
         data: table === "product_print_plates" ? mock.plates : table === "product_print_sources" ? mock.sources : table === "product_print_execution_bindings" ? mock.bindings : table === "inventory_items" ? [{ id: "material-1", name: "PLA preto", unit: "g" }]
           : table === "printers" ? [{ id: "printer-1", name: "Impressora A" }]
-            : [{ id: "task-1", bambu_task_id: "101", design_title: "Tampa do produto", status: "2", start_time: "2026-09-13T10:00:00Z", bambu_devices: { name: "Impressora A" } }], error: null,
+            : [{ id: "task-1", bambu_task_id: "101", design_title: "Tampa do produto", status: "2", start_time: "2026-09-13T10:00:00Z", bambu_devices: { name: "Impressora A" } }], error: table === "product_print_sources" && mock.sourceError ? { message: "Source unavailable" } : null,
       }).then(resolve, reject),
     };
     return builder;
   },
 } }));
 const base = { tenant_id: "tenant-1", product_id: "product-1", source_id: "source-1", units_per_plate: 1, material_id: "material-1", printer_id: "printer-1", est_grams: null, est_time_seconds: null, est_cost_per_unit: null, actual_grams_per_unit: 10, actual_seconds_per_unit: 600, actual_sample_units: 4, actual_source: "measured", actual_updated_at: null, model_id: "model-1", profile_id: "profile-1", is_active: true };
-const mount = (client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })) => render(<QueryClientProvider client={client}><ProductPrintPlates productId="product-1" tenantId="tenant-1" sourceId="source-1" showProductTotal /></QueryClientProvider>);
+const mount = (client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }), sourceId: string | null = "source-1") => render(<QueryClientProvider client={client}><ProductPrintPlates productId="product-1" tenantId="tenant-1" sourceId={sourceId} showProductTotal /></QueryClientProvider>);
 beforeEach(() => {
   mock.rpc.mockReset(); mock.rpc.mockImplementation(async (name: string) => ({ data: name === "product_plate_learning" ? mock.learned : "plate-3", error: null })); mock.toast.mockClear();
-  mock.sources = [{ id: "source-1", file_sha256: null, profile_id: "profile-1", is_active: true }]; mock.learned = null; mock.bindings=[];
+  mock.sources = [{ id: "source-1", file_sha256: null, profile_id: "profile-1", is_active: true }]; mock.sourceError=false; mock.learned = null; mock.bindings=[];
   mock.plates = [
     { ...base, id: "plate-1", plate_index: 1, label: "Base", actual_cost_per_unit: 10 },
     { ...base, id: "plate-2", plate_index: 2, label: "Tampa", actual_cost_per_unit: 8 },
@@ -67,6 +67,20 @@ describe("product plate configuration", () => {
     expect(screen.getByText(/R\$\s18,00/)).toBeInTheDocument();
     expect(screen.getByText("20min")).toBeInTheDocument();
     expect(screen.queryByText(/R\$\s9,00/)).not.toBeInTheDocument();
+  });
+  it.each([false,true])("keeps the manual pane total on the file plan when SHA is only in the source (source unavailable: %s)",async(sourceError)=>{
+    mock.sourceError=sourceError;
+    mock.sources=[{id:"source-1",file_sha256:"a".repeat(64),file_name:"linked-file.3mf",profile_id:"native-profile",is_active:true}];
+    mock.plates=[{...base,id:"plate-1",plate_index:1,label:"Source plate",est_grams:30,est_time_seconds:600,est_cost_per_unit:7,actual_cost_per_unit:88,imported_plate_metadata:null}];
+    mount(undefined,null);
+    expect(await screen.findByText(/R\$\s7,00/)).toBeInTheDocument();
+    expect(screen.queryByText(/R\$\s88,00/)).not.toBeInTheDocument();
+  });
+  it("loads source identities in the manual pane before retaining a non-file production average",async()=>{
+    mock.plates=[{...base,id:"plate-1",plate_index:1,label:"Legacy plate",est_grams:30,est_time_seconds:600,est_cost_per_unit:7,actual_cost_per_unit:88,imported_plate_metadata:null}];
+    mount(undefined,null);
+    expect(await screen.findByText(/R\$\s88,00/)).toBeInTheDocument();
+    expect(screen.queryByText(/R\$\s7,00/)).not.toBeInTheDocument();
   });
   it("saves print totals and per-unit cost with explicit capacity, without sending read-only averages", async () => {
     mount();

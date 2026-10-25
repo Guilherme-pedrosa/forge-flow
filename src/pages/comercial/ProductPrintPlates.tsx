@@ -120,12 +120,18 @@ export default function ProductPrintPlates({ productId, tenantId, sourceId, show
     queryFn: () => allRows((from, to) => db.from("product_print_plates").select("*").eq("tenant_id", tenantId).eq("product_id", productId).eq("is_active", true).order("plate_index").order("id").range(from, to)),
   });
   const plates = allPlates.filter(plate => plate.source_id === sourceId);
-  const sourcesQuery = useQuery({ queryKey: ["product_print_sources", tenantId, productId, "file-binding"], enabled: !!sourceId,
+  const sourcesQuery = useQuery({ queryKey: ["product_print_sources", tenantId, productId, "file-binding"], enabled: !!sourceId || allPlates.some(plate => !!plate.source_id),
     queryFn: () => allRows((from, to) => db.from("product_print_sources").select("id,tenant_id,product_id,file_sha256,file_name,profile_id,is_active").eq("tenant_id", tenantId).eq("product_id", productId).eq("is_active", true).order("id").range(from, to)) });
   const sources = sourcesQuery.data || [];
   const bindingsQuery = useQuery({ queryKey: ["product_print_execution_bindings", tenantId, productId], enabled: allPlates.length > 0,
     queryFn: () => allRows((from, to) => db.from("product_print_execution_bindings").select("id,tenant_id,plate_id,source_id,file_sha256,remote_plate_index,confirmation,confirmed_at").eq("tenant_id", tenantId).in("plate_id", allPlates.map(plate => plate.id)).order("confirmed_at", { ascending: false }).order("id").range(from, to)) });
-  const total = sumProductPlateReferences(allPlates.map(plate => fileIdentity(plate, sources.find(source => source.id === plate.source_id)).required ? { ...plate, actual_sample_units: 0 } : plate));
+  // The manual pane also shows the total across all source panes. Confirm each
+  // source before using its historical averages in that shared total.
+  const total = sumProductPlateReferences(allPlates.map(plate => {
+    const source = sources.find(value => value.id === plate.source_id);
+    const unverified = !!plate.source_id && (sourcesQuery.isPending || !!sourcesQuery.error || !source);
+    return unverified || fileIdentity(plate, source).required ? { ...plate, actual_sample_units: 0 } : plate;
+  }));
   const boundPlate = allPlates.find(plate => plate.id === bindingPlate);
   const boundSource = sources.find(source => source.id === boundPlate?.source_id);
   const boundFile = fileIdentity(boundPlate, boundSource);
