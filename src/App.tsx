@@ -45,6 +45,7 @@ const OrdensProducao = lazy(() => import("./pages/producao/Ordens"));
 const ComponentesProducao = lazy(() => import("./pages/producao/Componentes"));
 const Consignado = lazy(() => import("./pages/comercial/Consignado"));
 const Empresa = lazy(() => import("./pages/configuracoes/Empresa"));
+const PricingSettings = lazy(() => import("./pages/configuracoes/Precificacao"));
 const Usuarios = lazy(() => import("./pages/configuracoes/Usuarios"));
 const Logs = lazy(() => import("./pages/configuracoes/Logs"));
 const Login = lazy(() => import("./pages/auth/Login"));
@@ -123,6 +124,7 @@ function AuthenticatedRoutes() {
         <Route path="/integracoes/loja" element={<Lorace />} />
         {/* Config */}
         <Route path="/configuracoes" element={<Empresa />} />
+        <Route path="/configuracoes/precificacao" element={<PricingSettings />} />
         <Route path="/configuracoes/usuarios" element={<Usuarios />} />
         <Route path="/configuracoes/logs" element={<Logs />} />
         {/* Catch-all */}

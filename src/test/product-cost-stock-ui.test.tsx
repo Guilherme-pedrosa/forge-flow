@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Produtos from '@/pages/comercial/Produtos';
 const mock=vi.hoisted(()=>({rpc:vi.fn(),toast:vi.fn(),existing:false}));
@@ -15,7 +15,8 @@ vi.mock('@/pages/comercial/ProductPrintSources',()=>({default:()=>null}));
 vi.mock('@/pages/comercial/ProductMaterialRecipe',()=>({default:()=>null}));
 beforeEach(()=>{mock.existing=false;mock.rpc.mockReset();mock.toast.mockReset();mock.rpc.mockImplementation(async(name:string)=>({data:name==='product_material_recipe_catalog'?[{id:'product',configured:true,complete:true,cost_per_unit:999,plate_count:1}]:'saved',error:null}));});
 afterEach(cleanup);
-function mount(){render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><MemoryRouter><Produtos/></MemoryRouter></QueryClientProvider>);}
+function LocationProof(){const location=useLocation();return <div data-testid="location">{location.pathname}{location.search}</div>;}
+function mount(){render(<QueryClientProvider client={new QueryClient({defaultOptions:{queries:{retry:false}}})}><MemoryRouter><Produtos/><LocationProof/></MemoryRouter></QueryClientProvider>);}
 describe('Cadastro real de produto com custo e estoque',()=>{
  it('salva custo em reais com vírgula, venda e estoque no mesmo pedido sem receita',async()=>{
   mount();fireEvent.click(screen.getByRole('button',{name:'Novo Produto'}));
@@ -33,5 +34,14 @@ describe('Cadastro real de produto com custo e estoque',()=>{
   await waitFor(()=>expect(screen.getByRole('button',{name:'Salvar'})).toBeEnabled());
   fireEvent.click(screen.getByRole('button',{name:'Salvar'}));
   await waitFor(()=>expect(mock.rpc).toHaveBeenCalledWith('save_product_with_photos',expect.objectContaining({p_product_id:'product',p_product:expect.objectContaining({manual_cost:15.75,stock:expect.objectContaining({current_stock:24,expected_stock:20,avg_cost:15.75})})})));
+ });
+ it('salva o cadastro uma vez antes de abrir a formação completa de preço',async()=>{
+  mount();fireEvent.click(screen.getByRole('button',{name:'Novo Produto'}));
+  fireEvent.change(screen.getByLabelText('Nome *'),{target:{value:'Produto para precificar'}});
+  fireEvent.click(screen.getByRole('button',{name:'Salvar e precificar'}));
+  await waitFor(()=>expect(screen.getByTestId('location')).toHaveTextContent('/comercial/precificacao?produto=saved'));
+  const writes=mock.rpc.mock.calls.filter(([name])=>name==='save_product_with_photos');
+  expect(writes).toHaveLength(1);expect(writes[0][1].p_product.name).toBe('Produto para precificar');
+  expect(writes[0][1].p_product.sale_price).toBeNull();
  });
 });
