@@ -14,6 +14,7 @@ import { fetchPrintSourceImport, getPrintSourceImportIdentity, PrintSourceImport
 import type { ProductExternalImport } from "@/lib/makerworld-import";
 import type { MakerWorldModel } from "../../../supabase/functions/_shared/makerworld";
 import { MakerWorldPrinterOption } from "./MakerWorldReference";
+import ProductFileRevisionDialog from "@/components/comercial/ProductFileRevisionDialog";
 
 type Source = PrintSourceIdentifiers & {
   id: string; tenant_id: string; product_id: string; source_url: string | null;
@@ -39,6 +40,8 @@ export default function ProductPrintSources({ productId, tenantId, onBusyChange,
   const { toast } = useToast();
   const qc = useQueryClient();
   const [formOpen, setFormOpen] = useState(false);
+  const [revisionOpen, setRevisionOpen] = useState(false);
+  const [revisionBusy, setRevisionBusy] = useState(false);
   const [editing, setEditing] = useState<Source | null>(null);
   const [draft, setDraft] = useState(emptyDraft);
   const [file, setFile] = useState<File | null>(null);
@@ -213,10 +216,10 @@ export default function ProductPrintSources({ productId, tenantId, onBusyChange,
     },
     onError: (err: Error) => toast({ title: "Não foi possível arquivar", description: err.message, variant: "destructive" }),
   });
-  const writePending = writing || archive.isPending || Object.values(platesBusy).some(Boolean);
+  const writePending = writing || revisionBusy || archive.isPending || Object.values(platesBusy).some(Boolean);
   const busy = writePending || save.isPending || bind.isPending || hydrate.isPending || !!downloadId;
   useEffect(() => { onBusyChange?.(writePending); return () => onBusyChange?.(false); }, [writePending, onBusyChange]);
-  const hasDraft = formOpen || !!importChoice || (!!bindingSource && !!taskId) || Object.values(platesDraft).some(Boolean);
+  const hasDraft = formOpen || revisionOpen || !!importChoice || (!!bindingSource && !!taskId) || Object.values(platesDraft).some(Boolean);
   useEffect(() => { onDraftChange?.(hasDraft); return () => onDraftChange?.(false); }, [hasDraft, onDraftChange]);
 
   const download = async (source: Source) => {
@@ -248,8 +251,9 @@ export default function ProductPrintSources({ productId, tenantId, onBusyChange,
   return <section aria-label="Arquivos e links de impressão" className="rounded-xl border p-4 space-y-3">
     <div className="flex flex-wrap items-center justify-between gap-2">
       <h3 className="text-sm font-semibold flex items-center gap-2"><FileBox className="h-4 w-4" /> Arquivos e links de impressão</h3>
-      {!formOpen && <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => { resetForm(); setFormOpen(true); }}><Plus className="mr-1 h-3.5 w-3.5" /> Adicionar fonte</Button>}
+      {!formOpen && <div className="flex flex-wrap gap-2"><Button type="button" size="sm" disabled={busy} onClick={() => setRevisionOpen(true)}><FileBox className="mr-1 h-3.5 w-3.5" /> Atualizar pelo 3MF / STL</Button><Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => { resetForm(); setFormOpen(true); }}><Plus className="mr-1 h-3.5 w-3.5" /> Adicionar fonte</Button></div>}
     </div>
+    {revisionOpen && <ProductFileRevisionDialog productId={productId} tenantId={tenantId} open={revisionOpen} onOpenChange={setRevisionOpen} onBusyChange={setRevisionBusy} />}
     <p className="text-xs leading-relaxed text-muted-foreground">O link MakerWorld carrega as placas, o peso, o tempo e os filamentos do perfil escolhido. Vincular uma impressão Bambu identifica a configuração usada e registra os materiais observados.</p>
     {error && <div role="alert" className="rounded-lg bg-destructive/5 p-3 text-sm">Não foi possível carregar os vínculos. <Button type="button" size="sm" variant="ghost" onClick={() => refetch()}>Tentar novamente</Button></div>}
     {isLoading ? <p className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Carregando vínculos…</p> : !sources.length && !error && <p className="text-xs text-muted-foreground">Nenhum arquivo ou link associado.</p>}

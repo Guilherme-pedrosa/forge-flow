@@ -45,7 +45,7 @@ import { fetchMakerWorldModel, externalImportReference, legacyMakerWorldUrl, rea
 import { makerWorldImageUrl } from "../../../supabase/functions/_shared/makerworld";
 import { MakerWorldDescriptionTranslation } from "@/components/comercial/MakerWorldDescriptionTranslation";
 import { MakerWorldImageImport } from "@/components/comercial/MakerWorldImageImport";
-import { normalizePrintSourceUrl } from "@/lib/product-print-source";
+import { normalizePrintSourceUrl, safePrintFileName } from "@/lib/product-print-source";
 import { importedComposition, importProductPhotos, selectedImportVariant, validateImportedComposition, type ImportedComposition } from "@/lib/imported-composition";
 import { ImportedCompositionPreview } from "@/components/comercial/ImportedCompositionPreview";
 import { ImportedModelImage } from "@/components/comercial/ImportedModelImage";
@@ -119,6 +119,10 @@ export default function Produtos() {
   const [editorImportUrl, setEditorImportUrl] = useState("");
   const [readingMetadataFile, setReadingImportFile] = useState(false);
   const [readingModelFile, setReadingModelFile] = useState(false);
+  const importedModelFile = useRef<File | null>(null);
+  const uploadedModelFile = useRef<{ file: File; path: string } | null>(null);
+  const receiveModelFile = useCallback((file: File) => { importedModelFile.current = file; uploadedModelFile.current = null; }, []);
+  const reportModelReading = useCallback((busy: boolean) => { setReadingModelFile(busy); if (busy) { importedModelFile.current = null; uploadedModelFile.current = null; setCompositionImport(previous => previous?.profile_id.startsWith("local:") ? null : previous); } }, []);
   const readingImportFile = readingMetadataFile || readingModelFile;
   const makerRequest = useRef<AbortController | null>(null);
   const makerImportTarget = useRef<string | null>(null);
@@ -367,6 +371,7 @@ export default function Produtos() {
   }, [products, search, showArchived, catalogView, parentsByPart, partsByProduct, productById]);
 
   const resetForm = () => {
+    importedModelFile.current = null; uploadedModelFile.current = null;
     pricingTransfer.current = null;
     setPhotoLink("");
     productRequest.current = null;
@@ -776,6 +781,19 @@ ${selected?.name ? `Perfil: ${selected.name}
       if (!valid) throw new Error("Informe uma URL válida para as fotos do produto.");
     }
     const rpc = supabase.rpc.bind(supabase) as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ data: string | null; error: { message: string } | null }>;
+    let savedComposition = compositionImport;
+    if (savedComposition?.file_sha256 && importedModelFile.current) {
+      const modelFile = importedModelFile.current;
+      const hash = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", await modelFile.arrayBuffer())), byte => byte.toString(16).padStart(2, "0")).join("");
+      if (hash !== savedComposition.file_sha256) throw new Error("O arquivo mudou. Abra-o novamente antes de salvar o produto.");
+      if (uploadedModelFile.current?.file !== modelFile) {
+        const path = `${profile.tenant_id}/${crypto.randomUUID()}/${safePrintFileName(modelFile.name)}`;
+        const result = await supabase.storage.from("attachments").upload(path, modelFile, { contentType: "application/octet-stream", upsert: false });
+        if (result.error) throw new Error(result.error.message);
+        uploadedModelFile.current = { file: modelFile, path };
+      }
+      savedComposition = { ...savedComposition, file_path: uploadedModelFile.current.path, file_name: modelFile.name };
+    }
     const payload = {
       p_product_id: productId,
       p_product: {
@@ -798,7 +816,7 @@ ${selected?.name ? `Perfil: ${selected.name}
         prints_per_plate: positiveInteger(printsPerPlate, "Peças por placa", 10000),
         extras: buildExtrasPayload(),
         ...(externalImport ? { external_import: externalImport } : {}),
-        ...(compositionImport ? { [compositionImport.profile_id.startsWith("local:") ? "file_composition" : "import_composition"]: compositionImport } : {}),
+        ...(savedComposition ? { [savedComposition.profile_id.startsWith("local:") ? "file_composition" : "import_composition"]: savedComposition } : {}),
       },
       p_photos: photos,
     };
@@ -972,8 +990,8 @@ ${selected?.name ? `Perfil: ${selected.name}
 </TabsContent>
       <TabsContent forceMount value="producao" className={tabClass}>
         {editItem?.is_component && profile?.tenant_id && <PieceTechnicalSheet key={`technical-${editItem.id}`} productId={editItem.id} name={editItem.name} tenantId={profile.tenant_id} showSummary />}
-        {formTab === "producao" && (!editItem || compositionImport) && <Suspense fallback={<p>Carregando leitor de arquivos…</p>}><ModelFileInput current={compositionImport?.profile_id.startsWith("local:") ? undefined : compositionImport || undefined} onChange={setCompositionImport} onBusyChange={setReadingModelFile} disabled={readingMetadataFile} /></Suspense>}
-        {compositionImport && <ImportedCompositionPreview key={compositionImport.profile_id} value={compositionImport} onChange={setCompositionImport} onBusyChange={setReadingImportFile} />}<p className="rounded-lg bg-muted p-3 text-sm">Configuração opcional para produtos fabricados. Custo, venda e estoque podem ser cadastrados sem composição.</p>      {productionReference && (
+        {formTab === "producao" && (!editItem || compositionImport) && <Suspense fallback={<p>Carregando leitor de arquivos…</p>}><ModelFileInput current={compositionImport?.profile_id.startsWith("local:") ? undefined : compositionImport || undefined} onChange={setCompositionImport} onFileReady={receiveModelFile} onBusyChange={reportModelReading} disabled={readingMetadataFile} /></Suspense>}
+        {compositionImport && <ImportedCompositionPreview key={compositionImport.profile_id} value={compositionImport} onChange={setCompositionImport} onBusyChange={setReadingImportFile} onFileReady={receiveModelFile} />}<p className="rounded-lg bg-muted p-3 text-sm">Configuração opcional para produtos fabricados. Custo, venda e estoque podem ser cadastrados sem composição.</p>      {productionReference && (
         <section aria-label="Referência da produção" className="rounded-xl border border-primary/20 bg-primary/5 p-4 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-sm font-semibold">Base na produção</h3>

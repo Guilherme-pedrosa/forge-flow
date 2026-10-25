@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { parseModelFile, disposeModel, type ModelFile } from "@/lib/model-file";
@@ -6,6 +6,7 @@ import type { ImportedComposition } from "@/lib/imported-composition";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+const SlicingDialog = lazy(() => import("./SlicingDialog").then(module => ({ default: module.SlicingDialog })));
 
 function ModelCanvas({
   model,
@@ -135,12 +136,14 @@ export default function ModelFileInput({
   onChange,
   onBusyChange,
   onFileReady,
+  revision = false,
   disabled = false,
 }: {
   current?: ImportedComposition;
   onChange: (value: ImportedComposition) => void;
   onBusyChange?: (busy: boolean) => void;
   onFileReady?: (file: File) => void;
+  revision?: boolean;
   disabled?: boolean;
 }) {
   const [model, setModel] = useState<ModelFile | null>(null);
@@ -148,6 +151,8 @@ export default function ModelFileInput({
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState("");
   const [used, setUsed] = useState(false);
+  const [sourceFile, setSourceFile] = useState<File | null>(null);
+  const [slicingOpen, setSlicingOpen] = useState(false);
   const sequence = useRef(0);
   const activeModel = useRef<ModelFile | null>(null);
   useEffect(
@@ -161,15 +166,15 @@ export default function ModelFileInput({
     onBusyChange?.(busy);
     return () => onBusyChange?.(false);
   }, [busy, onBusyChange]);
-  // Shared entry point for a selected file and a future authenticated slicer
-  // result. Both paths verify the same complete file before applying its plan.
-  const loadFile = async (file: File) => {
+  // Selected files and verified worker results use the same strict parser.
+  const loadFile = async (file: File, fromSlicer = false) => {
     const version = ++sequence.current;
     setBusy(true);
     setError("");
     setUsed(false);
     setModel(null);
     setSelected("");
+    if (!fromSlicer) setSourceFile(null);
     let loaded: ModelFile | null = null;
     try {
       if (file.size > 80 * 1024 * 1024) throw new Error("Use um arquivo de até 80 MB.");
@@ -180,19 +185,31 @@ export default function ModelFileInput({
       loaded.composition.file_sha256 = Array.from(new Uint8Array(hash))
         .map(byte => byte.toString(16).padStart(2, "0")).join("");
       if (!current) loaded.composition.profile_id = `local:${loaded.composition.file_sha256}`;
+      const singlePlate = loaded.composition.plates.length === 1 ? loaded.composition.plates[0] : null;
+      const singlePart = singlePlate?.parts.length === 1 ? singlePlate.parts[0] : null;
+      if (!current && !loaded.composition.enabled && singlePlate?.slicer_estimates && singlePart?.quantity_per_plate) {
+        singlePlate.units_per_plate = singlePart.quantity_per_plate;
+        singlePart.quantity_per_product = 1;
+      }
       if (version !== sequence.current) {
         disposeModel(loaded.group);
         loaded = null;
         return;
       }
       onFileReady?.(file);
+      if (fromSlicer) setSlicingOpen(false);
+      setSourceFile(file);
       if (activeModel.current) disposeModel(activeModel.current.group);
       activeModel.current = loaded;
       setModel(loaded);
+      if (fromSlicer) { onChange(loaded.composition); setUsed(true); }
+      else if (loaded.composition.plates.some(plate => !plate.slicer_estimates)) setSlicingOpen(true);
       loaded = null;
+      return true;
     } catch (error) {
       if (loaded) disposeModel(loaded.group);
       if (version === sequence.current) setError((error as Error).message);
+      return false;
     } finally {
       if (version === sequence.current) setBusy(false);
     }
@@ -218,6 +235,7 @@ export default function ModelFileInput({
           if (file) void loadFile(file);
         }}
       />
+      {slicingOpen && sourceFile && <Suspense fallback={<p role="status">Carregando fatiador…</p>}><SlicingDialog open={slicingOpen} file={sourceFile} onOpenChange={setSlicingOpen} onSliced={async result => { if (!await loadFile(result, true)) throw new Error("Não foi possível ler o 3MF gerado. Confira o arquivo e tente novamente."); }} /></Suspense>}
       <p className="text-xs text-muted-foreground">
         Leitura local. Arraste para girar, use a roda para aproximar e clique em
         uma peça. Cores são agrupadas no mesmo objeto físico. Arquivos STL não
@@ -263,6 +281,7 @@ export default function ModelFileInput({
               </> : <p className="text-muted-foreground">Este arquivo ainda não contém dados de fatiamento.{plate.weight_grams != null || plate.time_seconds != null ? " Os valores do perfil importado foram preservados." : " Peso e tempo continuam sem estimativa."}</p>}
             </div>)}
           </div>
+          <Button type="button" variant="outline" disabled={busy || disabled} onClick={() => setSlicingOpen(true)}>Simular no fatiador</Button>
           <Button
             type="button"
             disabled={busy || used}
@@ -271,12 +290,11 @@ export default function ModelFileInput({
               setUsed(true);
             }}
           >
-            Usar estas peças no produto
+            {revision ? "Conferir associação das peças" : "Usar estas peças no produto"}
           </Button>
           {used && (
             <p role="status" className="text-sm">
-              Peças e dados de fatiamento aplicados ao formulário. Confira as
-              quantidades por produto e salve o cadastro.
+              {revision ? "Dados carregados. Confira a associação com as peças existentes e aplique a revisão." : "Peças e dados de fatiamento aplicados ao formulário. Confira as quantidades por produto e salve o cadastro."}
             </p>
           )}
         </>
