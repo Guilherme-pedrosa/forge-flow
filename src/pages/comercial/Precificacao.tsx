@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/components/shared/PageHeader";
 import { SearchableItemSelect } from "@/components/shared/SearchableItemSelect";
@@ -11,21 +11,23 @@ import { priceChannel } from "@/lib/channel-pricing";
 import { supabase } from "@/integrations/supabase/client";
 import { allRows } from "@/lib/finance";
 import { useAuth } from "@/contexts/AuthContext";
+import { readPricingSettings } from "@/lib/pricing-policy";
+import ProductPricingWorkspace from "./ProductPricingWorkspace";
 const money = (n: number) =>
   n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const initial: PricingInput = {
   quantity: "1",
   hours: "0",
-  watts: "0",
-  kwh: "0",
-  machineHour: "0",
+  watts: "",
+  kwh: "",
+  machineHour: "",
   laborMinutes: "0",
-  laborHour: "0",
-  overhead: "0",
+  laborHour: "",
+  overhead: "",
   failure: "0",
-  margin: "30",
+  margin: "",
   target: "",
-  materials: [{ name: "Material 1", grams: "0", kgPrice: "0" }],
+  materials: [{ name: "Material 1", grams: "0", kgPrice: "" }],
   extras: [],
 };
 const initialChannel = {
@@ -40,24 +42,46 @@ const initialChannel = {
 };
 const percent = (value: number | null) => value == null ? "—" : `${value.toFixed(1)}%`;
 export default function Precificacao() {
+  const [params, setParams] = useSearchParams();
+  const [mode, setMode] = useState<"product" | "free">("product");
+  const productId = params.get("produto") ?? "";
+  useEffect(() => { if (productId) setMode("product"); }, [productId]);
+  return <div className="min-w-0 space-y-5">
+    <PageHeader title="Precificação 3D" description="Forme o preço com a composição do produto, as placas, o trabalho e os insumos." breadcrumbs={[{ label: "Comercial" }, { label: "Precificação" }]} />
+    <div className="flex flex-wrap gap-2" aria-label="Modo de precificação">
+      <Button variant={mode === "product" ? "default" : "outline"} aria-pressed={mode === "product"} onClick={() => setMode("product")}>Produto cadastrado</Button>
+      <Button variant={mode === "free" ? "default" : "outline"} aria-pressed={mode === "free"} onClick={() => setMode("free")}>Simulação livre</Button>
+      <Button variant="ghost" asChild><a href="/configuracoes/precificacao">Configurar tarifas e custos</a></Button>
+    </div>
+    {mode === "product" ? <ProductPricingWorkspace productId={productId} onProductChange={id => setParams(current => { const next = new URLSearchParams(current); if (id) next.set("produto", id); else next.delete("produto"); return next; })} /> : <FreePricingSimulator />}
+  </div>;
+}
+
+function FreePricingSimulator() {
   const { profile } = useAuth();
   const company = useQuery({
-    queryKey: ["pricing-company", profile?.tenant_id],
+    queryKey: ["pricing_settings", profile?.tenant_id],
     enabled: !!profile?.tenant_id,
-    queryFn: async () => {
-      const result = await supabase
-        .from("tenants")
-        .select("settings")
-        .eq("id", profile!.tenant_id)
-        .single();
-      if (result.error) throw result.error;
-      return result.data.settings as Record<string, number> | null;
-    },
+    queryFn: readPricingSettings,
   });
   const navigate = useNavigate();
   const [name, setName] = useState("");
   const [product, setProduct] = useState("");
   const [input, setInput] = useState(initial);
+  const [printerId, setPrinterId] = useState("");
+  const hydrated = useRef<string | null>(null);
+  useEffect(() => {
+    if (!company.data || !profile?.tenant_id || hydrated.current === profile.tenant_id) return;
+    hydrated.current = profile.tenant_id;
+    const settings = company.data;
+    setInput(current => ({ ...current,
+      kwh: current.kwh === "" ? settings.energy_cost_kwh ?? "" : current.kwh,
+      machineHour: current.machineHour === "" ? settings.machine_hour_cost ?? "" : current.machineHour,
+      laborHour: current.laborHour === "" ? settings.labor_cost_hour ?? "" : current.laborHour,
+      overhead: current.overhead === "" ? settings.overhead_percent ?? "" : current.overhead,
+      margin: current.margin === "" ? settings.target_margin ?? "" : current.margin,
+    }));
+  }, [company.data, profile?.tenant_id]);
   const [channel, setChannel] = useState("factory");
   const [channelInput, setChannelInput] = useState(initialChannel);
   const channelEnabled = channel !== "factory";
@@ -90,7 +114,7 @@ export default function Precificacao() {
   const selectedQuantity = channelEnabled ? sale?.quantity : result?.quantity;
   const canTransfer = !!result && selectedPrice != null && selectedQuantity != null;
   const products = useQuery({
-    queryKey: ["pricing-products"],
+    queryKey: ["pricing-products", profile?.tenant_id],
     queryFn: () =>
       allRows((a, b) =>
         supabase
@@ -103,7 +127,7 @@ export default function Precificacao() {
       ),
   });
   const printers = useQuery({
-    queryKey: ["pricing-printers"],
+    queryKey: ["pricing-printers", profile?.tenant_id],
     queryFn: () =>
       allRows((a, b) =>
         supabase
@@ -116,7 +140,7 @@ export default function Precificacao() {
       ),
   });
   const materials = useQuery({
-    queryKey: ["pricing-materials"],
+    queryKey: ["pricing-materials", profile?.tenant_id],
     queryFn: () =>
       allRows((a, b) =>
         supabase
@@ -177,11 +201,7 @@ export default function Precificacao() {
   );
   return (
     <div className="space-y-5 min-w-0">
-      <PageHeader
-        title="Precificação 3D"
-        description="Simule o lote completo, compare o custo por unidade e aproveite o resultado no cadastro ou orçamento."
-        breadcrumbs={[{ label: "Comercial" }, { label: "Precificação" }]}
-      />
+      <p className="text-sm text-muted-foreground">Simule um novo projeto informando os totais do lote. Para aproveitar a ficha e as placas existentes, escolha Produto cadastrado.</p>
       <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="min-w-0 space-y-5">
           <section className="space-y-4 rounded-xl border bg-card p-4">
@@ -301,7 +321,7 @@ export default function Precificacao() {
                     {
                       name: `Material ${input.materials.length + 1}`,
                       grams: "0",
-                      kgPrice: "0",
+                      kgPrice: "",
                     },
                   ],
                 })
@@ -318,17 +338,18 @@ export default function Precificacao() {
               onClick={() =>
                 setInput({
                   ...input,
-                  kwh: company.data?.energy_cost_kwh ?? 0,
-                  laborHour: company.data?.labor_cost_hour ?? 0,
-                  overhead: company.data?.overhead_percent ?? 0,
-                  margin: company.data?.target_margin ?? 30,
+                  kwh: company.data?.energy_cost_kwh ?? "",
+                  machineHour: company.data?.printer_hour_costs.find(p => p.printer_id === printerId)?.hour_cost ?? company.data?.machine_hour_cost ?? "",
+                  laborHour: company.data?.labor_cost_hour ?? "",
+                  overhead: company.data?.overhead_percent ?? "",
+                  margin: company.data?.target_margin ?? "",
                 })
               }
             >
               Usar parâmetros da empresa
             </Button>
             <SearchableItemSelect
-              value=""
+              value={printerId}
               options={(printers.data || []).map((p) => ({
                 id: p.id,
                 label: p.name,
@@ -338,15 +359,12 @@ export default function Precificacao() {
               searchPlaceholder="Digitar impressora..."
               onChange={(id) => {
                 const p = printers.data?.find((p) => p.id === id);
+                setPrinterId(id);
                 if (p)
                   setInput({
                     ...input,
-                    watts: p.power_watts || 0,
-                    machineHour:
-                      (p.depreciation_per_hour ??
-                        ((p.useful_life_hours || 0) > 0
-                          ? (p.acquisition_cost || 0) / p.useful_life_hours!
-                          : 0)) + (p.maintenance_cost_per_hour || 0),
+                    watts: p.power_watts ?? "",
+                    machineHour: company.data?.printer_hour_costs.find(rate => rate.printer_id === p.id)?.hour_cost ?? company.data?.machine_hour_cost ?? "",
                   });
               }}
             />
@@ -354,7 +372,7 @@ export default function Precificacao() {
               {numberField("hours", "Horas totais de impressão")}
               {numberField("watts", "Potência média (W)")}
               {numberField("kwh", "Energia (R$ / kWh)")}
-              {numberField("machineHour", "Depreciação + manutenção (R$ / h)")}
+              {numberField("machineHour", "Hora-máquina sem energia (R$ / h)")}
               {numberField("laborMinutes", "Trabalho manual no lote (min)")}
               {numberField("laborHour", "Mão de obra (R$ / h)")}
               {numberField("overhead", "Despesas indiretas (%)")}
@@ -439,7 +457,7 @@ export default function Precificacao() {
                   ...input,
                   extras: [
                     ...input.extras,
-                    { name: "", cost: "0", basis: "unit" },
+                    { name: "", cost: "", basis: "unit" },
                   ],
                 })
               }
@@ -650,7 +668,7 @@ export default function Precificacao() {
           )}
         </aside>
       </div>
-      {(products.error || materials.error || printers.error) && (
+      {(products.error || materials.error || printers.error || company.error) && (
         <p role="alert" className="text-sm text-destructive">
           Alguns cadastros não puderam ser carregados. Você pode simular
           preenchendo os valores manualmente.

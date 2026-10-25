@@ -1,10 +1,11 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Precificacao from "@/pages/comercial/Precificacao";
 
 const mock = vi.hoisted(() => ({ navigate: vi.fn(), from: vi.fn(), rpc: vi.fn() }));
-vi.mock("react-router-dom", () => ({ useNavigate: () => mock.navigate }));
+vi.mock("react-router-dom", async importOriginal => ({ ...await importOriginal<typeof import("react-router-dom")>(), useNavigate: () => mock.navigate }));
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ profile: { tenant_id: "tenant-1" } }) }));
 vi.mock("@/components/shared/PageHeader", () => ({ PageHeader: ({ title }: { title: string }) => <h1>{title}</h1> }));
 vi.mock("@/components/shared/SearchableItemSelect", () => ({
@@ -18,16 +19,18 @@ vi.mock("@/integrations/supabase/client", () => ({ supabase: { from: mock.from, 
 
 const set = (label: string, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } });
 const brl = (value: number) => value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
-const mount = () => render(
+const mount = () => { const view = render(
   <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-    <Precificacao />
+    <MemoryRouter><Precificacao /></MemoryRouter>
   </QueryClientProvider>,
-);
+); fireEvent.click(screen.getByRole("button", { name: "Simulação livre" })); return view; };
 const factory = () => {
   set("Nome do produto", "Kit de três placas");
   set("Unidades prontas no lote", "10");
   set("Gramas no lote", "1000");
   set("Custo / kg (R$)", "100");
+  set("Despesas indiretas (%)", "0");
+  set("Margem desejada sobre a venda (%)", "30");
 };
 const commercialOrder = () => {
   set("Canal da simulação", "mercado_livre");
@@ -46,8 +49,9 @@ const amount = (label: string) => {
 
 beforeEach(() => {
   mock.navigate.mockReset(); mock.from.mockReset(); mock.rpc.mockReset();
+  mock.rpc.mockResolvedValue({ data: { energy_cost_kwh: 0, machine_hour_cost: 0, labor_cost_hour: 0, overhead_percent: 0, target_margin: 30, printer_hour_costs: [], revision: "settings-1" }, error: null });
   mock.from.mockImplementation((table: string) => {
-    const data = table === "products" ? [{ id: "product-1", name: "Kit", sku: "KIT" }] : [];
+    const data = table === "products" ? [{ id: "product-1", name: "Kit", sku: "KIT" }] : table === "printers" ? [{ id: "printer-1", name: "A1", power_watts: 200, depreciation_per_hour: 99, maintenance_cost_per_hour: 50 }] : [];
     const result = Promise.resolve({ data, error: null });
     const builder = {
       select: () => builder, eq: () => builder, in: () => builder, order: () => builder,
@@ -59,13 +63,22 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("channel simulation in the existing manufacturing calculator", () => {
+  it("loads configured rates and keeps the selected printer visible without adding legacy depreciation to the commercial rate", async () => {
+    mount();
+    await screen.findByRole("option", { name: "A1" });
+    set("Impressora de referência", "printer-1");
+    expect(screen.getByLabelText("Impressora de referência")).toHaveValue("printer-1");
+    expect(screen.getByLabelText("Potência média (W)")).toHaveValue(200);
+    expect(screen.getByLabelText("Hora-máquina sem energia (R$ / h)")).toHaveValue(0);
+    expect(screen.getByLabelText("Energia (R$ / kWh)")).toHaveValue(0);
+  });
   it("preserves the manufacturing transfer when commercial simulation is off", () => {
     mount(); factory();
     fireEvent.click(screen.getByRole("button", { name: "Cadastrar produto e orçar" }));
     expect(mock.navigate).toHaveBeenCalledWith("/comercial/produtos", {
       state: { pricing: { name: "Kit de três placas", cost: 10, price: 14.29, quantity: 10, quote: true } },
     });
-    expect(mock.rpc).not.toHaveBeenCalled();
+    expect(mock.rpc.mock.calls.filter(([name]) => name !== "pricing_settings")).toHaveLength(0);
   });
 
   it("starts channel commissions, taxes and expenses at zero for Mercado Livre and Shopee", () => {
@@ -100,7 +113,7 @@ describe("channel simulation in the existing manufacturing calculator", () => {
     expect(mock.navigate).toHaveBeenLastCalledWith("/comercial/orcamentos", {
       state: { pricingQuote: { product_id: "product-1", quantity: 3, unit_price: 30 } },
     });
-    expect(mock.rpc).not.toHaveBeenCalled();
+    expect(mock.rpc.mock.calls.filter(([name]) => name !== "pricing_settings")).toHaveLength(0);
   });
 
   it("blocks all price transfers for invalid percentages and restores the manufacturing mode", () => {
