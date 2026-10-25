@@ -4,7 +4,9 @@ import { zipSync, strToU8 } from 'fflate';
 const output='artifacts/imported-composition'; await mkdir(output,{recursive:true});
 const raw=JSON.parse(await readFile('src/test/fixtures/apple-makerworld.json','utf8'));
 const plateXml=(index,object)=>`<plate><metadata key="plater_id" value="${index}"/><model_instance><metadata key="object_id" value="${object}"/></model_instance></plate>`;
-const file=zipSync({'Metadata/model_settings.config':strToU8(`<config><object id="1"><metadata key="name" value="Body.stl"/></object><object id="2"><metadata key="name" value="Stem.stl"/></object><object id="3"><metadata key="name" value="Leaf.stl"/></object>${plateXml(1,1)}${plateXml(2,2)}${plateXml(3,3)}</config>`)});
+const mesh='<mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh>';
+const file=zipSync({'Metadata/model_settings.config':strToU8(`<config><object id="1"><metadata key="name" value="Body.stl"/></object><object id="2"><metadata key="name" value="Stem.stl"/></object><object id="3"><metadata key="name" value="Leaf.stl"/></object>${plateXml(1,1)}${plateXml(2,2)}${plateXml(3,3)}</config>`),
+ '3D/3dmodel.model':strToU8(`<model><resources>${[1,2,3].map(id=>`<object id="${id}">${mesh}</object>`).join('')}</resources><build>${[1,2,3].map(id=>`<item objectid="${id}"/>`).join('')}</build></model>`)});
 const browser=await chromium.launch({headless:true,channel:'msedge'});
 try {
  for(const viewport of [{width:1440,height:900},{width:1108,height:580},{width:390,height:720}]){
@@ -42,15 +44,15 @@ try {
   await editor.getByRole('button',{name:'Conferir peças e composição'}).click();
   const preview=editor.getByRole('region',{name:'Composição importada'});await expect(preview).toBeVisible();
   await expect(preview.getByRole('article')).toHaveCount(3);await expect(preview.getByText(/O autor não informou os nomes/)).toBeVisible();
-  await expect(preview.getByLabel('Conjunto / componente',{exact:true}).first()).toHaveValue('Conjunto da placa 1');
+  await expect(preview.getByLabel('Nome da placa',{exact:true}).first()).toHaveValue('Conjunto da placa 1');
   await expect.poll(()=>preview.locator('img').evaluateAll(images=>images.length===3&&images.every(i=>i.complete&&i.naturalWidth>0))).toBe(true);
   await page.screenshot({path:`${output}/placas-${viewport.width}.png`});
   await preview.getByText('Completar peças pelo arquivo 3MF',{exact:true}).click();
   await preview.getByLabel('Completar nomes e quantidades pelo arquivo 3MF').setInputFiles({name:'fixture-composto.3mf',mimeType:'application/octet-stream',buffer:Buffer.from(file)});
   await expect(preview.getByText(/Peças carregadas de fixture-composto/)).toBeVisible();
-  await expect(preview.getByLabel('Conjunto / componente',{exact:true}).nth(0)).toHaveValue('Corpo');
-  await expect(preview.getByLabel('Conjunto / componente',{exact:true}).nth(1)).toHaveValue('Caule');
-  await expect(preview.getByLabel('Conjunto / componente',{exact:true}).nth(2)).toHaveValue('Folha');
+  await expect(preview.getByLabel('Nome da placa',{exact:true}).nth(0)).toHaveValue('Corpo');
+  await expect(preview.getByLabel('Nome da placa',{exact:true}).nth(1)).toHaveValue('Caule');
+  await expect(preview.getByLabel('Nome da placa',{exact:true}).nth(2)).toHaveValue('Folha');
   await preview.getByRole('button',{name:'Esta composição forma 1 produto'}).click();
   await page.screenshot({path:`${output}/arquivo-${viewport.width}.png`});
   const bounds=await editor.boundingBox();expect(bounds.x).toBeGreaterThanOrEqual(0);expect(bounds.x+bounds.width).toBeLessThanOrEqual(viewport.width+1);
