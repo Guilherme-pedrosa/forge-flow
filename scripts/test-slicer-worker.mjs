@@ -88,6 +88,24 @@ try {
     const three = nativeProjectLayout(readZip(await readFile(new URL('./fixtures/slicer/three-plate-two-color.3mf', import.meta.url))));
     assert.deepEqual(three.plates.map(p => p.physical_instances.length), [2,3,4]);
   });
+  await test('Identical submeshes retain their own slot by relative position, including scale and mirror safeguards', async () => {
+    const mesh = '<mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh>';
+    const assembly = (a = 1, b = 2, linear = '1 0 0 0 1 0 0 0 1', translation = 0, offset = 20) => [
+      member('3D/3dmodel.model', '<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1">' + mesh + '</object><object id="2">' + mesh + '</object><object id="3"><components><component objectid="1" transform="1 0 0 0 1 0 0 0 1 0 0 0"/><component objectid="2" transform="1 0 0 0 1 0 0 0 1 ' + offset + ' 0 0"/></components></object></resources><build><item objectid="3" transform="' + linear + ' ' + translation + ' 0 0"/></build></model>'),
+      member('Metadata/model_settings.config', '<config><object id="3"><metadata key="name" value="assembly"/><metadata key="extruder" value="1"/><part id="1"><metadata key="extruder" value="' + a + '"/></part><part id="2"><metadata key="extruder" value="' + b + '"/></part></object><plate><metadata key="plater_id" value="1"/><model_instance><metadata key="object_id" value="3"/><metadata key="instance_id" value="0"/></model_instance></plate></config>'),
+      member('Metadata/project_settings.config', JSON.stringify({ filament_type: ['PLA','PLA'], filament_colour: ['#FF0000','#00FF00'] })),
+    ];
+    const metrics = { plates: [{ plate_index: 1, filaments: [1,2].map(id => ({ id, material_code: 'PLA', color_hex: id === 1 ? '#FF0000' : '#00FF00' })) }] };
+    const original = nativeProjectLayout(assembly()), ok = { plates_verified: true, copies_verified: true, slots_verified: true };
+    assert.deepEqual(verifyNativeProject(original, assembly(), metrics), ok);
+    assert.throws(() => verifyNativeProject(original, assembly(2,1), metrics), /alterou placas/);
+    assert.throws(() => verifyNativeProject(original, assembly(1,2,'2 0 0 0 1 0 0 0 1'), metrics), /alterou placas/);
+    assert.throws(() => verifyNativeProject(original, assembly(1,2,'-1 0 0 0 1 0 0 0 1'), metrics), /alterou placas/);
+    const mirrored = assembly(1,2,'-1 0 0 0 1 0 0 0 1');
+    assert.deepEqual(verifyNativeProject(nativeProjectLayout(mirrored), mirrored, metrics), ok);
+    assert.deepEqual(verifyNativeProject(original, assembly(1,2,undefined,100), metrics), ok);
+    assert.throws(() => verifyNativeProject(original, assembly(1,2,undefined,0,25), metrics), /alterou placas/);
+  });
   const profileDir = path.join(root, 'profiles'); await mkdir(profileDir);
   const hashes = {};
   for (const kind of ['machine', 'process', 'filament']) {
