@@ -184,13 +184,13 @@ await test('Real SKU metrics sum weighted unit means per required plate and excl
   const third=await savePlate(p,{...basePlate,plate_index:3,label:'Third part',est_cost_per_unit:null});assert.equal(await scalar('SELECT cost_estimate FROM products WHERE id=$1',[p]),null);
   await scalar('SELECT archive_product_print_plate($1)',[third]);assert.equal(Number(await scalar('SELECT actual_print_cost_per_unit FROM products WHERE id=$1',[p])),5.5);
 });
-await test('Source binding retains observed 1-based plate identity and rejects ambiguity',async()=>{
+await test('Execution binding preserves the file plate identity and records observed IDs separately',async()=>{
   const {p,base,lid}=await twoPlates('Bound assembly');const t=await task({modelId:'assembly',profileId:200,plateIndex:2});
   assert.equal(await scalar('SELECT bind_product_print_plate($1,$2)',[base,t]),base);
-  const bound=await row('SELECT model_id,profile_id,plate_index,source_id FROM product_print_plates WHERE id=$1',[base]);assert.equal(bound.model_id,'assembly');assert.equal(bound.profile_id,'200');assert.equal(bound.plate_index,2);assert.ok(bound.source_id);
+  const bound=await row('SELECT model_id,profile_id,plate_index,source_id FROM product_print_plates WHERE id=$1',[base]);assert.equal(bound.model_id,null);assert.equal(bound.profile_id,null);assert.equal(bound.plate_index,1);assert.equal(bound.source_id,null);
+  const execution=await row('SELECT model_id,profile_id,remote_plate_index FROM product_print_execution_bindings WHERE plate_id=$1',[base]);assert.equal(execution.model_id,'assembly');assert.equal(execution.profile_id,'200');assert.equal(execution.remote_plate_index,2);
   await rejects('SELECT bind_product_print_plate($1,$2)',[lid,t],/ambígua|vinculados/);
   const zero=await task({plateIndex:0});await rejects('SELECT bind_product_print_plate($1,$2)',[lid,zero],/Índice remoto/);
-  await rejects('SELECT archive_product_print_source($1)',[bound.source_id],/placas ativas|placas vinculadas|Arquive/);
 });
 await test('Binding sibling plates preserves the parent file and every prior plate identity',async()=>{
   const p=await saveProduct({name:'One file, two plates',extras:[]});
