@@ -210,7 +210,8 @@ DECLARE j erp_private.slicer_jobs:=erp_private.slicer_lease(p_worker,p_token,p_j
 BEGIN
   IF p_progress IS NULL OR p_progress NOT BETWEEN 0 AND 99 THEN RAISE EXCEPTION 'Progresso inválido.'; END IF;
   UPDATE erp_private.slicer_jobs SET leased_until=now()+interval '120 seconds',progress=greatest(progress,p_progress),updated_at=now() WHERE id=j.id;
-  UPDATE erp_private.slicer_workers SET last_seen_at=now() WHERE id=p_worker;
+  -- Worker presence is renewed by hello in its own transaction. Do not take the
+  -- worker row after the job row: claim locks them in the opposite order.
 END $$;
 CREATE FUNCTION public.slicer_worker_source(p_worker uuid,p_token text,p_job uuid,p_lease uuid,p_part integer) RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
 DECLARE j erp_private.slicer_jobs:=erp_private.slicer_lease(p_worker,p_token,p_job,p_lease); result text;

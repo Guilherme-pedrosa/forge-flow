@@ -139,7 +139,7 @@ if(process.env.FORGE_TEST_BAMBU_ENGINE){
     const cube=Buffer.from(['solid synthetic_cube',...faces.flatMap(face=>['facet normal 0 0 0','outer loop',...face.map(i=>'vertex '+vertices[i].join(' ')),'endloop','endfacet']),'endsolid synthetic_cube'].join('\n'));
     await role();const uploaded=await upload(await start(cube,id(nextId++),'synthetic-cube.stl'),cube);
     await role('anon','');await hello();const task=await claim();assert.equal(task.id,uploaded.id);
-    const signatures={slicer_worker_heartbeat:['p_worker','p_token','p_job','p_lease','p_progress'],slicer_worker_source:['p_worker','p_token','p_job','p_lease','p_part'],
+    const signatures={slicer_worker_hello:['p_worker','p_token','p_profiles','p_engine_version'],slicer_worker_heartbeat:['p_worker','p_token','p_job','p_lease','p_progress'],slicer_worker_source:['p_worker','p_token','p_job','p_lease','p_part'],
       slicer_worker_result:['p_worker','p_token','p_job','p_lease','p_size','p_sha256','p_stats'],slicer_worker_result_chunk:['p_worker','p_token','p_job','p_lease','p_part','p_base64'],
       slicer_worker_raw_chunk:['p_worker','p_token','p_job','p_lease','p_part','p_base64'],finish_slicer_job:['p_worker','p_token','p_job','p_lease'],reset_slicer_result:['p_worker','p_token','p_job','p_lease']};
     const rpc=(name,body)=>{const keys=signatures[name];assert.ok(keys);const values={p_worker:worker.worker_id,p_token:worker.worker_token,...body};return scalar('SELECT '+name+'('+keys.map((_,i)=>'$'+(i+1)).join(',')+')',keys.map(k=>k==='p_stats'?JSON.stringify(values[k]):values[k]));};

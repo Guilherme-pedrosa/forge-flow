@@ -98,7 +98,8 @@ try {
     const job = { id, lease_id: lease, profile_id: PROFILE, extension: 'stl', source_size: source.length, source_chunks: 2, source_sha256: sha256(source) };
     const config = { jobs_dir: jobs, engine_path: '/official', profile_dir: profileDir, profile_hashes: hashes };
     const rpc = async (name, body) => {
-      calls.push(name); assert.equal(body.p_job, id); assert.equal(body.p_lease, lease);
+      calls.push(name); if (name === 'slicer_worker_hello') return;
+      assert.equal(body.p_job, id); assert.equal(body.p_lease, lease);
       if (name === 'slicer_worker_source') return source.subarray(body.p_part * CHUNK_BYTES, (body.p_part + 1) * CHUNK_BYTES).toString('base64');
       if (body.p_base64) assert.ok(body.p_base64.length <= 524288);
       if (name === 'finish_slicer_job') return { status: 'done' };
