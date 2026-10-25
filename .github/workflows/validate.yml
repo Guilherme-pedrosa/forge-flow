@@ -20,6 +20,7 @@ jobs:
       - run: npm test
       - run: npm run test:operations
       - run: npm run test:database
+      - run: node scripts/test-bambu-execution-learning.mjs
       - run: npm run test:assembly
       - run: npm run test:lorace
       - run: npm run test:slicer

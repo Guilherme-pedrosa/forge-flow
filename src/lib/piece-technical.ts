@@ -7,7 +7,9 @@ export type PieceMaterial = {
   resolved_cost_per_kg?: number | null;
 };
 export type PieceTechnical = {
-  source: "manual" | "plate" | "unknown";
+  source: "manual" | "plate" | "bambu" | "unknown";
+  learned_reference?: { sample_units: number; sample_runs: number; project_key: string; file_sha256: string | null; updated_at: string;
+    consumption_source?: "measured" | "slicer_completed" | "mixed"; time_source?: "elapsed_start_end" | "confirmed_elapsed" | "mixed" };
   revision: string | null;
   materials: PieceMaterial[];
   grams?: number | null;
