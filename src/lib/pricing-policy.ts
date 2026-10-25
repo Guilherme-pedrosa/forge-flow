@@ -23,16 +23,16 @@ export const emptyPricingPolicyDraft = (): PricingPolicyDraft => ({ values: Obje
 export function pricingPolicyDraft(policy: PricingPolicy): PricingPolicyDraft {
   return { values: Object.fromEntries(pricingPolicyFields.map(field => [field.key, policy[field.key] == null ? "" : String(policy[field.key]).replace(".", ",")])) as PricingPolicyDraft["values"], printerHours: Object.fromEntries(policy.printer_hour_costs.map(printer => [printer.printer_id, String(printer.hour_cost).replace(".", ",")])) };
 }
-export function pricingPolicyNumber(value: string, label: string, margin = false): number | null {
+export function pricingPolicyNumber(value: string, label: string, margin = false, max = 1000000): number | null {
   const raw = value.trim();
   if (!raw) return null;
   if (!/^\d+(?:[.,]\d+)?$/.test(raw)) throw new Error(`Informe um valor válido para ${label}.`);
   const result = Number(raw.replace(",", "."));
-  if (!Number.isFinite(result) || result < 0 || result > 1e9 || margin && result >= 100) throw new Error(margin ? "A margem deve ficar entre 0% e menos de 100%." : `Revise ${label}.`);
+  if (!Number.isFinite(result) || result < 0 || result > max || margin && result >= 100) throw new Error(margin ? "A margem deve ficar entre 0% e menos de 100%." : `Revise ${label}.`);
   return result;
 }
 export function pricingPolicyPayload(draft: PricingPolicyDraft): PricingPolicyPayload {
-  return { ...Object.fromEntries(pricingPolicyFields.map(field => [field.key, pricingPolicyNumber(draft.values[field.key], field.label, field.key === "target_margin")])),
+  return { ...Object.fromEntries(pricingPolicyFields.map(field => [field.key, pricingPolicyNumber(draft.values[field.key], field.label, field.key === "target_margin", field.key === "overhead_percent" ? 1000 : 1000000)])),
     printer_hour_costs: Object.entries(draft.printerHours).flatMap(([printer_id, raw]) => {
       const hour_cost = pricingPolicyNumber(raw, "hora da impressora");
       return hour_cost == null ? [] : [{ printer_id, hour_cost }];

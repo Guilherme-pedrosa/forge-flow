@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Calculator, Loader2, Save } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
@@ -17,6 +17,8 @@ export default function PricingSettings() {
   const { profile } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
+  const navigate = useNavigate();
+  const priceAfterSave = useRef(false);
   const [draft, setDraft] = useState(emptyPricingPolicyDraft);
   const [revision, setRevision] = useState("");
   const [dirty, setDirty] = useState(false);
@@ -39,11 +41,12 @@ export default function PricingSettings() {
     setDirty(false); request.current = null;
     await Promise.all(["pricing_settings", "product_pricing_preview", "pricing-company", "tenant"].map(key => qc.invalidateQueries({ queryKey: [key] })));
     toast({ title: "Custos e precificação salvos", description: "As próximas simulações usarão estas tarifas e os dados das peças e placas." });
-  }, onError: (error: Error) => toast({ title: "Não foi possível salvar", description: error.message, variant: "destructive" }) });
+    if (priceAfterSave.current) { priceAfterSave.current = false; navigate("/comercial/precificacao"); }
+  }, onError: (error: Error) => { priceAfterSave.current = false; toast({ title: "Não foi possível salvar", description: error.message, variant: "destructive" }); } });
   const blocked = save.isPending || settings.isPending || !settings.data || !!settings.error || !!printers.error;
   const fields = (start: number, end: number) => pricingPolicyFields.slice(start, end).map(field => <div key={field.key} className="min-w-0 space-y-1.5"><Label htmlFor={`policy-${field.key}`}>{field.label}</Label><Input id={`policy-${field.key}`} inputMode="decimal" placeholder="Não definido" disabled={save.isPending} value={draft.values[field.key]} onChange={event => { setDirty(true); setDraft(previous => ({ ...previous, values: { ...previous.values, [field.key]: event.target.value } })); }} /><p className="text-xs leading-relaxed text-muted-foreground">{field.hint}</p></div>);
   return <div className="mx-auto max-w-5xl space-y-5">
-    <PageHeader title="Custos e precificação" description="Defina as tarifas padrão e use os consumos e tempos das peças para formar o preço do produto completo." breadcrumbs={[{ label: "Configurações", href: "/configuracoes" }, { label: "Custos e precificação" }]} actions={<Button variant="outline" asChild><Link to="/comercial/precificacao"><Calculator className="mr-2 h-4 w-4" />Precificar produto</Link></Button>} />
+    <PageHeader title="Custos e precificação" description="Defina as tarifas padrão e use os consumos e tempos das peças para formar o preço do produto completo." breadcrumbs={[{ label: "Configurações", href: "/configuracoes" }, { label: "Custos e precificação" }]} actions={<Button variant="outline" disabled={blocked} onClick={() => { if (dirty) { priceAfterSave.current = true; save.mutate(); } else navigate("/comercial/precificacao"); }}><Calculator className="mr-2 h-4 w-4" />{dirty ? "Salvar e precificar" : "Precificar produto"}</Button>} />
     {settings.isPending ? <p role="status">Carregando as tarifas…</p> : settings.error ? <div role="alert" className="rounded-lg border border-destructive/30 p-4">Não foi possível carregar os parâmetros. <Button variant="outline" onClick={() => settings.refetch()}>Tentar novamente</Button></div> : <>
       <p className="rounded-lg border bg-muted/30 p-3 text-sm">Em branco significa não definido. Informe <strong>0</strong> quando quiser considerar um custo ou tempo como zero.</p>
       <section className="space-y-4 rounded-xl border bg-card p-5"><h2 className="text-lg font-semibold">Tarifas e margem padrão</h2><div className="grid gap-5 sm:grid-cols-2">{fields(0, 4)}</div></section>

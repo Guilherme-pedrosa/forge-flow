@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, useLocation } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import PricingSettings from "@/pages/configuracoes/Precificacao";
 import { emptyPricingPolicyDraft, pricingPolicyPayload, type PricingPolicy } from "@/lib/pricing-policy";
@@ -12,9 +12,10 @@ vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: mock.rpc, fr
     then: (resolve: (value: unknown) => unknown) => Promise.resolve({ data: [{ id: "printer", name: "Bambina", power_watts: 150, is_active: true }], error: mock.printersError ? { message: "Offline" } : null }).then(resolve) };
   return query;
 } } }));
+function RouteProof() { const location = useLocation(); return <div data-testid="route">{location.pathname}</div>; }
 const mount = () => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(<MemoryRouter><QueryClientProvider client={client}><PricingSettings /></QueryClientProvider></MemoryRouter>);
+  render(<MemoryRouter><QueryClientProvider client={client}><PricingSettings /><RouteProof /></QueryClientProvider></MemoryRouter>);
   return client;
 };
 beforeEach(() => {
@@ -28,6 +29,13 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 describe("configurable pricing tariffs", () => {
+  it("saves edited tariffs before opening the product calculator", async () => {
+    mount(); const machine = await screen.findByLabelText("Hora da máquina padrão (R$/h)");
+    fireEvent.change(machine, { target: { value: "3" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar e precificar" }));
+    await waitFor(() => expect(screen.getByTestId("route")).toHaveTextContent("/comercial/precificacao"));
+    expect(mock.rpc).toHaveBeenCalledWith("save_pricing_settings", expect.objectContaining({ p_settings: expect.objectContaining({ machine_hour_cost: 3 }) }));
+  });
   it("loads missing values as blank and writes only after the user saves", async () => {
     mount(); const machine = await screen.findByLabelText("Hora da máquina padrão (R$/h)");
     expect(machine).toHaveValue(""); expect(screen.getByLabelText("Margem desejada sobre a venda (%)")).toHaveValue("");
