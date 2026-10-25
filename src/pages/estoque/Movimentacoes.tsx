@@ -165,12 +165,12 @@ export default function Movimentacoes() {
 
       {/* Filters */}
       <div className="flex flex-wrap items-center gap-3">
-        <div className="relative flex-1 max-w-sm">
+        <div className="relative min-w-0 flex-1 basis-full sm:max-w-sm sm:basis-auto">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input className="pl-9" placeholder="Buscar por item, lote, notas…" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         <Select value={typeFilter} onValueChange={value => { setTypeFilter(value); setPage(0); }}>
-          <SelectTrigger className="w-[200px]"><SelectValue placeholder="Tipo" /></SelectTrigger>
+          <SelectTrigger className="w-full sm:w-[200px]"><SelectValue placeholder="Tipo" /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Todos</SelectItem>
             {Object.entries(typeLabels).map(([k, v]) => (
@@ -250,10 +250,10 @@ export default function Movimentacoes() {
             <div>
               <Label>Item *</Label>
               <SearchableItemSelect value={itemId} label="Item de estoque" emptyLabel="Selecione o item" options={items.map(item => ({ id: item.id, label: `${item.name} (${item.unit})` }))} onChange={id => { setItemId(id); const item = items.find(i => i.id === id); setUnitCost(item ? String(item.avg_cost) : ""); }} />
-              <Button type="button" variant="link" className="px-0" onClick={() => setQuickItemOpen(true)}>+ Cadastrar item sem sair da entrada</Button>
+              <Button type="button" variant="link" className="h-auto min-h-11 whitespace-normal px-0 text-left" onClick={() => setQuickItemOpen(true)}>+ Cadastrar item sem sair da entrada</Button>
             </div>
             <div><Label htmlFor="stock-operation">Movimentação</Label><select id="stock-operation" className="h-11 w-full rounded-md border bg-background px-3" value={direction} onChange={e => setDirection(e.target.value)}><option value="in">Entrada</option><option value="out">Saída</option><option value="count">Conferência de saldo</option></select></div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
                 <Label>{direction === "count" ? "Quantidade contada" : "Quantidade"} ({items.find(item => item.id === itemId)?.unit ?? "unidade"}) *</Label>
                 <Input aria-label="Quantidade da movimentação" inputMode="decimal" value={quantity} onChange={(e) => setQuantity(e.target.value)} placeholder="1000" />

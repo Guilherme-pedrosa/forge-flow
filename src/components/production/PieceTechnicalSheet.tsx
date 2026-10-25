@@ -48,7 +48,7 @@ export function BambuLearnedCaption({ reference }: { reference?: BambuLearningRe
 export function PieceTechnicalSummary({ spec }: { spec?: PieceTechnical }) {
   return (
     <div className="space-y-2 text-sm">
-      <dl className="grid grid-cols-2 gap-2">
+      <dl className="grid grid-cols-1 gap-2 sm:grid-cols-2 [&>*]:min-w-0">
         <div>
           <dt className="text-muted-foreground">Filamento por peça</dt>
           <dd className="font-medium">{pieceNumber(spec?.grams, " g")}</dd>

@@ -120,14 +120,14 @@ export default function DRE() {
       />
 
       {/* Period Filter */}
-      <div className="flex items-end gap-3 flex-wrap">
-        <div className="grid gap-1.5">
+      <div className="grid grid-cols-1 items-end gap-3 sm:flex sm:flex-wrap">
+        <div className="grid min-w-0 gap-1.5">
           <Label className="text-xs flex items-center gap-1"><CalendarDays className="h-3 w-3" /> De</Label>
-          <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="w-[160px] h-8 text-sm" />
+          <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="h-11 min-w-0 w-full sm:w-[160px]" />
         </div>
-        <div className="grid gap-1.5">
+        <div className="grid min-w-0 gap-1.5">
           <Label className="text-xs">Até</Label>
-          <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="w-[160px] h-8 text-sm" />
+          <Input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="h-11 min-w-0 w-full sm:w-[160px]" />
         </div>
       </div>
 
@@ -149,7 +149,7 @@ export default function DRE() {
       </div>
       {periodValid && !hasError && <>
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-xl border bg-card p-4">
           <p className="text-xs text-muted-foreground">Receita</p>
           <p className="text-2xl font-bold text-foreground">{fmtCurrency(dre.totalRevenue)}</p>
@@ -181,7 +181,7 @@ export default function DRE() {
               if (line.separator) return <div key={i} className="h-px bg-border" />;
               return (
                 <div key={i} className={cn(
-                  "flex items-center justify-between px-6 py-3",
+                  "flex min-w-0 flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6",
                   line.highlight && "bg-muted/50",
                   line.final && "bg-primary/5",
                   line.section && "bg-muted/30",

@@ -43,11 +43,11 @@ export default function ProductPricingWorkspace({ productId, onProductChange }: 
 }
 
 function Breakdown({ value, pending = false }: { value: CostBreakdown; pending?: boolean }) {
-  return <dl className="space-y-2 text-sm">{Object.entries(costLabels).map(([key, label]) => <div key={key} className="flex justify-between gap-3">
+  return <dl className="space-y-2 text-sm">{Object.entries(costLabels).map(([key, label]) => <div key={key} className="flex min-w-0 flex-wrap justify-between gap-x-3 gap-y-1">
     <dt>{label}</dt><dd className="text-right tabular-nums">{money(value[key as keyof typeof costLabels])}</dd>
   </div>)}
-    <div className="flex justify-between gap-3 border-t pt-3 font-semibold"><dt>Custo para a quantidade</dt><dd>{pending ? "Pendente" : money(value.total_lot)}</dd></div>
-    <div className="flex justify-between gap-3 text-lg font-semibold"><dt>Custo por unidade</dt><dd>{pending ? "Pendente" : money(value.unit_cost)}</dd></div>
+    <div className="flex min-w-0 flex-wrap justify-between gap-x-3 gap-y-1 border-t pt-3 font-semibold"><dt>Custo para a quantidade</dt><dd>{pending ? "Pendente" : money(value.total_lot)}</dd></div>
+    <div className="flex min-w-0 flex-wrap justify-between gap-x-3 gap-y-1 text-lg font-semibold"><dt>Custo por unidade</dt><dd>{pending ? "Pendente" : money(value.unit_cost)}</dd></div>
   </dl>;
 }
 
@@ -281,10 +281,10 @@ function ProductPricingSession({ productId }: { productId: string }) {
         {commercial.value && <ChannelResult value={commercial.value} />}
         {selectedPrice != null && result.breakdown.unit_cost != null && selectedPrice < result.breakdown.unit_cost && <p role="status" className="text-sm text-destructive">O preço alvo não cobre o custo do produto.</p>}
       </>}
-      <Button className="w-full" variant="outline" disabled={!plan.data || plan.isError || pending || !!fieldError || !validPlan} onClick={() => { setMessage(""); savePlan.mutate(); }}>{savePlan.isPending ? "Salvando plano..." : "Salvar tempos e insumos do produto"}</Button>
-      <Button className="w-full" disabled={!canApply || pending} onClick={() => { setMessage(""); apply.mutate(); }}>{apply.isPending ? "Aplicando..." : "Aplicar custo e preço ao cadastro"}</Button>
+      <Button className="h-auto min-h-11 w-full whitespace-normal py-3" variant="outline" disabled={!plan.data || plan.isError || pending || !!fieldError || !validPlan} onClick={() => { setMessage(""); savePlan.mutate(); }}>{savePlan.isPending ? "Salvando plano..." : "Salvar tempos e insumos do produto"}</Button>
+      <Button className="h-auto min-h-11 w-full whitespace-normal py-3" disabled={!canApply || pending} onClick={() => { setMessage(""); apply.mutate(); }}>{apply.isPending ? "Aplicando..." : "Aplicar custo e preço ao cadastro"}</Button>
       <p className="text-xs text-muted-foreground">Salvar o plano guarda os parâmetros. Aplicar atualiza explicitamente o custo e o preço do produto após conferir novamente os dados.</p>
-      <Button className="w-full" variant="outline" disabled={!canApply || pending} onClick={() => navigate("/comercial/orcamentos", { state: { pricingQuote: { product_id: productId, quantity: channel === "factory" ? quantity : commercial.value!.quantity, unit_price: selectedPrice! } } })}>Usar preço no novo orçamento</Button>
+      <Button className="h-auto min-h-11 w-full whitespace-normal py-3" variant="outline" disabled={!canApply || pending} onClick={() => navigate("/comercial/orcamentos", { state: { pricingQuote: { product_id: productId, quantity: channel === "factory" ? quantity : commercial.value!.quantity, unit_price: selectedPrice! } } })}>Usar preço no novo orçamento</Button>
       {message && <p role="status" className="text-sm text-emerald-700">{message}</p>}
       {policy.error && <p className="text-sm text-destructive">Não foi possível carregar as configurações de custos. A prévia informa o que ainda falta confirmar.</p>}
     </aside>
@@ -296,7 +296,7 @@ function ChannelResult({ value }: { value: ReturnType<typeof priceChannel> }) {
     <p>Preço sugerido no canal: <strong>{money(value.suggested)} / un.</strong></p><p>Pedido de {value.quantity} unidades · Equilíbrio: {money(value.breakEven)} / un.</p>
     <dl className="space-y-1">{([
       ["Receita de produtos", value.revenue], ["Custo fabril", value.manufacturingCost], ["Comissão", value.commission], ["Tributo parametrizado", value.tax], ["Tarifa fixa", value.fixedFee], ["Frete próprio", value.sellerShipping], ["Anúncios", value.advertising], ["Outros gastos", value.otherCost],
-    ] as const).map(([label, amount]) => <div key={label} className="flex justify-between gap-2"><dt>{label}</dt><dd>{money(amount)}</dd></div>)}</dl>
+    ] as const).map(([label, amount]) => <div key={label} className="flex min-w-0 flex-wrap justify-between gap-x-2 gap-y-1"><dt>{label}</dt><dd>{money(amount)}</dd></div>)}</dl>
     <p>Resultado após custos informados: <strong>{money(value.includedResult)}</strong></p><p>Contribuição estimada: {money(value.contribution)}</p>
     <p className="text-xs text-muted-foreground">Estimativa do pedido com os gastos informados. Não representa lucro líquido nem repasse da plataforma.</p>
   </div>;

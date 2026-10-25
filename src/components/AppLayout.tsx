@@ -31,7 +31,7 @@ export function AppLayout({ children }: AppLayoutProps) {
         )}
       >
         <AppHeader onMenuClick={() => setMobileOpen(true)} showMenuButton />
-        <main id="main-content" tabIndex={-1} className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain p-4 outline-none md:p-7"><div className="mx-auto w-full max-w-[1600px]">{children}</div></main>
+        <main id="main-content" tabIndex={-1} className="app-main min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-contain p-4 outline-none md:p-7"><div className="mx-auto w-full min-w-0 max-w-[1600px]">{children}</div></main>
         <TelemetryStrip />
       </div>
     </div>
