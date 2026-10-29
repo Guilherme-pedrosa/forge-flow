@@ -23,15 +23,19 @@ const confirmed = (value: string | number, label: string) => {
   if (typeof value === "string" && !value.trim()) throw new Error(`Confirme ${label}, inclusive zero quando não houver custo.`);
   return nonNegative(value, label);
 };
-export function pricePrint(input: PricingInput) {
-  const quantity = positiveInteger(input.quantity, "Quantidade do lote", 10000);
-  const materials = input.materials.reduce(
+/** Material subtotal only; this is not a complete production cost or sale price. */
+export function printMaterialCost(materials: PricingInput["materials"]) {
+  return materials.reduce(
     (total, m) => {
       const grams = nonNegative(m.grams, "Gramas");
       return total + (grams * (grams > 0 ? confirmed(m.kgPrice, `o preço do kg de ${m.name || "filamento"}`) : nonNegative(m.kgPrice, "Preço do kg"))) / 1000;
     },
     0,
   );
+}
+export function pricePrint(input: PricingInput) {
+  const quantity = positiveInteger(input.quantity, "Quantidade do lote", 10000);
+  const materials = printMaterialCost(input.materials);
   const hours = nonNegative(input.hours, "Horas de impressão");
   const energy =
     ((hours * (hours > 0 ? confirmed(input.watts, "a potência da impressora") : nonNegative(input.watts, "Potência"))) / 1000) *

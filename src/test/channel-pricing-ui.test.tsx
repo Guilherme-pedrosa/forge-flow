@@ -68,9 +68,9 @@ describe("channel simulation in the existing manufacturing calculator", () => {
     await screen.findByRole("option", { name: "A1" });
     set("Impressora de referência", "printer-1");
     expect(screen.getByLabelText("Impressora de referência")).toHaveValue("printer-1");
-    expect(screen.getByLabelText("Potência média (W)")).toHaveValue(200);
-    expect(screen.getByLabelText("Hora-máquina sem energia (R$ / h)")).toHaveValue(0);
-    expect(screen.getByLabelText("Energia (R$ / kWh)")).toHaveValue(0);
+    expect(screen.getByLabelText("Potência média (W)")).toHaveValue("200");
+    expect(screen.getByLabelText("Hora-máquina sem energia (R$ / h)")).toHaveValue("0");
+    expect(screen.getByLabelText("Energia (R$ / kWh)")).toHaveValue("0");
   });
   it("preserves the manufacturing transfer when commercial simulation is off", () => {
     mount(); factory();
