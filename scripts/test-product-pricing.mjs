@@ -88,10 +88,12 @@ try{
   assert.equal((await preview(simple)).breakdown.machine,2);assert.equal(await scalar('SELECT depreciation_per_hour::float FROM printers WHERE id=$1',[printer]),2);await saveSettings(policy);
  });
  await test('Apply rejects stale/incomplete previews, records an immutable acceptance and updates commercial values without stock writes',async()=>{
+  await admin(()=>db.query(`UPDATE products SET catalog_details=catalog_details||'{"cost_source":"composition","price_source":"markup","markup_percent":50}'::jsonb WHERE id=$1`,[simple]));
   const p=await preview(simple);const stockBefore=await rows('SELECT id,current_stock,avg_cost FROM inventory_items ORDER BY id');const count=await scalar('SELECT count(*)::int FROM inventory_movements');
   await assert.rejects(scalar('SELECT apply_product_pricing($1,1,$2::jsonb,$3,$4)',[simple,'{}','stale',next()]),/mudaram/);
   const key=next(),accepted=await scalar('SELECT apply_product_pricing($1,1,$2::jsonb,$3,$4)',[simple,'{}',p.revision,key]);assert.ok(accepted);
   const product=(await rows('SELECT manual_cost_override::float,cost_estimate::float,sale_price::float,catalog_details FROM products WHERE id=$1',[simple]))[0];assert.equal(product.cost_estimate,9.38);assert.equal(product.sale_price,15.64);assert.equal(product.catalog_details.base_cost,9.38);
+  assert.equal(product.catalog_details.cost_source,'manual');assert.equal(product.catalog_details.price_source,'manual');assert.equal(product.catalog_details.markup_percent,null);
   assert.equal(await scalar('SELECT count(*)::int FROM inventory_movements'),count);assert.deepEqual(await rows('SELECT id,current_stock,avg_cost FROM inventory_items ORDER BY id'),stockBefore);
   assert.equal(await scalar('SELECT apply_product_pricing($1,1,$2::jsonb,$3,$4)',[simple,'{}',p.revision,key]),accepted);assert.equal(await scalar('SELECT count(*)::int FROM product_pricing_acceptances'),1);
   const newer=await preview(simple);await admin(()=>db.query('UPDATE inventory_items SET avg_cost=.2 WHERE id=$1',[material]));await assert.rejects(scalar('SELECT apply_product_pricing($1,1,$2::jsonb,$3,$4)',[simple,'{}',newer.revision,next()]),/mudaram/);
