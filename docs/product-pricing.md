@@ -2,6 +2,14 @@
 
 ## Uso diário
 
+O caminho principal para um produto é **Comercial → Produtos → cadastro → Valores**. Informe ou confira o custo, acrescente despesas por unidade e digite **Lucro sobre o custo (%)**. O preço muda durante a edição e é gravado junto com o produto em **Salvar/Criar**. **Conferir preço** abre a aba Valores sem salvar nem navegar para outra tela. O percentual é um acréscimo sobre o custo: R$ 10 + 50% = R$ 15, cuja margem sobre a venda é 33,33%.
+
+O custo pode vir da composição confirmada das peças/placas ou ser informado manualmente. Um custo manual existente é preservado até escolher a composição. Nesse modo, o cadastro consulta a composição vigente, inclui os demais custos confirmados na receita e soma as despesas acessórias/outras do cadastro. Não substitui confirmação de materiais, rendimento e demais custos por zeros. Custos incompletos aparecem como pendência. Um arquivo recém-importado precisa ter sua composição salva e conferida antes de usar esse custo.
+
+O modo escolhido e o percentual são preservados ao reabrir. Digitar diretamente no preço muda para preço manual; alterações posteriores no custo não substituem esse preço. Voltar ao cálculo pelo percentual é uma ação explícita. Abrir ou simular não altera valores publicados: a gravação ocorre ao salvar. O banco verifica a revisão da composição e o resultado monetário, inclusive arredondamento decimal. Alterações simultâneas em rendimento/composição rejeitam e revertem o salvamento do preço antigo. O custo da composição não cria um override manual nem reavalia o custo médio do estoque existente. Orçamentos incluem também as despesas por unidade desse cadastro.
+
+Esse é o preço base: taxas e frete de venda dependem do canal. A simulação de tarifas é opcional, em outra aba. Uma aceitação na formação completa de preço substitui o percentual anterior pelo novo preço aceito, para que reabrir o cadastro não recalcule sobre uma regra antiga.
+
 **Comercial → Precificação 3D** abre direto na simulação livre. Informe a quantidade de produtos completos, o peso total de filamento, o custo por kg e o tempo total das placas. O nome é opcional para calcular. Campos decimais desse caminho aceitam vírgula.
 
 O resultado fica logo depois dos dados do fatiador em telas estreitas. Energia, uso da máquina e trabalho ficam em **Custos da impressão**; embalagem e taxas de venda têm grupos separados. A simulação preenchida é conservada ao alternar para Produto cadastrado e voltar, durante a permanência nessa tela. Trocar empresa ou usuário limpa esse rascunho.
