@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/components/shared/PageHeader";
@@ -6,13 +6,14 @@ import { SearchableItemSelect } from "@/components/shared/SearchableItemSelect";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { pricePrint, type PricingInput } from "@/lib/print-pricing";
+import { pricePrint, printMaterialCost, type PricingInput } from "@/lib/print-pricing";
 import { priceChannel } from "@/lib/channel-pricing";
 import { supabase } from "@/integrations/supabase/client";
 import { allRows } from "@/lib/finance";
 import { useAuth } from "@/contexts/AuthContext";
 import { readPricingSettings } from "@/lib/pricing-policy";
 import ProductPricingWorkspace from "./ProductPricingWorkspace";
+import { nonNegative, positiveInteger } from "@/lib/production";
 const money = (n: number) =>
   n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const initial: PricingInput = {
@@ -41,23 +42,33 @@ const initialChannel = {
   variableUnitCost: "",
 };
 const percent = (value: number | null) => value == null ? "—" : `${value.toFixed(1)}%`;
+type FreePricingDraft = {
+  name: string; product: string; input: PricingInput; printerId: string;
+  hydratedTenant: string | null; channel: string; channelInput: typeof initialChannel;
+};
+const newFreeDraft = (): FreePricingDraft => ({ name: "", product: "", input: structuredClone(initial), printerId: "", hydratedTenant: null, channel: "factory", channelInput: { ...initialChannel } });
 export default function Precificacao() {
+  const { profile, user } = useAuth();
+  return <PricingWorkspace key={`${profile?.tenant_id || "no-company"}:${user?.id || "no-user"}`} />;
+}
+
+function PricingWorkspace() {
   const [params, setParams] = useSearchParams();
-  const [mode, setMode] = useState<"product" | "free">("product");
+  const [mode, setMode] = useState<"product" | "free">(() => params.get("produto") ? "product" : "free");
+  const [freeDraft, setFreeDraft] = useState(newFreeDraft);
   const productId = params.get("produto") ?? "";
   useEffect(() => { if (productId) setMode("product"); }, [productId]);
   return <div className="min-w-0 space-y-5">
-    <PageHeader title="Precificação 3D" description="Forme o preço com a composição do produto, as placas, o trabalho e os insumos." breadcrumbs={[{ label: "Comercial" }, { label: "Precificação" }]} />
+    <PageHeader title="Precificação 3D" description="Calcule com o peso e o tempo do fatiador. Não precisa cadastrar o produto antes." breadcrumbs={[{ label: "Comercial" }, { label: "Precificação" }]} />
     <div className="flex flex-wrap gap-2" aria-label="Modo de precificação">
-      <Button variant={mode === "product" ? "default" : "outline"} aria-pressed={mode === "product"} onClick={() => setMode("product")}>Produto cadastrado</Button>
       <Button variant={mode === "free" ? "default" : "outline"} aria-pressed={mode === "free"} onClick={() => setMode("free")}>Simulação livre</Button>
-      <Button variant="ghost" asChild><a href="/configuracoes/precificacao">Configurar tarifas e custos</a></Button>
+      <Button variant={mode === "product" ? "default" : "outline"} aria-pressed={mode === "product"} onClick={() => setMode("product")}>Produto cadastrado</Button>
     </div>
-    {mode === "product" ? <ProductPricingWorkspace productId={productId} onProductChange={id => setParams(current => { const next = new URLSearchParams(current); if (id) next.set("produto", id); else next.delete("produto"); return next; })} /> : <FreePricingSimulator />}
+    {mode === "product" ? <ProductPricingWorkspace productId={productId} onProductChange={id => setParams(current => { const next = new URLSearchParams(current); if (id) next.set("produto", id); else next.delete("produto"); return next; })} /> : <FreePricingSimulator draft={freeDraft} setDraft={setFreeDraft} />}
   </div>;
 }
 
-function FreePricingSimulator() {
+function FreePricingSimulator({ draft, setDraft }: { draft: FreePricingDraft; setDraft: Dispatch<SetStateAction<FreePricingDraft>> }) {
   const { profile } = useAuth();
   const company = useQuery({
     queryKey: ["pricing_settings", profile?.tenant_id],
@@ -65,25 +76,31 @@ function FreePricingSimulator() {
     queryFn: readPricingSettings,
   });
   const navigate = useNavigate();
-  const [name, setName] = useState("");
-  const [product, setProduct] = useState("");
-  const [input, setInput] = useState(initial);
-  const [printerId, setPrinterId] = useState("");
-  const hydrated = useRef<string | null>(null);
+  const { name, product, input, printerId, channel, channelInput } = draft;
+  const setName = (name: string) => setDraft(current => ({ ...current, name }));
+  const setProduct = (product: string) => setDraft(current => ({ ...current, product }));
+  const setPrinterId = (printerId: string) => setDraft(current => ({ ...current, printerId }));
+  const setInput = (value: SetStateAction<PricingInput>) => setDraft(current => ({ ...current, input: typeof value === "function" ? value(current.input) : value }));
+  const setChannel = (channel: string) => setDraft(current => ({ ...current, channel }));
+  const setChannelInput = (channelInput: typeof initialChannel) => setDraft(current => ({ ...current, channelInput }));
+  const [costsOpen, setCostsOpen] = useState(false);
   useEffect(() => {
-    if (!company.data || !profile?.tenant_id || hydrated.current === profile.tenant_id) return;
-    hydrated.current = profile.tenant_id;
+    if (!company.data || !profile?.tenant_id || draft.hydratedTenant === profile.tenant_id) return;
     const settings = company.data;
-    setInput(current => ({ ...current,
-      kwh: current.kwh === "" ? settings.energy_cost_kwh ?? "" : current.kwh,
-      machineHour: current.machineHour === "" ? settings.machine_hour_cost ?? "" : current.machineHour,
-      laborHour: current.laborHour === "" ? settings.labor_cost_hour ?? "" : current.laborHour,
-      overhead: current.overhead === "" ? settings.overhead_percent ?? "" : current.overhead,
-      margin: current.margin === "" ? settings.target_margin ?? "" : current.margin,
-    }));
-  }, [company.data, profile?.tenant_id]);
-  const [channel, setChannel] = useState("factory");
-  const [channelInput, setChannelInput] = useState(initialChannel);
+    setDraft(current => ({ ...current, hydratedTenant: profile.tenant_id, input: { ...current.input,
+      kwh: current.input.kwh === "" ? settings.energy_cost_kwh ?? "" : current.input.kwh,
+      machineHour: current.input.machineHour === "" ? settings.machine_hour_cost ?? "" : current.input.machineHour,
+      laborHour: current.input.laborHour === "" ? settings.labor_cost_hour ?? "" : current.input.laborHour,
+      overhead: current.input.overhead === "" ? settings.overhead_percent ?? "" : current.input.overhead,
+      margin: current.input.margin === "" ? settings.target_margin ?? "30" : current.input.margin,
+    } }));
+  }, [company.data, profile?.tenant_id, draft.hydratedTenant, setDraft]);
+  const materialSubtotal = useMemo(() => { try { return printMaterialCost(input.materials); } catch { return null; } }, [input.materials]);
+  const validBasics = useMemo(() => {
+    try { positiveInteger(input.quantity, "Quantidade do lote", 10000); nonNegative(input.hours, "Horas de impressão"); printMaterialCost(input.materials); return true; }
+    catch { return false; }
+  }, [input.quantity, input.hours, input.materials]);
+  const started = input.materials.some(material => String(material.grams).trim() !== "" && String(material.grams) !== "0") || String(input.hours) !== "0";
   const channelEnabled = channel !== "factory";
   const calculation = useMemo(() => {
     try {
@@ -92,7 +109,7 @@ function FreePricingSimulator() {
       return { value: null, error: (e as Error).message };
     }
   }, [input]);
-  const result = calculation.value;
+  const result = started ? calculation.value : null;
   const commercial = useMemo(() => {
     if (!channelEnabled || !result) return { value: null, error: "" };
     try {
@@ -115,11 +132,12 @@ function FreePricingSimulator() {
   const canTransfer = !!result && selectedPrice != null && selectedQuantity != null;
   const products = useQuery({
     queryKey: ["pricing-products", profile?.tenant_id],
+    enabled: !!profile?.tenant_id,
     queryFn: () =>
       allRows((a, b) =>
         supabase
           .from("products")
-          .select("id,name,sku")
+          .select("id,name,sku,sale_price")
           .eq("is_active", true)
           .order("name")
           .order("id")
@@ -127,7 +145,8 @@ function FreePricingSimulator() {
       ),
   });
   const printers = useQuery({
-    queryKey: ["pricing-printers", profile?.tenant_id],
+    queryKey: ["pricing-free-printers", profile?.tenant_id],
+    enabled: !!profile?.tenant_id,
     queryFn: () =>
       allRows((a, b) =>
         supabase
@@ -141,6 +160,7 @@ function FreePricingSimulator() {
   });
   const materials = useQuery({
     queryKey: ["pricing-materials", profile?.tenant_id],
+    enabled: !!profile?.tenant_id,
     queryFn: () =>
       allRows((a, b) =>
         supabase
@@ -162,9 +182,10 @@ function FreePricingSimulator() {
       <Label htmlFor={`price-${key}`}>{label}</Label>
       <Input
         id={`price-${key}`}
-        type="number"
-        min={0}
-        step="any"
+        type={key === "quantity" ? "number" : "text"}
+        inputMode={key === "quantity" ? "numeric" : "decimal"}
+        min={key === "quantity" ? 1 : undefined}
+        step={key === "quantity" ? 1 : undefined}
         value={input[key]}
         placeholder={placeholder}
         onChange={(e) => setInput({ ...input, [key]: e.target.value })}
@@ -201,11 +222,11 @@ function FreePricingSimulator() {
   );
   return (
     <div className="space-y-5 min-w-0">
-      <p className="text-sm text-muted-foreground">Simule um novo projeto informando os totais do lote. Para aproveitar a ficha e as placas existentes, escolha Produto cadastrado.</p>
+      <p className="text-sm text-muted-foreground">Some o peso e o tempo de todas as placas. A quantidade abaixo é de produtos completos, não de peças soltas.</p>
       <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="min-w-0 space-y-5">
           <section className="space-y-4 rounded-xl border bg-card p-4">
-            <h2 className="font-semibold">Produto e lote</h2>
+            <h2 className="font-semibold">Dados do fatiador</h2>
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
                 <Label htmlFor="pricing-name">Nome do produto</Label>
@@ -216,8 +237,10 @@ function FreePricingSimulator() {
                   onChange={(e) => setName(e.target.value)}
                   placeholder="Ex.: Maçã com caule e folha"
                 />
+                <p className="mt-1 text-xs text-muted-foreground">Opcional para calcular. Use um nome se quiser salvar depois.</p>
               </div>
               {numberField("quantity", "Unidades prontas no lote")}
+              {numberField("hours", "Horas totais de impressão", "Ex.: 2,5")}
             </div>
             <p className="text-sm text-muted-foreground">
               Informe peso e tempo totais de todas as placas necessárias para
@@ -282,9 +305,8 @@ function FreePricingSimulator() {
                     <Label htmlFor={`material-${key}-${i}`}>{label}</Label>
                     <Input
                       id={`material-${key}-${i}`}
-                      type="number"
-                      min={0}
-                      step="any"
+                      type="text"
+                      inputMode="decimal"
                       value={material[key]}
                       onChange={(e) =>
                         setInput({
@@ -330,211 +352,31 @@ function FreePricingSimulator() {
               Adicionar material / cor
             </Button>
           </section>
-          <section className="space-y-4 rounded-xl border bg-card p-4">
-            <h2 className="font-semibold">Impressão e trabalho</h2>
-            <Button
-              variant="outline"
-              disabled={!company.data}
-              onClick={() =>
-                setInput({
-                  ...input,
-                  kwh: company.data?.energy_cost_kwh ?? "",
-                  machineHour: company.data?.printer_hour_costs.find(p => p.printer_id === printerId)?.hour_cost ?? company.data?.machine_hour_cost ?? "",
-                  laborHour: company.data?.labor_cost_hour ?? "",
-                  overhead: company.data?.overhead_percent ?? "",
-                  margin: company.data?.target_margin ?? "",
-                })
-              }
-            >
-              Usar parâmetros da empresa
-            </Button>
-            <SearchableItemSelect
-              value={printerId}
-              options={(printers.data || []).map((p) => ({
-                id: p.id,
-                label: p.name,
-              }))}
-              label="Impressora de referência"
-              emptyLabel="Preencher com uma impressora"
-              searchPlaceholder="Digitar impressora..."
-              onChange={(id) => {
-                const p = printers.data?.find((p) => p.id === id);
-                setPrinterId(id);
-                if (p)
-                  setInput({
-                    ...input,
-                    watts: p.power_watts ?? "",
-                    machineHour: company.data?.printer_hour_costs.find(rate => rate.printer_id === p.id)?.hour_cost ?? company.data?.machine_hour_cost ?? "",
-                  });
-              }}
-            />
-            <div className="grid gap-3 sm:grid-cols-2">
-              {numberField("hours", "Horas totais de impressão")}
-              {numberField("watts", "Potência média (W)")}
-              {numberField("kwh", "Energia (R$ / kWh)")}
-              {numberField("machineHour", "Hora-máquina sem energia (R$ / h)")}
-              {numberField("laborMinutes", "Trabalho manual no lote (min)")}
-              {numberField("laborHour", "Mão de obra (R$ / h)")}
-              {numberField("overhead", "Despesas indiretas (%)")}
-              {numberField("failure", "Reserva adicional para falhas (%)")}
-            </div>
-            <p className="text-xs text-muted-foreground">
-              A reserva adiciona uma porcentagem ao custo de produção. Inclua
-              purga e suportes no peso; evite contabilizar a mesma perda duas
-              vezes.
-            </p>
-          </section>
-          <section className="space-y-3 rounded-xl border bg-card p-4">
-            <h2 className="font-semibold">Embalagem, componentes e extras</h2>
-            {input.extras.map((extra, i) => (
-              <div
-                key={i}
-                className="grid gap-2 sm:grid-cols-[1fr_110px_140px_auto]"
-              >
-                <Input
-                  aria-label={`Nome do extra ${i + 1}`}
-                  value={extra.name}
-                  placeholder="Embalagem"
-                  onChange={(e) =>
-                    setInput({
-                      ...input,
-                      extras: input.extras.map((x, j) =>
-                        j === i ? { ...x, name: e.target.value } : x,
-                      ),
-                    })
-                  }
-                />
-                <Input
-                  aria-label={`Custo do extra ${i + 1}`}
-                  type="number"
-                  min={0}
-                  step=".01"
-                  value={extra.cost}
-                  onChange={(e) =>
-                    setInput({
-                      ...input,
-                      extras: input.extras.map((x, j) =>
-                        j === i ? { ...x, cost: e.target.value } : x,
-                      ),
-                    })
-                  }
-                />
-                <select
-                  aria-label={`Base do extra ${i + 1}`}
-                  className="rounded-md border p-2 text-sm"
-                  value={extra.basis}
-                  onChange={(e) =>
-                    setInput({
-                      ...input,
-                      extras: input.extras.map((x, j) =>
-                        j === i
-                          ? { ...x, basis: e.target.value as "lot" | "unit" }
-                          : x,
-                      ),
-                    })
-                  }
-                >
-                  <option value="unit">Por unidade</option>
-                  <option value="lot">No lote inteiro</option>
-                </select>
-                <Button
-                  variant="ghost"
-                  onClick={() =>
-                    setInput({
-                      ...input,
-                      extras: input.extras.filter((_, j) => j !== i),
-                    })
-                  }
-                >
-                  Remover
-                </Button>
-              </div>
-            ))}
-            <Button
-              variant="outline"
-              onClick={() =>
-                setInput({
-                  ...input,
-                  extras: [
-                    ...input.extras,
-                    { name: "", cost: "", basis: "unit" },
-                  ],
-                })
-              }
-            >
-              Adicionar extra
-            </Button>
-          </section>
-          <section className="space-y-4 rounded-xl border bg-card p-4">
-            <h2 className="font-semibold">Venda por canal</h2>
-            <div>
-              <Label htmlFor="pricing-channel">Canal da simulação</Label>
-              <select
-                id="pricing-channel"
-                className="mt-1 w-full rounded-md border bg-background p-2 text-sm"
-                value={channel}
-                onChange={e => setChannel(e.target.value)}
-              >
-                <option value="factory">Somente custo fabril</option>
-                <option value="direct">Venda direta / WhatsApp / Instagram</option>
-                <option value="mercado_livre">Mercado Livre</option>
-                <option value="shopee">Shopee</option>
-                <option value="other">Outro canal</option>
-              </select>
-            </div>
-            {channelEnabled && (
-              <>
-                <p className="text-sm text-muted-foreground">
-                  O canal identifica esta simulação. Preencha as condições da sua
-                  conta; a seleção não aplica tarifas automaticamente.
-                </p>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {channelField("orderQuantity", "Unidades por pedido / pacote")}
-                  {channelField("commissionPercent", "Comissão sobre produtos (%)")}
-                  {channelField("taxPercent", "Tributo sobre produtos (%)")}
-                  {channelField("fixedFeePerOrder", "Tarifa fixa por pedido (R$)")}
-                  {channelField("sellerShippingPerOrder", "Frete próprio do pacote (R$)")}
-                  {channelField("advertisingPerOrder", "Anúncios atribuídos ao pedido (R$)")}
-                  {channelField("otherCostPerOrder", "Outros gastos do pedido (R$)")}
-                  {channelField("variableUnitCost", "Parcela variável do custo / unidade (R$)", result ? String(result.unit) : "Custo completo")}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Comissão e tributo usam a receita dos produtos, sem frete do
-                  comprador. Tarifa, frete próprio, anúncios e outros gastos
-                  entram uma vez por pedido. Embalagem já incluída nos extras
-                  permanece no custo fabril. Informe cada gasto em um só lugar.
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Para estimar contribuição, informe a parcela variável do custo.
-                  Em branco, a simulação considera todo o custo fabril como
-                  variável. Estas condições valem para o pacote informado;
-                  tarifas por item devem ser somadas na tarifa do pedido.
-                </p>
-              </>
-            )}
-          </section>
         </div>
-        <aside className="h-fit space-y-4 rounded-xl border bg-card p-5 xl:sticky xl:top-4">
+        <aside className="h-fit min-w-0 space-y-4 rounded-xl border bg-card p-5 xl:col-start-2 xl:row-start-1 xl:row-span-2 xl:sticky xl:top-4">
           <h2 className="text-lg font-semibold">Resultado da simulação</h2>
-          {calculation.error && (
-            <p role="alert" className="text-destructive">
-              {calculation.error}
-            </p>
-          )}
+          {!started && <p className="text-sm text-muted-foreground">Preencha o peso e o tempo para ver o custo e o preço sugerido.</p>}
+          {started && calculation.error && <div className="space-y-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-950" role="status">
+            {materialSubtotal != null && <p>Filamento informado · lote: <strong>{money(materialSubtotal)}</strong>. Este é apenas o material, não o custo completo.</p>}
+            <p>{calculation.error}</p>
+            {validBasics && <Button variant="outline" size="sm" onClick={() => { setCostsOpen(true); requestAnimationFrame(() => document.getElementById("pricing-costs")?.scrollIntoView?.({ block: "start", behavior: "smooth" })); }}>Conferir custos da impressão</Button>}
+          </div>}
           {commercial.error && (
             <p role="alert" className="text-destructive">{commercial.error}</p>
           )}
           {numberField("margin", "Margem desejada sobre a venda (%)")}
-          {numberField(
+          {company.data?.target_margin == null && String(input.margin) === "30" && <p className="text-xs text-muted-foreground">30% é um ponto de partida desta simulação. Ajuste para a margem que você deseja.</p>}
+          <details className="rounded-lg border p-3"><summary className="cursor-pointer text-sm font-medium">Quero testar outro preço de venda</summary><div className="mt-3">{numberField(
             "target",
             "Preço alvo por unidade (R$)",
             channelEnabled
               ? (sale ? String(sale.suggested) : "Preço sugerido no canal")
               : (result ? String(result.suggested) : "Preço sugerido"),
-          )}
+          )}</div></details>
           {result && (
             <>
-              <dl className="space-y-2 text-sm">
+              <dl><div className="flex flex-wrap justify-between gap-2 text-lg font-semibold"><dt>Custo / unidade</dt><dd>{money(result.unit)}</dd></div></dl>
+              <details className="rounded-lg border p-3"><summary className="cursor-pointer text-sm font-medium">Ver composição do custo</summary><dl className="mt-3 space-y-2 text-sm">
                 {(
                   [
                     ["Materiais", result.materials],
@@ -555,11 +397,7 @@ function FreePricingSimulator() {
                   <dt>Custo do lote</dt>
                   <dd>{money(result.lot)}</dd>
                 </div>
-                <div className="flex justify-between text-lg font-semibold">
-                  <dt>Custo / unidade</dt>
-                  <dd>{money(result.unit)}</dd>
-                </div>
-              </dl>
+              </dl></details>
               {!channelEnabled && (
                 <>
                   <p className="text-sm">
@@ -667,6 +505,191 @@ function FreePricingSimulator() {
             </>
           )}
         </aside>
+        <div className="min-w-0 space-y-4 xl:col-start-1">
+          <details id="pricing-costs" className="space-y-4 rounded-xl border bg-card p-4 scroll-mt-4" open={costsOpen} onToggle={event => setCostsOpen(event.currentTarget.open)}>
+            <summary className="cursor-pointer font-semibold">Custos da impressão</summary>
+            <p className="text-sm text-muted-foreground">Os valores da empresa são carregados quando estão configurados. Confira aqui energia, uso da máquina e trabalho; informe zero apenas quando esse custo não entrar na sua conta.</p>
+            <a href="/configuracoes/precificacao" target="_blank" rel="noopener noreferrer" className="inline-block text-sm underline underline-offset-4">Configurar tarifas e custos da empresa (abre em outra aba)</a>
+            <Button
+              variant="outline"
+              disabled={!company.data}
+              onClick={() =>
+                setInput({
+                  ...input,
+                  kwh: company.data?.energy_cost_kwh ?? "",
+                  machineHour: company.data?.printer_hour_costs.find(p => p.printer_id === printerId)?.hour_cost ?? company.data?.machine_hour_cost ?? "",
+                  laborHour: company.data?.labor_cost_hour ?? "",
+                  overhead: company.data?.overhead_percent ?? "",
+                  margin: company.data?.target_margin ?? "30",
+                })
+              }
+            >
+              Usar parâmetros da empresa
+            </Button>
+            <SearchableItemSelect
+              value={printerId}
+              options={(printers.data || []).map((p) => ({
+                id: p.id,
+                label: p.name,
+              }))}
+              label="Impressora de referência"
+              emptyLabel="Preencher com uma impressora"
+              searchPlaceholder="Digitar impressora..."
+              onChange={(id) => {
+                const p = printers.data?.find((p) => p.id === id);
+                setPrinterId(id);
+                if (p)
+                  setInput({
+                    ...input,
+                    watts: p.power_watts ?? "",
+                    machineHour: company.data?.printer_hour_costs.find(rate => rate.printer_id === p.id)?.hour_cost ?? company.data?.machine_hour_cost ?? "",
+                  });
+              }}
+            />
+            <div className="grid gap-3 sm:grid-cols-2">
+              {numberField("watts", "Potência média (W)")}
+              {numberField("kwh", "Energia (R$ / kWh)")}
+              {numberField("machineHour", "Hora-máquina sem energia (R$ / h)")}
+              {numberField("laborMinutes", "Trabalho manual no lote (min)")}
+              {numberField("laborHour", "Mão de obra (R$ / h)")}
+              {numberField("overhead", "Despesas indiretas (%)")}
+              {numberField("failure", "Reserva adicional para falhas (%)")}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              A reserva adiciona uma porcentagem ao custo de produção. Inclua
+              purga e suportes no peso; evite contabilizar a mesma perda duas
+              vezes.
+            </p>
+          </details>
+          <details className="space-y-3 rounded-xl border bg-card p-4">
+            <summary className="cursor-pointer font-semibold">Embalagem e outros custos</summary>
+            {input.extras.map((extra, i) => (
+              <div
+                key={i}
+                className="grid gap-2 sm:grid-cols-[1fr_110px_140px_auto]"
+              >
+                <Input
+                  aria-label={`Nome do extra ${i + 1}`}
+                  value={extra.name}
+                  placeholder="Embalagem"
+                  onChange={(e) =>
+                    setInput({
+                      ...input,
+                      extras: input.extras.map((x, j) =>
+                        j === i ? { ...x, name: e.target.value } : x,
+                      ),
+                    })
+                  }
+                />
+                <Input
+                  aria-label={`Custo do extra ${i + 1}`}
+                  type="text"
+                  inputMode="decimal"
+                  value={extra.cost}
+                  onChange={(e) =>
+                    setInput({
+                      ...input,
+                      extras: input.extras.map((x, j) =>
+                        j === i ? { ...x, cost: e.target.value } : x,
+                      ),
+                    })
+                  }
+                />
+                <select
+                  aria-label={`Base do extra ${i + 1}`}
+                  className="rounded-md border p-2 text-sm"
+                  value={extra.basis}
+                  onChange={(e) =>
+                    setInput({
+                      ...input,
+                      extras: input.extras.map((x, j) =>
+                        j === i
+                          ? { ...x, basis: e.target.value as "lot" | "unit" }
+                          : x,
+                      ),
+                    })
+                  }
+                >
+                  <option value="unit">Por unidade</option>
+                  <option value="lot">No lote inteiro</option>
+                </select>
+                <Button
+                  variant="ghost"
+                  onClick={() =>
+                    setInput({
+                      ...input,
+                      extras: input.extras.filter((_, j) => j !== i),
+                    })
+                  }
+                >
+                  Remover
+                </Button>
+              </div>
+            ))}
+            <Button
+              variant="outline"
+              onClick={() =>
+                setInput({
+                  ...input,
+                  extras: [
+                    ...input.extras,
+                    { name: "", cost: "", basis: "unit" },
+                  ],
+                })
+              }
+            >
+              Adicionar extra
+            </Button>
+          </details>
+          <details className="space-y-4 rounded-xl border bg-card p-4">
+            <summary className="cursor-pointer font-semibold">Taxas e despesas da venda</summary>
+            <div>
+              <Label htmlFor="pricing-channel">Canal da simulação</Label>
+              <select
+                id="pricing-channel"
+                className="mt-1 w-full rounded-md border bg-background p-2 text-sm"
+                value={channel}
+                onChange={e => setChannel(e.target.value)}
+              >
+                <option value="factory">Somente custo fabril</option>
+                <option value="direct">Venda direta / WhatsApp / Instagram</option>
+                <option value="mercado_livre">Mercado Livre</option>
+                <option value="shopee">Shopee</option>
+                <option value="other">Outro canal</option>
+              </select>
+            </div>
+            {channelEnabled && (
+              <>
+                <p className="text-sm text-muted-foreground">
+                  O canal identifica esta simulação. Preencha as condições da sua
+                  conta; a seleção não aplica tarifas automaticamente.
+                </p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {channelField("orderQuantity", "Unidades por pedido / pacote")}
+                  {channelField("commissionPercent", "Comissão sobre produtos (%)")}
+                  {channelField("taxPercent", "Tributo sobre produtos (%)")}
+                  {channelField("fixedFeePerOrder", "Tarifa fixa por pedido (R$)")}
+                  {channelField("sellerShippingPerOrder", "Frete próprio do pacote (R$)")}
+                  {channelField("advertisingPerOrder", "Anúncios atribuídos ao pedido (R$)")}
+                  {channelField("otherCostPerOrder", "Outros gastos do pedido (R$)")}
+                  {channelField("variableUnitCost", "Parcela variável do custo / unidade (R$)", result ? String(result.unit) : "Custo completo")}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Comissão e tributo usam a receita dos produtos, sem frete do
+                  comprador. Tarifa, frete próprio, anúncios e outros gastos
+                  entram uma vez por pedido. Embalagem já incluída nos extras
+                  permanece no custo fabril. Informe cada gasto em um só lugar.
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Para estimar contribuição, informe a parcela variável do custo.
+                  Em branco, a simulação considera todo o custo fabril como
+                  variável. Estas condições valem para o pacote informado;
+                  tarifas por item devem ser somadas na tarifa do pedido.
+                </p>
+              </>
+            )}
+          </details>
+        </div>
       </div>
       {(products.error || materials.error || printers.error || company.error) && (
         <p role="alert" className="text-sm text-destructive">

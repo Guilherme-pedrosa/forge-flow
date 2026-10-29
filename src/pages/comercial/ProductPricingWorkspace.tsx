@@ -26,7 +26,7 @@ export default function ProductPricingWorkspace({ productId, onProductChange }: 
   const { profile } = useAuth();
   const products = useQuery({
     queryKey: ["pricing-products", profile?.tenant_id], enabled: !!profile?.tenant_id,
-    queryFn: () => allRows((a, b) => supabase.from("products").select("id,name,sku").eq("is_active", true).order("name").order("id").range(a, b)),
+    queryFn: () => allRows((a, b) => supabase.from("products").select("id,name,sku,sale_price").eq("is_active", true).order("name").order("id").range(a, b)),
   });
   return <div className="space-y-5">
     <section className="space-y-3 rounded-xl border bg-card p-4">
@@ -37,7 +37,7 @@ export default function ProductPricingWorkspace({ productId, onProductChange }: 
       <p className="text-sm text-muted-foreground">A composição, os filamentos, as placas e os tempos vêm do cadastro do produto. Os parâmetros de custos vêm das configurações.</p>
       {products.error && <p role="alert" className="text-destructive">Não foi possível carregar os produtos. Tente novamente.</p>}
     </section>
-    {productId ? <ProductPricingSession key={`${profile?.tenant_id}:${productId}`} productId={productId} /> :
+    {productId ? <ProductPricingSession key={`${profile?.tenant_id}:${productId}`} productId={productId} currentPrice={products.isSuccess && !products.isFetching ? products.data?.find(product => product.id === productId)?.sale_price : undefined} /> :
       <p className="rounded-xl border border-dashed p-6 text-muted-foreground">Selecione o produto acima para conferir cada peça, calcular o custo e definir o preço de venda.</p>}
   </div>;
 }
@@ -51,12 +51,13 @@ function Breakdown({ value, pending = false }: { value: CostBreakdown; pending?:
   </dl>;
 }
 
-function ProductPricingSession({ productId }: { productId: string }) {
+function ProductPricingSession({ productId, currentPrice }: { productId: string; currentPrice?: number | null }) {
   const { profile } = useAuth();
   const tenant = profile?.tenant_id;
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [quantityInput, setQuantityInput] = useState("1");
+  const [orderQuantityInput, setOrderQuantityInput] = useState("1");
   const [changes, setChanges] = useState<PricingPlan>({});
   const [fieldError, setFieldError] = useState("");
   const [message, setMessage] = useState("");
@@ -67,6 +68,8 @@ function ProductPricingSession({ productId }: { productId: string }) {
   const [channelInputs, setChannelInputs] = useState({ commissionPercent: "0", taxPercent: "0", fixedFeePerOrder: "0", sellerShippingPerOrder: "0", advertisingPerOrder: "0", otherCostPerOrder: "0", variableUnitCost: "" });
   const quantity = /^\d+$/.test(quantityInput) ? Number(quantityInput) : 0;
   const validQuantity = quantity >= 1 && quantity <= 10000;
+  const savedPriceQuantity = channel === "factory" ? quantity : /^\d+$/.test(orderQuantityInput) ? Number(orderQuantityInput) : 0;
+  const canQuoteSavedPrice = typeof currentPrice === "number" && Number.isFinite(currentPrice) && currentPrice > 0 && currentPrice <= 1e9 && Number.isInteger(savedPriceQuantity) && savedPriceQuantity >= 1 && savedPriceQuantity <= 10000;
   const policy = useQuery({ queryKey: ["pricing_settings", tenant], queryFn: readPricingSettings, enabled: !!tenant });
   const plan = useQuery({ queryKey: ["product_pricing_plan", tenant, productId], queryFn: () => readProductPricingPlan(productId), enabled: !!tenant });
   const effectivePlan: PricingPlan = { ...plan.data?.plan, ...changes };
@@ -92,9 +95,9 @@ function ProductPricingSession({ productId }: { productId: string }) {
   const rows = result ? pricingProductionRows(result) : { components: [], plates: [], runs: [] };
   const commercial = useMemo(() => {
     if (channel === "factory" || !result?.complete) return { value: null, error: "" };
-    try { return { value: priceChannel({ ...channelInputs, orderQuantity: quantity, unitCost: result.breakdown.unit_cost!, marginPercent: result.margin_percent!, targetUnitPrice: target }), error: "" }; }
+    try { return { value: priceChannel({ ...channelInputs, orderQuantity: orderQuantityInput, unitCost: result.breakdown.unit_cost!, marginPercent: result.margin_percent!, targetUnitPrice: target }), error: "" }; }
     catch (error) { return { value: null, error: (error as Error).message }; }
-  }, [channel, channelInputs, quantity, result, target]);
+  }, [channel, channelInputs, orderQuantityInput, result, target]);
   let targetPrice: number | null = null;
   let targetError = "";
   try {
@@ -164,23 +167,58 @@ function ProductPricingSession({ productId }: { productId: string }) {
   }
 
   return <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-    <div className="min-w-0 space-y-5">
-      <section className="space-y-4 rounded-xl border bg-card p-4">
+    <aside className="h-fit space-y-4 rounded-xl border bg-card p-5 xl:order-2 xl:sticky xl:top-4">
+      <h2 className="text-lg font-semibold">Custo e preço do produto</h2>
+      <div><Label htmlFor="product-pricing-quantity">Quantidade de produtos prontos</Label><Input id="product-pricing-quantity" type="number" min="1" max="10000" step="1" value={quantityInput} disabled={pending} onChange={e => { setQuantityInput(e.target.value); setMessage(""); }} /></div>
+      <div className="space-y-2 rounded-lg bg-muted p-3 text-sm">
+        <p>Preço atual no cadastro: <strong>{money(currentPrice)}</strong></p>
+        <Button className="h-auto min-h-11 w-full whitespace-normal py-2" variant="outline" disabled={!canQuoteSavedPrice || pending} onClick={() => {
+          if (!canQuoteSavedPrice || pending) return;
+          navigate("/comercial/orcamentos", { state: { pricingQuote: { product_id: productId, quantity: savedPriceQuantity, unit_price: currentPrice! } } });
+        }}>Usar preço cadastrado no orçamento</Button>
+        <p className="text-xs text-muted-foreground">Usa o preço já salvo. Não depende do novo cálculo e não altera o cadastro.</p>
+      </div>
+      {!validQuantity && <p role="alert" className="text-destructive">Informe uma quantidade inteira entre 1 e 10.000.</p>}
+      {numberField("target_margin", "Margem desejada sobre a venda (%)", "Margem sobre o valor vendido, sem alterar o custo de produção.")}
+      <div><Label htmlFor="product-pricing-target">Preço alvo por unidade (R$)</Label><Input id="product-pricing-target" type="number" min="0" step=".01" value={target} disabled={pending} placeholder={money(channel === "factory" ? result?.suggested_unit_price : commercial.value?.suggested)} onChange={e => { setTarget(e.target.value); setMessage(""); }} /></div>
+      {[fieldError, targetError, commercial.error, plan.error?.message, preview.error?.message, savePlan.error?.message, apply.error?.message].filter(Boolean).map((error, i) => <p key={i} role="alert" className="text-sm text-destructive">{error}</p>)}
+      {!validPlan && <p className="text-sm text-amber-700" role="status">Selecione cada insumo e informe uma quantidade maior que zero para atualizar o custo.</p>}
+      {(plan.isLoading || preview.isFetching) && <p role="status" className="text-sm text-muted-foreground">Conferindo ficha, placas e custos...</p>}
+      <Button size="sm" variant="ghost" disabled={pending || !validQuantity || !validPlan || !!fieldError} onClick={() => {
+        setMessage(""); savePlan.reset(); apply.reset();
+        void Promise.all([qc.invalidateQueries({ queryKey: ["pricing_settings", tenant] }), qc.invalidateQueries({ queryKey: ["product_pricing_plan", tenant, productId] }), qc.invalidateQueries({ queryKey: ["product_pricing_preview", tenant, productId] })]);
+      }}>Atualizar prévia</Button>
+      {result && <>
+        <p className="text-sm font-medium">{result.cost_basis === "unit" ? "Padrão por unidade" : "Lote exclusivo"} · {result.quantity} {result.quantity === 1 ? "produto" : "produtos"}</p>
+        {!result.complete && <div className="space-y-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-950" role="status"><p className="font-medium">Falta confirmar para fechar o custo:</p><ul className="list-disc space-y-1 pl-4">{result.missing.map((item, i) => <li key={i}>{item}</li>)}</ul><p>Os valores abaixo mostram apenas parcelas já conhecidas.</p></div>}
+        <div data-testid="product-pricing-breakdown"><Breakdown value={result.breakdown} pending={!result.complete} /></div>
+        <p className="text-sm">Custo manual atual: <strong>{money(result.manual_cost_reference)}</strong></p>
+        {result.complete && channel === "factory" && <div className="space-y-1 rounded-lg bg-muted p-3 text-sm"><p>Preço sugerido: <strong>{money(result.suggested_unit_price)} / un.</strong></p><p>Preço escolhido: {money(selectedPrice)} / un.</p>{selectedPrice != null && <p>Resultado para a quantidade: {money(selectedPrice * result.quantity - result.breakdown.total_lot!)}</p>}</div>}
+        {commercial.value && <ChannelResult value={commercial.value} />}
+        {selectedPrice != null && result.breakdown.unit_cost != null && selectedPrice < result.breakdown.unit_cost && <p role="status" className="text-sm text-destructive">O preço alvo não cobre o custo do produto.</p>}
+      </>}
+      <Button className="h-auto min-h-11 w-full whitespace-normal py-3" disabled={!canApply || pending} onClick={() => { setMessage(""); apply.mutate(); }}>{apply.isPending ? "Aplicando..." : "Aplicar custo e preço ao cadastro"}</Button>
+      <p className="text-xs text-muted-foreground">Aplicar atualiza o custo e o preço do cadastro após conferir os dados. Para guardar ajustes de preparação, abra Custos e tempos.</p>
+      <Button className="h-auto min-h-11 w-full whitespace-normal py-3" variant="outline" disabled={!canApply || pending} onClick={() => navigate("/comercial/orcamentos", { state: { pricingQuote: { product_id: productId, quantity: channel === "factory" ? quantity : commercial.value!.quantity, unit_price: selectedPrice! } } })}>Usar preço no novo orçamento</Button>
+      {message && <p role="status" className="text-sm text-emerald-700">{message}</p>}
+      {policy.error && <p className="text-sm text-destructive">Não foi possível carregar as configurações de custos. A prévia informa o que ainda falta confirmar.</p>}
+    </aside>
+    <div className="min-w-0 space-y-5 xl:order-1">
+      <details className="rounded-xl border bg-card p-4"><summary className="cursor-pointer font-semibold">Custos e tempos</summary>
+        <div className="space-y-4 pt-4">
         <div className="grid gap-3 sm:grid-cols-2">
-          <div><Label htmlFor="product-pricing-quantity">Quantidade de produtos prontos</Label><Input id="product-pricing-quantity" type="number" min="1" max="10000" step="1" value={quantityInput} disabled={pending} onChange={e => { setQuantityInput(e.target.value); setMessage(""); }} /></div>
           <div><Label htmlFor="product-pricing-basis">Base do custo e do preço</Label><select id="product-pricing-basis" className={inputStyle} value={basis} disabled={pending} onChange={e => { setChanges(current => ({ ...current, cost_basis: e.target.value as PricingPlan["cost_basis"] })); setMessage(""); }}>
             <option value="unit">Padrão por unidade · rateia pelo rendimento</option><option value="exclusive_lot">Lote exclusivo · cobra impressões completas</option>
           </select></div>
         </div>
         <p className="text-sm text-muted-foreground">{basis === "unit" ? "O custo por unidade aproveita o rendimento cadastrado de cada placa. A produção necessária e as sobras aparecem no planejamento abaixo." : "Este pedido assume todo o custo das impressões necessárias, inclusive as peças que sobrarem. As sobras aparecem separadas no planejamento."}</p>
-        {!validQuantity && <p role="alert" className="text-destructive">Informe uma quantidade inteira entre 1 e 10.000.</p>}
         <div className="grid gap-3 sm:grid-cols-2">
           {numberField("handling_minutes_per_plate", "Preparação e retirada por placa (min)", "Trabalho ativo em cada impressão; o tempo automático da impressora é calculado à parte.")}
           {numberField("finishing_minutes_per_piece", "Acabamento padrão por peça (min)", "A ficha individual tem prioridade sobre o padrão. Editar este campo informa um ajuste para as peças deste produto.")}
           {numberField("assembly_minutes_per_product", "Montagem por produto completo (min)")}
           {numberField("extras_cost_per_product", "Outros custos por produto (R$)", "Não repita os insumos do estoque ou os extras já cadastrados.")}
         </div>
-        <details className="rounded-lg border p-3"><summary className="cursor-pointer font-medium">Tarifas e impressora deste produto</summary>
+        <div className="rounded-lg border p-3"><h3 className="font-medium">Tarifas e impressora deste produto</h3>
           <p className="my-3 text-sm text-muted-foreground">Os padrões vêm de <a className="underline" href="/configuracoes/precificacao">Custos e precificação</a>. Ajustes aqui valem para este produto. A tarifa de máquina exclui energia.</p>
           <SearchableItemSelect value={effectivePlan.printer_id ?? ""} disabled={pending} label="Impressora padrão do produto" emptyLabel="Usar impressora de cada placa" options={(printers.data ?? []).map(p => ({ id: p.id, label: p.name }))} onChange={id => setChanges(current => ({ ...current, printer_id: id || null }))} />
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -189,9 +227,8 @@ function ProductPricingSession({ productId }: { productId: string }) {
             {numberField("labor_cost_hour", "Hora de manipulação (R$ / h)")}
             {numberField("overhead_percent", "Despesas indiretas (%)")}
           </div>
-        </details>
-      </section>
-      <section className="space-y-3 rounded-xl border bg-card p-4">
+        </div>
+      <section className="space-y-3 border-t pt-4">
         <h2 className="font-semibold">Insumos por produto pronto</h2>
         <p className="text-sm text-muted-foreground">Escolha embalagem, ímã e outros insumos já cadastrados. O custo usa a unidade e o custo médio do estoque; não altera o saldo.</p>
         {consumables.map((item, i) => <div key={`${item.item_id}:${i}`} className="grid gap-2 rounded-lg border p-3 sm:grid-cols-[minmax(0,1fr)_130px_auto]">
@@ -205,8 +242,12 @@ function ProductPricingSession({ productId }: { productId: string }) {
         <Button variant="outline" disabled={pending || consumables.some(c => !c.item_id || c.quantity <= 0)} onClick={() => setConsumables([...consumables, { item_id: "", quantity: 1 }])}>Adicionar insumo do estoque</Button>
         {items.error && <p role="alert" className="text-destructive">Não foi possível carregar os insumos.</p>}
       </section>
-      {result && <>
-        <section className="space-y-3 rounded-xl border bg-card p-4">
+      <Button className="h-auto min-h-11 w-full whitespace-normal py-3" variant="outline" disabled={!plan.data || plan.isError || pending || !!fieldError || !validPlan} onClick={() => { setMessage(""); savePlan.mutate(); }}>{savePlan.isPending ? "Salvando plano..." : "Salvar tempos e insumos do produto"}</Button>
+      <p className="text-xs text-muted-foreground">Salvar guarda tempos, tarifas e insumos para as próximas simulações. O preço do cadastro só muda quando você aplica o resultado.</p>
+        </div>
+      </details>
+      {result && <details className="rounded-xl border bg-card p-4"><summary className="cursor-pointer font-semibold">Placas e composição</summary>
+        <div className="space-y-3 pt-4">
           <h2 className="font-semibold">Peças e placas que formam {result.product_name}</h2>
           {rows.components.length > 0 && <div className="grid gap-2 sm:grid-cols-2">{rows.components.map((component, i) => {
             const grams = component.technical?.grams ?? component.technical?.materials?.reduce<number | null>((sum, m) => sum == null || m.grams == null ? null : sum + m.grams, 0);
@@ -234,8 +275,7 @@ function ProductPricingSession({ productId }: { productId: string }) {
             </div>
           </details>; })}
           {rows.components.length === 0 && rows.plates.length === 0 && <p className="text-sm text-muted-foreground">Referência da ficha técnica do produto. Confira as pendências caso falte consumo, tempo ou rendimento.</p>}
-        </section>
-        <section className="space-y-3 rounded-xl border bg-card p-4" data-testid="pricing-production-plan">
+        <section className="space-y-3 border-t pt-4" data-testid="pricing-production-plan">
           <h2 className="font-semibold">Planejamento das impressões completas</h2>
           <p className="text-sm text-muted-foreground">Quantidade a produzir para atender {result.quantity} {result.quantity === 1 ? "produto" : "produtos"}. As sobras são peças adicionais; não entram no estoque nesta simulação.</p>
           {rows.runs.map((run, i) => <div key={`${run.plate_id}:${i}`} className="rounded-lg border p-3 text-sm">
@@ -246,48 +286,24 @@ function ProductPricingSession({ productId }: { productId: string }) {
           </div>)}
           <details><summary className="cursor-pointer text-sm font-medium">Conferir custo das rodadas completas</summary><div className="mt-3"><Breakdown value={result.production_breakdown} pending={!result.complete} /></div></details>
         </section>
-      </>}
-      <section className="space-y-3 rounded-xl border bg-card p-4">
-        <h2 className="font-semibold">Venda por canal</h2>
+        </div>
+      </details>}
+      <details className="rounded-xl border bg-card p-4"><summary className="cursor-pointer font-semibold">Venda por canal</summary>
+        <div className="space-y-3 pt-4">
         <Label htmlFor="product-pricing-channel">Canal da simulação</Label><select id="product-pricing-channel" className={inputStyle} value={channel} disabled={pending} onChange={e => setChannel(e.target.value)}>
           <option value="factory">Somente preço do produto</option><option value="direct">Venda direta / WhatsApp / Instagram</option><option value="mercado_livre">Mercado Livre</option><option value="shopee">Shopee</option><option value="other">Outro canal</option>
         </select>
         {channel !== "factory" && <><p className="text-sm text-muted-foreground">Informe as condições da sua conta. A escolha do canal não aplica tarifas automaticamente; o custo do produto vem da base selecionada acima.</p>
-          <p className="text-sm font-medium">Quantidade por pedido: {quantity} {quantity === 1 ? "produto" : "produtos"}, conforme o cálculo de produção acima.</p>
+          <div><Label htmlFor="product-channel-quantity">Unidades por pedido / pacote</Label><Input id="product-channel-quantity" type="number" min="1" max="10000" step="1" value={orderQuantityInput} disabled={pending} onChange={e => { setOrderQuantityInput(e.target.value); setMessage(""); }} /><p className="mt-1 text-xs text-muted-foreground">Quantidade vendida em um único pedido. O lote de produção acima continua separado; tarifa fixa e frete entram uma vez por pedido.</p></div>
           <div className="grid gap-3 sm:grid-cols-2">{([
             ["commissionPercent", "Comissão sobre produtos (%)"], ["taxPercent", "Tributo sobre produtos (%)"], ["fixedFeePerOrder", "Tarifa fixa por pedido (R$)"], ["sellerShippingPerOrder", "Frete próprio do pacote (R$)"], ["advertisingPerOrder", "Anúncios atribuídos ao pedido (R$)"], ["otherCostPerOrder", "Outros gastos do pedido (R$)"], ["variableUnitCost", "Parcela variável do custo / unidade (R$)"],
           ] as const).map(([key, label]) => <div key={key}><Label htmlFor={`product-channel-${key}`}>{label}</Label><Input id={`product-channel-${key}`} type="number" min="0" step="any" value={channelInputs[key]} disabled={pending} onChange={e => setChannelInputs(current => ({ ...current, [key]: e.target.value }))} /></div>)}</div>
           <p className="text-xs text-muted-foreground">Comissão e tributo incidem sobre a receita dos produtos. Os gastos fixos entram uma vez por pedido. Embalagens e insumos já incluídos no custo não devem ser repetidos aqui.</p>
         </>}
-      </section>
+        </div>
+      </details>
     </div>
-    <aside className="h-fit space-y-4 rounded-xl border bg-card p-5 xl:sticky xl:top-4">
-      <h2 className="text-lg font-semibold">Custo e preço do produto</h2>
-      {numberField("target_margin", "Margem desejada sobre a venda (%)", "Margem sobre o valor vendido, sem alterar o custo de produção.")}
-      <div><Label htmlFor="product-pricing-target">Preço alvo por unidade (R$)</Label><Input id="product-pricing-target" type="number" min="0" step=".01" value={target} disabled={pending} placeholder={money(channel === "factory" ? result?.suggested_unit_price : commercial.value?.suggested)} onChange={e => { setTarget(e.target.value); setMessage(""); }} /></div>
-      {[fieldError, targetError, commercial.error, plan.error?.message, preview.error?.message, savePlan.error?.message, apply.error?.message].filter(Boolean).map((error, i) => <p key={i} role="alert" className="text-sm text-destructive">{error}</p>)}
-      {!validPlan && <p className="text-sm text-amber-700" role="status">Selecione cada insumo e informe uma quantidade maior que zero para atualizar o custo.</p>}
-      {(plan.isLoading || preview.isFetching) && <p role="status" className="text-sm text-muted-foreground">Conferindo ficha, placas e custos...</p>}
-      <Button size="sm" variant="ghost" disabled={pending || !validQuantity || !validPlan || !!fieldError} onClick={() => {
-        setMessage(""); savePlan.reset(); apply.reset();
-        void Promise.all([qc.invalidateQueries({ queryKey: ["pricing_settings", tenant] }), qc.invalidateQueries({ queryKey: ["product_pricing_plan", tenant, productId] }), qc.invalidateQueries({ queryKey: ["product_pricing_preview", tenant, productId] })]);
-      }}>Atualizar prévia</Button>
-      {result && <>
-        <p className="text-sm font-medium">{result.cost_basis === "unit" ? "Padrão por unidade" : "Lote exclusivo"} · {result.quantity} {result.quantity === 1 ? "produto" : "produtos"}</p>
-        {!result.complete && <div className="space-y-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-950" role="status"><p className="font-medium">Falta confirmar para fechar o custo:</p><ul className="list-disc space-y-1 pl-4">{result.missing.map((item, i) => <li key={i}>{item}</li>)}</ul><p>Os valores abaixo mostram apenas parcelas já conhecidas.</p></div>}
-        <div data-testid="product-pricing-breakdown"><Breakdown value={result.breakdown} pending={!result.complete} /></div>
-        <p className="text-sm">Custo manual atual: <strong>{money(result.manual_cost_reference)}</strong></p>
-        {result.complete && channel === "factory" && <div className="space-y-1 rounded-lg bg-muted p-3 text-sm"><p>Preço sugerido: <strong>{money(result.suggested_unit_price)} / un.</strong></p><p>Preço escolhido: {money(selectedPrice)} / un.</p>{selectedPrice != null && <p>Resultado para a quantidade: {money(selectedPrice * result.quantity - result.breakdown.total_lot!)}</p>}</div>}
-        {commercial.value && <ChannelResult value={commercial.value} />}
-        {selectedPrice != null && result.breakdown.unit_cost != null && selectedPrice < result.breakdown.unit_cost && <p role="status" className="text-sm text-destructive">O preço alvo não cobre o custo do produto.</p>}
-      </>}
-      <Button className="h-auto min-h-11 w-full whitespace-normal py-3" variant="outline" disabled={!plan.data || plan.isError || pending || !!fieldError || !validPlan} onClick={() => { setMessage(""); savePlan.mutate(); }}>{savePlan.isPending ? "Salvando plano..." : "Salvar tempos e insumos do produto"}</Button>
-      <Button className="h-auto min-h-11 w-full whitespace-normal py-3" disabled={!canApply || pending} onClick={() => { setMessage(""); apply.mutate(); }}>{apply.isPending ? "Aplicando..." : "Aplicar custo e preço ao cadastro"}</Button>
-      <p className="text-xs text-muted-foreground">Salvar o plano guarda os parâmetros. Aplicar atualiza explicitamente o custo e o preço do produto após conferir novamente os dados.</p>
-      <Button className="h-auto min-h-11 w-full whitespace-normal py-3" variant="outline" disabled={!canApply || pending} onClick={() => navigate("/comercial/orcamentos", { state: { pricingQuote: { product_id: productId, quantity: channel === "factory" ? quantity : commercial.value!.quantity, unit_price: selectedPrice! } } })}>Usar preço no novo orçamento</Button>
-      {message && <p role="status" className="text-sm text-emerald-700">{message}</p>}
-      {policy.error && <p className="text-sm text-destructive">Não foi possível carregar as configurações de custos. A prévia informa o que ainda falta confirmar.</p>}
-    </aside>
+
   </div>;
 }
 
