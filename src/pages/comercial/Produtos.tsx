@@ -868,7 +868,7 @@ ${selected?.name ? `Perfil: ${selected.name}
   const tabClass = "m-0 space-y-5 data-[state=inactive]:hidden";
   const formFields = (
     <Tabs value={formTab} onValueChange={setFormTab} className="flex min-h-0 flex-1 flex-col gap-4 md:flex-row">
-      <TabsList aria-label="Cadastro do produto" className="h-auto w-full min-w-0 max-w-full shrink-0 justify-start gap-1 overflow-x-auto bg-muted/40 p-2 md:w-44 md:flex-col md:items-stretch md:self-start">
+      <TabsList aria-label="Cadastro do produto" className="h-auto w-full min-w-0 max-w-full shrink-0 justify-start gap-1 overflow-x-auto bg-muted/40 p-2 md:h-auto md:max-h-full md:w-44 md:flex-col md:items-stretch md:justify-start md:self-start md:overflow-x-hidden md:overflow-y-auto">
         {[['dados','Dados'],['valores','Valores'],['estoque','Estoque'],['embalagem','Embalagem para envio'],['fotos','Fotos'],['producao','Composição / produção']].map(([value,label]) => <TabsTrigger className="justify-start whitespace-nowrap px-4 py-3 md:whitespace-normal" key={value} value={value}>{label}</TabsTrigger>)}
       </TabsList>
       <div ref={formScrollRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto px-1 pb-4">
