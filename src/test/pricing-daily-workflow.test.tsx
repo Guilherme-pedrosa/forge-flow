@@ -63,8 +63,11 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("daily pricing of a new 3D product", () => {
-  it("opens the calculator directly without requiring an existing product or an extra mode click", () => {
+  it("opens the automatic file workflow directly and keeps manual simulation available", () => {
     mount();
+    expect(screen.getByRole("button", { name: "Arquivo e filamento" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByLabelText("Arquivo STL ou 3MF")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Simulação livre" }));
     expect(screen.getByLabelText("Nome do produto")).toBeVisible();
     expect(screen.getByLabelText("Unidades prontas no lote")).toBeVisible();
     expect(screen.getByLabelText("Gramas no lote")).toBeVisible();
@@ -113,6 +116,7 @@ describe("daily pricing of a new 3D product", () => {
   it("shows the known material subtotal while guiding missing costs instead of inventing a complete price", async () => {
     mock.rpc.mockResolvedValue({ data: { ...companyPolicy, machine_hour_cost: null, energy_cost_kwh: null, labor_cost_hour: null, overhead_percent: null, target_margin: null }, error: null });
     mount();
+    fireEvent.click(screen.getByRole("button", { name: "Simulação livre" }));
     await waitFor(() => expect(field("Margem desejada sobre a venda (%)").value).toBe("30"));
     set("Gramas no lote", "100"); set("Custo / kg (R$)", "80"); set("Horas totais de impressão", "2");
     expect(screen.getByText(/Filamento informado/)).toHaveTextContent(/R\$\s*8,00/);

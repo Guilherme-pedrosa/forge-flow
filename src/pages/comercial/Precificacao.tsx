@@ -14,6 +14,10 @@ import { useAuth } from "@/contexts/AuthContext";
 import { readPricingSettings } from "@/lib/pricing-policy";
 import ProductPricingWorkspace from "./ProductPricingWorkspace";
 import { nonNegative, positiveInteger } from "@/lib/production";
+import { PricingModelFile } from "@/components/comercial/PricingModelFile";
+import { PricingMakerWorldInput } from "@/components/comercial/PricingMakerWorldInput";
+import type { ProductExternalImport } from "@/lib/makerworld-import";
+import { modelPricingFromMakerWorld, recommendPrinterForEstimate, recommendFilamentsForEstimate, printerMachineHourCost, printerMatchesSliceModels, type ModelPricingEstimate } from "@/lib/model-pricing";
 const money = (n: number) =>
   n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const initial: PricingInput = {
@@ -45,8 +49,11 @@ const percent = (value: number | null) => value == null ? "—" : `${value.toFix
 type FreePricingDraft = {
   name: string; product: string; input: PricingInput; printerId: string;
   hydratedTenant: string | null; channel: string; channelInput: typeof initialChannel;
+  sourceFile: File | null; estimate: ModelPricingEstimate | null;
+  filamentIds: Record<string, string>; confirmedPrinterId: string;
+  makerReference: ProductExternalImport | null; sourceError: string;
 };
-const newFreeDraft = (): FreePricingDraft => ({ name: "", product: "", input: structuredClone(initial), printerId: "", hydratedTenant: null, channel: "factory", channelInput: { ...initialChannel } });
+const newFreeDraft = (): FreePricingDraft => ({ name: "", product: "", input: structuredClone(initial), printerId: "", hydratedTenant: null, channel: "factory", channelInput: { ...initialChannel }, sourceFile: null, estimate: null, filamentIds: {}, confirmedPrinterId: "", makerReference: null, sourceError: "" });
 export default function Precificacao() {
   const { profile, user } = useAuth();
   return <PricingWorkspace key={`${profile?.tenant_id || "no-company"}:${user?.id || "no-user"}`} />;
@@ -54,21 +61,22 @@ export default function Precificacao() {
 
 function PricingWorkspace() {
   const [params, setParams] = useSearchParams();
-  const [mode, setMode] = useState<"product" | "free">(() => params.get("produto") ? "product" : "free");
+  const [mode, setMode] = useState<"product" | "free" | "file">(() => params.get("produto") ? "product" : "file");
   const [freeDraft, setFreeDraft] = useState(newFreeDraft);
   const productId = params.get("produto") ?? "";
   useEffect(() => { if (productId) setMode("product"); }, [productId]);
   return <div className="min-w-0 space-y-5">
-    <PageHeader title="Precificação 3D" description="Calcule com o peso e o tempo do fatiador. Não precisa cadastrar o produto antes." breadcrumbs={[{ label: "Comercial" }, { label: "Precificação" }]} />
+    <PageHeader title="Precificação 3D" description="Cole o link do MakerWorld ou envie o 3MF para calcular seus custos." breadcrumbs={[{ label: "Comercial" }, { label: "Precificação" }]} />
     <div className="flex flex-wrap gap-2" aria-label="Modo de precificação">
+      <Button variant={mode === "file" ? "default" : "outline"} aria-pressed={mode === "file"} onClick={() => setMode("file")}>Arquivo e filamento</Button>
       <Button variant={mode === "free" ? "default" : "outline"} aria-pressed={mode === "free"} onClick={() => setMode("free")}>Simulação livre</Button>
       <Button variant={mode === "product" ? "default" : "outline"} aria-pressed={mode === "product"} onClick={() => setMode("product")}>Produto cadastrado</Button>
     </div>
-    {mode === "product" ? <ProductPricingWorkspace productId={productId} onProductChange={id => setParams(current => { const next = new URLSearchParams(current); if (id) next.set("produto", id); else next.delete("produto"); return next; })} /> : <FreePricingSimulator draft={freeDraft} setDraft={setFreeDraft} />}
+    {mode === "product" ? <ProductPricingWorkspace productId={productId} onProductChange={id => setParams(current => { const next = new URLSearchParams(current); if (id) next.set("produto", id); else next.delete("produto"); return next; })} /> : <FreePricingSimulator draft={freeDraft} setDraft={setFreeDraft} automatic={mode === "file"} />}
   </div>;
 }
 
-function FreePricingSimulator({ draft, setDraft }: { draft: FreePricingDraft; setDraft: Dispatch<SetStateAction<FreePricingDraft>> }) {
+function FreePricingSimulator({ draft, setDraft, automatic }: { draft: FreePricingDraft; setDraft: Dispatch<SetStateAction<FreePricingDraft>>; automatic: boolean }) {
   const { profile } = useAuth();
   const company = useQuery({
     queryKey: ["pricing_settings", profile?.tenant_id],
@@ -76,7 +84,7 @@ function FreePricingSimulator({ draft, setDraft }: { draft: FreePricingDraft; se
     queryFn: readPricingSettings,
   });
   const navigate = useNavigate();
-  const { name, product, input, printerId, channel, channelInput } = draft;
+  const { name, product, printerId, channel, channelInput } = draft;
   const setName = (name: string) => setDraft(current => ({ ...current, name }));
   const setProduct = (product: string) => setDraft(current => ({ ...current, product }));
   const setPrinterId = (printerId: string) => setDraft(current => ({ ...current, printerId }));
@@ -95,6 +103,55 @@ function FreePricingSimulator({ draft, setDraft }: { draft: FreePricingDraft; se
       margin: current.input.margin === "" ? settings.target_margin ?? "30" : current.input.margin,
     } }));
   }, [company.data, profile?.tenant_id, draft.hydratedTenant, setDraft]);
+  const printers = useQuery({
+    queryKey: ["pricing-free-printers", profile?.tenant_id], enabled: !!profile?.tenant_id,
+    queryFn: () => allRows((a, b) => supabase.from("printers")
+      .select("id,name,brand,model,power_watts,depreciation_per_hour,acquisition_cost,useful_life_hours,maintenance_cost_per_hour")
+      .eq("is_active", true).order("name").order("id").range(a, b)),
+  });
+  const materials = useQuery({
+    queryKey: ["pricing-materials", profile?.tenant_id], enabled: !!profile?.tenant_id,
+    queryFn: () => allRows((a, b) => supabase.from("inventory_items")
+      .select("id,name,unit,avg_cost,material_code,color_hex")
+      .eq("is_active", true).eq("category", "filament").in("unit", ["g", "kg"])
+      .order("name").order("id").range(a, b)),
+  });
+  const printer = printers.data?.find(p => p.id === printerId) ?? null;
+  const slots = useMemo(() => draft.estimate?.materials ?? [], [draft.estimate]);
+  useEffect(() => {
+    if (!automatic || !draft.estimate || !printers.data || !materials.data) return;
+    const suggestedPrinter = recommendPrinterForEstimate(draft.estimate, printers.data);
+    const suggestedFilaments = recommendFilamentsForEstimate(draft.estimate, materials.data);
+    setDraft(current => {
+      const nextPrinterId = current.printerId || suggestedPrinter?.id || "";
+      const nextFilaments = { ...current.filamentIds };
+      for (const [key, id] of Object.entries(suggestedFilaments)) if (!nextFilaments[key] && !(slots.length === 1 && nextFilaments.default)) nextFilaments[key] = id;
+      if (nextPrinterId === current.printerId && JSON.stringify(nextFilaments) === JSON.stringify(current.filamentIds)) return current;
+      return { ...current, printerId: nextPrinterId, filamentIds: nextFilaments };
+    });
+  }, [automatic, draft.estimate, printers.data, materials.data, setDraft, slots.length]);
+  const selectedMaterials = useMemo(() => slots.map(slot => materials.data?.find(m => m.id === (draft.filamentIds[slot.key] || (slots.length === 1 ? draft.filamentIds.default : "")))), [slots, materials.data, draft.filamentIds]);
+  const modelMatch = printer && draft.estimate ? printerMatchesSliceModels(printer, draft.estimate.printerModelIds) : null;
+  const modelError = !draft.estimate ? "Envie um 3MF fatiado ou simule o modelo para obter tempo e consumo." :
+    !printer ? "Escolha a impressora que será usada." :
+    modelMatch === false ? "O arquivo foi fatiado para outra impressora. Fatie novamente para a impressora selecionada." :
+    modelMatch == null && draft.confirmedPrinterId !== printer.id ? "Confirme para qual impressora este arquivo foi fatiado." :
+    selectedMaterials.some(m => !m) ? "Escolha o filamento do estoque para cada material do arquivo." :
+    selectedMaterials.some((m, i) => !m?.material_code || !slots[i].materialCode || m.material_code.trim().toUpperCase() !== slots[i].materialCode.trim().toUpperCase()) ? "O material escolhido difere do arquivo ou não tem identificação. Confira o cadastro ou fatie com o material correto." :
+    company.data?.finishing_minutes_per_piece > 0 && draft.estimate.partCount == null ? "O arquivo não informa a quantidade de peças para calcular o acabamento. Confira a composição no cadastro do produto." : "";
+  const automaticLabor = (company.data?.handling_minutes_per_plate ?? 0) * (draft.estimate?.plateCount ?? 0)
+    + (company.data?.finishing_minutes_per_piece ?? 0) * (draft.estimate?.partCount ?? 0)
+    + (company.data?.assembly_minutes_per_product ?? 0) * Number(draft.input.quantity);
+  const input: PricingInput = useMemo(() => automatic ? {
+    ...draft.input,
+    hours: draft.estimate?.hours ?? 0,
+    watts: printer?.power_watts ?? "",
+    machineHour: printer ? printerMachineHourCost(printer, company.data?.printer_hour_costs.find(p => p.printer_id === printer.id)?.hour_cost, company.data?.machine_hour_cost) ?? "" : "",
+    laborMinutes: automaticLabor + Number(String(draft.input.laborMinutes).replace(",", ".")),
+    extras: [...draft.input.extras, ...(company.data?.extras_cost_per_product != null ? [{ name: "Insumos padrão da empresa", cost: company.data.extras_cost_per_product, basis: "unit" as const }] : [])],
+    materials: slots.map((slot, i) => ({ name: selectedMaterials[i]?.name ?? slot.name, grams: slot.grams,
+      kgPrice: selectedMaterials[i] ? selectedMaterials[i]!.avg_cost * (selectedMaterials[i]!.unit === "g" ? 1000 : 1) : "" })),
+  } : draft.input, [automatic, draft.input, draft.estimate, printer, company.data, slots, selectedMaterials, automaticLabor]);
   const materialSubtotal = useMemo(() => { try { return printMaterialCost(input.materials); } catch { return null; } }, [input.materials]);
   const validBasics = useMemo(() => {
     try { positiveInteger(input.quantity, "Quantidade do lote", 10000); nonNegative(input.hours, "Horas de impressão"); printMaterialCost(input.materials); return true; }
@@ -104,11 +161,12 @@ function FreePricingSimulator({ draft, setDraft }: { draft: FreePricingDraft; se
   const channelEnabled = channel !== "factory";
   const calculation = useMemo(() => {
     try {
+      if (automatic && modelError) throw new Error(modelError);
       return { value: pricePrint(input), error: "" };
     } catch (e) {
       return { value: null, error: (e as Error).message };
     }
-  }, [input]);
+  }, [input, automatic, modelError]);
   const result = started ? calculation.value : null;
   const commercial = useMemo(() => {
     if (!channelEnabled || !result) return { value: null, error: "" };
@@ -144,35 +202,6 @@ function FreePricingSimulator({ draft, setDraft }: { draft: FreePricingDraft; se
           .range(a, b),
       ),
   });
-  const printers = useQuery({
-    queryKey: ["pricing-free-printers", profile?.tenant_id],
-    enabled: !!profile?.tenant_id,
-    queryFn: () =>
-      allRows((a, b) =>
-        supabase
-          .from("printers")
-          .select("*")
-          .eq("is_active", true)
-          .order("name")
-          .order("id")
-          .range(a, b),
-      ),
-  });
-  const materials = useQuery({
-    queryKey: ["pricing-materials", profile?.tenant_id],
-    enabled: !!profile?.tenant_id,
-    queryFn: () =>
-      allRows((a, b) =>
-        supabase
-          .from("inventory_items")
-          .select("id,name,unit,avg_cost")
-          .eq("is_active", true)
-          .in("unit", ["g", "kg"])
-          .order("name")
-          .order("id")
-          .range(a, b),
-      ),
-  });
   const numberField = (
     key: keyof Omit<PricingInput, "materials" | "extras">,
     label: string,
@@ -186,9 +215,10 @@ function FreePricingSimulator({ draft, setDraft }: { draft: FreePricingDraft; se
         inputMode={key === "quantity" ? "numeric" : "decimal"}
         min={key === "quantity" ? 1 : undefined}
         step={key === "quantity" ? 1 : undefined}
-        value={input[key]}
+        value={automatic && key === "laborMinutes" ? draft.input.laborMinutes : input[key]}
         placeholder={placeholder}
-        onChange={(e) => setInput({ ...input, [key]: e.target.value })}
+        readOnly={automatic && (key === "watts" || key === "machineHour")}
+        onChange={(e) => setInput(current => ({ ...current, [key]: e.target.value }))}
       />
     </div>
   );
@@ -222,10 +252,45 @@ function FreePricingSimulator({ draft, setDraft }: { draft: FreePricingDraft; se
   );
   return (
     <div className="space-y-5 min-w-0">
-      <p className="text-sm text-muted-foreground">Some o peso e o tempo de todas as placas. A quantidade abaixo é de produtos completos, não de peças soltas.</p>
+      {!automatic && <p className="text-sm text-muted-foreground">Some o peso e o tempo de todas as placas. A quantidade abaixo é de produtos completos, não de peças soltas.</p>}
       <div className="grid min-w-0 gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="min-w-0 space-y-5">
-          <section className="space-y-4 rounded-xl border bg-card p-4">
+          {automatic ? <section className="space-y-4 rounded-xl border bg-card p-4">
+            <h2 className="font-semibold">O que vamos imprimir?</h2>
+            <PricingMakerWorldInput reference={draft.makerReference} onLoaded={reference => {
+              let estimate: ModelPricingEstimate | null = null, sourceError = "";
+              if (reference) { try { estimate = modelPricingFromMakerWorld(reference); } catch (error) { sourceError = (error as Error).message; } }
+              setDraft(current => ({ ...current, makerReference: reference, sourceFile: null, estimate, sourceError,
+                filamentIds: {}, confirmedPrinterId: current.printerId, name: reference?.title ?? current.name }));
+            }} />
+            <p className="text-center text-sm text-muted-foreground">ou envie o arquivo</p>
+            <PricingModelFile sourceFile={draft.sourceFile} estimate={draft.makerReference ? null : draft.estimate} printer={printer}
+              materialCodes={(slots.length ? selectedMaterials : [materials.data?.find(m => m.id === draft.filamentIds.default)]).map(m => m?.material_code ?? "")}
+              onLoaded={(file, estimate) => setDraft(current => ({ ...current, makerReference: null, sourceError: "", sourceFile: file, estimate, confirmedPrinterId: current.printerId,
+                filamentIds: { default: current.filamentIds.default ?? "" }, name: file.name.replace(/\.(?:stl|3mf)$/i, "").slice(0, 200) }))} />
+            {draft.sourceError && <p role="alert" className="text-sm text-amber-800">{draft.sourceError}</p>}
+            {draft.makerReference && draft.estimate && <p className="rounded-lg bg-muted p-3 text-sm">{draft.estimate.hours.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} h · {draft.estimate.weightGrams.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} g · {draft.estimate.plateCount} placa(s), conforme o perfil do MakerWorld.</p>}
+            {(draft.sourceFile || draft.estimate) && <SearchableItemSelect value={printerId} options={(printers.data ?? []).map(p => ({ id: p.id, label: p.name, description: p.model }))}
+              label="Impressora da impressão" emptyLabel="Qual impressora foi usada no fatiamento?" searchPlaceholder="Buscar impressora..."
+              onChange={id => setDraft(current => ({ ...current, printerId: id, confirmedPrinterId: id }))} />}
+            {draft.sourceFile && !slots.length && <SearchableItemSelect value={draft.filamentIds.default ?? ""}
+              options={(materials.data ?? []).map(m => ({ id: m.id, label: m.name, description: m.material_code ?? undefined }))}
+              label="Filamento para simular" emptyLabel="Qual filamento você vai usar?" searchPlaceholder="Buscar filamento..."
+              onChange={id => setDraft(current => ({ ...current, filamentIds: { ...current.filamentIds, default: id } }))} />}
+            {slots.map((slot, i) => <div key={slot.key} className="space-y-2 rounded-lg border p-3">
+              <p className="text-sm">{slot.name} · {slot.grams.toLocaleString("pt-BR", { maximumFractionDigits: 3 })} g</p>
+              <SearchableItemSelect value={draft.filamentIds[slot.key] || (slots.length === 1 ? draft.filamentIds.default ?? "" : "")}
+                options={(materials.data ?? []).map(m => ({ id: m.id, label: m.name, description: m.material_code ?? undefined }))}
+                label={slot.slotId == null ? `Filamento ${i + 1}` : `Filamento do slot ${slot.slotId}`} emptyLabel="Qual filamento você vai usar?" searchPlaceholder="Buscar filamento..."
+                onChange={id => setDraft(current => ({ ...current, filamentIds: { ...current.filamentIds, [slot.key]: id } }))} />
+              {selectedMaterials[i] && <p className="text-xs text-muted-foreground">Custo do cadastro: {money(Number(input.materials[i].kgPrice))} / kg</p>}
+            </div>)}
+            {(printers.error || materials.error) && <p role="alert" className="text-sm text-destructive">Não foi possível carregar impressoras ou filamentos. Tente novamente.</p>}
+            <details className="rounded-lg border p-3"><summary className="cursor-pointer text-sm font-medium">Rendimento e nome do produto</summary><div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <div><Label htmlFor="pricing-name">Nome do produto</Label><Input id="pricing-name" maxLength={200} value={name} onChange={e => setName(e.target.value)} /></div>
+              {numberField("quantity", "Unidades prontas no lote")}
+            </div><p className="mt-2 text-xs text-muted-foreground">Começa com um produto completo por arquivo/perfil. Se as placas produzem mais unidades, ajuste o rendimento para dividir o custo. Para imprimir mais cópias, altere o arquivo no fatiador.</p></details>
+          </section> : <section className="space-y-4 rounded-xl border bg-card p-4">
             <h2 className="font-semibold">Dados do fatiador</h2>
             <div className="grid gap-3 sm:grid-cols-2">
               <div>
@@ -351,13 +416,15 @@ function FreePricingSimulator({ draft, setDraft }: { draft: FreePricingDraft; se
             >
               Adicionar material / cor
             </Button>
-          </section>
+          </section>}
         </div>
         <aside className="h-fit min-w-0 space-y-4 rounded-xl border bg-card p-5 xl:col-start-2 xl:row-start-1 xl:row-span-2 xl:sticky xl:top-4">
           <h2 className="text-lg font-semibold">Resultado da simulação</h2>
-          {!started && <p className="text-sm text-muted-foreground">Preencha o peso e o tempo para ver o custo e o preço sugerido.</p>}
+          {automatic && draft.estimate && <p className="text-sm text-muted-foreground">Rendimento considerado: {input.quantity} produto(s) completo(s) por arquivo/perfil. Ajuste em Rendimento se necessário.</p>}
+          {!started && <p className="text-sm text-muted-foreground">{automatic ? "Escolha o arquivo, a impressora e o filamento para ver o custo por peça." : "Preencha o peso e o tempo para ver o custo e o preço sugerido."}</p>}
           {started && calculation.error && <div className="space-y-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-950" role="status">
             {materialSubtotal != null && <p>Filamento informado · lote: <strong>{money(materialSubtotal)}</strong>. Este é apenas o material, não o custo completo.</p>}
+            {automatic && materialSubtotal != null && validBasics && !modelError && <p>Filamento / unidade: <strong>{money(materialSubtotal / Number(input.quantity))}</strong></p>}
             <p>{calculation.error}</p>
             {validBasics && <Button variant="outline" size="sm" onClick={() => { setCostsOpen(true); requestAnimationFrame(() => document.getElementById("pricing-costs")?.scrollIntoView?.({ block: "start", behavior: "smooth" })); }}>Conferir custos da impressão</Button>}
           </div>}
@@ -515,7 +582,7 @@ function FreePricingSimulator({ draft, setDraft }: { draft: FreePricingDraft; se
               disabled={!company.data}
               onClick={() =>
                 setInput({
-                  ...input,
+                  ...draft.input,
                   kwh: company.data?.energy_cost_kwh ?? "",
                   machineHour: company.data?.printer_hour_costs.find(p => p.printer_id === printerId)?.hour_cost ?? company.data?.machine_hour_cost ?? "",
                   laborHour: company.data?.labor_cost_hour ?? "",
@@ -526,7 +593,7 @@ function FreePricingSimulator({ draft, setDraft }: { draft: FreePricingDraft; se
             >
               Usar parâmetros da empresa
             </Button>
-            <SearchableItemSelect
+            {!automatic && <SearchableItemSelect
               value={printerId}
               options={(printers.data || []).map((p) => ({
                 id: p.id,
@@ -542,19 +609,20 @@ function FreePricingSimulator({ draft, setDraft }: { draft: FreePricingDraft; se
                   setInput({
                     ...input,
                     watts: p.power_watts ?? "",
-                    machineHour: company.data?.printer_hour_costs.find(rate => rate.printer_id === p.id)?.hour_cost ?? company.data?.machine_hour_cost ?? "",
+                    machineHour: printerMachineHourCost(p, company.data?.printer_hour_costs.find(rate => rate.printer_id === p.id)?.hour_cost, company.data?.machine_hour_cost) ?? "",
                   });
               }}
-            />
+            />}
             <div className="grid gap-3 sm:grid-cols-2">
               {numberField("watts", "Potência média (W)")}
               {numberField("kwh", "Energia (R$ / kWh)")}
               {numberField("machineHour", "Hora-máquina sem energia (R$ / h)")}
-              {numberField("laborMinutes", "Trabalho manual no lote (min)")}
+              {numberField("laborMinutes", automatic ? "Trabalho manual adicional no lote (min)" : "Trabalho manual no lote (min)")}
               {numberField("laborHour", "Mão de obra (R$ / h)")}
               {numberField("overhead", "Despesas indiretas (%)")}
               {numberField("failure", "Reserva adicional para falhas (%)")}
             </div>
+            {automatic && <p className="text-xs text-muted-foreground">Preparação, acabamento, montagem e insumos padrão são incluídos quando configurados na empresa. Trabalho adicional soma aos tempos padrão ({automaticLabor.toLocaleString("pt-BR")} min neste lote). Confira esses custos uma vez nas configurações para reutilizá-los nas próximas peças.</p>}
             <p className="text-xs text-muted-foreground">
               A reserva adiciona uma porcentagem ao custo de produção. Inclua
               purga e suportes no peso; evite contabilizar a mesma perda duas
@@ -563,7 +631,7 @@ function FreePricingSimulator({ draft, setDraft }: { draft: FreePricingDraft; se
           </details>
           <details className="space-y-3 rounded-xl border bg-card p-4">
             <summary className="cursor-pointer font-semibold">Embalagem e outros custos</summary>
-            {input.extras.map((extra, i) => (
+            {draft.input.extras.map((extra, i) => (
               <div
                 key={i}
                 className="grid gap-2 sm:grid-cols-[1fr_110px_140px_auto]"
@@ -574,8 +642,8 @@ function FreePricingSimulator({ draft, setDraft }: { draft: FreePricingDraft; se
                   placeholder="Embalagem"
                   onChange={(e) =>
                     setInput({
-                      ...input,
-                      extras: input.extras.map((x, j) =>
+                      ...draft.input,
+                      extras: draft.input.extras.map((x, j) =>
                         j === i ? { ...x, name: e.target.value } : x,
                       ),
                     })
@@ -588,8 +656,8 @@ function FreePricingSimulator({ draft, setDraft }: { draft: FreePricingDraft; se
                   value={extra.cost}
                   onChange={(e) =>
                     setInput({
-                      ...input,
-                      extras: input.extras.map((x, j) =>
+                      ...draft.input,
+                      extras: draft.input.extras.map((x, j) =>
                         j === i ? { ...x, cost: e.target.value } : x,
                       ),
                     })
@@ -601,8 +669,8 @@ function FreePricingSimulator({ draft, setDraft }: { draft: FreePricingDraft; se
                   value={extra.basis}
                   onChange={(e) =>
                     setInput({
-                      ...input,
-                      extras: input.extras.map((x, j) =>
+                      ...draft.input,
+                      extras: draft.input.extras.map((x, j) =>
                         j === i
                           ? { ...x, basis: e.target.value as "lot" | "unit" }
                           : x,
@@ -617,8 +685,8 @@ function FreePricingSimulator({ draft, setDraft }: { draft: FreePricingDraft; se
                   variant="ghost"
                   onClick={() =>
                     setInput({
-                      ...input,
-                      extras: input.extras.filter((_, j) => j !== i),
+                      ...draft.input,
+                      extras: draft.input.extras.filter((_, j) => j !== i),
                     })
                   }
                 >
@@ -630,9 +698,9 @@ function FreePricingSimulator({ draft, setDraft }: { draft: FreePricingDraft; se
               variant="outline"
               onClick={() =>
                 setInput({
-                  ...input,
+                  ...draft.input,
                   extras: [
-                    ...input.extras,
+                    ...draft.input.extras,
                     { name: "", cost: "", basis: "unit" },
                   ],
                 })

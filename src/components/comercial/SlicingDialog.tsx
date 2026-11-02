@@ -20,6 +20,8 @@ interface Profiles {
 interface Props {
   open: boolean; file: File | null; onOpenChange: (open: boolean) => void;
   onSliced: (file: File, metadata: SlicingJob) => void | Promise<void>;
+  resultLabel?: string;
+  profileId?: string;
 }
 type RpcClient = { rpc(name: string, args?: Record<string, unknown>): Promise<{ data: unknown; error: { message: string } | null }> };
 async function rpc<T>(name: string, args?: Record<string, unknown>): Promise<T> {
@@ -54,7 +56,7 @@ function saveDownload(blob: Blob, name: string) {
 }
 const statusLabel = { uploading: 'Enviando arquivo', queued: 'Aguardando o fatiador local', running: 'Simulando no Bambu Studio', done: 'Simulação concluída', failed: 'Não foi possível simular', cancelled: 'Simulação cancelada' };
 
-export function SlicingDialog({ open, file, onOpenChange, onSliced }: Props) {
+export function SlicingDialog({ open, file, onOpenChange, onSliced, resultLabel = 'Usar no cadastro', profileId }: Props) {
   const { user } = useAuth();
   const [profiles, setProfiles] = useState<Profiles | null>(null), [profile, setProfile] = useState('');
   const [job, setJob] = useState<SlicingJob | null>(null), [busy, setBusy] = useState(false), [progress, setProgress] = useState(0);
@@ -64,10 +66,13 @@ export function SlicingDialog({ open, file, onOpenChange, onSliced }: Props) {
   useEffect(() => {
     if (!open) return;
     let active = true;
-    const refresh = () => rpc<Profiles>('slicer_profiles').then(data => { if (active) { setProfiles(data); setProfile(previous => previous || data.profiles[0]?.id || ''); } }).catch(e => { if (active) setError(e.message); });
+    const refresh = () => rpc<Profiles>('slicer_profiles').then(data => { if (active) {
+      const available = profileId ? { ...data, profiles: data.profiles.filter(p => p.id === profileId) } : data;
+      setProfiles(available); setProfile(previous => available.profiles.some(p => p.id === previous) ? previous : available.profiles[0]?.id || '');
+    } }).catch(e => { if (active) setError(e.message); });
     void refresh(); const timer = setInterval(refresh, 15000);
     return () => { active = false; clearInterval(timer); };
-  }, [open]);
+  }, [open, profileId]);
 
   useEffect(() => {
     const current = ++operation.current; setJob(null); setError(''); setProgress(0); storageKey.current = '';
@@ -79,10 +84,10 @@ export function SlicingDialog({ open, file, onOpenChange, onSliced }: Props) {
       if (!saved) return;
       try {
         const previous = await rpc<SlicingJob>('slicer_job', { p_job: JSON.parse(saved).job_id });
-        if (operation.current === current && previous.source_sha256 === hash) setJob(previous);
+        if (operation.current === current && previous.source_sha256 === hash && (!profileId || previous.profile_id === profileId)) setJob(previous);
       } catch { sessionStorage.removeItem(storageKey.current); }
     }).catch(() => { if (operation.current === current) setError('Não foi possível ler este arquivo.'); });
-  }, [open, file, user]);
+  }, [open, file, user, profileId]);
 
   useEffect(() => {
     if (!open || !job || !['queued', 'running'].includes(job.status)) return;
@@ -174,7 +179,7 @@ export function SlicingDialog({ open, file, onOpenChange, onSliced }: Props) {
         {active && <Button variant="outline" onClick={() => void cancel()}>Cancelar simulação</Button>}
         {job?.status === 'done' && job.result_available ? <>
           <Button variant="outline" disabled={busy} onClick={() => void useResult(true)}><Download className="mr-2 h-4 w-4" />Baixar 3MF</Button>
-          <Button disabled={busy} onClick={() => void useResult()}>{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Usar no cadastro</Button>
+          <Button disabled={busy} onClick={() => void useResult()}>{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{resultLabel}</Button>
         </> : <Button disabled={!file || !selected?.available || busy || Boolean(job && ['queued', 'running'].includes(job.status))} onClick={() => void simulate()}>{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{job?.status === 'uploading' ? 'Retomar envio' : 'Simular no Bambu Studio'}</Button>}
       </div>
       {profiles?.can_manage_workers && !selected?.available && <details className="border-t pt-3 text-sm">

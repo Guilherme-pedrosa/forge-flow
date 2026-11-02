@@ -2,6 +2,16 @@
 
 ## Uso diário
 
+**Comercial → Precificação 3D** abre em **Arquivo e filamento**. Cole o link do MakerWorld ou envie o 3MF. A impressora compatível e os filamentos são preenchidos quando os dados permitem: material/cor únicos ou único filamento daquele tipo no estoque. As escolhas ficam visíveis e podem ser alteradas. Havendo várias correspondências de filamento, o sistema pergunta qual usar. O custo por kg vem do custo médio (convertendo g para kg), sem digitar novamente o preço da bobina.
+
+O link usa o serviço de importação MakerWorld já existente. Perfil único ou indicado de forma inequívoca no link é selecionado automaticamente; quando houver várias configurações, há uma pergunta de perfil. O cálculo usa os totais e o consumo por material publicados naquele perfil, sem somar novamente os totais das placas. Um único material explicitamente identificado pode receber o peso total conhecido. Havendo vários materiais com distribuição de gramas desconhecida, ou faltando tempo/peso, o sistema solicita o 3MF fatiado. Um 3MF já fatiado fornece automaticamente o tempo e os gramas por material de todas as placas.
+
+Para STL ou 3MF sem estimativas, **Calcular tempo e filamento** usa o fatiador local existente. O perfil disponível é Bambu Lab A1, bico 0,4 mm, PLA e camada de 0,20 mm; exige worker conectado. Para outra impressora/material, importe o 3MF fatiado no perfil correspondente. Apenas selecionar impressora e filamento não determina a geometria, suportes, preenchimento ou tempo. O sistema não inventa essas medidas. A instalação e as credenciais do worker estão em [SLICER_WORKER.md](SLICER_WORKER.md).
+
+A tarifa específica da impressora tem prioridade sobre a tarifa geral da empresa. Na ausência de ambas, o cadastro da impressora fornece depreciação (ou aquisição ÷ vida útil) mais manutenção por hora. Energia usa potência cadastrada e tarifa da empresa. Custos desconhecidos continuam pendentes, com subtotal de filamento separado. Esses parâmetros são reutilizados; não é preciso preencher tudo a cada peça. A consulta de impressoras solicita somente identidade e dados de custo, sem credenciais Bambu.
+
+O rendimento começa em um **produto completo** por conjunto de placas e pode ser ajustado em **Rendimento e nome do produto**. Essa quantidade divide os custos do arquivo, sem multiplicar as estimativas nem confundir peças soltas com produtos prontos. Trocar o tipo de material ou usar arquivo de outra impressora bloqueia o preço até novo fatiamento compatível. Se o arquivo omitir o modelo da impressora, a escolha explícita indica a máquina usada no fatiamento. Preparação por placa, acabamento por peça física, montagem por produto e insumos padrão são incluídos quando configurados. Importar/simular apenas calcula; não grava produto, movimenta estoque ou envia impressão.
+
 O caminho principal para um produto é **Comercial → Produtos → cadastro → Valores**. Informe ou confira o custo, acrescente despesas por unidade e digite **Lucro sobre o custo (%)**. O preço muda durante a edição e é gravado junto com o produto em **Salvar/Criar**. **Conferir preço** abre a aba Valores sem salvar nem navegar para outra tela. O percentual é um acréscimo sobre o custo: R$ 10 + 50% = R$ 15, cuja margem sobre a venda é 33,33%.
 
 O custo pode vir da composição confirmada das peças/placas ou ser informado manualmente. Um custo manual existente é preservado até escolher a composição. Nesse modo, o cadastro consulta a composição vigente, inclui os demais custos confirmados na receita e soma as despesas acessórias/outras do cadastro. Não substitui confirmação de materiais, rendimento e demais custos por zeros. Custos incompletos aparecem como pendência. Um arquivo recém-importado precisa ter sua composição salva e conferida antes de usar esse custo.
@@ -10,7 +20,7 @@ O modo escolhido e o percentual são preservados ao reabrir. Digitar diretamente
 
 Esse é o preço base: taxas e frete de venda dependem do canal. A simulação de tarifas é opcional, em outra aba. Uma aceitação na formação completa de preço substitui o percentual anterior pelo novo preço aceito, para que reabrir o cadastro não recalcule sobre uma regra antiga.
 
-**Comercial → Precificação 3D** abre direto na simulação livre. Informe a quantidade de produtos completos, o peso total de filamento, o custo por kg e o tempo total das placas. O nome é opcional para calcular. Campos decimais desse caminho aceitam vírgula.
+**Simulação livre** continua disponível como opção manual. Informe a quantidade de produtos completos, o peso total de filamento, o custo por kg e o tempo total das placas. O nome é opcional para calcular. Campos decimais desse caminho aceitam vírgula.
 
 O resultado fica logo depois dos dados do fatiador em telas estreitas. Energia, uso da máquina e trabalho ficam em **Custos da impressão**; embalagem e taxas de venda têm grupos separados. A simulação preenchida é conservada ao alternar para Produto cadastrado e voltar, durante a permanência nessa tela. Trocar empresa ou usuário limpa esse rascunho.
 
