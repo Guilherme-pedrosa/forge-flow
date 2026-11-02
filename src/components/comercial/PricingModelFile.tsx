@@ -3,7 +3,7 @@ import { FileBox, Loader2, Scissors } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { modelPricingFromComposition, type ModelPricingEstimate } from "@/lib/model-pricing";
+import { modelPricingFromComposition, printerMatchesSliceModels, type ModelPricingEstimate } from "@/lib/model-pricing";
 import type { SlicingJob } from "./SlicingDialog";
 
 const PricingSlicingDialog = lazy(() => import("./SlicingDialog").then(module => ({ default: module.SlicingDialog })));
@@ -65,8 +65,10 @@ export function PricingModelFile({ sourceFile, estimate, onLoaded, printer, mate
 
   const a1 = !!printer && /bambu/i.test(`${printer.brand} ${printer.model}`)
     && /\ba1\b/i.test(printer.model) && !/mini/i.test(printer.model);
+  const a2l = !!printer && /bambu/i.test(`${printer.brand} ${printer.model}`) && /^(?:Bambu\s+(?:Lab\s+)?)?A2L$/i.test(printer.model.trim());
+  const slicingProfileId = a2l ? "bambu-a2l-04-pla-020-v1" : "bambu-a1-04-pla-020-v1";
   const pla = materialCodes.length > 0 && materialCodes.every(code => code.trim().toUpperCase() === "PLA");
-  const canSlice = a1 && pla && !!sourceFile && sourceFile.size <= 64 * 1024 * 1024;
+  const canSlice = (a1 || a2l) && pla && !!sourceFile && sourceFile.size <= 64 * 1024 * 1024;
 
   async function load(file: File) {
     const current = ++operation.current;
@@ -90,13 +92,15 @@ export function PricingModelFile({ sourceFile, estimate, onLoaded, printer, mate
 
   async function useSliced(file: File, job: SlicingJob) {
     const original = sourceFile, context = selection, current = ++operation.current;
+    if (job.profile_id !== slicingProfileId) throw new Error("O perfil do resultado não corresponde ao modelo selecionado. Simule novamente.");
     const result = await readEstimate(file);
     if (!alive.current || operation.current !== current || source.current !== original || selected.current !== context)
       throw new Error("A peça ou a seleção mudou. Confira a seleção e simule novamente.");
     if (!original || !result.estimate) throw new Error(result.notice || "O resultado não contém tempo e filamento completos.");
+    if (printer && printerMatchesSliceModels(printer, result.estimate.printerModelIds) === false) throw new Error("O arquivo fatiado informa outro modelo de impressora. Simule novamente com a seleção atual.");
     // The worker profile is authoritative even when slice_info omits its model.
-    const next = job.profile_id === "bambu-a1-04-pla-020-v1" && !result.estimate.printerModelIds.length
-      ? { ...result.estimate, printerModelIds: ["Bambu Lab A1"] } : result.estimate;
+    const model = job.profile_id === "bambu-a1-04-pla-020-v1" ? "Bambu Lab A1" : job.profile_id === "bambu-a2l-04-pla-020-v1" ? "Bambu Lab A2L" : null;
+    const next = model && !result.estimate.printerModelIds.length ? { ...result.estimate, printerModelIds: [model] } : result.estimate;
     // The estimate belongs to these returned bytes. Keep the generated 3MF
     // available for import and hashing instead of attaching the original STL.
     expectedSource.current = file;
@@ -124,10 +128,10 @@ export function PricingModelFile({ sourceFile, estimate, onLoaded, printer, mate
     {sourceFile && !estimate && !reading && <p className="text-sm text-muted-foreground">{notice || "Este arquivo ainda precisa de tempo e consumo do fatiador."}</p>}
     {sourceFile && <div className="space-y-2">
       {canSlice ? <Button type="button" variant="outline" disabled={reading} onClick={() => setSlicing(true)}><Scissors className="mr-2 h-4 w-4" />{estimate ? "Simular novamente no Bambu Studio" : "Calcular tempo e filamento"}</Button>
-        : <p className="text-xs text-muted-foreground">A simulação local disponível usa Bambu Lab A1 (0,4 mm), PLA e camada de 0,20 mm, com arquivo de até 64 MB. Para outra impressora ou material, importe um 3MF já fatiado no perfil correspondente. Selecione a A1 e todos os filamentos PLA para habilitar a simulação.</p>}
+        : <p className="text-xs text-muted-foreground">A simulação local atende à A1 e à A2L, bico de 0,4 mm, PLA e camada de 0,20 mm, com arquivo de até 64 MB. Selecione um desses modelos e os filamentos PLA para habilitar a simulação.</p>}
       <p className="text-xs text-muted-foreground">Trocar a impressora ou o tipo de material exige um fatiamento compatível. O custo usa os filamentos escolhidos abaixo.</p>
     </div>}
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-    {slicing && canSlice && <Suspense fallback={<p role="status" className="text-sm">Abrindo simulação…</p>}><PricingSlicingDialog open file={sourceFile} onOpenChange={setSlicing} onSliced={useSliced} resultLabel="Usar na precificação" profileId="bambu-a1-04-pla-020-v1" /></Suspense>}
+    {slicing && canSlice && <Suspense fallback={<p role="status" className="text-sm">Abrindo simulação…</p>}><PricingSlicingDialog open file={sourceFile} onOpenChange={setSlicing} onSliced={useSliced} resultLabel="Usar na precificação" profileId={slicingProfileId} /></Suspense>}
   </section>;
 }

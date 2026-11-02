@@ -5,7 +5,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Progress } from '@/components/ui/progress';
-import { detectLocalSlicer, LOCAL_SLICER_PROFILE_ID, sliceWithLocalExtension, type LocalSlicerInfo } from '@/lib/local-slicer-extension';
+import { detectLocalSlicer, LOCAL_SLICER_PROFILES, sliceWithLocalExtension, type LocalSlicerInfo } from '@/lib/local-slicer-extension';
 
 const CHUNK_BYTES = 393216, MAX_FILE_BYTES = 67108864;
 export interface SlicingJob {
@@ -23,6 +23,7 @@ interface Props {
   onSliced: (file: File, metadata: SlicingJob) => void | Promise<void>;
   resultLabel?: string;
   profileId?: string;
+  ownedPrinterModels?: string[];
 }
 type RpcClient = { rpc(name: string, args?: Record<string, unknown>): Promise<{ data: unknown; error: { message: string } | null }> };
 async function rpc<T>(name: string, args?: Record<string, unknown>): Promise<T> {
@@ -57,7 +58,7 @@ function saveDownload(blob: Blob, name: string) {
 }
 const statusLabel = { uploading: 'Enviando arquivo', queued: 'Aguardando o fatiador local', running: 'Simulando no Bambu Studio', done: 'Simulação concluída', failed: 'Não foi possível simular', cancelled: 'Simulação cancelada' };
 
-export function SlicingDialog({ open, file, onOpenChange, onSliced, resultLabel = 'Usar no cadastro', profileId }: Props) {
+export function SlicingDialog({ open, file, onOpenChange, onSliced, resultLabel = 'Usar no cadastro', profileId, ownedPrinterModels }: Props) {
   const { user } = useAuth();
   const [profiles, setProfiles] = useState<Profiles | null>(null), [profile, setProfile] = useState('');
   const [job, setJob] = useState<SlicingJob | null>(null), [busy, setBusy] = useState(false), [progress, setProgress] = useState(0);
@@ -65,10 +66,24 @@ export function SlicingDialog({ open, file, onOpenChange, onSliced, resultLabel 
   const operation = useRef(0), storageKey = useRef('');
   const [local, setLocal] = useState<LocalSlicerInfo | null>(null), [detecting, setDetecting] = useState(true);
   const [useCloud, setUseCloud] = useState(false), [detectVersion, setDetectVersion] = useState(0);
+  const [localProfile, setLocalProfile] = useState('');
+  const ownedProfileIds = ownedPrinterModels === undefined ? null : LOCAL_SLICER_PROFILES.filter(option => ownedPrinterModels.some(model => model.replace(/^Bambu\s+(?:Lab\s+)?/i, '').trim().toUpperCase() === option.label)).map(option => option.id);
+  const ownedProfilesKey = JSON.stringify(ownedProfileIds);
+  const eligibleProfiles = LOCAL_SLICER_PROFILES.filter(option => (!profileId || option.id === profileId) && (!ownedProfileIds || ownedProfileIds.includes(option.id)));
+  const localProfiles = eligibleProfiles.filter(option => Boolean(local && (local.profiles ?? [local.profile_id]).includes(option.id)));
+  const selectedLocalProfile = localProfiles.find(option => option.id === localProfile) ?? localProfiles[0];
   const [localFile, setLocalFile] = useState<File | null>(null), [jobSource, setJobSource] = useState<'local' | 'cloud' | null>(null);
   const localOperation = useRef<AbortController | null>(null);
   const cloudEnabled = !detecting && useCloud;
+  const cloudOwnedKey = cloudEnabled ? ownedProfilesKey : '';
   const jobId = job?.id, jobStatus = job?.status;
+  const resultProfileAllowed = !!job && (!profileId || job.profile_id === profileId) && (!ownedProfileIds || ownedProfileIds.includes(job.profile_id))
+    && (jobSource !== 'local' || selectedLocalProfile?.id === job.profile_id);
+  useEffect(() => {
+    if (!jobId || resultProfileAllowed) return;
+    ++operation.current; localOperation.current?.abort(); localOperation.current = null;
+    setJob(null); setLocalFile(null); setJobSource(null); setBusy(false); setError(''); setProgress(0);
+  }, [jobId, resultProfileAllowed]);
 
   useEffect(() => {
     if (!open) return;
@@ -76,7 +91,7 @@ export function SlicingDialog({ open, file, onOpenChange, onSliced, resultLabel 
     setDetecting(true); setLocal(null); setUseCloud(false); setProfiles(null);
     void detectLocalSlicer({ signal: controller.signal }).then(value => {
       if (controller.signal.aborted) return;
-      setLocal(profileId && value?.profile_id !== profileId ? null : value); setDetecting(false);
+      setLocal(value); setDetecting(false);
     });
     return () => controller.abort();
   }, [open, profileId, detectVersion]);
@@ -85,12 +100,13 @@ export function SlicingDialog({ open, file, onOpenChange, onSliced, resultLabel 
     if (!open || !cloudEnabled) return;
     let active = true;
     const refresh = () => rpc<Profiles>('slicer_profiles').then(data => { if (active) {
-      const available = profileId ? { ...data, profiles: data.profiles.filter(p => p.id === profileId) } : data;
+      const allowed: string[] | null = JSON.parse(ownedProfilesKey);
+      const available = { ...data, profiles: data.profiles.filter(p => (!profileId || p.id === profileId) && (!allowed || allowed.includes(p.id))) };
       setProfiles(available); setProfile(previous => available.profiles.some(p => p.id === previous) ? previous : available.profiles[0]?.id || '');
     } }).catch(e => { if (active) setError(e.message); });
     void refresh(); const timer = setInterval(refresh, 15000);
     return () => { active = false; clearInterval(timer); };
-  }, [open, profileId, cloudEnabled]);
+  }, [open, profileId, cloudEnabled, ownedProfilesKey]);
 
   useEffect(() => {
     const current = ++operation.current; localOperation.current?.abort(); localOperation.current = null;
@@ -108,7 +124,7 @@ export function SlicingDialog({ open, file, onOpenChange, onSliced, resultLabel 
       } catch { sessionStorage.removeItem(storageKey.current); }
     }).catch(() => { if (operation.current === current) setError('Não foi possível ler este arquivo.'); });
     return cleanup;
-  }, [open, file, user, profileId, cloudEnabled]);
+  }, [open, file, user, profileId, cloudEnabled, cloudOwnedKey]);
 
   useEffect(() => {
     if (!open || !jobId || jobSource !== 'cloud' || !['queued', 'running'].includes(jobStatus ?? '')) return;
@@ -120,22 +136,23 @@ export function SlicingDialog({ open, file, onOpenChange, onSliced, resultLabel 
   }, [open, jobId, jobStatus, jobSource]);
 
   async function simulateLocal() {
-    if (!file || !local || local.profile_id !== LOCAL_SLICER_PROFILE_ID || busy) return;
+    if (!file || !local || !selectedLocalProfile || busy) return;
+    const selectedProfileId = selectedLocalProfile.id;
     const current = ++operation.current, controller = new AbortController(); localOperation.current = controller;
     const id = `local:${crypto.randomUUID()}`;
     setBusy(true); setError(''); setProgress(0); setLocalFile(null); setJobSource('local');
-    setJob({ id, file_name: file.name, status: 'running', source_sha256: '', source_size: file.size, profile_id: local.profile_id, progress: 0, result_available: false, result_chunks: 0 });
+    setJob({ id, file_name: file.name, status: 'running', source_sha256: '', source_size: file.size, profile_id: selectedProfileId, progress: 0, result_available: false, result_chunks: 0 });
     try {
       if (!/\.(stl|3mf)$/i.test(file.name) || !file.size || file.size > MAX_FILE_BYTES) throw new Error('Escolha um STL ou 3MF de até 64 MB.');
       const sourceHash = await file.arrayBuffer().then(fileSha256);
       if (current !== operation.current || controller.signal.aborted) return;
-      const result = await sliceWithLocalExtension(file, { signal: controller.signal, onProgress: value => {
+      const result = await sliceWithLocalExtension(file, { profileId: selectedProfileId, signal: controller.signal, onProgress: value => {
         if (current === operation.current) { setProgress(value); setJob(previous => previous && { ...previous, progress: value }); }
       } });
       const resultHash = await result.file.arrayBuffer().then(fileSha256);
       if (current !== operation.current || controller.signal.aborted) return;
       setLocalFile(result.file);
-      setJob({ id, file_name: file.name, status: 'done', source_sha256: sourceHash, source_size: file.size, profile_id: local.profile_id,
+      setJob({ id, file_name: file.name, status: 'done', source_sha256: sourceHash, source_size: file.size, profile_id: selectedProfileId,
         progress: 100, result_available: true, result_size: result.file.size, result_sha256: resultHash, result_chunks: Math.ceil(result.file.size / CHUNK_BYTES), stats: result.stats });
     } catch (failure) {
       if (current === operation.current) {
@@ -155,8 +172,15 @@ export function SlicingDialog({ open, file, onOpenChange, onSliced, resultLabel 
       const bytes = new Uint8Array(await file.arrayBuffer()), hash = await fileSha256(bytes.buffer);
       storageKey.current = `forge-slicing:${user.id}:${hash}`;
       const existing = sessionStorage.getItem(storageKey.current), saved = existing && !['done', 'failed', 'cancelled'].includes(job?.status ?? '') ? JSON.parse(existing) : {};
-      const request = saved.request_id ?? crypto.randomUUID();
-      sessionStorage.setItem(storageKey.current, JSON.stringify({ request_id: request, job_id: saved.job_id }));
+      // A previous profile may share this file's cache key. Reuse only its own in-flight request.
+      let cached = saved;
+      if (saved.job_id && (!job || job.profile_id !== profile)) {
+        const prior = await rpc<SlicingJob>('slicer_job', { p_job: saved.job_id });
+        if (current !== operation.current) return;
+        if (prior.profile_id !== profile || ['done', 'failed', 'cancelled'].includes(prior.status)) cached = {};
+      }
+      const request = cached.request_id ?? crypto.randomUUID();
+      sessionStorage.setItem(storageKey.current, JSON.stringify({ request_id: request, job_id: cached.job_id }));
       let next = await rpc<SlicingJob>('start_slicer_upload', { p_name: file.name, p_size: file.size, p_sha256: hash, p_profile: profile, p_request: request });
       if (current !== operation.current) { await rpc('cancel_slicer_job', { p_job: next.id }); return; }
       setJob(next); sessionStorage.setItem(storageKey.current, JSON.stringify({ request_id: request, job_id: next.id }));
@@ -185,10 +209,12 @@ export function SlicingDialog({ open, file, onOpenChange, onSliced, resultLabel 
     } catch (e) { setError(e instanceof Error ? e.message : 'Não foi possível cancelar.'); }
   }
   async function applyResult(downloadOnly = false) {
-    if (!job) return;
+    if (!job || !resultProfileAllowed) return;
+    const current = operation.current;
     setBusy(true); setError('');
     try {
       const result = jobSource === 'local' ? localFile : await downloadSlicedFile(job);
+      if (current !== operation.current) return;
       if (!result) throw new Error('O resultado local não está mais disponível. Fatie novamente.');
       if (downloadOnly) saveDownload(result, result.name);
       else { await onSliced(result, job); onOpenChange(false); }
@@ -214,15 +240,20 @@ export function SlicingDialog({ open, file, onOpenChange, onSliced, resultLabel 
         <DialogDescription>Fatie o arquivo aqui para calcular tempo e filamento por placa. O motor do Bambu Studio trabalha em segundo plano; você não precisa abrir o projeto nele.</DialogDescription></DialogHeader>
       <p className="break-words text-sm font-medium">{file?.name ?? 'Escolha um arquivo STL ou 3MF.'}</p>
       {detecting && <p role="status" className="text-sm text-muted-foreground">Verificando a extensão deste computador…</p>}
-      {local && !useCloud && <div className="space-y-2"><p className="font-medium">Extensão local conectada</p><p className="text-sm text-muted-foreground">Bambu A1 · bico 0,4 mm · PLA · camada 0,20 mm · Bambu Studio {local.engine_version}</p><p className="text-sm text-muted-foreground">O arquivo é processado neste computador, sem envio para a fila da empresa.</p></div>}
+      {local && !useCloud && <div className="space-y-2"><p className="font-medium">Extensão local conectada</p>
+        {localProfiles.length > 1 && <label className="block text-sm font-medium">Modelo de impressão<select aria-label="Modelo para fatiamento" value={selectedLocalProfile?.id ?? ''} onChange={event => { setLocalProfile(event.target.value); setJob(null); setLocalFile(null); setJobSource(null); setError(''); }} disabled={busy || Boolean(active)} className="mt-2 h-11 w-full rounded-md border bg-background px-3">{localProfiles.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select></label>}
+        {selectedLocalProfile ? <p className="text-sm text-muted-foreground">Bambu {selectedLocalProfile.label} · bico 0,4 mm · PLA · camada 0,20 mm · Bambu Studio {local.engine_version}</p>
+          : eligibleProfiles.length === 0 ? <p role="status" className="text-sm">Aguardando um modelo cadastrado compatível para fatiar: A1 ou A2L.</p>
+          : <p role="alert" className="text-sm">Atualize o conector local para usar o modelo selecionado. <a className="text-primary underline" href="/downloads/forge-slicer-extension.zip" download>Baixar atualização</a></p>}
+        <p className="text-sm text-muted-foreground">O arquivo é processado neste computador, sem envio para a fila da empresa.</p></div>}
       {cloudEnabled && <><label className="space-y-2 text-sm font-medium">Perfil de impressão da empresa
-        <select aria-label="Perfil de impressão" className="mt-2 h-11 w-full rounded-md border bg-background px-3" value={profile} onChange={e => setProfile(e.target.value)} disabled={Boolean(active) || busy}>
+        <select aria-label="Perfil de impressão" className="mt-2 h-11 w-full rounded-md border bg-background px-3" value={profile} onChange={e => { if (storageKey.current) sessionStorage.removeItem(storageKey.current); setProfile(e.target.value); setJob(null); setLocalFile(null); setJobSource(null); setError(''); }} disabled={Boolean(active) || busy}>
           {profiles?.profiles.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
       </label>
       <p className="text-sm text-muted-foreground">Bambu Studio {selected?.engine_version ?? '02.08.02.61'} · {selected?.available ? 'Fatiador da empresa conectado' : 'Nenhum fatiador da empresa conectado'}</p></>}
       {file?.name.toLowerCase().endsWith('.3mf') && <p className="text-sm text-muted-foreground">Mantém as placas, cópias e cores do projeto 3MF. Neste perfil, todos os filamentos do arquivo precisam ser PLA; os materiais configurados no projeto são preservados.</p>}
-      <p className="text-xs text-muted-foreground">O perfil atual atende à A1. A2L e outros modelos precisam de um perfil compatível; a extensão não separa um projeto AMS em novas placas automaticamente.</p>
+      <p className="text-xs text-muted-foreground">A1 e A2L usam seus perfis oficiais. O projeto determina as trocas de cores e a torre; imprimir sem AMS exige placas preparadas para essa produção.</p>
       {cloudEnabled && !selected?.available && <p className="rounded-md bg-muted p-3 text-sm">A fila da empresa precisa de um computador conectado. Para usar a extensão deste Chrome, volte ao fatiamento neste computador.</p>}
       {!local && !detecting && !useCloud && <div role="status" className="space-y-2 rounded-md border p-3 text-sm"><p className="font-medium">O Forge não conseguiu se conectar à extensão deste Chrome.</p><p className="text-muted-foreground">Se o popup já mostra “Conectado”, recarregue a extensão em chrome://extensions e atualize esta página. A versão atual aceita elevare3d.com.br e elevare3d.lovable.app.</p><Button variant="outline" size="sm" disabled={busy || Boolean(active)} onClick={() => setDetectVersion(value => value + 1)}>Verificar extensão novamente</Button><details><summary className="cursor-pointer text-muted-foreground">Ainda não instalou?</summary><p className="my-2 text-muted-foreground">Instale a extensão e o conector local com o Bambu Studio oficial.</p><a className="font-medium text-primary underline" href="/downloads/forge-slicer-extension.zip" download>Baixar extensão para Chrome</a></details></div>}
       {job && <div className="space-y-2 rounded-lg border p-3" aria-live="polite">
@@ -238,10 +269,10 @@ export function SlicingDialog({ open, file, onOpenChange, onSliced, resultLabel 
       {error && <p role="alert" className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">{error}</p>}
       <div className="flex flex-wrap justify-end gap-2">
         {active && <Button variant="outline" onClick={() => void cancel()}>Cancelar simulação</Button>}
-        {job?.status === 'done' && job.result_available ? <>
+        {job?.status === 'done' && job.result_available && resultProfileAllowed ? <>
           <Button variant="outline" disabled={busy} onClick={() => void applyResult(true)}><Download className="mr-2 h-4 w-4" />Baixar 3MF</Button>
           <Button disabled={busy} onClick={() => void applyResult()}>{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{resultLabel}</Button>
-        </> : !useCloud ? <Button disabled={detecting || !local || !file || busy || Boolean(active)} onClick={() => void simulateLocal()}>{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Fatiar neste computador</Button> : <Button disabled={detecting || !file || !selected?.available || busy || Boolean(job && ['queued', 'running'].includes(job.status))} onClick={() => void simulate()}>{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{job?.status === 'uploading' ? 'Retomar envio' : 'Simular no Bambu Studio'}</Button>}
+        </> : !useCloud ? <Button disabled={detecting || !selectedLocalProfile || !file || busy || Boolean(active)} onClick={() => void simulateLocal()}>{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Fatiar neste computador</Button> : <Button disabled={detecting || !file || !selected?.available || busy || Boolean(job && ['queued', 'running'].includes(job.status))} onClick={() => void simulate()}>{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{job?.status === 'uploading' ? 'Retomar envio' : 'Simular no Bambu Studio'}</Button>}
       </div>
       {!detecting && <Button type="button" variant="link" disabled={busy || Boolean(active)} className="h-auto p-0 text-xs" onClick={() => setUseCloud(value => !value)}>{useCloud ? 'Usar extensão deste computador' : 'Usar fatiador conectado à empresa'}</Button>}
       {cloudEnabled && profiles?.can_manage_workers && !selected?.available && <details className="border-t pt-3 text-sm">

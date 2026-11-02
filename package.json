@@ -8,7 +8,7 @@
     "build": "vite build",
     "build:worker": "node scripts/build-slicer-worker.mjs",
     "build:extension": "node scripts/build-slicer-extension.mjs && node scripts/package-slicer-extension.mjs",
-    "test:extension": "node scripts/test-slicer-extension.mjs && node scripts/test-slicer-native-host.mjs && node scripts/test-slicer-package.mjs && vitest run src/lib/local-slicer-extension.test.ts src/components/comercial/SlicingDialog.test.tsx src/components/comercial/PricingModelFile.test.tsx --maxWorkers=2",
+    "test:extension": "node scripts/test-slicer-extension.mjs && node scripts/test-slicer-native-host.mjs && node scripts/test-slicer-package.mjs && vitest run src/lib/local-slicer-extension.test.ts src/components/comercial/SlicingDialog.test.tsx src/components/comercial/PricingModelFile.test.tsx --maxWorkers=1",
     "test:slicer": "node scripts/test-slicer-queue.mjs && node scripts/test-slicer-worker.mjs && node scripts/test-slicer-startup.mjs",
     "test:filaments": "node scripts/test-simple-filament-registration.mjs && vitest run src/components/estoque/FilamentRegistration.test.tsx src/lib/filament-registration.test.ts src/test/bobinas-registration-entry.test.tsx src/test/inventory-registration-context.test.tsx src/test/inventory-cost-workflow-ui.test.tsx src/lib/pricing-filaments.test.ts --maxWorkers=2",
     "test:pricing-consistency": "node scripts/test-catalog-source-replay.mjs && node scripts/test-import-cost-policy.mjs && node scripts/test-full-catalog-pricing.mjs && node scripts/test-channel-pricing-policy.mjs",

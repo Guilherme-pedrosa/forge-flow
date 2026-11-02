@@ -19,6 +19,24 @@ const mesh = '<mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="
 const modelConfig = '<config><object id="1"><metadata key="name" value="Cube.stl"/></object><plate><metadata key="plater_id" value="1"/><model_instance><metadata key="object_id" value="1"/></model_instance></plate></config>';
 
 describe("3MF plate plans from real slicer metadata", () => {
+  it.each(["A1", "A2L"])("uses the explicit official %s project preset when CLI slice_info leaves the model blank", model => {
+    const current = composition(), project = { printer_model: `Bambu Lab ${model}`, printer_settings_id: `Bambu Lab ${model} 0.4 nozzle` };
+    const result = slicedCompositionFrom3mf(zip(realSlice, { "Metadata/project_settings.config": strToU8(JSON.stringify(project)) }), current);
+    expect(result.plates[0].slicer_estimates?.printer_model_id).toBe(`Bambu Lab ${model}`);
+    expect(result.plates[0]).toMatchObject({ weight_grams: 3.63, time_seconds: 1351 }); expect(result.plates[0].parts).toEqual(current.plates[0].parts);
+  });
+  it("never identifies the printer from a filename, an unpaired project hint or an unknown model", () => {
+    for (const project of [{ printer_model: "Bambu Lab A2L" }, { printer_settings_id: "Bambu Lab A2L 0.4 nozzle" }, { printer_model: "A2L", printer_settings_id: "custom" }, { printer_model: "Bambu Lab A3", printer_settings_id: "Bambu Lab A3 0.4 nozzle" }]) {
+      expect(slicedCompositionFrom3mf(zip(realSlice, { "Metadata/project_settings.config": strToU8(JSON.stringify(project)) }), composition()).plates[0].slicer_estimates?.printer_model_id).toBeNull();
+    }
+  });
+  it("rejects conflicting or malformed fallback project metadata and never replaces an explicit slice_info model", () => {
+    const project = strToU8(JSON.stringify({ printer_model: "Bambu Lab A2L", printer_settings_id: "Bambu Lab A1 0.4 nozzle" }));
+    expect(() => slicedCompositionFrom3mf(zip(realSlice, { "Metadata/project_settings.config": project }), composition())).toThrow("não correspondem");
+    expect(() => slicedCompositionFrom3mf(zip(realSlice, { "Metadata/project_settings.config": strToU8("{invalid") }), composition())).toThrow("configuração");
+    const explicit = realSlice.replace('key="printer_model_id" value=""', 'key="printer_model_id" value="N2S"');
+    expect(slicedCompositionFrom3mf(zip(explicit, { "Metadata/project_settings.config": project }), composition()).plates[0].slicer_estimates?.printer_model_id).toBe("N2S");
+  });
   it("imports actual prediction, grams, nozzle, slicer version and filament grams/meters without allocating mixed pieces", () => {
     const current = composition();
     const result = slicedCompositionFrom3mf(zip(realSlice), current);

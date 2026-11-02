@@ -4,6 +4,7 @@ export const PROTOCOL = Object.freeze({
   extension_id: "lkalcgppeejlaioplgipmmgdcpncofck",
   host_name: "com.elevare3d.forge_slicer",
   profile_id: "bambu-a1-04-pla-020-v1",
+  profiles: ["bambu-a1-04-pla-020-v1", "bambu-a2l-04-pla-020-v1"],
   chunk_bytes: 393216,
   max_file_bytes: 67108864,
   allowed_origins: ["https://elevare3d.lovable.app", "https://id-preview--f4da8107-e6b0-434d-90a9-de1c21edf12f.lovable.app", "https://elevare3d.com.br"],
@@ -27,7 +28,7 @@ export function validateRequest(value) {
   if (!fields || Object.keys(value).some(key => !["id", "op", ...fields].includes(key))) throw new Error("Operação não permitida.");
   if (value.op === "begin" && (typeof value.name !== "string" || value.name.length > 200 || /[\\/\x00-\x1f]/.test(value.name)
     || !/\.(stl|3mf)$/i.test(value.name) || !Number.isSafeInteger(value.size) || value.size < 1 || value.size > PROTOCOL.max_file_bytes
-    || !/^[a-f0-9]{64}$/.test(value.sha256 || "") || value.profile_id !== PROTOCOL.profile_id)) throw new Error("Arquivo ou perfil não suportado.");
+    || !/^[a-f0-9]{64}$/.test(value.sha256 || "") || !PROTOCOL.profiles.includes(value.profile_id))) throw new Error("Arquivo ou perfil não suportado.");
   if (["chunk", "read"].includes(value.op) && (!Number.isSafeInteger(value.part) || value.part < 0
     || value.part >= Math.ceil(PROTOCOL.max_file_bytes / PROTOCOL.chunk_bytes))) throw new Error("Bloco inválido.");
   if (value.op === "chunk" && (typeof value.base64 !== "string" || !value.base64.length || value.base64.length > 524288

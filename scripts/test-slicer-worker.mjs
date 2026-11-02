@@ -6,7 +6,7 @@ import { EventEmitter } from 'node:events';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { API_ORIGIN, PROFILE, ENGINE_VERSION, CHUNK_BYTES, sha256, readZip, writeZip, parseXml, normalizeOutput, validateArchive, nativeProjectLayout, verifyNativeProject, readMetrics, runSimulation, processJob, createRpc, safeRemoveJob } from './forge-slicer-worker.mjs';
+import { API_ORIGIN, PROFILE, PROFILE_DEFINITIONS, ENGINE_VERSION, CHUNK_BYTES, sha256, readZip, writeZip, parseXml, normalizeOutput, validateArchive, nativeProjectLayout, verifyNativeProject, readMetrics, runSimulation, processJob, createRpc, safeRemoveJob } from './forge-slicer-worker.mjs';
 const { build } = createRequire(createRequire(import.meta.url).resolve('vite/package.json'))('esbuild');
 
 const root = await mkdtemp(path.join(os.tmpdir(), 'forge-slicer-test-'));
@@ -20,8 +20,18 @@ const info = '<config><header><header_item key="X-BBL-Client-Version" value="02.
 const archive = (config = buggyConfig, extra = []) => writeZip([member('3D/3dmodel.model', geometry), member('Metadata/model_settings.config', config), member('Metadata/slice_info.config', info), member('Metadata/plate_1.gcode', '; official toolpaths\nG1 X20 E0.02'), ...extra]);
 const report = { return_code: 0, sliced_plates: [{ id: 1, total_predication: 100.25, filaments: [{ total_used_g: 2.1001 }] }] };
 const officialArgs = [['Bambu Lab A1 0.4 nozzle'], ['Direct Drive Standard']];
+function withMachineSettings(raw){const entries=readZip(raw),name='Metadata/project_settings.config',existing=entries.find(e=>e.name===name);
+ const value={...(existing?JSON.parse(existing.data):{}),printer_model:'Bambu Lab A1',printer_settings_id:'Bambu Lab A1 0.4 nozzle'};
+ return writeZip([...entries.filter(e=>e.name!==name),member(name,JSON.stringify(value))]);}
 
 try {
+  await test('Only the A1 and A2L model profiles can be resolved; inherited object keys never become profiles',async()=>{
+    assert.deepEqual(Object.keys(PROFILE_DEFINITIONS),[PROFILE,'bambu-a2l-04-pla-020-v1']);
+    for(const profileId of ['other','constructor','__proto__'])await assert.rejects(runSimulation({profileId}),/Modelo.*não autorizado/);
+    const raw=archive(buggyConfig.replaceAll('Bambu Lab A1','Bambu Lab A2L'));
+    const normalized=normalizeOutput(raw,['Bambu Lab A2L 0.4 nozzle'],['Direct Drive Standard']);
+    assert.equal(normalized.normalizations.length,2);assert.equal(readMetrics(normalized.entries,report,'Bambu Lab A2L').plates[0].printer_model_id,'Bambu Lab A2L');
+  });
   await test('Bundled native-host imports stay inert and do not activate the cloud queue CLI', async () => {
     const worker = fileURLToPath(new URL('./forge-slicer-worker.mjs', import.meta.url));
     const bundled = path.join(root, 'native-library-proof.mjs');
@@ -148,12 +158,13 @@ try {
   const profileDir = path.join(root, 'profiles'); await mkdir(profileDir);
   const hashes = {};
   for (const kind of ['machine', 'process', 'filament']) {
-    const bytes = Buffer.from(JSON.stringify(kind === 'process' ? { compatible_printers: officialArgs[0], print_extruder_variant: officialArgs[1] } : {}));
+    const definition=PROFILE_DEFINITIONS[PROFILE];
+    const bytes = Buffer.from(JSON.stringify(kind === 'process' ? { name:definition.process,compatible_printers: officialArgs[0], print_extruder_variant: officialArgs[1] } : kind === 'machine' ? {name:definition.machine,printer_model:definition.model} : {name:definition.filament}));
     await writeFile(path.join(profileDir, kind + '.json'), bytes); hashes[kind] = sha256(bytes);
   }
   await test('Native 3MF execution disables rearrangement and keeps embedded PLA instead of remapping all slots', async () => {
     const twoPlateInfo = '<config><header><header_item key="X-BBL-Client-Version" value="02.08.02.61"/></header>' + [1,2].map(id => '<plate><metadata key="index" value="' + id + '"/><metadata key="prediction" value="100"/><metadata key="weight" value="2.1"/><filament id="1" type="PLA" color="#00AE42" used_g="2.1" used_m="0.7"/></plate>').join('') + '</config>';
-    const raw = writeZip([...nativeEntries.filter(e => e.name !== 'Metadata/slice_info.config'), member('Metadata/slice_info.config', twoPlateInfo)]);
+    const raw = withMachineSettings(writeZip([...nativeEntries.filter(e => e.name !== 'Metadata/slice_info.config'), member('Metadata/slice_info.config', twoPlateInfo)]));
     const workspace = path.join(root, 'native-project');
     const result = await runSimulation({ enginePath: '/official', profileDir, profileHashes: hashes, source: nativeSource, extension: '3mf', workspace,
       spawnProcess(_exe, args) {
@@ -174,7 +185,7 @@ try {
         assert.equal(args.at(-1), path.join(workspace, 'source.stl')); assert.deepEqual(args.slice(args.indexOf('--orient'), args.indexOf('--orient') + 2), ['--orient', '1']);
         assert.ok(!args.some(arg => /--(?:send|print|connect|upload)/.test(arg)));
         const child = new EventEmitter(); child.kill = () => {};
-        void Promise.all([writeFile(path.join(workspace, 'output', 'simulation.3mf'), archive()), writeFile(path.join(workspace, 'output', 'result.json'), JSON.stringify(report))]).then(() => child.emit('exit', 0));
+        void Promise.all([writeFile(path.join(workspace, 'output', 'simulation.3mf'), withMachineSettings(archive())), writeFile(path.join(workspace, 'output', 'result.json'), JSON.stringify(report))]).then(() => child.emit('exit', 0));
         return child;
       } });
     assert.equal(invoked, true); assert.equal(result.stats.input_sha256, sha256(Buffer.from('solid test'))); assert.equal(result.stats.estimates_only, true);

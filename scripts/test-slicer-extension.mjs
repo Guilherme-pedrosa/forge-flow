@@ -21,7 +21,7 @@ await test('Manifest has a pinned public identity and the minimum scoped permiss
   const id=[...createHash('sha256').update(Buffer.from(manifest.key,'base64')).digest().subarray(0,16)].flatMap(value=>[value>>4,value&15]).map(value=>String.fromCharCode(97+value)).join('');
   assert.equal(id,PROTOCOL.extension_id);assert.deepEqual(manifest.permissions,['nativeMessaging','activeTab']);
   assert.deepEqual(manifest.externally_connectable.matches,PROTOCOL.allowed_origins.map(origin=>origin+'/*'));
-  assert.equal(manifest.manifest_version,3);assert.equal(manifest.version,'1.0.1');assert.equal(manifest.background.type,'module');assert.equal(manifest.content_scripts,undefined);assert.equal(manifest.host_permissions,undefined);
+  assert.equal(manifest.manifest_version,3);assert.equal(manifest.version,'1.0.2');assert.equal(manifest.background.type,'module');assert.equal(manifest.content_scripts,undefined);assert.equal(manifest.host_permissions,undefined);
   for(const file of ['service-worker.js','protocol.js','popup.js','popup.html','popup.css'])await readFile(new URL('../extensions/forge-slicer/'+file,import.meta.url));
 });
 await test('Only the exact Forge origins and the pinned extension can invoke the native bridge',()=>{

@@ -1,8 +1,11 @@
 import protocol from "../../extensions/forge-slicer/protocol.json";
 
 export const LOCAL_SLICER_PROFILE_ID = protocol.profile_id;
+export const LOCAL_SLICER_PROFILES = [
+  { id: protocol.profiles[0], label: "A1" }, { id: protocol.profiles[1], label: "A2L" },
+];
 const CHUNK_BYTES = protocol.chunk_bytes, MAX_FILE_BYTES = protocol.max_file_bytes;
-export type LocalSlicerInfo = { profile_id: string; engine_version: string };
+export type LocalSlicerInfo = { profile_id: string; engine_version: string; profiles?: string[] };
 export type LocalSlicerStats = { time_seconds: number; weight_grams: number; engine: string; engine_version: string; normalizations: string[] };
 type Message = Record<string, unknown>;
 type PortListener<T> = { addListener(listener: T): void; removeListener(listener: T): void };
@@ -74,7 +77,10 @@ function connect(signal?: AbortSignal, onProgress?: (progress: number) => void) 
 function readInfo(value: Message): LocalSlicerInfo {
   if (value.profile_id !== LOCAL_SLICER_PROFILE_ID || typeof value.engine_version !== "string" || !value.engine_version.trim() || value.engine_version.length > 100)
     throw new Error("O fatiador local não oferece o perfil Bambu A1, bico 0,4 mm, PLA e camada 0,20 mm.");
-  return { profile_id: value.profile_id, engine_version: value.engine_version };
+  if (value.profiles !== undefined && (!Array.isArray(value.profiles) || !value.profiles.length || value.profiles.length > protocol.profiles.length
+    || new Set(value.profiles).size !== value.profiles.length || value.profiles.some(id => typeof id !== "string" || !protocol.profiles.includes(id))))
+    throw new Error("O conector informou modelos de impressão inválidos.");
+  return { profile_id: value.profile_id, engine_version: value.engine_version, ...(value.profiles !== undefined ? { profiles: value.profiles as string[] } : {}) };
 }
 
 /** Detection opens a short-lived native session and never starts slicing. */
@@ -87,7 +93,7 @@ export async function detectLocalSlicer({ signal }: { signal?: AbortSignal } = {
   finally { await session?.finish().catch(() => {}); }
 }
 
-export async function sliceWithLocalExtension(file: File, { signal, onProgress }: { signal?: AbortSignal; onProgress?: (progress: number) => void } = {}): Promise<{ file: File; stats: LocalSlicerStats }> {
+export async function sliceWithLocalExtension(file: File, { signal, onProgress, profileId = LOCAL_SLICER_PROFILE_ID }: { signal?: AbortSignal; onProgress?: (progress: number) => void; profileId?: string } = {}): Promise<{ file: File; stats: LocalSlicerStats }> {
   checkAbort(signal);
   if (!/\.(stl|3mf)$/i.test(file.name) || !validFileName(file.name) || !file.size || file.size > MAX_FILE_BYTES)
     throw new Error("Escolha um STL ou 3MF de até 64 MB.");
@@ -98,7 +104,8 @@ export async function sliceWithLocalExtension(file: File, { signal, onProgress }
   const session = connect(signal, progress => onProgress?.(45 + Math.round(progress * .4)));
   try {
     const info = readInfo(await session.request("hello"));
-    await session.request("begin", { name: file.name, size: bytes.length, sha256: hash, profile_id: info.profile_id });
+    if (!(info.profiles ?? [info.profile_id]).includes(profileId)) throw new Error("Atualize o conector local para fatiar com este modelo de impressora.");
+    await session.request("begin", { name: file.name, size: bytes.length, sha256: hash, profile_id: profileId });
     for (let part = 0; part < Math.ceil(bytes.length / CHUNK_BYTES); part++) {
       await session.request("chunk", { part, base64: encode(bytes.subarray(part * CHUNK_BYTES, (part + 1) * CHUNK_BYTES)) });
       onProgress?.(Math.round(Math.min(bytes.length, (part + 1) * CHUNK_BYTES) / bytes.length * 40));
@@ -110,7 +117,7 @@ export async function sliceWithLocalExtension(file: File, { signal, onProgress }
       || typeof result.file_name !== "string" || !/\.3mf$/i.test(result.file_name) || !validFileName(result.file_name))
       throw new Error("O fatiador local não retornou um 3MF válido e completo.");
     const rawStats = record(result.stats);
-    if (rawStats.profile_id !== info.profile_id || rawStats.input_sha256 !== hash || rawStats.output_sha256 !== result.sha256)
+    if (rawStats.profile_id !== profileId || rawStats.input_sha256 !== hash || rawStats.output_sha256 !== result.sha256)
       throw new Error("A origem ou o hash do resultado local não corresponde a este arquivo.");
     if (typeof rawStats.time_seconds !== "number" || !Number.isFinite(rawStats.time_seconds) || rawStats.time_seconds <= 0 || rawStats.time_seconds > 31536000
       || typeof rawStats.weight_grams !== "number" || !Number.isFinite(rawStats.weight_grams) || rawStats.weight_grams <= 0 || rawStats.weight_grams > 1000000

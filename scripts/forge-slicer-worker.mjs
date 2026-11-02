@@ -8,6 +8,10 @@ import { StringDecoder } from 'node:string_decoder';
 import { SaxesParser } from 'saxes';
 
 export const PROFILE = 'bambu-a1-04-pla-020-v1';
+export const PROFILE_DEFINITIONS = Object.freeze({
+  [PROFILE]: Object.freeze({ model: 'Bambu Lab A1', machine: 'Bambu Lab A1 0.4 nozzle', process: '0.20mm Standard @BBL A1', filament: 'Generic PLA @BBL A1' }),
+  'bambu-a2l-04-pla-020-v1': Object.freeze({ model: 'Bambu Lab A2L', machine: 'Bambu Lab A2L 0.4 nozzle', process: '0.20mm Standard @BBL A2L', filament: 'Generic PLA @BBL A2L' }),
+});
 export const ENGINE_VERSION = '02.08.02.61';
 export const API_ORIGIN = 'https://gaomleftwxpzjivrnzjk.supabase.co';
 export const CHUNK_BYTES = 393216; // Encoded request payload is at most 512 KiB.
@@ -275,10 +279,10 @@ export function verifyNativeProject(source, entries, metrics) {
 }
 
 export function normalizeOutput(raw, compatiblePrinters, extruderVariant) {
-  if (JSON.stringify(compatiblePrinters) !== '["Bambu Lab A1 0.4 nozzle"]' || JSON.stringify(extruderVariant) !== '["Direct Drive Standard"]') fail('O perfil oficial não corresponde à normalização autorizada.');
+  if (!Object.values(PROFILE_DEFINITIONS).some(profile => JSON.stringify(compatiblePrinters) === JSON.stringify([profile.machine])) || JSON.stringify(extruderVariant) !== '["Direct Drive Standard"]') fail('O perfil oficial não corresponde à normalização autorizada.');
   const entries = readZip(raw), normalizations = [];
   const allowed = [
-    ['compatible_printers', 'Bambu Lab A1 0.4 nozzle', COMPATIBLE_NORMALIZATION],
+    ['compatible_printers', compatiblePrinters[0], COMPATIBLE_NORMALIZATION],
     ['print_extruder_variant', 'Direct Drive Standard', EXTRUDER_NORMALIZATION],
   ];
   const normalized = entries.map(entry => {
@@ -303,7 +307,7 @@ export function normalizeOutput(raw, compatiblePrinters, extruderVariant) {
   return { output, entries: verified, normalizations };
 }
 
-export function readMetrics(entries, report) {
+export function readMetrics(entries, report, printerModel = 'Bambu Lab A1') {
   if (report.return_code !== 0 || !Array.isArray(report.sliced_plates) || !report.sliced_plates.length) fail('O Bambu Studio não confirmou o fatiamento.');
   const info = entries.find(e => e.name === 'Metadata/slice_info.config');
   if (!info) fail('O fatiador não retornou tempos e consumo.');
@@ -325,14 +329,16 @@ export function readMetrics(entries, report) {
     if (!Number.isFinite(jsonWeight) || Math.abs(jsonWeight - weight) > Math.max(0.1, weight * 0.01)
       || Math.abs(positive(jsonPlate.total_predication, 31536000) - time) > 2) fail('As métricas do JSON e do 3MF não conferem.');
     return { plate_index: Number(p.metadata.index), time_seconds: time, weight_grams: weight,
-      printer_model_id: p.metadata.printer_model_id || 'Bambu Lab A1', nozzle_diameters: p.metadata.nozzle_diameters || '0.4',
+      printer_model_id: p.metadata.printer_model_id || printerModel, nozzle_diameters: p.metadata.nozzle_diameters || '0.4',
       filaments: p.filaments.map(f => ({ id: Number(f.id), material_code: f.type, color_hex: f.color,
         weight_grams: positive(f.used_g, 1000000), length_meters: positive(f.used_m, 1000000) })) };
   });
   return { time_seconds: result.reduce((s, p) => s + p.time_seconds, 0), weight_grams: result.reduce((s, p) => s + p.weight_grams, 0), plates: result };
 }
 
-export async function resolveOfficialProfiles(enginePath, target) {
+export async function resolveOfficialProfiles(enginePath, target, profileId = PROFILE) {
+  const definition = Object.hasOwn(PROFILE_DEFINITIONS, profileId) ? PROFILE_DEFINITIONS[profileId] : null;
+  if (!definition) fail('Modelo de impressora não autorizado.');
   const vendor = path.join(path.dirname(enginePath), 'resources', 'profiles', 'BBL');
   async function load(kind, name, seen = []) {
     if (seen.includes(name) || /[\\/]/.test(name)) fail('Herança de perfil inválida.');
@@ -342,7 +348,7 @@ export async function resolveOfficialProfiles(enginePath, target) {
     Object.assign(parents, node); delete parents.inherits; delete parents.include; return parents;
   }
   await mkdir(target, { recursive: true });
-  const sources = { machine: ['machine', 'Bambu Lab A1 0.4 nozzle'], process: ['process', '0.20mm Standard @BBL A1'], filament: ['filament', 'Generic PLA @BBL A1'] };
+  const sources = { machine: ['machine', definition.machine], process: ['process', definition.process], filament: ['filament', definition.filament] };
   const profiles = {};
   for (const [kind, [folder, name]] of Object.entries(sources)) {
     const data = Buffer.from(JSON.stringify(await load(folder, name), null, 2));
@@ -363,7 +369,9 @@ export async function safeRemoveJob(root, job) {
   await rm(resolved, { recursive: true, force: true });
 }
 
-export async function runSimulation({ enginePath, profileDir, profileHashes, source, extension, workspace, timeoutMs = 600000, signal, onChild = () => {}, spawnProcess = spawn }) {
+export async function runSimulation({ enginePath, profileDir, profileHashes, profileId = PROFILE, source, extension, workspace, timeoutMs = 600000, signal, onChild = () => {}, spawnProcess = spawn }) {
+  const definition = Object.hasOwn(PROFILE_DEFINITIONS, profileId) ? PROFILE_DEFINITIONS[profileId] : null;
+  if (!definition) fail('Modelo de impressora não autorizado.');
   if (!['stl', '3mf'].includes(extension) || !source.length || source.length > MAX_FILE_BYTES) fail('Arquivo de simulação inválido.');
   let nativeLayout = null;
   if (extension === '3mf') { const entries = readZip(source); validateArchive(entries, true); nativeLayout = nativeProjectLayout(entries); }
@@ -376,6 +384,8 @@ export async function runSimulation({ enginePath, profileDir, profileHashes, sou
     if (sha256(bytes) !== profileHashes[kind]) fail('O perfil do fatiador foi alterado. Execute a configuração novamente.');
     profiles[kind] = JSON.parse(bytes); await writeFile(path.join(workspace, kind + '.json'), bytes, { mode: 0o600 });
   }
+  if (profiles.machine.printer_model !== definition.model || profiles.machine.name !== definition.machine
+    || profiles.process.name !== definition.process || profiles.filament.name !== definition.filament) fail('Os perfis não correspondem ao modelo escolhido.');
   const input = path.join(workspace, 'source.' + extension); await writeFile(input, source, { mode: 0o600 });
   const args = ['--datadir', dataDir, '--debug', '3', '--load-settings', path.join(workspace, 'machine.json') + ';' + path.join(workspace, 'process.json'),
     ...(nativeLayout ? [] : ['--load-filaments', path.join(workspace, 'filament.json')]), '--curr-bed-type', 'Textured PEI Plate', '--orient', nativeLayout ? '0' : '1', '--arrange', nativeLayout ? '0' : '1', '--slice', '0',
@@ -392,10 +402,12 @@ export async function runSimulation({ enginePath, profileDir, profileHashes, sou
   const raw = await readFile(path.join(outputDir, 'simulation.3mf'));
   const report = JSON.parse(await readFile(path.join(outputDir, 'result.json'), 'utf8'));
   const { output, entries, normalizations } = normalizeOutput(raw, profiles.process.compatible_printers, profiles.process.print_extruder_variant);
-  const metrics = readMetrics(entries, report);
+  const outputSettings = JSON.parse(entries.find(entry => entry.name === 'Metadata/project_settings.config')?.data.toString('utf8') || '{}');
+  if (outputSettings.printer_model !== definition.model || outputSettings.printer_settings_id !== definition.machine) fail('O fatiador não confirmou o modelo escolhido no resultado.');
+  const metrics = readMetrics(entries, report, definition.model);
   const preservation = nativeLayout ? verifyNativeProject(nativeLayout, entries, metrics) : null;
   await writeFile(path.join(outputDir, 'simulation-valid.3mf'), output, { mode: 0o600 });
-  const stats = { engine: 'Bambu Studio', engine_version: ENGINE_VERSION, profile_id: PROFILE, ...metrics,
+  const stats = { engine: 'Bambu Studio', engine_version: ENGINE_VERSION, profile_id: profileId, ...metrics,
     input_sha256: sha256(source), raw_output_size: raw.length, raw_output_sha256: sha256(raw), output_sha256: sha256(output), normalizations,
     profile_hashes: profileHashes, filament_source: nativeLayout ? '3mf_embedded_pla' : 'official_generic_pla', ...(preservation ? { preservation } : {}),
     elapsed_seconds: Math.round((Date.now() - started) / 10) / 100, estimates_only: true };

@@ -39,6 +39,22 @@ beforeEach(() => { Object.defineProperty(globalThis, "crypto", { value: webcrypt
 afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 describe("local slicer extension protocol", () => {
+  it("uses the explicitly supported A2L profile without replacing it by A1", async () => {
+    const a2l = protocol.profiles[1];
+    const local = await host({ hello: { ...info, profiles: protocol.profiles }, slice: { file_name: "a2l.3mf", size: output.length, sha256: await hash(output), chunks: 1, stats: { ...stats, profile_id: a2l } } });
+    const result = await sliceWithLocalExtension(file(), { profileId: a2l });
+    expect(result.file.name).toBe("a2l.3mf"); expect(local.port.postMessage.mock.calls.map(([message]) => message).find(message => message.op === "begin")).toMatchObject({ profile_id: a2l }); expect(local.operations()).toContain("finish");
+  });
+  it("rejects A2L on an old A1-only host before uploading or slicing", async () => {
+    const local = await host();
+    await expect(sliceWithLocalExtension(file(), { profileId: protocol.profiles[1] })).rejects.toThrow("Atualize o conector local");
+    expect(local.operations()).not.toContain("begin"); expect(local.operations()).not.toContain("chunk"); expect(local.operations()).not.toContain("slice");
+  });
+  it("rejects A1 statistics for a requested A2L slice before reading its output bytes", async () => {
+    const local = await host({ hello: { ...info, profiles: protocol.profiles } });
+    await expect(sliceWithLocalExtension(file(), { profileId: protocol.profiles[1] })).rejects.toThrow("origem ou o hash");
+    expect(local.operations()).toContain("slice"); expect(local.operations()).not.toContain("read"); expect(local.operations()).toContain("cancel");
+  });
   it("detects through hello and finish without starting slicing or uploading", async () => {
     const local = await host();
     await expect(detectLocalSlicer()).resolves.toEqual(info);

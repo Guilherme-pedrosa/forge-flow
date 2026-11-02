@@ -24,7 +24,7 @@ async function privateChild(root,filename,relative,directory=false){
 export async function loadNativeConfig(filename){
  const canonical=await regular(filename),root=path.dirname(canonical);
  let config;try{config=JSON.parse(await readFile(canonical,'utf8'));}catch{fail('Configuração local inválida. Reinstale o conector.');}
- const keys=['version','extension_id','host_name','profile_id','engine_version','engine_path','engine_sha256','profile_dir','profile_hashes','jobs_dir'];
+ const keys=['version','extension_id','host_name','profile_id','engine_version','engine_path','engine_sha256','profile_dir','profile_hashes','jobs_dir','additional_profiles'];
  if(!config||typeof config!=='object'||Array.isArray(config)||Object.keys(config).some(k=>!keys.includes(k))
   ||config.version!==1||config.extension_id!==PROTOCOL.extension_id||config.host_name!==PROTOCOL.host_name||config.profile_id!==PROFILE
   ||config.engine_version!==ENGINE_VERSION||!path.isAbsolute(config.engine_path||'')||!HASH.test(config.engine_sha256||'')
@@ -36,7 +36,21 @@ export async function loadNativeConfig(filename){
   const file=await privateChild(root,path.join(config.profile_dir,kind+'.json'),path.join('profiles',kind+'.json'));
   if(!HASH.test(config.profile_hashes[kind]||'')||sha256(await readFile(file))!==config.profile_hashes[kind])fail('O perfil local mudou. Reinstale o conector.');
  }
- return Object.freeze({...config,root,profile_hashes:Object.freeze({...config.profile_hashes})});
+ const additional={};
+ if(config.additional_profiles!==undefined){
+  if(!config.additional_profiles||typeof config.additional_profiles!=='object'||Array.isArray(config.additional_profiles))fail('Perfis locais inválidos.');
+  for(const [id,value] of Object.entries(config.additional_profiles)){
+   if(id!=='bambu-a2l-04-pla-020-v1'||!value||Object.keys(value).sort().join(',')!=='profile_dir,profile_hashes'
+    ||!value.profile_hashes||Object.keys(value.profile_hashes).sort().join(',')!=='filament,machine,process')fail('Modelo local não autorizado.');
+   const dir=await privateChild(root,value.profile_dir,path.join('profiles','a2l'),true);
+   for(const kind of ['machine','process','filament']){
+    const file=await privateChild(root,path.join(dir,kind+'.json'),path.join('profiles','a2l',kind+'.json'));
+    if(!HASH.test(value.profile_hashes[kind]||'')||sha256(await readFile(file))!==value.profile_hashes[kind])fail('O perfil local mudou. Reinstale o conector.');
+   }
+   additional[id]=Object.freeze({profile_dir:dir,profile_hashes:Object.freeze({...value.profile_hashes})});
+  }
+ }
+ return Object.freeze({...config,root,profile_hashes:Object.freeze({...config.profile_hashes}),additional_profiles:Object.freeze(additional)});
 }
 
 // A short exclusive guard serializes stale-PID recovery too. If recovery itself
@@ -77,7 +91,7 @@ export class NativeSession{
   this.timer=setTimeout(()=>{this.close().finally(()=>this.onStop());},Math.min(30000,this.timeoutMs));this.timer.unref?.();
  }
  async handle(message){const request=validateRequest(message);if(this.state==='closed'&&request.op!=='cancel')fail('Esta operação local já foi encerrada. Abra uma nova conexão.');switch(request.op){
-  case 'hello':return{name:'Forge • Fatiador local',profile_id:PROFILE,engine_version:ENGINE_VERSION,version:1,chunk_bytes:CHUNK_BYTES,max_file_bytes:MAX_FILE_BYTES};
+  case 'hello':return{name:'Forge • Fatiador local',profile_id:PROFILE,profiles:[PROFILE,...Object.keys(this.config.additional_profiles||{})],engine_version:ENGINE_VERSION,version:1,chunk_bytes:CHUNK_BYTES,max_file_bytes:MAX_FILE_BYTES};
   case 'begin':return this.begin(request);
   case 'chunk':return this.chunk(request);
   case 'slice':return this.slice();
@@ -88,6 +102,8 @@ export class NativeSession{
  }}
  async begin(request){
   if(this.state!=='idle'||this.used)fail('Este conector aceita somente uma simulação por vez.');
+  this.selectedProfile=request.profile_id===PROFILE?this.config:this.config.additional_profiles?.[request.profile_id];
+  if(!this.selectedProfile)fail('Este modelo ainda não está instalado no conector. Atualize o conector local.');
   if(request.name.includes(':'))fail('Informe somente o nome do arquivo STL ou 3MF.');
   this.state='opening';
   try{this.release=await acquireNativeLock(this.config.root);}catch(error){this.state='idle';throw error;}
@@ -110,12 +126,12 @@ export class NativeSession{
   this.state='slicing';
   try{
    if(sha256(await readFile(this.config.engine_path))!==this.config.engine_sha256)fail('O Bambu Studio mudou desde a instalação. Reinstale o conector.');
-   this.running=this.simulate({enginePath:this.config.engine_path,profileDir:this.config.profile_dir,profileHashes:this.config.profile_hashes,source,
+   this.running=this.simulate({enginePath:this.config.engine_path,profileDir:this.selectedProfile.profile_dir,profileHashes:this.selectedProfile.profile_hashes,profileId:this.input.profile_id,source,
     extension:path.extname(this.input.name).slice(1).toLowerCase(),workspace:this.workspace,timeoutMs:Math.max(1,this.deadline-Date.now()),signal:this.controller.signal,
     onChild:child=>{this.child=child;if(child.pid){try{this.priority(child.pid);}catch(error){child.kill();throw error;}}}});
    const result=await this.running;
    if(this.controller.signal.aborted)fail('Simulação interrompida.');
-   if(!Buffer.isBuffer(result.output)||!result.output.length||result.output.length>MAX_FILE_BYTES||result.stats?.profile_id!==PROFILE||result.stats?.engine_version!==ENGINE_VERSION
+   if(!Buffer.isBuffer(result.output)||!result.output.length||result.output.length>MAX_FILE_BYTES||result.stats?.profile_id!==this.input.profile_id||result.stats?.engine_version!==ENGINE_VERSION
     ||result.stats.input_sha256!==this.input.sha256||result.stats.output_sha256!==sha256(result.output))fail('O motor local não confirmou a integridade do resultado.');
    this.output=result.output;this.stats=result.stats;this.state='ready';
    return{file_name:path.basename(this.input.name,path.extname(this.input.name))+'-fatiado.3mf',size:this.output.length,sha256:sha256(this.output),chunks:Math.ceil(this.output.length/CHUNK_BYTES),stats:this.stats};

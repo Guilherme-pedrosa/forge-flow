@@ -27,14 +27,36 @@ export function slicedCompositionFrom3mf(bytes: Uint8Array, current: ImportedCom
   if (bytes.byteLength > MAX_FILE) throw new Error("Use um arquivo 3MF de até 80 MB.");
   let expanded = 0;
   const entries = unzipSync(bytes, { filter: entry => {
-    if (!/^Metadata\/slice_info\.config$/i.test(entry.name)) return false;
+    if (!/^Metadata\/(slice_info|project_settings)\.config$/i.test(entry.name)) return false;
     expanded += entry.originalSize;
     if (expanded > MAX_XML) throw new Error("Os metadados de fatiamento excedem o limite de leitura.");
     return true;
   } });
-  const slices = Object.values(entries);
+  const slices = Object.entries(entries).filter(([name]) => /^Metadata\/slice_info\.config$/i.test(name)).map(([, value]) => value);
+  const projects = Object.entries(entries).filter(([name]) => /^Metadata\/project_settings\.config$/i.test(name)).map(([, value]) => value);
   if (!slices.length) return current;
   if (slices.length > 1) throw new Error("O 3MF contém metadados de fatiamento repetidos.");
+  if (projects.length > 1) throw new Error("O 3MF contém configurações do projeto repetidas.");
+  let projectModel: string | null | undefined;
+  function officialProjectModel(): string | null {
+    if (projectModel !== undefined) return projectModel;
+    projectModel = null;
+    if (!projects.length) return null;
+    let value: unknown;
+    try { value = JSON.parse(strFromU8(projects[0]).replace(/^\uFEFF/, "")); } catch { throw new Error("Não foi possível ler a configuração de impressora do projeto 3MF."); }
+    if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("A configuração de impressora do projeto 3MF é inválida.");
+    const config = value as Record<string, unknown>;
+    const declared = bounded(typeof config.printer_model === "string" ? config.printer_model.trim() : null, 200, "impressora do projeto");
+    const preset = bounded(typeof config.printer_settings_id === "string" ? config.printer_settings_id.trim() : null, 300, "perfil do projeto");
+    // The official CLI can leave slice_info's model blank. Only this explicit,
+    // coherent official model/preset pair supplies a fallback; geometry and file names never do.
+    const models = ["Bambu Lab A1", "Bambu Lab A2L"];
+    const model = models.find(name => name.toLowerCase() === declared?.toLowerCase());
+    const presetModel = models.find(name => `${name} 0.4 nozzle`.toLowerCase() === preset?.toLowerCase());
+    if (model && presetModel && model !== presetModel) throw new Error("A impressora e o perfil oficial do projeto 3MF não correspondem.");
+    if (model && presetModel === model) projectModel = model;
+    return projectModel;
+  }
   const text = strFromU8(slices[0]);
   if (/<!DOCTYPE|<!ENTITY/i.test(text)) throw new Error("O fatiamento contém uma declaração XML não suportada.");
   const doc = new DOMParser().parseFromString(text, "application/xml");
@@ -69,7 +91,7 @@ export function slicedCompositionFrom3mf(bytes: Uint8Array, current: ImportedCom
     if (filaments.length > 1024) throw new Error("O fatiamento contém filamentos demais.");
     parsed.set(index, { weight: weight || null, time: time || null, estimates: {
       source: "3mf_slice_info", slicer_version: version,
-      printer_model_id: bounded(metadata(plate, "printer_model_id"), 200, "impressora"),
+      printer_model_id: bounded(metadata(plate, "printer_model_id"), 200, "impressora") || officialProjectModel(),
       nozzle_diameters: bounded(metadata(plate, "nozzle_diameters"), 100, "bico"), filaments,
     } });
   }

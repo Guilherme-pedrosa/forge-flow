@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { PROTOCOL } from '../extensions/forge-slicer/protocol.js';
-import { ENGINE_VERSION, PROFILE, sha256, resolveOfficialProfiles, runSimulation, verificationCube, safeRemoveJob } from './forge-slicer-worker.mjs';
+import { ENGINE_VERSION, PROFILE, PROFILE_DEFINITIONS, sha256, resolveOfficialProfiles, runSimulation, verificationCube, safeRemoveJob } from './forge-slicer-worker.mjs';
 import { acquireNativeLock, lowerPriority } from './forge-slicer-native-host.mjs';
 
 const fail=message=>{throw new Error(message);};
@@ -24,7 +24,7 @@ export function nativeLauncher(node,host,config){
 }
 export async function protectNativePaths(paths){
  const powershell=path.join(process.env.SystemRoot||'C:\\Windows','System32','WindowsPowerShell','v1.0','powershell.exe');
- const script=`$ErrorActionPreference='Stop';$sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User;$paths=@(${paths.map(quote).join(',')});foreach($p in $paths){$isDir=[System.IO.Directory]::Exists($p);if($isDir){$acl=New-Object System.Security.AccessControl.DirectorySecurity}else{$acl=New-Object System.Security.AccessControl.FileSecurity};$acl.SetAccessRuleProtection($true,$false);foreach($identity in @($sid,(New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')),(New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-544')))){if($isDir){$rule=New-Object System.Security.AccessControl.FileSystemAccessRule($identity,'FullControl','ContainerInherit,ObjectInherit','None','Allow')}else{$rule=New-Object System.Security.AccessControl.FileSystemAccessRule($identity,'FullControl','Allow')};$acl.AddAccessRule($rule)};Set-Acl -LiteralPath $p -AclObject $acl}`;
+ const script=`$ErrorActionPreference='Stop';$sid=[System.Security.Principal.WindowsIdentity]::GetCurrent().User;$paths=@(${paths.map(quote).join(',')});foreach($p in $paths){$existing=Get-Acl -LiteralPath $p;$rules=@($existing.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier]));$allowedSids=@($sid.Value,'S-1-5-18','S-1-5-32-544');$unexpected=@($rules|Where-Object { $_.IdentityReference.Value -notin $allowedSids -or $_.AccessControlType -ne 'Allow' -or $_.FileSystemRights -ne 'FullControl' });if($existing.AreAccessRulesProtected -and $rules.Count -eq 3 -and $unexpected.Count -eq 0 -and @($rules|ForEach-Object {$_.IdentityReference.Value}|Select-Object -Unique).Count -eq 3){continue};$isDir=[System.IO.Directory]::Exists($p);if($isDir){$acl=New-Object System.Security.AccessControl.DirectorySecurity}else{$acl=New-Object System.Security.AccessControl.FileSecurity};$acl.SetAccessRuleProtection($true,$false);foreach($identity in @($sid,(New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')),(New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-544')))){if($isDir){$rule=New-Object System.Security.AccessControl.FileSystemAccessRule($identity,'FullControl','ContainerInherit,ObjectInherit','None','Allow')}else{$rule=New-Object System.Security.AccessControl.FileSystemAccessRule($identity,'FullControl','Allow')};$acl.AddAccessRule($rule)};Set-Acl -LiteralPath $p -AclObject $acl}`;
  command(powershell,['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')]);
 }
 export function registerNativeManifest(manifest){
@@ -52,12 +52,24 @@ export async function installSlicerExtension({baseDirectory=process.env.LOCALAPP
   try{verification=await verify({enginePath:engine,profileDir,profileHashes:hashes,source:verificationCube(),extension:'stl',workspace,
    onChild:child=>{if(child.pid)priority(child.pid);}});}finally{await safeRemoveJob(jobsDir,workspace);}
   if(verification.stats?.engine_version!==ENGINE_VERSION||verification.stats?.profile_id!==PROFILE)fail('Use o Bambu Studio oficial 2.8.2.61 com o perfil A1/PLA 0,20mm.');
+  const additionalProfiles={};
+  for(const id of Object.keys(PROFILE_DEFINITIONS).filter(id=>id!==PROFILE)){
+   const dir=path.join(profileDir,'a2l');await noLink(dir,true);await mkdir(dir,{recursive:true});
+   for(const kind of ['machine','process','filament'])await noLink(path.join(dir,kind+'.json'));
+   const profileHashes=await resolveProfiles(engine,dir,id),checkWorkspace=path.join(jobsDir,randomUUID());
+   try{const proof=await verify({enginePath:engine,profileDir:dir,profileHashes,profileId:id,source:verificationCube(),extension:'stl',workspace:checkWorkspace,
+    onChild:child=>{if(child.pid)priority(child.pid);}});
+    if(proof.stats?.engine_version!==ENGINE_VERSION||proof.stats?.profile_id!==id)fail('O perfil oficial da A2L não passou na verificação local.');
+   }finally{await safeRemoveJob(jobsDir,checkWorkspace);}
+   await protect([dir,...['machine','process','filament'].map(k=>path.join(dir,k+'.json'))]);
+   additionalProfiles[id]={profile_dir:dir,profile_hashes:profileHashes};
+  }
   if(sha256(await readFile(engine))!==engineHash)fail('O Bambu Studio mudou durante a verificação. Execute a instalação novamente.');
   const host=path.join(install,'forge-slicer-native-host.mjs'),config=path.join(install,'native.private.json'),launcher=path.join(install,'forge-slicer-native.bat'),manifest=path.join(install,PROTOCOL.host_name+'.json');
   for(const file of [host,config,launcher,manifest,...['machine','process','filament'].map(k=>path.join(profileDir,k+'.json'))])await noLink(file);
   await copyFile(path.join(packageDirectory,'native','forge-slicer-native-host.mjs'),host);
   await writeFile(config,JSON.stringify({version:1,extension_id:PROTOCOL.extension_id,host_name:PROTOCOL.host_name,profile_id:PROFILE,engine_version:ENGINE_VERSION,
-   engine_path:engine,engine_sha256:engineHash,profile_dir:profileDir,profile_hashes:hashes,jobs_dir:jobsDir},null,2),{mode:0o600});
+   engine_path:engine,engine_sha256:engineHash,profile_dir:profileDir,profile_hashes:hashes,jobs_dir:jobsDir,additional_profiles:additionalProfiles},null,2),{mode:0o600});
   await writeFile(launcher,nativeLauncher(node,host,config),{mode:0o600});await writeFile(manifest,JSON.stringify(nativeManifest(launcher),null,2),{mode:0o600});
   await protect([host,config,launcher,manifest,...['machine','process','filament'].map(k=>path.join(profileDir,k+'.json'))]);
   if(register)registerManifest(manifest);

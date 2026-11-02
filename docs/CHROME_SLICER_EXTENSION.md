@@ -6,6 +6,8 @@ Escolha o STL ou 3MF no cadastro e use **Fatiar neste computador**. O conector e
 
 O popup verifica a ligação entre extensão e conector. A página precisa também poder falar com a extensão: as origens exatas aceitas são `https://elevare3d.com.br`, `https://elevare3d.lovable.app` e o preview deste projeto. Se o popup está conectado e a página não, atualize o pacote na mesma pasta, clique em **Recarregar** na extensão em `chrome://extensions`, atualize a página do Forge e use **Verificar extensão novamente**. Não é necessário reinstalar um conector saudável para essa atualização. A fila de fatiamento da empresa é uma opção separada e só é consultada quando escolhida; a indisponibilidade dessa fila não informa o estado da extensão local.
 
+A versão 1.0.2 acrescenta A2L ao conector nativo. Para essa atualização, execute o instalador do pacote novo e recarregue a extensão; instalações antigas continuam atendendo à A1 até a atualização.
+
 ## Instalação
 
 1. Baixe `/downloads/forge-slicer-extension.zip` no Forge e extraia o pacote para uma pasta permanente.
@@ -18,7 +20,7 @@ A identificação fixa é `lkalcgppeejlaioplgipmmgdcpncofck`. A chave pública d
 
 ## Perfil e recursos
 
-O perfil de simulação validado nesta versão é **A1 / bico 0,4 mm / PLA / camada 0,20 mm**. Um STL usa orientação e organização automáticas. Um projeto 3MF completo preserva suas placas, cópias, slots e cores PLA; a validação recusa mudanças inesperadas. Outro modelo ou material exige um 3MF fatiado no perfil correspondente. Selecionar AMS ou separar placas exige o perfil de produção correto.
+Os perfis de simulação validados são **A1 e A2L / bico 0,4 mm / PLA / camada 0,20 mm**. O cadastro oferece apenas os modelos existentes na empresa, agrupando máquinas iguais. O modelo já escolhido na precificação é reaproveitado. Um STL usa orientação e organização automáticas. Um projeto 3MF completo preserva suas placas, cópias, slots e cores PLA; a validação recusa mudanças inesperadas. Outro modelo ou material exige um 3MF fatiado no perfil correspondente. Projetos multicoloridos usam a estratégia presente no 3MF: trocas automáticas com purga e torre ou placas preparadas com cores separadas. O sistema não transforma automaticamente uma geometria multicolorida em peças separáveis. A versão 1.0.2 verifica também o modelo nos metadados de saída; não basta alterar o nome do perfil.
 
 A extensão usa Manifest V3 e não mantém consultas, alarmes ou processamento ocioso. O processo nativo abre por solicitação, aceita uma simulação por vez, roda em prioridade abaixo do normal e encerra ao concluir, cancelar ou desconectar. O trabalho tem limite de dez minutos. O motor instalado não suporta `--threads 2`; a versão atual não promete um limite de dois núcleos.
 
@@ -35,3 +37,6 @@ Fontes primárias da versão usada: [volume total, torre e flush](https://github
 ## Validação
 
 `node scripts/test-slicer-extension.mjs` confere identidade, origens, mensagens e cancelamento. `node scripts/test-slicer-native-host.mjs --real-engine` confere protocolo binário, integridade, travas, encerramento e o fatiamento real de um cubo. Os testes React cobrem disponibilidade, envio, download, hashes, cancelamento e uso do 3MF resultante no cadastro. A instalação real com ACL e registro depende de uma sessão Windows com acesso à pasta privada; a execução no AppContainer do Codex não substitui essa etapa.
+
+
+Em 02/11/2026, o conector instalado foi exercitado pelo protocolo binário real, com download dos blocos e conferência de SHA-256: cubo A1, 3,63 g / 1.351 s; cubo A2L, 3,57 g / 1.355 s; projeto sintético de duas cores na A2L, 60,92 g / 12.734 s. Cada processo encerrou com código zero e sem arquivos de trabalho restantes. Esses exemplos validam o percurso técnico; não substituem o fatiamento do produto real do operador.

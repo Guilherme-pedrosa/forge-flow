@@ -139,6 +139,7 @@ export default function ModelFileInput({
   onParsed,
   revision = false,
   disabled = false,
+  ownedPrinterModels,
 }: {
   current?: ImportedComposition;
   onChange: (value: ImportedComposition) => void;
@@ -147,6 +148,7 @@ export default function ModelFileInput({
   onParsed?: (composition: ImportedComposition) => void;
   revision?: boolean;
   disabled?: boolean;
+  ownedPrinterModels?: string[];
 }) {
   const [model, setModel] = useState<ModelFile | null>(null);
   const [error, setError] = useState("");
@@ -240,7 +242,7 @@ export default function ModelFileInput({
           if (file) void loadFile(file);
         }}
       />
-      {slicingOpen && sourceFile && <Suspense fallback={<p role="status">Carregando fatiador…</p>}><SlicingDialog open={slicingOpen} file={sourceFile} onOpenChange={setSlicingOpen} onSliced={async result => { if (!await loadFile(result, true)) throw new Error("Não foi possível ler o 3MF gerado. Confira o arquivo e tente novamente."); }} /></Suspense>}
+      {slicingOpen && sourceFile && <Suspense fallback={<p role="status">Carregando fatiador…</p>}><SlicingDialog open={slicingOpen} file={sourceFile} ownedPrinterModels={ownedPrinterModels} onOpenChange={setSlicingOpen} onSliced={async result => { if (!await loadFile(result, true)) throw new Error("Não foi possível ler o 3MF gerado. Confira o arquivo e tente novamente."); }} /></Suspense>}
       <p className="text-xs text-muted-foreground">
         Leitura local. Arraste para girar, use a roda para aproximar e clique em
         uma peça. Cores são agrupadas no mesmo objeto físico. Arquivos STL não

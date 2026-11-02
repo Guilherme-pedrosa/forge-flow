@@ -5,11 +5,12 @@ import type { ModelPricingEstimate } from "@/lib/model-pricing";
 import { useState } from "react";
 import { webcrypto } from "node:crypto";
 
-const mocks = vi.hoisted(() => ({ parse: vi.fn(), dispose: vi.fn(), pricing: vi.fn(), slicedFile: null as File | null }));
+const mocks = vi.hoisted(() => ({ parse: vi.fn(), dispose: vi.fn(), pricing: vi.fn(), slicedFile: null as File | null, jobProfile: null as string | null }));
 vi.mock("@/lib/model-file", () => ({ parseModelFile: mocks.parse, disposeModel: mocks.dispose }));
-vi.mock("@/lib/model-pricing", () => ({ modelPricingFromComposition: mocks.pricing }));
-vi.mock("./SlicingDialog", () => ({ SlicingDialog: ({ open, onSliced, resultLabel }: { open: boolean; onSliced: (file: File, job: { profile_id: string }) => void; resultLabel: string }) => open
-  ? <button onClick={() => onSliced(mocks.slicedFile!, { profile_id: "bambu-a1-04-pla-020-v1" })}>{resultLabel}</button> : null }));
+vi.mock("@/lib/model-pricing", async original => ({ ...await original<typeof import("@/lib/model-pricing")>(), modelPricingFromComposition: mocks.pricing }));
+vi.mock("./SlicingDialog", () => ({ SlicingDialog: function FakeSlicingDialog({ open, onSliced, resultLabel, profileId }: { open: boolean; onSliced: (file: File, job: { profile_id: string }) => void | Promise<void>; resultLabel: string; profileId: string }) {
+  const [error, setError] = useState(""); return open ? <><button onClick={async () => { try { await onSliced(mocks.slicedFile!, { profile_id: mocks.jobProfile || profileId }); } catch (failure) { setError((failure as Error).message); } }}>{resultLabel}</button>{error && <p role="alert">{error}</p>}</> : null;
+} }));
 
 const native: ModelPricingEstimate = { hours: 1.5, timeSeconds: 5400, weightGrams: 42, plateCount: 2, partCount: null, printerModelIds: [], nozzleDiameters: ["0.4"], materials: [] };
 const a1 = { brand: "Bambu Lab", model: "A1" };
@@ -22,6 +23,7 @@ function choose(file: File) { fireEvent.change(screen.getByLabelText("Arquivo ST
 beforeEach(() => {
   mocks.parse.mockReset().mockReturnValue({ group: "allocated-model", composition: "composition" });
   mocks.dispose.mockReset(); mocks.pricing.mockReset().mockReturnValue(native);
+  mocks.jobProfile = null;
 });
 
 describe("PricingModelFile automatic estimates", () => {
@@ -56,7 +58,7 @@ describe("PricingModelFile automatic estimates", () => {
   ])("does not offer the A1 PLA profile for an incompatible selection", (printer, materialCodes) => {
     render(<PricingModelFile sourceFile={modelFile("Peça.stl")} estimate={null} printer={printer} materialCodes={materialCodes} onLoaded={vi.fn()} />);
     expect(screen.queryByRole("button", { name: "Calcular tempo e filamento" })).not.toBeInTheDocument();
-    expect(screen.getByText(/Para outra impressora ou material/)).toBeInTheDocument();
+    expect(screen.getByText(/A simulação local atende à A1 e à A2L/)).toBeInTheDocument();
   });
 
   it("ignores an older file read after a newer selection completes", async () => {
@@ -83,21 +85,21 @@ describe("PricingModelFile automatic estimates", () => {
     expect(mocks.dispose).toHaveBeenCalledWith("allocated-model");
   });
 
-  it("replaces the original STL with the returned 3MF so the transferred bytes match its slice estimate", async () => {
+  it.each([a1, { brand: "Bambu Lab", model: "A2L" }])("replaces the original STL with the returned 3MF for $model so transferred bytes match its slice estimate", async printer => {
     const original = modelFile("Minha peça.stl"), loaded = vi.fn();
     const slicedBytes = new Uint8Array([80, 75, 3, 4, 99]);
     mocks.slicedFile = modelFile("Minha peça-simulado.3mf", Promise.resolve(slicedBytes.buffer));
     function Draft() {
       const [file, setFile] = useState<File | null>(original);
       const [estimate, setEstimate] = useState<ModelPricingEstimate | null>(null);
-      return <><PricingModelFile sourceFile={file} estimate={estimate} printer={a1} materialCodes={["PLA"]} onLoaded={(nextFile, nextEstimate) => {
+      return <><PricingModelFile sourceFile={file} estimate={estimate} printer={printer} materialCodes={["PLA"]} onLoaded={(nextFile, nextEstimate) => {
         loaded(nextFile, nextEstimate); setFile(nextFile); setEstimate(nextEstimate);
       }} /><output aria-label="Arquivo a transferir">{file?.name}</output></>;
     }
     render(<Draft />);
     fireEvent.click(screen.getByRole("button", { name: "Calcular tempo e filamento" }));
     fireEvent.click(await screen.findByRole("button", { name: "Usar na precificação" }));
-    await waitFor(() => expect(loaded).toHaveBeenCalledExactlyOnceWith(mocks.slicedFile, { ...native, printerModelIds: ["Bambu Lab A1"] }));
+    await waitFor(() => expect(loaded).toHaveBeenCalledExactlyOnceWith(mocks.slicedFile, { ...native, printerModelIds: [`Bambu Lab ${printer.model}`] }));
     expect(mocks.parse).toHaveBeenCalledWith(slicedBytes, "Minha peça-simulado.3mf");
     expect(screen.getByLabelText("Arquivo a transferir")).toHaveTextContent("Minha peça-simulado.3mf");
     expect(screen.getByText("Filamento total do arquivo")).toBeInTheDocument();
@@ -105,6 +107,14 @@ describe("PricingModelFile automatic estimates", () => {
     const transferredHash = await webcrypto.subtle.digest("SHA-256", await transferred.arrayBuffer());
     expect(new Uint8Array(transferredHash)).toEqual(new Uint8Array(await webcrypto.subtle.digest("SHA-256", slicedBytes)));
     expect(new Uint8Array(transferredHash)).not.toEqual(new Uint8Array(await webcrypto.subtle.digest("SHA-256", await original.arrayBuffer())));
+  });
+  it.each(["profile", "file model"])("rejects an A2L result when its %s identifies A1", async mismatch => {
+    const loaded = vi.fn(); mocks.slicedFile = modelFile("resultado.3mf");
+    if (mismatch === "profile") mocks.jobProfile = "bambu-a1-04-pla-020-v1";
+    else mocks.pricing.mockReturnValue({ ...native, printerModelIds: ["Bambu Lab A1"] });
+    render(<PricingModelFile sourceFile={modelFile("part.stl")} estimate={null} printer={{ brand: "Bambu Lab", model: "A2L" }} materialCodes={["PLA"]} onLoaded={loaded} />);
+    fireEvent.click(screen.getByRole("button", { name: "Calcular tempo e filamento" })); fireEvent.click(await screen.findByRole("button", { name: "Usar na precificação" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/modelo|perfil/); expect(loaded).not.toHaveBeenCalled();
   });
 
   it("clears the previous cost immediately and keeps it cleared when its replacement fails", async () => {

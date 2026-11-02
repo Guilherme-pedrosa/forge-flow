@@ -3,6 +3,7 @@
   "extension_id": "lkalcgppeejlaioplgipmmgdcpncofck",
   "host_name": "com.elevare3d.forge_slicer",
   "profile_id": "bambu-a1-04-pla-020-v1",
+  "profiles": ["bambu-a1-04-pla-020-v1", "bambu-a2l-04-pla-020-v1"],
   "chunk_bytes": 393216,
   "max_file_bytes": 67108864,
   "allowed_origins": [

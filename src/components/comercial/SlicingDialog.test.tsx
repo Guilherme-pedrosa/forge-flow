@@ -6,7 +6,7 @@ import { SlicingDialog, downloadSlicedFile, encodeSlicingChunk, fileSha256, type
 const mocks = vi.hoisted(() => ({ rpc: vi.fn(), detect: vi.fn(), slice: vi.fn(), user: { id: 'owner-test' } }));
 vi.mock('@/integrations/supabase/client', () => ({ supabase: { rpc: mocks.rpc } }));
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: mocks.user }) }));
-vi.mock('@/lib/local-slicer-extension', () => ({ detectLocalSlicer: mocks.detect, sliceWithLocalExtension: mocks.slice, LOCAL_SLICER_PROFILE_ID: 'bambu-a1-04-pla-020-v1' }));
+vi.mock('@/lib/local-slicer-extension', () => ({ detectLocalSlicer: mocks.detect, sliceWithLocalExtension: mocks.slice, LOCAL_SLICER_PROFILE_ID: 'bambu-a1-04-pla-020-v1', LOCAL_SLICER_PROFILES: [{ id: 'bambu-a1-04-pla-020-v1', label: 'A1' }, { id: 'bambu-a2l-04-pla-020-v1', label: 'A2L' }] }));
 vi.mock('@/components/ui/dialog', () => ({
   Dialog: ({ open, children, onOpenChange }: { open: boolean; children: React.ReactNode; onOpenChange: (open: boolean) => void }) => open ? <div>{children}<button onClick={() => onOpenChange(false)}>Fechar simulador</button></div> : null,
   DialogContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -16,8 +16,8 @@ vi.mock('@/components/ui/dialog', () => ({
 }));
 const profile = { id: 'bambu-a1-04-pla-020-v1', name: 'Bambu A1 · PLA · 0,20 mm', engine_version: '02.08.02.61', available: true };
 const bytes = new Uint8Array([80, 75, 3, 4, 42]);
-function sourceFile() {
-  const file = new File([bytes], 'part.stl');
+function sourceFile(name = 'part.stl') {
+  const file = new File([bytes], name);
   Object.defineProperty(file, 'arrayBuffer', { value: async () => bytes.buffer.slice(0) }); return file;
 }
 const baseJob: SlicingJob = { id: 'job-id', file_name: 'part.stl', status: 'done', source_size: bytes.length, source_sha256: 'a'.repeat(64), profile_id: profile.id, progress: 100, result_available: true, result_size: bytes.length, result_chunks: 1 };
@@ -27,6 +27,53 @@ beforeEach(() => {
 });
 afterEach(cleanup);
 describe('SlicingDialog private simulation transfer', () => {
+  const a2l = 'bambu-a2l-04-pla-020-v1';
+  it('deduplicates the owned fleet to two official models and slices A2L only after explicit selection', async () => {
+    mocks.detect.mockResolvedValue({ profile_id: profile.id, profiles: [profile.id, a2l], engine_version: profile.engine_version });
+    const result = sourceFile('a2l-fatiado.3mf'), sliced = vi.fn();
+    mocks.slice.mockResolvedValue({ file: result, stats: { time_seconds: 12734, weight_grams: 60.92, engine: 'Bambu Studio', engine_version: profile.engine_version, normalizations: [] } });
+    render(<SlicingDialog open file={sourceFile()} ownedPrinterModels={['A1', 'A1', 'Bambu Lab A1', 'A1', 'A1', 'A2L']} onOpenChange={vi.fn()} onSliced={sliced} />);
+    const model = await screen.findByRole('combobox', { name: 'Modelo para fatiamento' });
+    expect([...model.querySelectorAll('option')].map(option => option.textContent)).toEqual(['A1', 'A2L']);
+    fireEvent.change(model, { target: { value: a2l } }); expect(mocks.slice).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Fatiar neste computador' })); await screen.findByText('Simulação concluída');
+    expect(mocks.slice).toHaveBeenCalledWith(expect.any(File), expect.objectContaining({ profileId: a2l }));
+    fireEvent.click(screen.getByRole('button', { name: 'Usar no cadastro' })); await waitFor(() => expect(sliced).toHaveBeenCalledWith(result, expect.objectContaining({ profile_id: a2l, stats: expect.objectContaining({ weight_grams: 60.92, time_seconds: 12734 }) })));
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+  it('keeps an older A1-only host from silently slicing an A2L request', async () => {
+    mocks.detect.mockResolvedValue({ profile_id: profile.id, engine_version: profile.engine_version });
+    render(<SlicingDialog open file={sourceFile()} profileId={a2l} onOpenChange={vi.fn()} onSliced={vi.fn()} />);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Atualize o conector local'); expect(screen.getByRole('button', { name: 'Fatiar neste computador' })).toBeDisabled(); expect(mocks.slice).not.toHaveBeenCalled(); expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+  it('waits for the registered models and enables only A2L when that fleet query completes', async () => {
+    mocks.detect.mockResolvedValue({ profile_id: profile.id, profiles: [profile.id, a2l], engine_version: profile.engine_version });
+    const file = sourceFile(), ui = (models: string[]) => <SlicingDialog open file={file} ownedPrinterModels={models} onOpenChange={vi.fn()} onSliced={vi.fn()} />;
+    const view = render(ui([])); await screen.findByText('Extensão local conectada'); expect(screen.getByRole('button', { name: 'Fatiar neste computador' })).toBeDisabled();
+    expect(screen.getByText(/Aguardando um modelo cadastrado compatível/)).toBeVisible(); view.rerender(ui(['Bambu Lab A2L']));
+    expect(screen.getByRole('button', { name: 'Fatiar neste computador' })).toBeEnabled(); expect(screen.getByText(/Bambu A2L · bico/)).toBeVisible(); expect(screen.queryByRole('combobox', { name: 'Modelo para fatiamento' })).not.toBeInTheDocument(); expect(mocks.detect).toHaveBeenCalledOnce();
+  });
+  it('clears a completed result when its selected model changes', async () => {
+    mocks.detect.mockResolvedValue({ profile_id: profile.id, profiles: [profile.id, a2l], engine_version: profile.engine_version });
+    mocks.slice.mockResolvedValue({ file: sourceFile('result.3mf'), stats: { time_seconds: 3600, weight_grams: 25, engine: 'Bambu Studio', engine_version: profile.engine_version, normalizations: [] } });
+    render(<SlicingDialog open file={sourceFile()} onOpenChange={vi.fn()} onSliced={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Fatiar neste computador' })); await screen.findByText('Simulação concluída'); expect(screen.getByRole('button', { name: 'Usar no cadastro' })).toBeEnabled();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Modelo para fatiamento' }), { target: { value: a2l } });
+    expect(screen.queryByRole('button', { name: 'Usar no cadastro' })).not.toBeInTheDocument(); expect(screen.queryByText('Filamento previsto')).not.toBeInTheDocument(); expect(screen.getByRole('button', { name: 'Fatiar neste computador' })).toBeEnabled();
+  });
+  it('aborts and clears a running result when its model is removed from the owned fleet', async () => {
+    mocks.detect.mockResolvedValue({ profile_id: profile.id, profiles: [profile.id, a2l], engine_version: profile.engine_version });
+    mocks.slice.mockImplementation((_file, { signal }: { signal: AbortSignal }) => new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(new DOMException('Cancelado', 'AbortError')))));
+    const file = sourceFile(), ui = (models: string[]) => <SlicingDialog open file={file} ownedPrinterModels={models} onOpenChange={vi.fn()} onSliced={vi.fn()} />;
+    const view = render(ui(['A1'])); fireEvent.click(await screen.findByRole('button', { name: 'Fatiar neste computador' })); await waitFor(() => expect(mocks.slice).toHaveBeenCalledOnce()); const signal = mocks.slice.mock.calls[0][1].signal;
+    view.rerender(ui(['A2L'])); await waitFor(() => expect(signal.aborted).toBe(true)); expect(screen.queryByText('Filamento previsto')).not.toBeInTheDocument(); expect(screen.getByRole('button', { name: 'Fatiar neste computador' })).toBeEnabled(); expect(mocks.slice).toHaveBeenCalledOnce();
+  });
+  it('filters the company fallback by the same registered model instead of offering an A1 worker to an A2L-only fleet', async () => {
+    mocks.detect.mockResolvedValue({ profile_id: profile.id, profiles: [profile.id, a2l], engine_version: profile.engine_version }); mocks.rpc.mockResolvedValue({ data: { can_manage_workers: false, profiles: [profile] }, error: null });
+    render(<SlicingDialog open file={sourceFile()} ownedPrinterModels={['A2L']} onOpenChange={vi.fn()} onSliced={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Usar fatiador conectado à empresa' })); await waitFor(() => expect(mocks.rpc).toHaveBeenCalled());
+    expect(screen.getByRole('combobox', { name: 'Perfil de impressão' }).querySelectorAll('option')).toHaveLength(0); expect(screen.getByRole('button', { name: 'Simular no Bambu Studio' })).toBeDisabled(); expect(mocks.slice).not.toHaveBeenCalled();
+  });
   it('prioritizes the installed extension without automatic slicing or any cloud request', async () => {
     const result = sourceFile(), sliced = vi.fn(), changed = vi.fn();
     mocks.detect.mockResolvedValue({ profile_id: profile.id, engine_version: profile.engine_version });
@@ -34,7 +81,7 @@ describe('SlicingDialog private simulation transfer', () => {
     render(<SlicingDialog open file={sourceFile()} onOpenChange={changed} onSliced={sliced} />);
     const start = await screen.findByRole('button', { name: 'Fatiar neste computador' });
     expect(start).toBeEnabled(); expect(mocks.slice).not.toHaveBeenCalled(); expect(mocks.rpc).not.toHaveBeenCalled();
-    expect(screen.getByText(/A2L e outros modelos precisam de um perfil compatível/)).toBeVisible();
+    expect(screen.getByText(/A1 e A2L usam seus perfis oficiais/)).toBeVisible();
     fireEvent.click(start);
     expect(await screen.findByText('Simulação concluída')).toBeInTheDocument();
     expect(mocks.slice).toHaveBeenCalledExactlyOnceWith(expect.any(File), expect.objectContaining({ signal: expect.any(AbortSignal), onProgress: expect.any(Function) }));
