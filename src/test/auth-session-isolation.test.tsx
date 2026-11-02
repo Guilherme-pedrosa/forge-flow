@@ -15,17 +15,22 @@ function deferred<T>() { let resolve!: (value: T) => void; const promise = new P
 function Probe() {
   const { user, profile, loading, profileError, signOut, retryProfile } = useAuth();
   const location = useLocation();
-  return <><span data-testid="user">{user?.id ?? "none"}</span><span data-testid="profile">{profile?.display_name ?? "none"}</span><span data-testid="loading">{String(loading)}</span><span data-testid="error">{profileError ?? "none"}</span><span data-testid="path">{location.pathname}</span><button onClick={() => void signOut()}>Sair</button><button onClick={() => void retryProfile()}>Repetir</button></>;
+  return <><span data-testid="user">{user?.id ?? "none"}</span><span data-testid="profile">{profile?.display_name ?? "none"}</span><span data-testid="loading">{String(loading)}</span><span data-testid="error">{profileError ?? "none"}</span><span data-testid="path">{location.pathname}</span><span data-testid="url">{location.pathname}{location.search}</span><button onClick={() => void signOut()}>Sair</button><button onClick={() => void retryProfile()}>Repetir</button></>;
 }
-function mount() {
+function mount(entry = "/") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  render(<QueryClientProvider client={client}><MemoryRouter><AuthProvider><Probe /></AuthProvider></MemoryRouter></QueryClientProvider>);
+  render(<QueryClientProvider client={client}><MemoryRouter initialEntries={[entry]}><AuthProvider><Probe /></AuthProvider></MemoryRouter></QueryClientProvider>);
   return client;
 }
 beforeEach(() => { vi.clearAllMocks(); auth.read.mockReset(); auth.getSession.mockReset().mockResolvedValue({ data: { session: null }, error: null }); auth.signOut.mockResolvedValue({ error: null }); });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe("Isolamento de sessão e perfil", () => {
+  it("preserva o recibo local da conexão Mercado Livre durante login e retorna ao Forge sem novo storage", async () => {
+    const callback = `/comercial/marketplaces?integrador_oauth=${"a".repeat(64)}`; mount(callback);
+    await waitFor(() => expect(screen.getByTestId("path")).toHaveTextContent("/login")); auth.read.mockResolvedValue({ data: profile("A"), error: null });
+    await act(async () => { auth.listener("SIGNED_IN", session("A")); }); await waitFor(() => expect(screen.getByTestId("url")).toHaveTextContent(callback));
+  });
   it("ignora consulta de perfil que termina depois de logout", async () => {
     const pending = deferred<any>(); auth.read.mockReturnValue(pending.promise); mount();
     await act(async () => { auth.listener("SIGNED_IN", session("A")); });

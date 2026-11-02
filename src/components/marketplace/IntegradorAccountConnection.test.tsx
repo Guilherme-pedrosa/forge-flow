@@ -1,0 +1,65 @@
+import { StrictMode } from "react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { IntegradorAccountConnection } from "./IntegradorAccountConnection";
+const mock = vi.hoisted(() => ({ begin: vi.fn(), finish: vi.fn(), open: vi.fn() }));
+vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
+vi.mock("@/lib/mercado-livre-integration", async original => ({ ...await original<typeof import("@/lib/mercado-livre-integration")>(), beginIntegradorEnrollment: mock.begin, finishIntegradorEnrollment: mock.finish, openIntegradorAuthorization: mock.open }));
+const id = "11111111-1111-4111-8111-111111111111", receipt = "a".repeat(64);
+const binding = { configured: true, enabled: true, bridge_id: "bridge-a", source_url: "https://integradorwedo.lovable.app", revision: "r1", allow_enrollment: true, approved_seller_ids: [], account_mappings: [] };
+const pending = { id, name: "ELEVARE3D", channel: "mercado_livre" as const, external_seller_id: null, connection_state: "pending_credentials", last_sync_at: null };
+const result = { connected: true, account_id: id, seller_id: "new-elevare", nickname: "ELEVARE3D", replayed: false };
+beforeEach(() => { mock.begin.mockReset().mockResolvedValue({ authorization_url: "official-provider-url", attempt_id: "attempt-a", expires_at: "2026-11-03T00:00:00Z" }); mock.finish.mockReset().mockResolvedValue(result); mock.open.mockReset(); });
+afterEach(cleanup);
+function mount(options: { receipt?: string; allowed?: boolean; strict?: boolean } = {}) {
+  const connected = vi.fn(), consumed = vi.fn(), busy = vi.fn();
+  let currentReceipt = options.receipt;
+  const ui = (tenant = "tenant-a", user = "operator-a") => <IntegradorAccountConnection key={`${tenant}:${user}`} binding={binding} tenantId={tenant} userId={user} accounts={[pending, { ...pending, id: "legacy-account", name: "Outra loja", external_seller_id: "old-seller" }]} allowed={options.allowed ?? true} configured callbackReceipt={currentReceipt} onConnected={connected} onReceiptConsumed={consumed} onBusyChange={busy} />;
+  const view = render(options.strict ? <StrictMode>{ui()}</StrictMode> : ui()); return { ...view, connected, consumed, busy, changeScope: () => view.rerender(ui("tenant-b", "operator-b")), changeReceipt: (next: string) => { currentReceipt = next; view.rerender(ui()); } };
+}
+const choose = (target = id) => fireEvent.change(screen.getByLabelText("Cadastro no Forge para esta conexão"), { target: { value: target } });
+describe("new Elevare Mercado Livre enrollment", () => {
+  it("works with no approved sellers and waits for an explicit pending-account choice before leaving for the provider", async () => {
+    const view = mount(); expect(mock.begin).not.toHaveBeenCalled(); expect(mock.finish).not.toHaveBeenCalled(); expect(screen.getByRole("button", { name: "Conectar Mercado Livre" })).toBeDisabled(); expect(screen.queryByRole("option", { name: /Outra loja/ })).not.toBeInTheDocument();
+    choose(); fireEvent.click(screen.getByRole("button", { name: "Conectar Mercado Livre" })); await waitFor(() => expect(mock.open).toHaveBeenCalledWith("official-provider-url"));
+    expect(mock.begin).toHaveBeenCalledWith(binding, id, window.location.origin, expect.any(String), expect.objectContaining({ userId: "operator-a", signal: expect.any(AbortSignal) })); expect(view.connected).not.toHaveBeenCalled(); expect(mock.finish).not.toHaveBeenCalled();
+  });
+  it("creates a new local account only when the operator explicitly selects new", async () => {
+    mount(); choose("new"); fireEvent.click(screen.getByRole("button", { name: "Conectar Mercado Livre" })); await waitFor(() => expect(mock.begin).toHaveBeenCalledWith(binding, null, window.location.origin, expect.any(String), expect.anything()));
+  });
+  it("retries a lost begin response with the same request identity and preserves the selected account", async () => {
+    mock.begin.mockRejectedValueOnce(new Error("Resposta perdida")); mount(); choose(); fireEvent.click(screen.getByRole("button", { name: "Conectar Mercado Livre" })); await screen.findByText("Resposta perdida"); const first = mock.begin.mock.calls[0].slice(0, 4);
+    expect(screen.getByLabelText("Cadastro no Forge para esta conexão")).toHaveValue(id); fireEvent.click(screen.getByRole("button", { name: "Conectar Mercado Livre" })); await waitFor(() => expect(mock.open).toHaveBeenCalled()); expect(mock.begin.mock.calls[1].slice(0, 4)).toEqual(first);
+  });
+  it("automatically consumes a verified callback once, including StrictMode, without reauthorizing or linking tokens locally", async () => {
+    const view = mount({ receipt, strict: true }); await screen.findByText(/Conta conectada: ELEVARE3D/);
+    expect(mock.finish).toHaveBeenCalledOnce(); expect(mock.finish).toHaveBeenCalledWith(binding, receipt, expect.any(String), expect.objectContaining({ userId: "operator-a" })); expect(view.connected).toHaveBeenCalledWith(result); expect(view.consumed).toHaveBeenCalledOnce(); expect(mock.begin).not.toHaveBeenCalled(); expect(mock.open).not.toHaveBeenCalled();
+  });
+  it("keeps a failed completion receipt and retries the same scoped request instead of beginning OAuth again", async () => {
+    mock.finish.mockRejectedValueOnce(new Error("Resposta perdida")); const view = mount({ receipt }); await screen.findByText("Resposta perdida"); const first = mock.finish.mock.calls[0].slice(0, 3); expect(view.consumed).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Conferir conclusão desta conexão" })); await screen.findByText(/Conta conectada: ELEVARE3D/); expect(mock.finish.mock.calls[1].slice(0, 3)).toEqual(first); expect(mock.begin).not.toHaveBeenCalled();
+  });
+  it("explains an existing legacy seller without replacing it or consuming the failed receipt", async () => {
+    mock.finish.mockRejectedValueOnce(new Error("seller_already_legacy")); const view = mount({ receipt }); await screen.findByText(/Entre na conta Mercado Livre correta da Elevare3D/); expect(view.connected).not.toHaveBeenCalled(); expect(view.consumed).not.toHaveBeenCalled(); expect(mock.begin).not.toHaveBeenCalled();
+  });
+  it("ignores a late enrollment result after the original user and tenant leave", async () => {
+    let resolve!: (value: unknown) => void; mock.finish.mockReturnValueOnce(new Promise(done => { resolve = done; })).mockRejectedValue(new Error("receipt_actor_mismatch")); const view = mount({ receipt }); await waitFor(() => expect(mock.finish).toHaveBeenCalledOnce()); view.changeScope();
+    await act(async () => { resolve(result); }); expect(view.connected).not.toHaveBeenCalled(); expect(view.consumed).not.toHaveBeenCalled(); expect(screen.queryByText(/Conta conectada:/)).not.toBeInTheDocument(); expect(view.busy).toHaveBeenLastCalledWith(false);
+  });
+  it("does not consume an invalid callback and permits an explicit fresh connection", async () => {
+    mount({ receipt: "not-a-receipt" }); expect(screen.getByRole("alert")).toHaveTextContent("recibo válido"); expect(mock.finish).not.toHaveBeenCalled(); choose(); expect(screen.getByRole("button", { name: "Conectar Mercado Livre" })).toBeEnabled();
+  });
+  it("never consumes a newer receipt using an older pending completion in the same auth scope", async () => {
+    let resolveA!: (value: unknown) => void, resolveB!: (value: unknown) => void;
+    mock.finish.mockReturnValueOnce(new Promise(done => { resolveA = done; })).mockReturnValueOnce(new Promise(done => { resolveB = done; }));
+    const view = mount({ receipt }); await waitFor(() => expect(mock.finish).toHaveBeenCalledOnce()); const oldSignal = mock.finish.mock.calls[0][3].signal; view.changeReceipt("b".repeat(64));
+    await waitFor(() => expect(mock.finish).toHaveBeenCalledTimes(2)); expect(oldSignal.aborted).toBe(true);
+    await act(async () => { resolveA(result); }); expect(view.connected).not.toHaveBeenCalled(); expect(view.consumed).not.toHaveBeenCalled(); expect(screen.queryByText(/Conta conectada:/)).not.toBeInTheDocument();
+    await act(async () => { resolveB({ ...result, seller_id: "correct-new-receipt", nickname: "Conta confirmada" }); }); expect(view.connected).toHaveBeenCalledWith(expect.objectContaining({ seller_id: "correct-new-receipt" })); expect(view.consumed).toHaveBeenCalledOnce();
+  });
+  it("does not open an old authorization or clear a callback that arrived while begin was pending", async () => {
+    let resolve!: (value: unknown) => void; mock.begin.mockReturnValueOnce(new Promise(done => { resolve = done; })); mock.finish.mockRejectedValue(new Error("O retorno expirou."));
+    const view = mount(); choose(); fireEvent.click(screen.getByRole("button", { name: "Conectar Mercado Livre" })); await waitFor(() => expect(mock.begin).toHaveBeenCalledOnce()); view.changeReceipt(receipt); await waitFor(() => expect(mock.finish).toHaveBeenCalledOnce());
+    await act(async () => { resolve({ authorization_url: "obsolete-provider-url" }); }); expect(mock.open).not.toHaveBeenCalled(); expect(view.consumed).not.toHaveBeenCalled(); expect(view.connected).not.toHaveBeenCalled();
+  });
+});

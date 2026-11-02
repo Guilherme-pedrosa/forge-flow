@@ -24,6 +24,12 @@ function mount(activeAccount = local) {
 }
 async function choose(id = "seller-a") { await screen.findByRole("option", { name: /Loja A/ }); fireEvent.change(screen.getByLabelText("Vendedor do Integrador"), { target: { value: id } }); }
 describe("concrete Integrador operations in Forge", () => {
+  it("offers the new Elevare account flow with an empty approved scope and keeps global settings read only", async () => {
+    mock.binding.mockResolvedValue({ configured: true, enabled: true, bridge_id: "public-id", source_url: "https://integradorwedo.lovable.app", revision: "r1", allow_enrollment: true, approved_seller_ids: [], account_mappings: [] });
+    mock.readiness.mockResolvedValue({ settings: { client_id: "1234", client_secret_configured: true, configured: true, read_only: true, full_scope: false }, source_accounts: [], enrollment: { allowed: true, configured: true, connected_seller_count: 0 } }); mount();
+    await screen.findByRole("button", { name: "Conectar Mercado Livre" }); expect(screen.queryByLabelText("Vendedor do Integrador")).not.toBeInTheDocument(); expect(screen.queryByText(/Loja A|Loja B/)).not.toBeInTheDocument(); expect(screen.getByRole("option", { name: /Cadastro Elevare · cadastro pendente/ })).toBeInTheDocument(); expect(mock.link).not.toHaveBeenCalled(); expect(mock.verify).not.toHaveBeenCalled();
+    expect(screen.getByText(/Esta conexão permite consultar a configuração/)).toBeInTheDocument(); expect(screen.queryByRole("button", { name: /Salvar configuração/ })).not.toBeInTheDocument();
+  });
   it("reads only safe app/account status and requires explicit seller choice and remote verification", async () => {
     mount(); await screen.findByRole("option", { name: /Loja A/ });
     expect(screen.getByLabelText("Vendedor do Integrador")).toHaveValue(""); expect(mock.verify).not.toHaveBeenCalled(); expect(mock.listings).not.toHaveBeenCalled(); expect(mock.link).not.toHaveBeenCalled();

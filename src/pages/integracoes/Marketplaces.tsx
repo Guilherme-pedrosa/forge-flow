@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, Loader2, RefreshCw, Store } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
@@ -34,6 +34,7 @@ export default function Marketplaces() {
 }
 function MarketplacesSession() {
   const { profile, user } = useAuth(); const { toast } = useToast(); const qc = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const alive = useRef(true); useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const [integradorBusy, setIntegradorBusy] = useState(false);
   const [stockBusy, setStockBusy] = useState(false);
@@ -66,6 +67,7 @@ function MarketplacesSession() {
   const sourceLink = sourceOwnership && sourceBinding.data?.configured && sourceBinding.data.enabled && sourceOwnership.bridge_id === sourceBinding.data.bridge_id
     && sourceBinding.data.approved_seller_ids.includes(sourceOwnership.source_seller_id) && account?.external_seller_id === sourceOwnership.source_seller_id ? sourceOwnership : null;
   const sourceOwnsAccount = !!sourceOwnership;
+  const sourceEnrollmentAccount = account?.channel === "mercado_livre" && !!sourceBinding.data?.allow_enrollment && !sourceOwnsAccount && !account.external_seller_id && ["pending_credentials", "pending_access", "import_only"].includes(account.connection_state);
   const sourceReadiness = useQuery({ queryKey: ["integrador_readiness", profile?.tenant_id ?? "", user?.id ?? profile?.user_id ?? "", sourceBinding.data?.bridge_id, sourceBinding.data?.revision],
     enabled: !!sourceLink, retry: false, queryFn: ({ signal }) => readIntegradorReadiness(sourceBinding.data!, { userId: user?.id ?? profile?.user_id ?? "", signal }) });
   const sourceOrdersReady = !!sourceLink && !!sourceReadiness.data?.settings.configured && !!sourceReadiness.data.source_accounts.find(row => row.seller_id === sourceLink.source_seller_id)?.credentials_configured && !sourceReadiness.isFetching;
@@ -139,6 +141,7 @@ function MarketplacesSession() {
   return <div className="space-y-5">
     <PageHeader title="Vendas dos marketplaces" description="Traga os pedidos, vincule os produtos uma vez e confira o prazo para organizar a produção." breadcrumbs={[{ label: "Integrações" }, { label: "Marketplaces" }]} />
     <MercadoLivreSettings accounts={accounts.data ?? []} activeAccount={account} disabled={mutate.isPending || stockBusy || bindingBusy} onBusyChange={setIntegradorBusy}
+      enrollmentReceipt={searchParams.get("integrador_oauth")} enrollmentError={searchParams.get("integrador_oauth_error")} onEnrollmentReceiptConsumed={() => setSearchParams(previous => { const next = new URLSearchParams(previous); next.delete("integrador_oauth"); next.delete("integrador_oauth_error"); return next; }, { replace: true })}
       onAccountLinked={async id => { await accounts.refetch(); if (alive.current) { setAccountId(id); setListingSelection(null); } }}
       onSelectListing={(identity, sellerId) => { if (!account || account.channel !== "mercado_livre" || account.external_seller_id !== sellerId || sourceLink?.source_seller_id !== sellerId) return;
         setListingSelection(identity); if (bindingsDetails.current) bindingsDetails.current.open = true;
@@ -146,7 +149,7 @@ function MarketplacesSession() {
       }} />
     {mutate.isPending && <p role="status" className="flex gap-2 text-sm"><Loader2 className="h-4 w-4 animate-spin" />Concluindo operação…</p>}
     {oauthCode && oauthMainAccount && !oauthShopId && <p role="alert" className="rounded-xl border bg-card p-4">A Shopee retornou uma autorização de conta principal. Nesta etapa, autorize uma loja individual para conectá-la ao ERP.</p>}
-    {oauthCode && oauthState && (!oauthMainAccount || oauthShopId) && (oauthShopId || !sourceOwnsAccount && sourceBinding.isSuccess) && <div className="rounded-xl border bg-card p-4"><p>{oauthLabel} retornou a autorização. Conclua para validar a conta.</p><Button disabled={operationsBusy} className="mt-2" onClick={() => mutate.mutate(async () => { const result = await edge({ action: "oauth_exchange", code: oauthCode, state: oauthState, ...(oauthShopId ? { shop_id: oauthShopId } : {}) }, oauthShopId ? "shopee" : "mercado_livre"); if (typeof result.account_id === "string") setAccountId(result.account_id); window.history.replaceState({}, "", window.location.pathname); return `Conta autorizada: ${oauthLabel}`; })}>Concluir autorização</Button></div>}
+    {oauthCode && oauthState && (!oauthMainAccount || oauthShopId) && (oauthShopId || !sourceOwnsAccount && !sourceEnrollmentAccount && sourceBinding.isSuccess) && <div className="rounded-xl border bg-card p-4"><p>{oauthLabel} retornou a autorização. Conclua para validar a conta.</p><Button disabled={operationsBusy} className="mt-2" onClick={() => mutate.mutate(async () => { const result = await edge({ action: "oauth_exchange", code: oauthCode, state: oauthState, ...(oauthShopId ? { shop_id: oauthShopId } : {}) }, oauthShopId ? "shopee" : "mercado_livre"); if (typeof result.account_id === "string") setAccountId(result.account_id); window.history.replaceState({}, "", window.location.pathname); return `Conta autorizada: ${oauthLabel}`; })}>Concluir autorização</Button></div>}
     {oauthCode && !oauthState && <p role="alert" className="rounded-xl border bg-card p-4">O retorno não trouxe o estado de segurança da autorização. Comece a autorização novamente; a conta ainda não foi conectada.</p>}
     <section className="rounded-xl border bg-card p-4 space-y-3" aria-label="Contas dos canais">
       <h2 className="font-semibold flex gap-2"><Store className="h-5 w-5" />Contas de venda</h2>
@@ -175,7 +178,8 @@ function MarketplacesSession() {
           <Button disabled={operationsBusy || !recentFrom || !recentTo || (sourceOwnsAccount ? !sourceOrdersReady : account.connection_state !== "connected")} onClick={() => fetchRecent(0)}>Buscar pedidos recentes</Button>
           {account.channel === "shopee" ? recentCursor !== null && <Button variant="outline" disabled={operationsBusy} onClick={() => fetchRecent(0, recentCursor)}>Buscar próxima página</Button> : recentNext !== null && <Button variant="outline" disabled={operationsBusy} onClick={() => fetchRecent(recentNext)}>Buscar próxima página</Button>}</div>
         <p className="text-xs text-muted-foreground">{account.channel === "shopee" ? "Busca atualizações em páginas de 20, em intervalos de até 15 dias, incluindo cancelamentos e mudanças de pagamento. Pedidos sem horário oficial ou com valores divergentes ficam para conferência." : "Busca pedidos pagos em páginas de 20, até 100 por intervalo de até 31 dias. Consulte outros estados por ID para revisar cancelamentos ou alterações."}</p>
-        <div className="flex flex-wrap gap-2">{!sourceOwnsAccount && <Button variant="outline" disabled={operationsBusy} onClick={() => mutate.mutate(async () => { const result = await edge({ action: "oauth_begin", account_id: account.id }); if (typeof result.authorization_url !== "string") throw new Error("Endereço de autorização não retornado."); window.location.assign(result.authorization_url); return `Abrindo autorização: ${marketplaceLabels[account.channel]}`; })}>{account.connection_state === "connected" ? "Autorizar novamente" : `Autorizar ${marketplaceLabels[account.channel]}`}</Button>}
+        {sourceEnrollmentAccount && <p className="text-sm text-muted-foreground">Conecte este cadastro pelo formulário Minha conta Elevare3D acima.</p>}
+        <div className="flex flex-wrap gap-2">{!sourceOwnsAccount && !sourceEnrollmentAccount && <Button variant="outline" disabled={operationsBusy} onClick={() => mutate.mutate(async () => { const result = await edge({ action: "oauth_begin", account_id: account.id }); if (typeof result.authorization_url !== "string") throw new Error("Endereço de autorização não retornado."); window.location.assign(result.authorization_url); return `Abrindo autorização: ${marketplaceLabels[account.channel]}`; })}>{account.connection_state === "connected" ? "Autorizar novamente" : `Autorizar ${marketplaceLabels[account.channel]}`}</Button>}
           <Input className="sm:max-w-md" aria-label={`IDs de pedidos ${marketplaceLabels[account.channel]}`} placeholder="Números de pedidos, separados por vírgula" value={orderIds} onChange={e => setOrderIds(e.target.value)} />
           <Button disabled={operationsBusy || !orderIds.trim() || (sourceOwnsAccount ? !sourceOrdersReady : account.connection_state !== "connected")} onClick={() => mutate.mutate(async () => { const result = await edge({ action: "fetch_orders", account_id: account.id, order_ids: orderIds.split(/[\s,;]+/).filter(Boolean) }); return `Consulta concluída: ${Number(result.imported ?? 0)} pedidos atualizados${workflowSummary(result)}`; })}><RefreshCw className="mr-2 h-4 w-4" />Consultar pedidos</Button>
         </div><p className="text-xs text-muted-foreground">{sourceOwnsAccount ? "As credenciais permanecem no Integrador. Os pedidos consultados seguem os vínculos de produto e a organização da venda no Forge." : "Sem credenciais do aplicativo no servidor, a autorização informa o acesso pendente. Sincronização automática e etiquetas ainda não estão ativadas."}</p>

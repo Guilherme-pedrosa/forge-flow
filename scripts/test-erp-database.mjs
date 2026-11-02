@@ -576,11 +576,31 @@ await test('Materials accept initial cost and stock in the regular save and reta
  assert.equal(await scalar('SELECT count(*)::int FROM inventory_movements WHERE item_id=$1',[item]),2);
  await rejects('SELECT save_inventory_catalog($1,$2::jsonb,$3)',[otherMaterial,JSON.stringify({current_stock:5,expected_stock:0}),requestId()],/não encontrado/);
 });
-await test('Purchase receipt increases the exact same product balance',async()=>{
+await test('New purchases reject finished-product stock atomically without stock or financial changes',async()=>{
  const product=await saveProduct({name:'Produto comprado',manual_cost:10,cost_estimate:10,sale_price:25,stock:{current_stock:20,avg_cost:10,unit:'un'}});
  const item=await scalar('SELECT stock_item_id FROM products WHERE id=$1',[product]);
- await scalar('SELECT save_quick_purchase($1::jsonb,$2::jsonb,$3::jsonb,$4,true)',[JSON.stringify({order_date:today,subtotal:50,total:50}),JSON.stringify([{description:'Produto comprado',inventory_item_id:item,quantity:5,stock_quantity:5,unit_price:10,total:50}]),JSON.stringify([{amount:50,due_date:today}]),requestId()]);
- assert.equal(Number(await scalar('SELECT current_stock FROM inventory_items WHERE id=$1',[item])),25);
+ const snapshot=async()=>({stock:await row('SELECT current_stock,avg_cost FROM inventory_items WHERE id=$1',[item]),purchases:await scalar('SELECT count(*)::int FROM purchase_orders'),lines:await scalar('SELECT count(*)::int FROM purchase_order_items'),payables:await scalar('SELECT count(*)::int FROM accounts_payable'),movements:await scalar('SELECT count(*)::int FROM inventory_movements')});
+ const before=await snapshot(),args=[JSON.stringify({order_date:today,subtotal:50,total:50}),JSON.stringify([{description:'Produto comprado',inventory_item_id:item,quantity:5,stock_quantity:5,unit_price:10,total:50}]),JSON.stringify([{amount:50,due_date:today}]),requestId()];
+ await rejects('SELECT save_quick_purchase($1::jsonb,$2::jsonb,$3::jsonb,$4,true)',args,/somente insumos/);
+ assert.deepEqual(await snapshot(),before);
+ // Replaying the rejected request cannot leave an accepted purchase or a partial receipt behind.
+ await rejects('SELECT save_quick_purchase($1::jsonb,$2::jsonb,$3::jsonb,$4,true)',args,/somente insumos/);
+ assert.deepEqual(await snapshot(),before);
+});
+await test('Material purchase receives into the same filament with weighted average cost and inert retries',async()=>{
+ const item=await makeMaterial('PLA branco para compra','g');
+ await postMovement({item_id:item,movement_type:'purchase_in',quantity:1000,unit_cost:0.1});
+ const args=[JSON.stringify({order_date:today,subtotal:200,total:200}),JSON.stringify([{description:'PLA branco 1 kg',inventory_item_id:item,quantity:1,stock_quantity:1000,unit_price:200,total:200}]),JSON.stringify([{amount:200,due_date:today}]),requestId()];
+ const call='SELECT save_quick_purchase($1::jsonb,$2::jsonb,$3::jsonb,$4,true)',purchase=await scalar(call,args);
+ assert.equal(await scalar('SELECT inventory_item_id FROM purchase_order_items WHERE purchase_order_id=$1',[purchase]),item);
+ assert.equal(Number(await scalar('SELECT current_stock FROM inventory_items WHERE id=$1',[item])),2000);
+ assert.equal(Number(await scalar('SELECT avg_cost FROM inventory_items WHERE id=$1',[item])),0.15);
+ assert.equal(Number(await scalar('SELECT sum(amount) FROM accounts_payable WHERE origin_id=$1',[purchase])),200);
+ assert.equal(Number(await scalar('SELECT sum(total_cost) FROM inventory_movements WHERE reference_id=$1',[purchase])),200);
+ assert.equal(await scalar('SELECT count(*)::int FROM inventory_movements WHERE reference_id=$1',[purchase]),1);
+ const snapshot=async()=>({stock:await row('SELECT current_stock,avg_cost FROM inventory_items WHERE id=$1',[item]),purchases:await scalar('SELECT count(*)::int FROM purchase_orders'),payables:await scalar('SELECT count(*)::int FROM accounts_payable'),movements:await scalar('SELECT count(*)::int FROM inventory_movements')});
+ const beforeRetry=await snapshot();assert.equal(await scalar(call,args),purchase);
+ await scalar('SELECT receive_purchase_order($1,CURRENT_DATE)',[purchase]);assert.deepEqual(await snapshot(),beforeRetry);
 });
 await test('Ready-stock sale needs no print recipe, debits once, creates receivable and cancellation restores once',async()=>{
  const product=await saveProduct({name:'Pronta entrega',manual_cost:10,cost_estimate:10,sale_price:25,stock:{current_stock:20,avg_cost:10}});

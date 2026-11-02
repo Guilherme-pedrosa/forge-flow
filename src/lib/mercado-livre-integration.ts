@@ -6,6 +6,18 @@ import type { MarketplaceStockPreview } from "./marketplace-stock-preview";
 // This origin/path is pinned before obtaining a session. A database value or a listing URL never chooses where the JWT is sent.
 export const INTEGRADOR_ORIGIN = "https://integradorwedo.lovable.app";
 export const INTEGRADOR_BRIDGE_ENDPOINT = `${INTEGRADOR_ORIGIN}/api/public/hooks/forge-bridge`;
+export function integradorAuthorizationUrl(value: string): string {
+  try {
+    const url = new URL(value), callback = new URL(url.searchParams.get("redirect_uri") || "");
+    if (url.origin !== "https://auth.mercadolivre.com.br" || url.pathname !== "/authorization" || url.username || url.password || url.hash
+      || url.searchParams.get("response_type") !== "code" || !/^\d{1,40}$/.test(url.searchParams.get("client_id") || "") || !/^forge1\.[a-f0-9]{64}$/.test(url.searchParams.get("state") || "")
+      || url.searchParams.get("code_challenge_method") !== "S256" || !/^[\w-]{43}$/.test(url.searchParams.get("code_challenge") || "")
+      || callback.href !== `${INTEGRADOR_ORIGIN}/api/public/hooks/ml-oauth`
+      || ["access_token", "refresh_token", "id_token", "client_secret", "code"].some(key => url.searchParams.has(key))) throw new Error();
+    return url.href;
+  } catch { throw new Error("O endereço de autorização não corresponde ao Mercado Livre e ao retorno aprovado do Integrador."); }
+}
+export function openIntegradorAuthorization(value: string): void { window.location.assign(integradorAuthorizationUrl(value)); }
 const text = z.string().max(1000);
 const nullableText = text.nullable().optional().default(null);
 const identifier = z.string().min(1).max(160);
@@ -23,12 +35,14 @@ const readinessSchema = z.object({
   source_jobs: z.object({ pending_stock_jobs: quantity, running_stock_jobs: quantity, failed_stock_jobs: quantity }).optional(),
   capabilities: z.object({ read_listings: z.boolean(), write_stock: z.literal(false), write_prices: z.literal(false) }).optional(),
   manual_operations: z.object({ available: z.boolean(), automatic_writes: z.literal(false), ownership_confirmation_required: z.literal(true), accepted_forge_channel_price_required: z.literal(true) }).optional(),
+  enrollment: z.object({ allowed: z.boolean(), configured: z.boolean(), connected_seller_count: z.number().int().nonnegative() }).optional(),
 });
 export type MercadoLivreReadiness = z.infer<typeof readinessSchema>;
 export type IntegradorSettings = MercadoLivreReadiness["settings"];
 export type IntegradorSourceAccount = z.infer<typeof sourceAccount>;
 const bindingSchema = z.object({ configured: z.boolean(), bridge_id: nullableText, source_url: nullableText,
   revision: nullableText, approved_seller_ids: z.array(identifier).optional().default([]), enabled: z.boolean().optional().default(false),
+  allow_enrollment: z.boolean().optional().default(false),
   account_mappings: z.array(z.object({ account_id: identifier, source_seller_id: identifier, bridge_id: identifier })).optional().default([]) });
 export type IntegradorBridgeBinding = z.infer<typeof bindingSchema>;
 const attribute = z.object({ id: nullableText, name: nullableText, value_name: nullableText });
@@ -59,9 +73,9 @@ function assertSource(binding: IntegradorBridgeBinding) {
   if (!binding.configured || !binding.enabled || !binding.bridge_id) throw new Error("A conexão desta empresa com o Integrador precisa ser associada antes da consulta.");
   if (![INTEGRADOR_ORIGIN, `${INTEGRADOR_ORIGIN}/`, INTEGRADOR_BRIDGE_ENDPOINT].includes(binding.source_url ?? "")) throw new Error("O endereço do Integrador não corresponde à conexão aprovada desta empresa.");
 }
-type BridgeAction = "settings_readiness" | "revalidate_account" | "fetch_listings" | "fetch_orders" | "fetch_recent_orders" | "settings_save" | "stock_preview" | "takeover_stock" | "sync_stock" | "sync_price";
+type BridgeAction = "settings_readiness" | "revalidate_account" | "fetch_listings" | "fetch_orders" | "fetch_recent_orders" | "settings_save" | "stock_preview" | "takeover_stock" | "sync_stock" | "sync_price" | "enrollment_begin" | "enrollment_finish";
 async function sourceRequest(binding: IntegradorBridgeBinding, action: BridgeAction, args: { source_seller_id?: string; offset?: number; limit?: number; order_ids?: string[]; from?: string; to?: string;
-  settings?: IntegradorSettingsChanges; expected_revision?: string; request_id?: string; acknowledge_scheduled_effects?: true; account_id?: string; product_ids?: string[]; acknowledge_takeover?: true; acknowledge_marketplace_write?: true }, context: { userId: string; signal?: AbortSignal }): Promise<unknown> {
+  settings?: IntegradorSettingsChanges; expected_revision?: string; request_id?: string; acknowledge_scheduled_effects?: true; account_id?: string | null; product_ids?: string[]; acknowledge_takeover?: true; acknowledge_marketplace_write?: true; return_origin?: string; receipt?: string }, context: { userId: string; signal?: AbortSignal }): Promise<unknown> {
   assertSource(binding); context.signal?.throwIfAborted();
   if (args.source_seller_id && !binding.approved_seller_ids.includes(args.source_seller_id)) throw new Error("Selecione um vendedor aprovado para esta empresa.");
   const controller = new AbortController();
@@ -95,6 +109,23 @@ async function sourceRequest(binding: IntegradorBridgeBinding, action: BridgeAct
 export async function readIntegradorReadiness(binding: IntegradorBridgeBinding, context: { userId: string; signal?: AbortSignal }): Promise<MercadoLivreReadiness> {
   const result = readMercadoLivreReadiness(await sourceRequest(binding, "settings_readiness", {}, context));
   return { ...result, source_accounts: result.source_accounts.filter(account => binding.approved_seller_ids.includes(account.seller_id)) };
+}
+const enrollmentReceipt = /^[\da-f]{64}$/;
+export function validIntegradorEnrollmentReceipt(value: string): boolean { return enrollmentReceipt.test(value); }
+export async function beginIntegradorEnrollment(binding: IntegradorBridgeBinding, accountId: string | null, returnOrigin: string, requestId: string, context: { userId: string; signal?: AbortSignal }): Promise<{ authorization_url: string; attempt_id: string; expires_at: string }> {
+  if (!binding.allow_enrollment) throw new Error("A conexão de uma nova conta ainda não foi habilitada para esta empresa.");
+  if (accountId !== null && !z.string().uuid().safeParse(accountId).success) throw new Error("Selecione um cadastro pendente válido do Forge.");
+  let origin: URL; try { origin = new URL(returnOrigin); if (origin.origin !== returnOrigin || origin.protocol !== "https:") throw new Error(); } catch { throw new Error("Abra o Forge pelo endereço HTTPS autorizado antes de conectar a conta."); }
+  const result = parsed(z.object({ authorization_url: z.string().max(8192), attempt_id: z.string().uuid(), expires_at: z.string().datetime() }),
+    await sourceRequest(binding, "enrollment_begin", { account_id: accountId, return_origin: origin.origin, request_id: requestId }, context));
+  return { authorization_url: integradorAuthorizationUrl(result.authorization_url), attempt_id: result.attempt_id, expires_at: result.expires_at };
+}
+export type IntegradorEnrollmentResult = { connected: true; account_id: string; seller_id: string; nickname: string; replayed: boolean };
+export async function finishIntegradorEnrollment(binding: IntegradorBridgeBinding, receipt: string, requestId: string, context: { userId: string; signal?: AbortSignal }): Promise<IntegradorEnrollmentResult> {
+  if (!binding.allow_enrollment || !validIntegradorEnrollmentReceipt(receipt)) throw new Error("O retorno da conexão não é válido. Comece a autorização da conta novamente.");
+  const result = parsed(z.object({ connected: z.literal(true), account_id: z.string().uuid(), seller_id: identifier, nickname: text, replayed: z.boolean() }),
+    await sourceRequest(binding, "enrollment_finish", { receipt, request_id: requestId }, context));
+  return { connected: result.connected, account_id: result.account_id, seller_id: result.seller_id, nickname: result.nickname, replayed: result.replayed };
 }
 export async function revalidateIntegradorAccount(binding: IntegradorBridgeBinding, sellerId: string, context: { userId: string; signal?: AbortSignal }): Promise<IntegradorSourceAccount> {
   const result = parsed(z.object({ verified: z.literal(true), account: sourceAccount }), await sourceRequest(binding, "revalidate_account", { source_seller_id: sellerId }, context));

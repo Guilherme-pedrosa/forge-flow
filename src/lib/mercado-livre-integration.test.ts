@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { INTEGRADOR_BRIDGE_ENDPOINT, fetchIntegradorListings, fetchIntegradorMarketplaceOrders, integradorSettingsDraft, prepareIntegradorSettingsChanges, readIntegradorReadiness, readMercadoLivreReadiness, revalidateIntegradorAccount, saveIntegradorSettings, readIntegradorStockPreview, takeoverIntegradorStock, syncIntegradorManual, type IntegradorBridgeBinding } from "./mercado-livre-integration";
+import { INTEGRADOR_BRIDGE_ENDPOINT, fetchIntegradorListings, fetchIntegradorMarketplaceOrders, integradorSettingsDraft, prepareIntegradorSettingsChanges, readIntegradorReadiness, readMercadoLivreReadiness, revalidateIntegradorAccount, saveIntegradorSettings, readIntegradorStockPreview, takeoverIntegradorStock, syncIntegradorManual, integradorAuthorizationUrl, beginIntegradorEnrollment, finishIntegradorEnrollment, type IntegradorBridgeBinding } from "./mercado-livre-integration";
 const mock = vi.hoisted(() => ({ getSession: vi.fn(), rpc: vi.fn(), fetch: vi.fn() }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { auth: { getSession: mock.getSession } } }));
 vi.mock("./marketplace-orders", async original => ({ ...await original<typeof import("./marketplace-orders")>(), marketplaceRpc: mock.rpc }));
@@ -12,6 +12,11 @@ const readiness = { settings: { client_id: "1234", client_secret_configured: tru
 beforeEach(() => { mock.rpc.mockReset(); mock.getSession.mockReset().mockResolvedValue({ data: { session: { user: { id: "operator-a" }, access_token: "session-jwt" } }, error: null }); mock.fetch.mockReset().mockResolvedValue({ ok: true, json: async () => readiness }); vi.stubGlobal("fetch", mock.fetch); });
 afterEach(() => vi.unstubAllGlobals());
 describe("pinned authenticated Integrador client", () => {
+  it("accepts only the official provider code flow returning to the pinned Integrador", () => {
+    const url = new URL("https://auth.mercadolivre.com.br/authorization"); url.search = new URLSearchParams({ response_type: "code", client_id: "1234", state: `forge1.${"a".repeat(64)}`, code_challenge_method: "S256", code_challenge: "A".repeat(43), redirect_uri: "https://integradorwedo.lovable.app/api/public/hooks/ml-oauth" }).toString();
+    expect(integradorAuthorizationUrl(url.href)).toBe(url.href);
+    for (const change of [() => { url.hostname = "auth.mercadolivre.com.br.attacker.example"; }, () => { url.hostname = "auth.mercadolivre.com.br"; url.username = "attacker"; }, () => { url.username = ""; url.searchParams.set("redirect_uri", "https://attacker.example/callback"); }, () => { url.searchParams.set("redirect_uri", "https://integradorwedo.lovable.app/callback"); url.searchParams.set("response_type", "token"); }]) { change(); expect(() => integradorAuthorizationUrl(url.href)).toThrow("endereço de autorização"); }
+  });
   it("uses the normal transient Forge JWT only at the pinned endpoint and strips unexpected secret fields", async () => {
     mock.fetch.mockResolvedValue({ ok: true, json: async () => ({ ...readiness, access_token: "forbidden", settings: { ...readiness.settings, client_secret: "forbidden-secret" }, source_accounts: [{ ...account, refresh_token: "forbidden-refresh" }, { ...account, seller_id: "other-tenant" }] }) });
     const result = await readIntegradorReadiness(binding, { userId: "operator-a" });
@@ -74,6 +79,31 @@ const localAccount = "11111111-1111-4111-8111-111111111111", productId = "222222
 const manualBinding: IntegradorBridgeBinding = { ...binding, account_mappings: [{ account_id: localAccount, source_seller_id: "seller-a", bridge_id: binding.bridge_id! }] };
 const selection = { account_id: localAccount, source_seller_id: "seller-a", product_ids: [productId] };
 const manualContext = { userId: "operator-a", tenantId: "tenant-a" };
+describe("new-account enrollment with empty approved seller scope", () => {
+  const emptyBinding = { ...binding, approved_seller_ids: [], allow_enrollment: true };
+  const authUrl = () => { const url = new URL("https://auth.mercadolivre.com.br/authorization"); url.search = new URLSearchParams({ response_type: "code", client_id: "1234", state: `forge1.${"a".repeat(64)}`, code_challenge_method: "S256", code_challenge: "A".repeat(43), redirect_uri: "https://integradorwedo.lovable.app/api/public/hooks/ml-oauth" }).toString(); return url.href; };
+  it("reads enrollment capability without exposing an old source account or authorizing it", async () => {
+    mock.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ ...readiness, enrollment: { allowed: true, configured: true, connected_seller_count: 0 } }) });
+    const result = await readIntegradorReadiness(emptyBinding, manualContext); expect(result.enrollment?.allowed).toBe(true); expect(result.source_accounts).toEqual([]); expect(JSON.stringify(result)).not.toContain("seller-a");
+  });
+  it("begins only the operator-selected pending account and accepts a code URL to the exact server callback", async () => {
+    mock.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ authorization_url: authUrl(), attempt_id: localAccount, expires_at: "2026-11-03T00:00:00Z" }) });
+    expect((await beginIntegradorEnrollment(emptyBinding, localAccount, "https://elevare3d.lovable.app", productId, manualContext)).authorization_url).toBe(authUrl());
+    expect(JSON.parse(mock.fetch.mock.calls[0][1].body)).toEqual({ bridge_id: binding.bridge_id, action: "enrollment_begin", account_id: localAccount, return_origin: "https://elevare3d.lovable.app", request_id: productId });
+    mock.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ authorization_url: authUrl().replace("auth.mercadolivre.com.br", "attacker.example"), attempt_id: localAccount, expires_at: "2026-11-03T00:00:00Z" }) });
+    await expect(beginIntegradorEnrollment(emptyBinding, null, "https://elevare3d.lovable.app", productId, manualContext)).rejects.toThrow("endereço de autorização");
+  });
+  it("finishes through the opaque receipt only, strips secrets, and never invokes the legacy link RPC", async () => {
+    const result = { connected: true, account_id: localAccount, seller_id: "new-elevare", nickname: "ELEVARE3D", replayed: true };
+    mock.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ ...result, access_token: "forbidden", refresh_token: "forbidden", code: "forbidden" }) });
+    expect(await finishIntegradorEnrollment(emptyBinding, "a".repeat(64), productId, manualContext)).toEqual(result);
+    expect(JSON.parse(mock.fetch.mock.calls[0][1].body)).toEqual({ bridge_id: binding.bridge_id, action: "enrollment_finish", receipt: "a".repeat(64), request_id: productId }); expect(mock.rpc).not.toHaveBeenCalled();
+  });
+  it("blocks malformed receipts or disabled enrollment before obtaining a session", async () => {
+    await expect(finishIntegradorEnrollment(emptyBinding, "receipt?access_token=x", productId, manualContext)).rejects.toThrow("retorno da conexão");
+    await expect(beginIntegradorEnrollment({ ...emptyBinding, allow_enrollment: false }, localAccount, "https://elevare3d.lovable.app", productId, manualContext)).rejects.toThrow("habilitada"); expect(mock.getSession).not.toHaveBeenCalled(); expect(mock.fetch).not.toHaveBeenCalled();
+  });
+});
 function manualPreview() {
   return { revision: "a".repeat(64), claimed: false, complete: false, issues: ["finished_availability_missing"], stock_owner: "integrador", manual_confirmation_required: true,
     targets: [{ ...selection, product_id: productId, seller_id: "seller-a", item_id: "MLB-A" }], prices: [],

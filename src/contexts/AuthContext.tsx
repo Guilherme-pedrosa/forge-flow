@@ -3,6 +3,7 @@ import { Session, User } from "@supabase/supabase-js";
 import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useNavigate, useLocation } from "react-router-dom";
+import { localAuthReturn } from "@/lib/auth-return";
 
 interface Profile {
   id: string;
@@ -173,10 +174,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (loading || profileError) return;
     const path = location.pathname;
-    if (!session && !PUBLIC_ROUTES.includes(path)) navigate("/login", { replace: true });
-    else if (session && !profile && path !== "/setup") navigate("/setup", { replace: true });
-    else if (session && profile && [...PUBLIC_ROUTES, "/setup"].includes(path)) navigate("/", { replace: true });
-  }, [session, profile, loading, profileError, location.pathname, navigate]);
+    const from = localAuthReturn((location.state as { from?: unknown } | null)?.from);
+    const current = localAuthReturn(`${path}${location.search}${location.hash}`);
+    if (!session && !PUBLIC_ROUTES.includes(path)) navigate("/login", { replace: true, state: { from: current ?? from } });
+    else if (session && !profile && path !== "/setup") navigate("/setup", { replace: true, state: { from: from ?? current } });
+    else if (session && profile && [...PUBLIC_ROUTES, "/setup"].includes(path)) navigate(from ?? "/", { replace: true });
+  }, [session, profile, loading, profileError, location.pathname, location.search, location.hash, location.state, navigate]);
 
   return <AuthContext.Provider value={{ session, user: session?.user ?? null, profile, loading, profileError, retryProfile, signOut }}>{children}</AuthContext.Provider>;
 }
