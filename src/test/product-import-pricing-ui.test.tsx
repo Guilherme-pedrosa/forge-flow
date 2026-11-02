@@ -117,7 +117,7 @@ async function loadNative(expectedCost = "12.2") {
   fireEvent.change(within(editor).getByLabelText("Nome *"), { target: { value: "Produto do arquivo" } });
   expect(within(editor).getByRole("tab", { name: "Produto e preço" })).toHaveAttribute("aria-selected", "true");
   fireEvent.click(await within(editor).findByRole("button", { name: "Ler 3MF fatiado de teste" }));
-  await waitFor(() => expect(within(editor).getByLabelText("Preço de custo (R$)")).toHaveValue(expectedCost));
+  await waitFor(() => expect(within(editor).getByLabelText("Preço de custo (R$)")).toHaveValue(expectedCost), { timeout: 5000 });
   return editor;
 }
 
@@ -132,6 +132,9 @@ describe("automatic costs in the product import editor", () => {
     fireEvent.click(within(editor).getByRole("button", { name: /^Criar$/ }));
     await waitFor(() => expect(saved()).toBeDefined());
     expect(saved()!.p_product).toMatchObject({ cost_estimate: 12.2, manual_cost: 12.2, sale_price: 24.4, material_id: "pla", margin_percent: 50 });
+    expect(saved()!.p_product.description).toContain("Peça produzida por impressão 3D em PLA. Cor única.");
+    expect(saved()!.p_product.commercial_presentation.description_generation.generated_text).toBe(saved()!.p_product.description);
+    expect(saved()!.p_product.commercial_presentation.dimensions).toEqual({ length_mm: null, width_mm: null, height_mm: null });
     expect(saved()!.p_product.file_composition.file_path).toContain("tenant-1/");
     expect(saved()!.p_product.import_pricing).toEqual({ version: 1, printer_id: "a1", quantity: 1,
       source_profile_id: saved()!.p_product.file_composition.profile_id, source_file_sha256: saved()!.p_product.file_composition.file_sha256,

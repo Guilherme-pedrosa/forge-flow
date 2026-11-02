@@ -4,6 +4,7 @@ import { MemoryRouter } from "react-router-dom";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import Produtos from "@/pages/comercial/Produtos";
 import { supabase } from "@/integrations/supabase/client";
+import { buildCommercialProductDescription } from "@/lib/commercial-product-description";
 
 const mock = vi.hoisted(() => ({ rpc: vi.fn(), toast: vi.fn(), products: [] as Record<string, unknown>[], photos: [] as { url: string }[], get: vi.fn(), translate: vi.fn<(text: string, source: string, signal: AbortSignal) => Promise<string>>() }));
 const abortDescriptor = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "throwIfAborted");
@@ -48,6 +49,8 @@ beforeEach(() => {
   mock.translate.mockImplementation(async text => text);
   mock.get.mockResolvedValue({ data: { status: "ready", payload: rawDesign }, error: null });
   mock.rpc.mockImplementation(async (name: string, args: unknown) => {
+    if (name === "pricing_settings") return { data: { revision: "confirmed", machine_hour_cost: 0, energy_cost_kwh: 0, labor_cost_hour: 0, overhead_percent: 0, target_margin: 50,
+      handling_minutes_per_plate: 0, finishing_minutes_per_piece: 0, assembly_minutes_per_product: 0, extras_cost_per_product: 0, printer_hour_costs: [] }, error: null };
     if (name === "request_makerworld_import") return { data: "request-1", error: null };
     if (name === "get_makerworld_import") return mock.get(args);
     if (name === "product_material_recipe_catalog") return { data: mock.products.map(product => ({ id: product.id, configured: true, complete: true, cost_per_unit: 3.5, plate_count: 0 })), error: null };
@@ -165,37 +168,80 @@ describe("importação MakerWorld no cadastro de produtos", () => {
     expect(mock.rpc.mock.contexts.every(context => context === supabase)).toBe(true);
     expect(mock.rpc.mock.calls.some(call => call[0] === "save_product_material_recipe")).toBe(false);
   });
-  it("aguarda a tradução pendente antes de salvar a descrição e a configuração importada", async () => {
-    let finishTranslation!: (text: string) => void;
-    mock.translate.mockImplementation(() => new Promise<string>(resolve => { finishTranslation = resolve; }));
+  it("gera uma descrição comercial local sem traduzir instruções e preserva a fonte completa", async () => {
     mount(); const search = await searchModel();
     fireEvent.click(await within(search).findByRole("button", { name: /Conjunto Maker/ }));
     await chooseA1();
     const editor = await screen.findByRole("dialog", { name: "Novo Produto" });
-    await waitFor(() => expect(mock.translate).toHaveBeenCalledTimes(1));
-    const original = String(mock.translate.mock.calls[0][0]);
-    expect(mock.translate).toHaveBeenCalledWith(original, "en", expect.any(AbortSignal));
-    // Translation remains the only pending operation in this metadata-only test.
+    await waitFor(() => expect((within(editor).getByLabelText("Descrição") as HTMLTextAreaElement).value).toContain("Peça produzida por impressão 3D."));
+    const generated = (within(editor).getByLabelText("Descrição") as HTMLTextAreaElement).value;
+    expect(generated).not.toMatch(/autor|Montagem|cola|Manual/);
+    expect(mock.translate).not.toHaveBeenCalled();
     expect(within(editor).getByRole("tab", { name: "Produto e preço" })).toHaveAttribute("aria-selected", "true");
     fireEvent.click(within(editor).getByRole("button", { name: "Prefiro informar o custo manualmente" }));
     const create = within(editor).getByRole("button", { name: "Criar" });
-    expect(create).toBeDisabled();
-    fireEvent.click(create);
-    expect(savedPayload()).toBeUndefined();
-    expect(within(editor).getByLabelText("Descrição")).toHaveValue(original);
-    const translated = "Descrição traduzida para o cadastro. Revise a montagem.";
-    await act(async () => finishTranslation(translated));
     await waitFor(() => expect(create).toBeEnabled());
-    expect(savedPayload()).toBeUndefined();
-    expect(within(editor).getByLabelText("Descrição")).toHaveValue(translated);
     fireEvent.click(create);
     await waitFor(() => expect(savedPayload()).toBeDefined());
     expect(mock.rpc.mock.calls.filter(call => call[0] === "save_product_with_photos")).toHaveLength(1);
-    expect(savedPayload().p_product).toMatchObject({ name: "Conjunto Maker", description: translated, material_id: null, prints_per_plate: 1 });
-    expect(savedPayload().p_product.external_import).toMatchObject({ description: original, selected_profile_id: "102", selected_variant_profile_id: "602" });
+    expect(savedPayload().p_product).toMatchObject({ name: "Conjunto Maker", description: generated, material_id: null, prints_per_plate: 1,
+      commercial_presentation: { dimensions: { length_mm: null, width_mm: null, height_mm: null }, description_generation: { generator: "facts-pt-BR-v1", generated_text: generated } } });
+    expect(savedPayload().p_product.external_import).toMatchObject({ description_html: rawDesign.summary, license: "CC BY", author: { name: "Autor do modelo" }, selected_profile_id: "102", selected_variant_profile_id: "602" });
     expect(savedPayload().p_product.external_import.gallery).toEqual(photos);
     expect(savedPayload().p_product.external_import.profiles[1].variants[0].plate_details.map((value: { name: string }) => value.name)).toEqual(["Base A1", "Tampa A1"]);
     expect(savedPayload().p_photos).toEqual(photos.slice(1));
+  });
+  it("acrescenta só medidas da peça confirmadas e mantém a edição comercial após mudar as medidas", async () => {
+    mount(); const search = await searchModel(); fireEvent.click(await within(search).findByRole("button", { name: /Conjunto Maker/ })); await chooseA1();
+    const editor = await screen.findByRole("dialog", { name: "Novo Produto" });
+    fireEvent.change(within(editor).getByLabelText("Nome *"), { target: { value: "Nativity with Holy Family" } });
+    fireEvent.change(within(editor).getByLabelText("Altura da peça (cm)"), { target: { value: "12,5" } });
+    await waitFor(() => expect(within(editor).getByLabelText("Descrição")).toHaveValue("Presépio com a Sagrada Família. Peça produzida por impressão 3D. Medidas da peça: altura 12,5 cm."));
+    expect(within(editor).getByLabelText("Comprimento da peça (cm)")).toHaveValue("");
+    fireEvent.change(within(editor).getByLabelText("Descrição"), { target: { value: "Presépio da coleção Elevare, descrição revisada." } });
+    fireEvent.change(within(editor).getByLabelText("Altura da peça (cm)"), { target: { value: "15" } });
+    expect(within(editor).getByLabelText("Descrição")).toHaveValue("Presépio da coleção Elevare, descrição revisada.");
+    fireEvent.click(within(editor).getByRole("button", { name: "Prefiro informar o custo manualmente" }));
+    fireEvent.click(within(editor).getByRole("button", { name: "Criar" })); await waitFor(() => expect(savedPayload()).toBeDefined());
+    expect(savedPayload().p_product.commercial_presentation).toEqual({ dimensions: { length_mm: null, width_mm: null, height_mm: 150 }, description_generation: null });
+    expect(savedPayload().p_product.external_import.description_html).toBe(rawDesign.summary);
+  });
+  it("reabre as medidas sem reescrever descrição manual e só substitui pelo botão explícito", async () => {
+    mock.products = [{ ...existingProduct, commercial_presentation: { dimensions: { length_mm: 120, width_mm: 80, height_mm: 150 }, description_generation: null } }]; mount();
+    fireEvent.click(await screen.findByRole("button", { name: `Editar ${existingProduct.name}` }));
+    const editor = await screen.findByRole("dialog", { name: "Editar Produto" });
+    expect(within(editor).getByLabelText("Altura da peça (cm)")).toHaveValue("15");
+    expect(within(editor).getByLabelText("Descrição")).toHaveValue(existingProduct.description);
+    fireEvent.change(within(editor).getByLabelText("Altura da peça (cm)"), { target: { value: "16" } });
+    expect(within(editor).getByLabelText("Descrição")).toHaveValue(existingProduct.description);
+    fireEvent.click(within(editor).getByRole("button", { name: "Reescrever para loja" }));
+    expect((within(editor).getByLabelText("Descrição") as HTMLTextAreaElement).value).toContain("altura 16 cm");
+    fireEvent.click(within(editor).getByRole("button", { name: "Salvar" })); await waitFor(() => expect(savedPayload()).toBeDefined());
+    expect(savedPayload().p_product.commercial_presentation.description_generation.generated_text).toBe(savedPayload().p_product.description);
+  });
+  it("reabre o marcador salvo e atualiza a altura sem perder as cores e o material já confirmados", async () => {
+    const generated = buildCommercialProductDescription({ title: "Presépio", category: "printed_part", material: { confirmed: true, name: "PLA" }, colors: { confirmed: true, count: 3, names: ["Branco", "Verde", "Vermelho"] }, dimensions: { confirmed: true, heightMm: 150 } });
+    mock.products = [{ ...existingProduct, description: generated.text, commercial_presentation: { dimensions: { length_mm: null, width_mm: null, height_mm: 150 }, description_generation: generated.generation } }]; mount();
+    fireEvent.click(await screen.findByRole("button", { name: `Editar ${existingProduct.name}` }));
+    const editor = await screen.findByRole("dialog", { name: "Editar Produto" });
+    expect(within(editor).getByLabelText("Descrição")).toHaveValue(generated.text);
+    fireEvent.change(within(editor).getByLabelText("Altura da peça (cm)"), { target: { value: "16" } });
+    const text = (within(editor).getByLabelText("Descrição") as HTMLTextAreaElement).value;
+    expect(text).toContain("em PLA."); expect(text).toContain("Produção em 3 cores (Branco, Verde, Vermelho)."); expect(text).toContain("altura 16 cm");
+    fireEvent.click(within(editor).getByRole("button", { name: "Salvar" })); await waitFor(() => expect(savedPayload()).toBeDefined());
+    expect(savedPayload().p_product.commercial_presentation.description_generation.generated_text).toBe(text);
+    expect(savedPayload().p_product.commercial_presentation.dimensions.height_mm).toBe(160);
+  });
+  it("preserva o texto já escrito no novo cadastro ao anexar um link MakerWorld", async () => {
+    mount(); fireEvent.click(screen.getByRole("button", { name: "Novo Produto" }));
+    let editor = await screen.findByRole("dialog", { name: "Novo Produto" });
+    fireEvent.change(within(editor).getByLabelText("Nome *"), { target: { value: "Produto em preparação" } });
+    fireEvent.change(within(editor).getByLabelText("Descrição"), { target: { value: "Descrição comercial que a equipe já revisou." } });
+    fireEvent.change(within(editor).getByLabelText("Importar produto completo pelo link do MakerWorld"), { target: { value: "https://makerworld.com/pt/models/456-conjunto" } });
+    fireEvent.click(within(editor).getByRole("button", { name: "Carregar modelo" })); await chooseA1();
+    editor = screen.getByRole("dialog", { name: "Novo Produto" });
+    expect(within(editor).getByLabelText("Descrição")).toHaveValue("Descrição comercial que a equipe já revisou.");
+    expect(mock.translate).not.toHaveBeenCalled();
   });
   it("atualiza detalhes e mescla a galeria do produto existente preservando nome, preço e composição manual", async () => {
     mock.products = [existingProduct]; mock.photos = [{ url: "https://own.example.test/manual-extra.jpg" }, { url: photos[2] }]; mount();

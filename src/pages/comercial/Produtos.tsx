@@ -55,7 +55,9 @@ import { PieceTechnicalSheet } from "@/components/production/PieceTechnicalSheet
 import MakerWorldReference, { MakerWorldPrinterOption } from "./MakerWorldReference";
 import { fetchMakerWorldModel, externalImportReference, legacyMakerWorldUrl, readProductExternalImport, type ProductExternalImport } from "@/lib/makerworld-import";
 import { makerWorldImageUrl, parseMakerWorldUrl } from "../../../supabase/functions/_shared/makerworld";
-import { MakerWorldDescriptionTranslation } from "@/components/comercial/MakerWorldDescriptionTranslation";
+import { applyCommercialDescriptionSuggestion, buildCommercialProductDescription, refreshCommercialDescriptionDimensions, type CommercialDescriptionGeneration, type CommercialDescriptionSource } from "@/lib/commercial-product-description";
+import { emptyProductDimensionsDraft, prepareProductPresentation, readProductDescriptionGeneration, readProductDimensionsDraft } from "@/lib/product-presentation";
+import { ProductDimensionsFields } from "@/components/comercial/ProductDimensionsFields";
 import { MakerWorldImageImport } from "@/components/comercial/MakerWorldImageImport";
 import { normalizePrintSourceUrl, safePrintFileName } from "@/lib/product-print-source";
 import { importedComposition, importProductPhotos, selectedImportVariant, validateImportedComposition, type ImportedComposition } from "@/lib/imported-composition";
@@ -154,7 +156,9 @@ export default function Produtos() {
   const [modelReaderRevision, setModelReaderRevision] = useState(0);
   const importedModelFile = useRef<File | null>(null);
   const uploadedModelFile = useRef<{ file: File; path: string } | null>(null);
-  const receiveModelFile = useCallback((file: File) => { importedModelFile.current = file; uploadedModelFile.current = null; }, []);
+  const receiveModelFile = useCallback((file: File) => { importedModelFile.current = file; uploadedModelFile.current = null;
+    setDescriptionFileName(file.name); setAutomaticDescription(true); setName(current => current.trim() ? current : file.name.replace(/\.(3mf|stl)$/i, "").replace(/_/g, " "));
+  }, []);
   const reportModelReading = useCallback((busy: boolean) => { setReadingModelFile(busy); if (busy) { importedModelFile.current = null; uploadedModelFile.current = null; setCompositionImport(previous => previous?.profile_id.startsWith("local:") ? null : previous); importedCalculation.current = null; setImportCostReady(false); setCostEstimate(""); setSalePrice(""); setAutomaticImportCost(true); setImportedPricing({ estimate: null, error: "Conclua a leitura e o cálculo do arquivo ou escolha informar o custo manualmente." }); setTransferredPricingSource(null); transferredScope.current = null; } }, []);
   const readingImportFile = readingMetadataFile || readingModelFile;
   const makerRequest = useRef<AbortController | null>(null);
@@ -166,7 +170,13 @@ export default function Produtos() {
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [translatingDescription, setTranslatingDescription] = useState(false);
+  const [descriptionGeneration, setDescriptionGeneration] = useState<CommercialDescriptionGeneration | null>(null);
+  const descriptionEdited = useRef(false);
+  const [automaticDescription, setAutomaticDescription] = useState(false);
+  const [descriptionFileName, setDescriptionFileName] = useState("");
+  const [descriptionSource, setDescriptionSource] = useState<CommercialDescriptionSource | null>(null);
+  const [descriptionMaterialIds, setDescriptionMaterialIds] = useState<string[]>([]);
+  const [productDimensions, setProductDimensions] = useState(emptyProductDimensionsDraft);
   const [sku, setSku] = useState("");
   const [category, setCategory] = useState("printed_part");
   const [materialId, setMaterialId] = useState("");
@@ -227,6 +237,7 @@ export default function Produtos() {
     : sourcePricingPlan.error || !sourcePricingPlan.data ? "Não foi possível conferir os ajustes de custo deste produto. Tente novamente ou informe o custo manualmente."
       : Object.keys(sourcePricingPlan.data.plan).length ? "Este produto tem ajustes próprios de custos, tempos ou insumos. A nova impressão precisa ser conciliada com esses ajustes antes de calcular o custo completo. Confira a composição ou informe o custo manualmente." : "";
   const beginImportedPricing = useCallback((estimate: ModelPricingEstimate | null, error = "", initial?: PreparedPricingSourceTransfer["calculated"]) => {
+    setDescriptionMaterialIds([]);
     setTransferredPricingSource(null); transferredScope.current = null; setMissingPricingSource(false);
     initialImportCalculation.current = initial ?? null;
     importPricingVersion.current += 1;
@@ -252,6 +263,7 @@ export default function Produtos() {
   const receiveImportCalculation = useCallback((value: ImportedProductPrice | null) => {
     if (!automaticImportCost) return;
     importedCalculation.current = value;
+    setDescriptionMaterialIds(value ? [...new Set(Object.values(value.materialSelections))] : []);
     setImportCostReady(!!value);
     setCostEstimate(value ? catalogAmountInput(value.cost) : "");
     if (!value) { if (initializeImportedPrice.current) setSalePrice(""); return; }
@@ -336,12 +348,37 @@ export default function Produtos() {
   const { data: materials = [], error: materialsError } = useQuery({
     queryKey: ["inventory_items", "product-costs", profile?.tenant_id],
     queryFn: async () => {
-      const { data, error } = await supabase.from("inventory_items").select("id, name, category, avg_cost, freight_cost, loss_coefficient, unit").eq("tenant_id", profile!.tenant_id).eq("is_active", true).order("name");
+      const { data, error } = await supabase.from("inventory_items").select("id, name, category, avg_cost, freight_cost, loss_coefficient, unit, material_code, color, color_hex").eq("tenant_id", profile!.tenant_id).eq("is_active", true).order("name");
       if (error) throw error;
       return data;
     },
     enabled: !!profile,
   });
+
+  const commercialSuggestion = useMemo(() => {
+    let presentation = null;
+    try { presentation = prepareProductPresentation(productDimensions); } catch { /* Invalid measures remain a draft and are rejected on save. */ }
+    const selected = descriptionMaterialIds.map(id => materials.find(item => item.id === id));
+    const complete = selected.length > 0 && selected.every(Boolean);
+    const colorEntries = complete ? selected.map(item => ({ key: item!.color_hex?.trim().toUpperCase() || item!.color?.trim().toLowerCase() || "", name: item!.color?.trim() || "" })) : [];
+    const colors = colorEntries.length && colorEntries.every(item => item.key) ? [...new Map(colorEntries.map(item => [item.key, item])).values()] : [];
+    const materialCodes = complete ? [...new Set(selected.map(item => item!.material_code).filter(Boolean))] : [];
+    const source = externalImport ? { provider: "makerworld" as const, source_id: externalImport.design_id, source_url: externalImport.source_url,
+      original_title: externalImport.title, original_description: externalImport.description, original_description_html: externalImport.description_html,
+      author: externalImport.author, license: externalImport.license } : descriptionFileName ? { provider: "3mf" as const, original_title: descriptionFileName, file_sha256: compositionImport?.file_sha256 ?? null } : descriptionSource;
+    return buildCommercialProductDescription({ title: name || descriptionFileName, category, source,
+      colors: colors.length ? { confirmed: true, count: colors.length, names: colors.every(item => item.name) ? colors.map(item => item.name) : [] } : null,
+      material: complete && selected.every(item => item!.material_code) && materialCodes.length === 1 ? { confirmed: true, name: materialCodes[0]! } : null,
+      dimensions: presentation ? { confirmed: true, lengthMm: presentation.dimensions.length_mm, widthMm: presentation.dimensions.width_mm, heightMm: presentation.dimensions.height_mm } : null });
+  }, [name, category, productDimensions, descriptionMaterialIds, materials, externalImport, descriptionFileName, compositionImport?.file_sha256, descriptionSource]);
+  useEffect(() => {
+    if (!automaticDescription) return;
+    const next = applyCommercialDescriptionSuggestion({ value: description, operatorEdited: descriptionEdited.current, generation: descriptionGeneration }, commercialSuggestion);
+    if (!next.applied) return;
+    if (next.value !== description) setDescription(next.value);
+    if (JSON.stringify(next.generation) !== JSON.stringify(descriptionGeneration)) setDescriptionGeneration(next.generation);
+  }, [automaticDescription, commercialSuggestion, description, descriptionGeneration]);
+  const rewriteCommercialDescription = () => { descriptionEdited.current = false; setAutomaticDescription(true); setDescription(commercialSuggestion.text); setDescriptionGeneration(commercialSuggestion.generation); };
 
   const referenceMaterialOptions = useMemo(() => {
     const outputStockIds = new Set(products.map(product => product.stock_item_id).filter(Boolean));
@@ -452,6 +489,8 @@ export default function Produtos() {
     setManualPlateDraft(false); setFilamentBusy(false); setFilamentDraft(false);
     setFormTab("dados"); setAccessoryCost("0"); setOtherCost("0"); setBarcode(""); setMaxStock("0"); setMarkup(""); setStockQuantity("0"); setStockUnit("un"); setMinStock("0"); setStockEnabled(true);
     setShippingPackage(emptyShippingPackageDraft());
+    setProductDimensions(emptyProductDimensionsDraft()); setDescriptionGeneration(null); descriptionEdited.current = false;
+    setAutomaticDescription(false); setDescriptionFileName(""); setDescriptionSource(null); setDescriptionMaterialIds([]);
     setName(""); setDescription(""); setSku(""); setCategory("printed_part"); setMaterialId("");
     setEstGrams(""); setEstTime(""); setPostMinutes(""); setCostEstimate(""); setSalePrice(""); setPhotoUrl(""); setExtraPhotos([]); setNotes(""); setPrinterId(""); setNumColors("1"); setPrintsPerPlate("1"); setExtras([]); setKitComponents([]);
   };
@@ -487,12 +526,12 @@ export default function Produtos() {
       const uniqueMaterials = [...new Set(Object.values(source.calculated.materialSelections))];
       const singleMaterialId = uniqueMaterials.length === 1 ? uniqueMaterials[0] : "";
       setMaterialId(singleMaterialId);
+      setDescriptionMaterialIds(uniqueMaterials); setDescriptionFileName(source.sourceFile?.name || ""); setAutomaticDescription(true);
       setNumColors(String(Math.max(1, new Set(source.estimate.materials.map(material => material.colorHex || material.key)).size)));
       if (source.estimate.plateCount === 1 && singleMaterialId) {
         setEstGrams(String(source.estimate.weightGrams)); setEstTime(String(source.estimate.hours)); setPrintsPerPlate(String(source.calculated.quantity));
       }
       if (source.externalImport) {
-        setDescription(source.externalImport.description ?? "");
         const photos = importProductPhotos(source.externalImport); setPhotoUrl(photos[0] || ""); setExtraPhotos(photos.slice(1));
       }
     } else if (sourceRequired) setMissingPricingSource(true);
@@ -525,6 +564,11 @@ export default function Produtos() {
     setManualPlateDraft(false); setFilamentBusy(false); setFilamentDraft(false);
     setStockQuantity(String(p.stock?.current_stock ?? 0)); setStockUnit(p.stock?.unit || "un"); setMinStock(String(p.stock?.min_stock ?? 0)); setStockEnabled(p.category !== "service" || !!p.stock_item_id);
     setShippingPackage(readShippingPackageDraft(p.shipping_package));
+    const generation = readProductDescriptionGeneration(p.commercial_presentation);
+    setProductDimensions(readProductDimensionsDraft(p.commercial_presentation)); setDescriptionGeneration(generation);
+    descriptionEdited.current = !generation || generation.generated_text !== (p.description || "");
+    setAutomaticDescription(false); setDescriptionFileName(""); setDescriptionSource(null);
+    setDescriptionMaterialIds(Array.isArray(p.catalog_details?.import_pricing?.materials) ? [...new Set<string>(p.catalog_details.import_pricing.materials.flatMap((item: { item_id?: string }) => typeof item?.item_id === "string" ? [item.item_id] : []))] : []);
     setFormTab("dados"); setAccessoryCost(String(p.catalog_details?.accessory_cost ?? 0)); setOtherCost(String(p.catalog_details?.other_cost ?? 0)); setBarcode(p.catalog_details?.barcode || ""); setMaxStock(String(p.stock?.max_stock ?? 0)); setMarkup("");
     setEditItem(p); setName(p.name); setDescription(p.description || ""); setSku(p.sku || "");
     setCostSource(p.catalog_details?.cost_source === "composition" || p.manual_cost_override === null && p.recipe_configured ? "composition" : "manual");
@@ -634,6 +678,7 @@ export default function Produtos() {
     setEstTime(task.cost_time_seconds ? (task.cost_time_seconds / 3600).toFixed(2) : "");
     setPhotoUrl(task.cover_url || "");
     setCategory("printed_part");
+    setDescriptionSource({ provider: "bambu", source_id: String(task.bambu_task_id || ""), original_title: task.design_title || null }); setAutomaticDescription(true);
     setNotes(`Importado da Bambu Lab — Task ID: ${task.bambu_task_id}\nPeso e tempo previstos pelo fatiador para a placa; consumo realizado é apurado na produção.`);
     setBambuImportOpen(false);
     setCreateOpen(true);
@@ -649,6 +694,7 @@ export default function Produtos() {
     setEstTime(proj.total_time_seconds ? (proj.total_time_seconds / 3600).toFixed(2) : "");
     setPhotoUrl(proj.thumbnail || "");
     setCategory("printed_part");
+    setDescriptionSource({ provider: "bambu", source_id: String(proj.project_id || ""), original_title: proj.name || null }); setAutomaticDescription(true);
     const filamentInfo = proj.filaments?.length > 0
       ? proj.filaments.map((f: any) => `${f.type} ${f.grams}g`).join(", ")
       : "";
@@ -678,8 +724,11 @@ export default function Produtos() {
     const selected = profiles[index];
     const variant = selectedVariantIndex > 0 ? selected?.variants?.[selectedVariantIndex - 1] : selected;
     const updating = makerImportTarget.current != null && makerImportTarget.current === editItem?.id;
+    const preserveCreateDescription = !updating && createOpen && descriptionEdited.current;
+    const editedDescription = description;
     if (!updating) {
       resetForm(); setName(model.title); setCategory("printed_part");
+      if (preserveCreateDescription) { descriptionEdited.current = true; setDescription(editedDescription); }
       const colors = new Set((variant?.filaments || []).map((filament: any) => filament.color).filter(Boolean));
       if (colors.size > 0 && colors.size <= 16) setNumColors(String(colors.size));
     }
@@ -693,7 +742,7 @@ export default function Produtos() {
     }
     const composition = importedComposition(imported);
     setCompositionImport(composition && updating ? { ...composition, enabled: !!editItem.assembly_enabled } : composition);
-    setDescription(previous => updating && previous.trim() ? previous : model.description || "");
+    setAutomaticDescription(true);
     const images = importProductPhotos(imported);
     if (updating) {
       if (!photoUrl && images[0]) setPhotoUrl(images[0]);
@@ -867,7 +916,7 @@ ${selected?.name ? `Perfil: ${selected.name}
     if (hasProductionDraft) throw new Error("Conclua ou cancele o cadastro auxiliar, a composição ou a placa em edição antes de salvar o produto.");
     if (missingPricingSource) throw new Error(MISSING_PRICING_SOURCE_TRANSFER);
     if (transferredPricingSource && transferredScope.current !== `${profile.tenant_id}:${user?.id}`) throw new Error("Sua sessão mudou. Envie novamente a precificação antes de salvar.");
-    if (uploadingPhoto || photosLoading || printSourceBusy || makerWorldLoading || translatingDescription || readingImportFile) throw new Error("Aguarde o carregamento das fotos, fontes e descrição antes de salvar.");
+    if (uploadingPhoto || photosLoading || printSourceBusy || makerWorldLoading || readingImportFile) throw new Error("Aguarde o carregamento das fotos, fontes e descrição antes de salvar.");
     if (costSource === "composition" && !compositionReady) throw new Error("Atualize e complete a composição antes de salvar o custo calculado, ou informe um custo manual.");
     if (sourcePricingPlanProblem) throw new Error(sourcePricingPlanProblem);
     if (priceDraft.error) throw new Error(priceDraft.error);
@@ -918,15 +967,20 @@ ${selected?.name ? `Perfil: ${selected.name}
       ? buildImportedPricingPlan(importedPricing.estimate, savedComposition, importedCalculation.current,
         importedPricing.estimate.source === "makerworld" ? externalImport : null)
       : null;
+    // Persist the latest confirmed facts even if the offline preview effect has not painted yet.
+    const commercialDraft = automaticDescription
+      ? applyCommercialDescriptionSuggestion({ value: description, operatorEdited: descriptionEdited.current, generation: descriptionGeneration }, commercialSuggestion)
+      : { value: description, generation: descriptionGeneration };
     const payload = {
       p_product_id: productId,
       p_product: {
-        name: name.trim(), description: description.trim() || null, sku: sku.trim() || null, category,
+        name: name.trim(), description: commercialDraft.value.trim() || null, sku: sku.trim() || null, category,
         material_id: materialId || null, est_grams: grams,
         est_time_minutes: Math.round(nonNegative(estTime, "Tempo por placa") * 60),
         post_process_minutes: nonNegative(postMinutes, "Pós-processo por placa"),
         cost_estimate: cost, manual_cost: cost, sale_price: price,
         shipping_package: prepareShippingPackage(shippingPackage),
+        commercial_presentation: prepareProductPresentation(productDimensions, !descriptionEdited.current && commercialDraft.value === commercialDraft.generation?.generated_text ? commercialDraft.generation : null),
         catalog_details: { base_cost: baseCost, accessory_cost: nonNegative(accessoryCost, "Despesas acessórias"), other_cost: nonNegative(otherCost, "Outras despesas"), barcode: barcode.trim() },
         catalog_pricing: { cost_source: costSource, price_source: priceSource,
           markup_percent: priceSource === "markup" ? priceDraft.markup : null,
@@ -1033,15 +1087,22 @@ ${selected?.name ? `Perfil: ${selected.name}
         {externalImport && <div className="grid grid-cols-[6rem_minmax(0,1fr)] gap-3 rounded-lg border p-3"><ImportedModelImage src={photoUrl || null} alt="Foto principal do produto importado" className="h-24 w-24 rounded-md bg-muted object-contain" /><div className="min-w-0"><p className="font-medium break-words">{name}</p><p className="mt-1 text-sm text-muted-foreground">{allPhotos.length} foto(s) · {compositionImport?.plates.length ?? selectedImportVariant(externalImport)?.plate_details.length ?? 0} placa(s)</p><p className="text-sm">{description.trim() ? "Descrição carregada abaixo." : "O autor não disponibilizou a descrição deste modelo."}</p><Button type="button" variant="link" className="h-auto px-0 py-1 whitespace-normal text-left" onClick={() => setFormTab("producao")}>Conferir peças e composição</Button></div></div>}
 </>);
   const productModelFileField = ((!editItem || compositionImport) && <Suspense fallback={<p>Carregando leitor de arquivos…</p>}><ModelFileInput key={modelReaderRevision} current={compositionImport?.profile_id.startsWith("local:") ? undefined : compositionImport || undefined} onChange={setCompositionImport} onParsed={receiveImportedComposition} onFileReady={receiveModelFile} onBusyChange={reportModelReading} disabled={readingMetadataFile || filamentBusy || filamentDraft} /></Suspense>);
-  const productNameField = (<div className="sm:col-span-2"><Label htmlFor="product-name">Nome *</Label><Input autoFocus id="product-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Vaso Geométrico P" /></div>);
+  const productNameField = (<div className="sm:col-span-2"><Label htmlFor="product-name">Nome *</Label><Input autoFocus id="product-name" value={name} onChange={(e) => { setName(e.target.value); if (descriptionGeneration && !descriptionEdited.current) setAutomaticDescription(true); }} placeholder="Vaso Geométrico P" /></div>);
   const productMetadataFields = (<>      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div><Label>Categoria</Label>
-          <Select value={category} onValueChange={setCategory}><SelectTrigger><SelectValue /></SelectTrigger>
+          <Select value={category} onValueChange={value => { setCategory(value); if (descriptionGeneration && !descriptionEdited.current) setAutomaticDescription(true); }}><SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>{Object.entries(categoryLabels).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
           </Select>
         </div>
         <div><Label>SKU</Label><Input value={sku} onChange={(e) => setSku(e.target.value)} placeholder="VASO-GEO-P" /></div>
-        <div className="sm:col-span-2"><Label htmlFor="product-description">Descrição</Label><Textarea id="product-description" value={description} onChange={(e) => setDescription(e.target.value)} rows={4} />{externalImport?.description && <MakerWorldDescriptionTranslation key={externalImport.description} original={externalImport.description} value={description} onApply={(text, expected) => setDescription(current => current === expected ? text : current)} onBusy={setTranslatingDescription} />}</div>
+        <div className="sm:col-span-2 space-y-2"><div className="flex flex-wrap items-center justify-between gap-2"><Label htmlFor="product-description">Descrição</Label><Button type="button" size="sm" variant="outline" disabled={!name.trim() || readingImportFile || makerWorldLoading} onClick={rewriteCommercialDescription}>Reescrever para loja</Button></div><Textarea id="product-description" value={description} onChange={(e) => { descriptionEdited.current = true; setDescriptionGeneration(null); setDescription(e.target.value); }} rows={4} /><p className="text-xs text-muted-foreground">Texto comercial em português, gerado neste computador a partir dos dados confirmados. Suas edições são preservadas.</p>{externalImport?.description && <details className="text-xs text-muted-foreground"><summary className="cursor-pointer">Descrição original do MakerWorld</summary><p className="mt-2 whitespace-pre-wrap">{externalImport.description}</p></details>}</div>
+        <div className="sm:col-span-2"><ProductDimensionsFields value={productDimensions} onChange={next => { setProductDimensions(next);
+          if (!descriptionGeneration || descriptionEdited.current) return;
+          try { const presentation = prepareProductPresentation(next); const dimensions = presentation?.dimensions;
+            const refreshed = refreshCommercialDescriptionDimensions(description, descriptionGeneration, dimensions ? { confirmed: true, lengthMm: dimensions.length_mm, widthMm: dimensions.width_mm, heightMm: dimensions.height_mm } : null);
+            if (refreshed.applied) { setDescription(refreshed.value); setDescriptionGeneration(refreshed.generation); }
+          } catch { /* Keep incomplete input until it is valid; saving validates the measurements. */ }
+        }} /></div>
       </div>
 
         <div><Label htmlFor="product-barcode">Código de barras</Label><Input id="product-barcode" value={barcode} onChange={e => setBarcode(e.target.value)} /></div>
@@ -1499,7 +1560,7 @@ ${selected?.name ? `Perfil: ${selected.name}
       <Dialog open={createOpen} onOpenChange={open => { if (open) setCreateOpen(true); else closeCreateProduct(); }}>
         <DialogContent className="flex h-[94dvh] w-[96vw] max-w-6xl flex-col gap-4 p-4 sm:p-6" closeDisabled={createWritePending}><DialogHeader className="pr-10"><DialogTitle>Novo Produto</DialogTitle><DialogDescription>Dados, valores, estoque e fotos em um único cadastro.</DialogDescription></DialogHeader>
           {formFields}
-          <DialogFooter className="gap-2"><Button type="button" className="min-h-11" variant="outline" disabled={createWritePending} onClick={closeCreateProduct}>Cancelar</Button><Button type="button" variant="outline" disabled={!name.trim() || createWritePending || hasProductionDraft || photosLoading || makerWorldLoading || translatingDescription || readingImportFile} onClick={showProductPricing}><Calculator className="mr-2 h-4 w-4" />Conferir preço</Button><Button type="button" className="min-h-11" onClick={() => { createAnother.current = false; createMut.mutate(); }} disabled={!name.trim() || createWritePending || hasProductionDraft || photosLoading || makerWorldLoading || translatingDescription || readingImportFile}>{createMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Criar</Button><Button type="button" variant="outline" disabled={!name.trim() || createWritePending || hasProductionDraft || photosLoading || makerWorldLoading || translatingDescription || readingImportFile} onClick={() => { createAnother.current = true; createMut.mutate(); }}>Salvar e cadastrar outro</Button></DialogFooter>
+          <DialogFooter className="gap-2"><Button type="button" className="min-h-11" variant="outline" disabled={createWritePending} onClick={closeCreateProduct}>Cancelar</Button><Button type="button" variant="outline" disabled={!name.trim() || createWritePending || hasProductionDraft || photosLoading || makerWorldLoading || readingImportFile} onClick={showProductPricing}><Calculator className="mr-2 h-4 w-4" />Conferir preço</Button><Button type="button" className="min-h-11" onClick={() => { createAnother.current = false; createMut.mutate(); }} disabled={!name.trim() || createWritePending || hasProductionDraft || photosLoading || makerWorldLoading || readingImportFile}>{createMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Criar</Button><Button type="button" variant="outline" disabled={!name.trim() || createWritePending || hasProductionDraft || photosLoading || makerWorldLoading || readingImportFile} onClick={() => { createAnother.current = true; createMut.mutate(); }}>Salvar e cadastrar outro</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -1509,7 +1570,7 @@ ${selected?.name ? `Perfil: ${selected.name}
           {formFields}
           {printSourceBusy && <p role="status" className="text-xs text-muted-foreground">Salvando composição ou fonte de impressão. Aguarde a confirmação.</p>}
           {hasProductionDraft && !printSourceBusy && <p role="status" className="text-xs text-amber-800 dark:text-amber-300">Salve ou cancele a composição, fonte ou placa em edição antes de salvar o cadastro. Fechar ou cancelar o produto descarta esses rascunhos.</p>}
-          <DialogFooter className="gap-2"><Button type="button" className="min-h-11" variant="outline" disabled={editWritePending} onClick={closeEditProduct}>Cancelar</Button><Button type="button" variant="outline" disabled={!name.trim() || editWritePending || hasProductionDraft || photosLoading || makerWorldLoading || translatingDescription || readingImportFile} onClick={showProductPricing}><Calculator className="mr-2 h-4 w-4" />Conferir preço</Button><Button type="button" className="min-h-11" onClick={() => updateMut.mutate()} disabled={!name.trim() || editWritePending || hasProductionDraft || photosLoading || makerWorldLoading || translatingDescription || readingImportFile}>{updateMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} {photosLoading ? "Carregando fotos..." : "Salvar"}</Button></DialogFooter>
+          <DialogFooter className="gap-2"><Button type="button" className="min-h-11" variant="outline" disabled={editWritePending} onClick={closeEditProduct}>Cancelar</Button><Button type="button" variant="outline" disabled={!name.trim() || editWritePending || hasProductionDraft || photosLoading || makerWorldLoading || readingImportFile} onClick={showProductPricing}><Calculator className="mr-2 h-4 w-4" />Conferir preço</Button><Button type="button" className="min-h-11" onClick={() => updateMut.mutate()} disabled={!name.trim() || editWritePending || hasProductionDraft || photosLoading || makerWorldLoading || readingImportFile}>{updateMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} {photosLoading ? "Carregando fotos..." : "Salvar"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 

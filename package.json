@@ -32,7 +32,8 @@
     "test:print-import": "node scripts/test-operational-print-import.mjs",
     "test:variants": "node scripts/test-material-variants.mjs",
     "test:lorace": "node scripts/test-lorace-storefront.mjs && node scripts/test-lorace-payments-edge.mjs && node scripts/test-lorace-payments-http.mjs && node scripts/test-storefront-cms.mjs && node scripts/test-storefront-structure.mjs && node scripts/test-storefront-categories.mjs && node scripts/test-product-shipping-package.mjs && node scripts/test-storefront-shipping.mjs",
-    "test:purchase-import": "node scripts/test-purchase-import-review.mjs && node scripts/test-purchase-material-links.mjs && vitest run src/lib/nfe-purchase.test.ts src/lib/purchase-catalog.test.ts src/lib/nfe-purchase-draft.test.ts src/components/estoque/NfePurchaseImportDialog.test.tsx src/components/estoque/QuickInventoryItem.test.tsx src/test/purchase-stock-ui.test.tsx src/test/order-inline-customer.test.tsx src/test/partner-prefill.test.tsx src/test/financial-catalog-session.test.tsx --maxWorkers=1"
+    "test:purchase-import": "node scripts/test-purchase-import-review.mjs && node scripts/test-purchase-material-links.mjs && vitest run src/lib/nfe-purchase.test.ts src/lib/purchase-catalog.test.ts src/lib/nfe-purchase-draft.test.ts src/components/estoque/NfePurchaseImportDialog.test.tsx src/components/estoque/QuickInventoryItem.test.tsx src/test/purchase-stock-ui.test.tsx src/test/order-inline-customer.test.tsx src/test/partner-prefill.test.tsx src/test/financial-catalog-session.test.tsx --maxWorkers=1",
+    "test:commercial-publication": "node scripts/test-commercial-product-presentation.mjs && vitest run src/lib/commercial-product-description.test.ts src/lib/product-presentation.test.ts src/test/makerworld-products-ui.test.tsx src/test/product-import-pricing-ui.test.tsx src/test/product-pricing-source-transfer-ui.test.tsx src/test/lorace-shipping-publication-ui.test.tsx src/test/product-shipping-ui.test.tsx --maxWorkers=1"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
@@ -95,8 +96,6 @@
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.8",
     "@eslint/js": "^9.32.0",
-    "@lovable.dev/vite-plugin-dev-server-bridge": "^1.0.2",
-    "@lovable.dev/vite-plugin-hmr-gate": "^1.8.0",
     "@playwright/test": "^1.57.0",
     "@tailwindcss/typography": "^0.5.16",
     "@testing-library/jest-dom": "^6.6.0",
@@ -120,6 +119,8 @@
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.38.0",
     "vite": "^5.4.19",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "@lovable.dev/vite-plugin-dev-server-bridge": "^1.0.2",
+    "@lovable.dev/vite-plugin-hmr-gate": "^1.8.0"
   }
 }

@@ -1,3 +1,5 @@
+import { prepareShippingPackage, shippingPackageFields, type ShippingPackageDraft } from "./product-shipping";
+
 export type StorefrontCategoryOption = { slug: string; name: string };
 
 export function storefrontCategoryOptions(site: { content?: { categories?: unknown } } | null): StorefrontCategoryOption[] {
@@ -21,4 +23,13 @@ export function storefrontPublicationError(product: { is_active: boolean; photo_
   if (!Number.isFinite(price) || price <= 0) return "Informe um preço de venda maior que zero no Forge ou no campo Preço específico na loja.";
   if (!product.photo_url || !/^https:\/\/[^/@]+(\/|$)/.test(product.photo_url)) return "A foto do cadastro não possui um endereço HTTPS válido. Confira a foto em Editar produto e fotos.";
   return null;
+}
+export function storefrontPackageError(draft: ShippingPackageDraft): string | null {
+  try {
+    const packaging = prepareShippingPackage(draft);
+    return packaging && shippingPackageFields.every(([key]) => packaging[key] != null)
+      ? null : "Complete comprimento, largura, altura e peso total embalado para publicar com cálculo de frete.";
+  } catch (error) {
+    return error instanceof Error ? error.message : "Confira as medidas e o peso total da embalagem.";
+  }
 }
