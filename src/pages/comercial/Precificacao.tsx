@@ -7,11 +7,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { pricePrint, printMaterialCost, type PricingInput } from "@/lib/print-pricing";
-import { priceChannel } from "@/lib/channel-pricing";
+import { ChannelPricingPanel, type ChannelPricingSelection, type ChannelPricingPanelState } from "@/components/comercial/ChannelPricingPanel";
 import { supabase } from "@/integrations/supabase/client";
 import { allRows } from "@/lib/finance";
 import { useAuth } from "@/contexts/AuthContext";
-import { readPricingSettings } from "@/lib/pricing-policy";
+import { importedWorkCosts, readPricingSettings } from "@/lib/pricing-policy";
 import { loadPricingFilaments, MISSING_FILAMENT_COST } from "@/lib/pricing-filaments";
 import { createPricingSourceTransfer, discardPricingSourceTransfer } from "@/lib/pricing-source-transfer";
 import ProductPricingWorkspace from "./ProductPricingWorkspace";
@@ -37,25 +37,15 @@ const initial: PricingInput = {
   materials: [{ name: "Material 1", grams: "0", kgPrice: "" }],
   extras: [],
 };
-const initialChannel = {
-  orderQuantity: "1",
-  commissionPercent: "0",
-  taxPercent: "0",
-  fixedFeePerOrder: "0",
-  sellerShippingPerOrder: "0",
-  advertisingPerOrder: "0",
-  otherCostPerOrder: "0",
-  variableUnitCost: "",
-};
 const percent = (value: number | null) => value == null ? "—" : `${value.toFixed(1)}%`;
 type FreePricingDraft = {
   name: string; product: string; input: PricingInput; printerId: string;
-  hydratedTenant: string | null; channel: string; channelInput: typeof initialChannel;
+  hydratedTenant: string | null; channelSelection: ChannelPricingSelection | null; channelState: ChannelPricingPanelState | null;
   sourceFile: File | null; estimate: ModelPricingEstimate | null;
   filamentIds: Record<string, string>; confirmedPrinterId: string;
   makerReference: ProductExternalImport | null; sourceError: string;
 };
-const newFreeDraft = (): FreePricingDraft => ({ name: "", product: "", input: structuredClone(initial), printerId: "", hydratedTenant: null, channel: "factory", channelInput: { ...initialChannel }, sourceFile: null, estimate: null, filamentIds: {}, confirmedPrinterId: "", makerReference: null, sourceError: "" });
+const newFreeDraft = (): FreePricingDraft => ({ name: "", product: "", input: structuredClone(initial), printerId: "", hydratedTenant: null, channelSelection: null, channelState: null, sourceFile: null, estimate: null, filamentIds: {}, confirmedPrinterId: "", makerReference: null, sourceError: "" });
 export default function Precificacao() {
   const { profile, user } = useAuth();
   return <PricingWorkspace key={`${profile?.tenant_id || "no-company"}:${user?.id || "no-user"}`} />;
@@ -81,6 +71,7 @@ function PricingWorkspace() {
 function FreePricingSimulator({ draft, setDraft, automatic, initialMakerUrl }: { draft: FreePricingDraft; setDraft: Dispatch<SetStateAction<FreePricingDraft>>; automatic: boolean; initialMakerUrl?: string }) {
   const { profile, user } = useAuth();
   const [transferring, setTransferring] = useState(false);
+  const [channelPolicyBusy, setChannelPolicyBusy] = useState(false);
   const [transferError, setTransferError] = useState("");
   const transferBusy = useRef(false), transferAlive = useRef(true);
   const latestTransfer = useRef({ draft, automatic, tenantId: profile?.tenant_id, userId: user?.id });
@@ -93,13 +84,11 @@ function FreePricingSimulator({ draft, setDraft, automatic, initialMakerUrl }: {
     queryFn: readPricingSettings,
   });
   const navigate = useNavigate();
-  const { name, product, printerId, channel, channelInput } = draft;
+  const { name, product, printerId } = draft;
   const setName = (name: string) => setDraft(current => ({ ...current, name }));
   const setProduct = (product: string) => setDraft(current => ({ ...current, product }));
   const setPrinterId = (printerId: string) => setDraft(current => ({ ...current, printerId }));
   const setInput = (value: SetStateAction<PricingInput>) => setDraft(current => ({ ...current, input: typeof value === "function" ? value(current.input) : value }));
-  const setChannel = (channel: string) => setDraft(current => ({ ...current, channel }));
-  const setChannelInput = (channelInput: typeof initialChannel) => setDraft(current => ({ ...current, channelInput }));
   const [costsOpen, setCostsOpen] = useState(false);
   useEffect(() => {
     if (!company.data || !profile?.tenant_id || draft.hydratedTenant === profile.tenant_id) return;
@@ -138,6 +127,14 @@ function FreePricingSimulator({ draft, setDraft, automatic, initialMakerUrl }: {
   }, [automatic, draft.estimate, printers.data, materials.data, setDraft, slots.length]);
   const selectedMaterials = useMemo(() => slots.map(slot => materials.data?.find(m => m.id === (draft.filamentIds[slot.key] || (slots.length === 1 ? draft.filamentIds.default : "")))), [slots, materials.data, draft.filamentIds]);
   const modelMatch = printer && draft.estimate ? printerMatchesSliceModels(printer, draft.estimate.printerModelIds) : null;
+  const automaticWork = useMemo(() => {
+    if (!automatic) return { value: null, error: "" };
+    try {
+      if (!company.data) throw new Error("Carregue os parâmetros de custo da empresa para calcular.");
+      if (!draft.estimate) return { value: null, error: "" };
+      return { value: importedWorkCosts(company.data, { plateCount: draft.estimate.plateCount, partCount: draft.estimate.partCount, quantity: Number(draft.input.quantity) }), error: "" };
+    } catch (failure) { return { value: null, error: (failure as Error).message }; }
+  }, [automatic, company.data, draft.estimate, draft.input.quantity]);
   const modelError = !draft.estimate ? "Envie um 3MF fatiado ou simule o modelo para obter tempo e consumo." :
     !printer ? "Escolha a impressora que será usada." :
     modelMatch === false ? "O arquivo foi fatiado para outra impressora. Fatie novamente para a impressora selecionada." :
@@ -145,27 +142,25 @@ function FreePricingSimulator({ draft, setDraft, automatic, initialMakerUrl }: {
     selectedMaterials.some(m => !m) ? "Escolha o filamento do estoque para cada material do arquivo." :
     selectedMaterials.some((m, i) => !m?.material_code || !slots[i].materialCode || m.material_code.trim().toUpperCase() !== slots[i].materialCode.trim().toUpperCase()) ? "O material escolhido difere do arquivo ou não tem identificação. Confira o cadastro ou fatie com o material correto." :
     selectedMaterials.some(material => material?.cost_confirmed === false) ? MISSING_FILAMENT_COST :
-    company.data?.finishing_minutes_per_piece > 0 && draft.estimate.partCount == null ? "O arquivo não informa a quantidade de peças para calcular o acabamento. Confira a composição no cadastro do produto." : "";
-  const automaticLabor = (company.data?.handling_minutes_per_plate ?? 0) * (draft.estimate?.plateCount ?? 0)
-    + (company.data?.finishing_minutes_per_piece ?? 0) * (draft.estimate?.partCount ?? 0)
-    + (company.data?.assembly_minutes_per_product ?? 0) * Number(draft.input.quantity);
+    automaticWork.error;
+  const automaticLabor = automaticWork.value?.laborMinutes;
   const input: PricingInput = useMemo(() => automatic ? {
     ...draft.input,
     hours: draft.estimate?.hours ?? 0,
     watts: printer?.power_watts ?? "",
     machineHour: printer ? printerMachineHourCost(printer, company.data?.printer_hour_costs.find(p => p.printer_id === printer.id)?.hour_cost, company.data?.machine_hour_cost) ?? "" : "",
-    laborMinutes: automaticLabor + Number(String(draft.input.laborMinutes).replace(",", ".")),
-    extras: [...draft.input.extras, ...(company.data?.extras_cost_per_product != null ? [{ name: "Insumos padrão da empresa", cost: company.data.extras_cost_per_product, basis: "unit" as const }] : [])],
+    laborMinutes: automaticLabor == null ? "" : automaticLabor + Number(String(draft.input.laborMinutes).replace(",", ".")),
+    extras: [...draft.input.extras, ...(automaticWork.value ? [{ name: "Insumos padrão da empresa", cost: automaticWork.value.extrasCostPerProduct, basis: "unit" as const }] : [])],
     materials: slots.map((slot, i) => ({ name: selectedMaterials[i]?.name ?? slot.name, grams: slot.grams,
       kgPrice: selectedMaterials[i] ? selectedMaterials[i]!.avg_cost * (selectedMaterials[i]!.unit === "g" ? 1000 : 1) : "" })),
-  } : draft.input, [automatic, draft.input, draft.estimate, printer, company.data, slots, selectedMaterials, automaticLabor]);
+  } : draft.input, [automatic, draft.input, draft.estimate, printer, company.data, slots, selectedMaterials, automaticLabor, automaticWork.value]);
   const materialSubtotal = useMemo(() => { try { return printMaterialCost(input.materials); } catch { return null; } }, [input.materials]);
   const validBasics = useMemo(() => {
     try { positiveInteger(input.quantity, "Quantidade do lote", 10000); nonNegative(input.hours, "Horas de impressão"); printMaterialCost(input.materials); return true; }
     catch { return false; }
   }, [input.quantity, input.hours, input.materials]);
   const started = input.materials.some(material => String(material.grams).trim() !== "" && String(material.grams) !== "0") || String(input.hours) !== "0";
-  const channelEnabled = channel !== "factory";
+  const channelEnabled = draft.channelSelection != null && draft.channelSelection.channel !== "factory";
   const calculation = useMemo(() => {
     try {
       if (automatic && modelError) throw new Error(modelError);
@@ -175,26 +170,11 @@ function FreePricingSimulator({ draft, setDraft, automatic, initialMakerUrl }: {
     }
   }, [input, automatic, modelError]);
   const result = started ? calculation.value : null;
-  const commercial = useMemo(() => {
-    if (!channelEnabled || !result) return { value: null, error: "" };
-    try {
-      return {
-        value: priceChannel({
-          ...channelInput,
-          unitCost: result.unit,
-          marginPercent: input.margin,
-          targetUnitPrice: input.target,
-        }),
-        error: "",
-      };
-    } catch (e) {
-      return { value: null, error: (e as Error).message };
-    }
-  }, [channelEnabled, channelInput, input.margin, input.target, result]);
+  const commercial = { value: draft.channelSelection?.result ?? null, error: draft.channelSelection?.error ?? "" };
   const sale = commercial.value;
   const selectedPrice = channelEnabled ? sale?.target : result?.target;
   const selectedQuantity = channelEnabled ? sale?.quantity : result?.quantity;
-  const canTransfer = !!result && selectedPrice != null && selectedQuantity != null;
+  const canTransfer = !!result && !channelPolicyBusy && selectedPrice != null && selectedQuantity != null;
   const products = useQuery({
     queryKey: ["pricing-products", profile?.tenant_id],
     enabled: !!profile?.tenant_id,
@@ -236,14 +216,15 @@ function FreePricingSimulator({ draft, setDraft, automatic, initialMakerUrl }: {
     let sourceToken: string | undefined;
     try {
       const pricing = { name: name.trim(), cost: Math.round(result.unit * 10000) / 10000,
-        price: selectedPrice!, quantity: selectedQuantity!, quote };
+        price: channelEnabled ? result.target : selectedPrice!, quantity: selectedQuantity!, quote,
+        ...(channelEnabled ? { quotePrice: selectedPrice! } : {}) };
       if (automatic) {
         if (!draft.estimate || !profile?.tenant_id || !user?.id) throw new Error("Sua sessão expirou. Entre novamente antes de cadastrar o produto.");
         sourceToken = await createPricingSourceTransfer({ tenantId: profile.tenant_id, userId: user.id }, {
           sourceFile: draft.sourceFile, externalImport: draft.makerReference, estimate: draft.estimate,
           calculated: { printerId, quantity: result.quantity,
             materialSelections: Object.fromEntries(slots.map((slot, index) => [slot.key, selectedMaterials[index]!.id])) },
-          pricingInput: input, accepted: pricing,
+          pricingInput: input, accepted: pricing, ...(draft.channelSelection?.catalogDraft ? { channelPricing: draft.channelSelection.catalogDraft } : {}),
         });
         const latest = latestTransfer.current;
         if (!transferAlive.current || latest.draft !== current.draft || latest.automatic !== current.automatic
@@ -252,7 +233,7 @@ function FreePricingSimulator({ draft, setDraft, automatic, initialMakerUrl }: {
       } else discardPricingSourceTransfer();
       navigate("/comercial/produtos", {
         state: {
-          pricing: { ...pricing, ...(sourceToken ? { sourceToken, sourceRequired: true } : {}) },
+          pricing: { ...pricing, ...(sourceToken ? { sourceToken, sourceRequired: true } : {}), ...(!automatic && draft.channelSelection?.catalogDraft ? { channelPricing: draft.channelSelection.catalogDraft } : {}) },
         },
       });
     } catch (problem) {
@@ -263,20 +244,6 @@ function FreePricingSimulator({ draft, setDraft, automatic, initialMakerUrl }: {
       if (transferAlive.current) setTransferring(false);
     }
   };
-  const channelField = (key: keyof typeof initialChannel, label: string, placeholder?: string) => (
-    <div key={key}>
-      <Label htmlFor={`channel-${key}`}>{label}</Label>
-      <Input
-        id={`channel-${key}`}
-        type="number"
-        min={0}
-        step={key === "orderQuantity" ? "1" : "any"}
-        value={channelInput[key]}
-        placeholder={placeholder}
-        onChange={e => setChannelInput({ ...channelInput, [key]: e.target.value })}
-      />
-    </div>
-  );
   return (
     <div className="space-y-5 min-w-0">
       {!automatic && <p className="text-sm text-muted-foreground">Some o peso e o tempo de todas as placas. A quantidade abaixo é de produtos completos, não de peças soltas.</p>}
@@ -460,13 +427,13 @@ function FreePricingSimulator({ draft, setDraft, automatic, initialMakerUrl }: {
           )}
           {numberField("margin", "Margem desejada sobre a venda (%)")}
           {company.data?.target_margin == null && String(input.margin) === "30" && <p className="text-xs text-muted-foreground">30% é um ponto de partida desta simulação. Ajuste para a margem que você deseja.</p>}
-          <details className="rounded-lg border p-3"><summary className="cursor-pointer text-sm font-medium">Quero testar outro preço de venda</summary><div className="mt-3">{numberField(
+{!channelEnabled &&           <details className="rounded-lg border p-3"><summary className="cursor-pointer text-sm font-medium">Quero testar outro preço de venda</summary><div className="mt-3">{numberField(
             "target",
             "Preço alvo por unidade (R$)",
             channelEnabled
               ? (sale ? String(sale.suggested) : "Preço sugerido no canal")
               : (result ? String(result.suggested) : "Preço sugerido"),
-          )}</div></details>
+          )}</div></details>}
           {result && (
             <>
               <dl><div className="flex flex-wrap justify-between gap-2 text-lg font-semibold"><dt>Custo / unidade</dt><dd>{money(result.unit)}</dd></div></dl>
@@ -648,7 +615,7 @@ function FreePricingSimulator({ draft, setDraft, automatic, initialMakerUrl }: {
               {numberField("overhead", "Despesas indiretas (%)")}
               {numberField("failure", "Reserva adicional para falhas (%)")}
             </div>
-            {automatic && <p className="text-xs text-muted-foreground">Preparação, acabamento, montagem e insumos padrão são incluídos quando configurados na empresa. Trabalho adicional soma aos tempos padrão ({automaticLabor.toLocaleString("pt-BR")} min neste lote). Confira esses custos uma vez nas configurações para reutilizá-los nas próximas peças.</p>}
+            {automatic && <p className="text-xs text-muted-foreground">Preparação, acabamento, montagem e insumos padrão precisam ser confirmados na empresa, inclusive zero quando não se aplicarem. Trabalho adicional soma aos tempos padrão ({automaticLabor == null ? "pendente" : `${automaticLabor.toLocaleString("pt-BR")} min neste lote`}). Confira esses custos uma vez para reutilizá-los nas próximas peças.</p>}
             <p className="text-xs text-muted-foreground">
               A reserva adiciona uma porcentagem ao custo de produção. Inclua
               purga e suportes no peso; evite contabilizar a mesma perda duas
@@ -735,54 +702,9 @@ function FreePricingSimulator({ draft, setDraft, automatic, initialMakerUrl }: {
               Adicionar extra
             </Button>
           </details>
-          <details className="space-y-4 rounded-xl border bg-card p-4">
-            <summary className="cursor-pointer font-semibold">Taxas e despesas da venda</summary>
-            <div>
-              <Label htmlFor="pricing-channel">Canal da simulação</Label>
-              <select
-                id="pricing-channel"
-                className="mt-1 w-full rounded-md border bg-background p-2 text-sm"
-                value={channel}
-                onChange={e => setChannel(e.target.value)}
-              >
-                <option value="factory">Somente custo fabril</option>
-                <option value="direct">Venda direta / WhatsApp / Instagram</option>
-                <option value="mercado_livre">Mercado Livre</option>
-                <option value="shopee">Shopee</option>
-                <option value="other">Outro canal</option>
-              </select>
-            </div>
-            {channelEnabled && (
-              <>
-                <p className="text-sm text-muted-foreground">
-                  O canal identifica esta simulação. Preencha as condições da sua
-                  conta; a seleção não aplica tarifas automaticamente.
-                </p>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {channelField("orderQuantity", "Unidades por pedido / pacote")}
-                  {channelField("commissionPercent", "Comissão sobre produtos (%)")}
-                  {channelField("taxPercent", "Tributo sobre produtos (%)")}
-                  {channelField("fixedFeePerOrder", "Tarifa fixa por pedido (R$)")}
-                  {channelField("sellerShippingPerOrder", "Frete próprio do pacote (R$)")}
-                  {channelField("advertisingPerOrder", "Anúncios atribuídos ao pedido (R$)")}
-                  {channelField("otherCostPerOrder", "Outros gastos do pedido (R$)")}
-                  {channelField("variableUnitCost", "Parcela variável do custo / unidade (R$)", result ? String(result.unit) : "Custo completo")}
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Comissão e tributo usam a receita dos produtos, sem frete do
-                  comprador. Tarifa, frete próprio, anúncios e outros gastos
-                  entram uma vez por pedido. Embalagem já incluída nos extras
-                  permanece no custo fabril. Informe cada gasto em um só lugar.
-                </p>
-                <p className="text-xs text-muted-foreground">
-                  Para estimar contribuição, informe a parcela variável do custo.
-                  Em branco, a simulação considera todo o custo fabril como
-                  variável. Estas condições valem para o pacote informado;
-                  tarifas por item devem ser somadas na tarifa do pedido.
-                </p>
-              </>
-            )}
-          </details>
+          <ChannelPricingPanel unitCost={result?.unit ?? null} showResult={false} savedState={draft.channelState} onBusy={setChannelPolicyBusy}
+            onStateChange={value => setDraft(current => JSON.stringify(current.channelState) === JSON.stringify(value) ? current : { ...current, channelState: value })}
+            onSelection={value => setDraft(current => JSON.stringify(current.channelSelection) === JSON.stringify(value) ? current : { ...current, channelSelection: value })} />
         </div>
       </div>
       {(products.error || materials.error || printers.error || company.error) && (

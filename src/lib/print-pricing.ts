@@ -101,6 +101,7 @@ export type PricingTransfer = {
   price: number;
   quantity: number;
   quote: boolean;
+  quotePrice?: number;
 };
 export function readPricingTransfer(value: unknown): PricingTransfer | null {
   if (!value || typeof value !== "object") return null;
@@ -110,6 +111,7 @@ export function readPricingTransfer(value: unknown): PricingTransfer | null {
     !v.name.trim() ||
     v.name.length > 200 ||
     typeof v.quote !== "boolean" ||
+    v.quotePrice !== undefined && (!Number.isFinite(v.quotePrice) || v.quotePrice < .01 || v.quotePrice > 1e9 || v.quotePrice !== Math.round(v.quotePrice * 100) / 100) ||
     ![v.cost, v.price].every((n) => Number.isFinite(n) && n >= 0 && n <= 1e9) ||
     !Number.isInteger(v.quantity) ||
     v.quantity < 1 ||

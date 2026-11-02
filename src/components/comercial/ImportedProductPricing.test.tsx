@@ -263,6 +263,38 @@ describe("ImportedProductPricing", () => {
     await waitFor(() => expect(loaded.mock.calls.at(-1)?.[0]).toMatchObject({ cost: 10.4333, quantity: 2, price: 20.87 }));
   });
 
+  it.each(["handling_minutes_per_plate", "finishing_minutes_per_piece", "assembly_minutes_per_product", "extras_cost_per_product", "labor_cost_hour"])("keeps unknown company %s pending instead of reducing it to zero", async key => {
+    mock.policy[key] = null;
+    const { loaded } = mount();
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Confirme"));
+    expect(screen.queryByText("Custo por peça")).not.toBeInTheDocument();
+    expect(loaded).toHaveBeenLastCalledWith(null);
+  });
+
+  it("confirms the missing standards in place and recalculates without losing the source, filament or finished-product quantity", async () => {
+    mock.policy = { ...policy, finishing_minutes_per_piece: null, assembly_minutes_per_product: null, extras_cost_per_product: null, printer_hour_costs: [{ printer_id: "a1", hour_cost: 2 }] };
+    const read = mock.rpc.getMockImplementation()!;
+    mock.rpc.mockImplementation(async (name: string, args: Record<string, unknown>) => {
+      if (name !== "save_pricing_settings") return read(name, args);
+      mock.policy = { ...mock.policy, ...(args.p_settings as object), revision: "policy-2" };
+      return { data: "saved-policy", error: null };
+    });
+    const draft = vi.fn(), busy = vi.fn(), { loaded } = mount(estimate, vi.fn(), undefined, { onAuxiliaryDraft: draft, onAuxiliaryBusy: busy });
+    await screen.findByText("Confirme os custos que faltam");
+    editField("Produtos completos neste perfil", "3");
+    for (const label of ["Acabamento padrão por peça (min)", "Montagem por produto completo (min)", "Outros insumos padrão por produto (R$)"])
+      fireEvent.click(screen.getByRole("button", { name: `Considerar zero: ${label}` }));
+    expect(draft).toHaveBeenLastCalledWith(true);
+    fireEvent.click(screen.getByRole("button", { name: "Salvar parâmetros e recalcular" }));
+    await waitFor(() => expect(loaded.mock.calls.at(-1)?.[0]).toMatchObject({ cost: 4.0667, quantity: 3, printerId: "a1", materialSelections: { [estimate.materials[0].key]: "pla" } }));
+    expect(screen.getByLabelText("Produtos completos neste perfil")).toHaveValue(3);
+    expect(screen.getByText(/2 h · 100 g · 2 placa/)).toBeInTheDocument();
+    expect(screen.getByText("Filamento: PLA vermelho cadastrado")).toBeInTheDocument();
+    expect(draft).toHaveBeenLastCalledWith(false); expect(busy).toHaveBeenLastCalledWith(false);
+    const saved = mock.rpc.mock.calls.find(([name]) => name === "save_pricing_settings")?.[1];
+    expect(saved).toMatchObject({ p_settings: { printer_hour_costs: [{ printer_id: "a1", hour_cost: 2 }], handling_minutes_per_plate: 0, finishing_minutes_per_piece: 0, assembly_minutes_per_product: 0, extras_cost_per_product: 0 } });
+  });
+
   it("requires explicit stock selection and single-filament confirmation for an unknown placeholder", async () => {
     const unknown = { ...estimate, printerModelIds: [], materials: [{ ...estimate.materials[0], key: "unknown", slotId: null, materialCode: null, colorHex: null, name: "Filamento não informado" }] };
     const { loaded } = mount(unknown);

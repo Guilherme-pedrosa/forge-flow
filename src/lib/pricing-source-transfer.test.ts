@@ -6,6 +6,7 @@ import { modelPricingFromComposition, modelPricingFromMakerWorld } from "./model
 import { normalizeMakerWorldDesign } from "../../supabase/functions/_shared/makerworld";
 import type { ProductExternalImport } from "./makerworld-import";
 import type { PricingInput } from "./print-pricing";
+import type { CatalogChannelPricingDraft } from "./channel-policy";
 import { consumePricingSourceTransfer, createPricingSourceTransfer, discardPricingSourceTransfer,
   MAX_PRICING_TRANSFER_FILE_BYTES, PRICING_SOURCE_TRANSFER_TTL_MS, type PricingSourceTransferInput } from "./pricing-source-transfer";
 
@@ -40,6 +41,15 @@ function maker(): PricingSourceTransferInput {
   return { sourceFile: null, externalImport: reference, estimate,
     calculated: { printerId: "a1-escolhida", quantity: 2, materialSelections: { [estimate.materials[0].key]: "estoque-vermelho" } },
     pricingInput: structuredClone(pricingInput), accepted: { ...accepted } };
+}
+function channelInput() {
+  const input = maker();
+  input.accepted = { ...input.accepted, price: 20, quotePrice: 30 };
+  input.channelPricing = { channel: "mercado_livre", quantity: input.accepted.quantity, quoted_unit_cost: input.accepted.cost,
+    unit_price: 30, expected_policy_revision: "channel-policy-version", assumptions: { commission_percent: 10, tax_percent: 5,
+      fixed_fee_per_order: 4, fixed_fee_per_item: 0, seller_shipping_per_order: 12, advertising_per_order: 2,
+      other_cost_per_order: 0, target_margin: 20 } };
+  return input;
 }
 beforeEach(() => { vi.stubGlobal("crypto", webcrypto); discardPricingSourceTransfer(); });
 afterEach(() => { discardPricingSourceTransfer(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
@@ -123,5 +133,28 @@ describe("ephemeral pricing source transfers", () => {
     resolve(first.bytes.slice().buffer);
     await expect(preparing).rejects.toThrow(/origem da impressão mudou/);
     expect(consumePricingSourceTransfer(second, scope)?.externalImport).not.toBeNull();
+  });
+  it("retains a channel quote separately from the factory price and the physical profile quantity", async () => {
+    const input = channelInput(), token = await createPricingSourceTransfer(scope, input);
+    const transferred = consumePricingSourceTransfer(token, scope)!;
+    expect(transferred.accepted).toMatchObject({ cost: 17.1234, price: 20, quotePrice: 30, quantity: 7, quote: true });
+    expect(transferred.plan.quantity).toBe(2);
+    expect(transferred.channelPricing).toEqual(input.channelPricing);
+    expect(transferred.channelPricing).not.toBe(input.channelPricing);
+    expect(transferred.channelPricing?.quantity).toBe(7);
+    expect(transferred.channelPricing?.unit_price).toBe(30);
+  });
+  it.each(["cost", "quantity", "quote_price", "invalid"])("rejects mismatched channel %s instead of dropping its conditions", async field => {
+    const input = channelInput();
+    if (field === "cost") input.channelPricing!.quoted_unit_cost += .01;
+    if (field === "quantity") input.channelPricing!.quantity += 1;
+    if (field === "quote_price") input.channelPricing!.unit_price = 31;
+    if (field === "invalid") input.channelPricing!.channel = "factory" as CatalogChannelPricingDraft["channel"];
+    await expect(createPricingSourceTransfer(scope, input)).rejects.toThrow(/canal/);
+  });
+  it.each([null, false, 0, ""])("does not silently omit the explicitly malformed optional channel value %s", async malformed => {
+    const input = channelInput();
+    input.channelPricing = malformed as unknown as CatalogChannelPricingDraft;
+    await expect(createPricingSourceTransfer(scope, input)).rejects.toThrow(/canal/);
   });
 });

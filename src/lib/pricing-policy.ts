@@ -18,6 +18,27 @@ export type PricingPolicy = Record<PricingPolicyKey, number | null> & {
   printer_hour_costs: { printer_id: string; hour_cost: number }[];
 };
 export type PricingPolicyPayload = Record<PricingPolicyKey, number | null> & { printer_hour_costs: { printer_id: string; hour_cost: number }[] };
+
+/** An absent company standard is a pending decision, never free work or supplies. */
+export function importedWorkCosts(policy: PricingPolicy, counts: { plateCount: number; partCount: number | null; quantity: number }) {
+  const confirmed = (key: PricingPolicyKey) => {
+    const value = policy[key];
+    if (value == null || !Number.isFinite(value) || value < 0)
+      throw new Error(`Confirme ${pricingPolicyFields.find(field => field.key === key)!.label.toLocaleLowerCase("pt-BR")}, inclusive zero quando não se aplicar.`);
+    return value;
+  };
+  const handling = confirmed("handling_minutes_per_plate");
+  const finishing = confirmed("finishing_minutes_per_piece");
+  const assembly = confirmed("assembly_minutes_per_product");
+  const extras = confirmed("extras_cost_per_product");
+  confirmed("labor_cost_hour");
+  if (finishing > 0 && counts.partCount == null)
+    throw new Error("O modelo não informa a quantidade de peças para calcular o acabamento. Importe a composição completa.");
+  return {
+    laborMinutes: handling * counts.plateCount + (finishing === 0 ? 0 : finishing * counts.partCount!) + assembly * counts.quantity,
+    extrasCostPerProduct: extras,
+  };
+}
 export type PricingPolicyDraft = { values: Record<PricingPolicyKey, string>; printerHours: Record<string, string> };
 export const emptyPricingPolicyDraft = (): PricingPolicyDraft => ({ values: Object.fromEntries(pricingPolicyFields.map(field => [field.key, ""])) as PricingPolicyDraft["values"], printerHours: {} });
 export function pricingPolicyDraft(policy: PricingPolicy): PricingPolicyDraft {

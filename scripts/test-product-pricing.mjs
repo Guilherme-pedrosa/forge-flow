@@ -81,7 +81,9 @@ try{
   await admin(()=>db.query('UPDATE inventory_items SET avg_cost=0 WHERE id=$1',[material]));assert.equal((await preview(simple)).complete,false);
   await admin(()=>db.query("INSERT INTO inventory_movements(tenant_id,item_id,movement_type,quantity,unit_cost,reference_type,reference_id) VALUES($1,$2,'purchase_in',1,0,'pricing_qa',$2)",[tenant,material]));assert.equal((await preview(simple)).complete,true);assert.equal((await preview(simple)).breakdown.material,0);
   await admin(()=>db.query('UPDATE inventory_items SET avg_cost=.1 WHERE id=$1',[material]));
-  await saveSettings({...policy,machine_hour_cost:null});const p=await preview(simple);assert.equal(p.complete,false);assert.equal(p.breakdown.unit_cost,null);assert.equal(p.suggested_unit_price,null);await saveSettings(policy);
+  await saveSettings({...policy,machine_hour_cost:null});const fallback=await preview(simple);assert.equal(fallback.complete,true);assert.equal(fallback.plates[0].machine_hour_cost,3);
+  await admin(()=>db.query('UPDATE printers SET maintenance_cost_per_hour=NULL WHERE id=$1',[printer]));const p=await preview(simple);assert.equal(p.complete,false);assert.equal(p.breakdown.unit_cost,null);assert.equal(p.suggested_unit_price,null);
+  await admin(()=>db.query('UPDATE printers SET maintenance_cost_per_hour=1 WHERE id=$1',[printer]));await saveSettings(policy);
  });
  await test('Printer commercial overrides win without changing depreciation; preview overrides do not persist',async()=>{
   await saveSettings({...policy,printer_hour_costs:[{printer_id:printer,hour_cost:8}]});assert.equal((await preview(simple)).breakdown.machine,2);assert.equal((await preview(simple,1,{plates:[{plate_id:(await preview(simple)).plates[0].plate_id,machine_hour_cost:12,handling_minutes:0}]})).breakdown.machine,3);

@@ -51,8 +51,12 @@ try {
   close(saved.current_stock,0);close(saved.avg_cost,0);assert.equal((await ledger(item)).length,0);
  });
  await test('A known acquisition price can support pricing before the first physical stock entry',async()=>{
-  const item=await create({avg_cost:.089}),product=await scalar("SELECT save_product_with_photos(NULL,$1::jsonb,'[]'::jsonb,$2)",[JSON.stringify({name:'Peça sem estoque comprado ainda'}),next()]);
+  const item=await create({avg_cost:.089}),printer=next();
+  await db.query("INSERT INTO printers(id,tenant_id,name,model,power_watts) VALUES($1,$2,'Impressora confirmada','A1',100)",[printer,tenant]);
+  await scalar('SELECT save_pricing_settings($1::jsonb,$2,$3)',[JSON.stringify({energy_cost_kwh:0,labor_cost_hour:0,overhead_percent:0,target_margin:0,machine_hour_cost:0,handling_minutes_per_plate:0,finishing_minutes_per_piece:0,assembly_minutes_per_product:0,extras_cost_per_product:0}),(await scalar('SELECT pricing_settings()')).revision,next()]);
+  const product=await scalar("SELECT save_product_with_photos(NULL,$1::jsonb,'[]'::jsonb,$2)",[JSON.stringify({name:'Peça sem estoque comprado ainda',material_id:item,est_grams:100,est_time_minutes:60,prints_per_plate:1}),next()]);
   await scalar("SELECT save_product_material_recipe($1,NULL,'per_print',$2::jsonb,NULL,$3,0)",[product,JSON.stringify([{item_id:item,grams:100}]),next()]);
+  await scalar('SELECT save_product_pricing_plan($1,$2::jsonb,$3,$4)',[product,JSON.stringify({printer_id:printer}),(await scalar('SELECT product_pricing_plan($1)',[product])).revision,next()]);
   const catalog=(await scalar('SELECT product_material_recipe_catalog()')).find(p=>p.id===product);assert.equal(catalog.complete,true);close(catalog.cost_per_unit,8.9);close((await stock(item)).current_stock,0);
  });
  await test('Manual 2.5 kg at R$89/kg becomes exactly2500g at R$0.089/g with one initial ledger entry',async()=>{

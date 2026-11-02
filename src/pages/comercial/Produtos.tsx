@@ -5,10 +5,13 @@ import { useState, useMemo, useEffect, useRef, useCallback, lazy, Suspense } fro
 import { Link as RouterLink, useSearchParams, useLocation, useNavigate } from "react-router-dom";
 import { readPricingTransfer, type PricingTransfer } from "@/lib/print-pricing";
 import { consumePricingSourceTransfer, MISSING_PRICING_SOURCE_TRANSFER, type PreparedPricingSourceTransfer } from "@/lib/pricing-source-transfer";
+import { readProductExtraDrafts, normalizeProductExtraCost, serializeProductExtraDrafts, type ProductExtraDraft, type ProductKitExtraDraft } from "@/lib/product-extra-drafts";
 import { catalogAmountInput, catalogPriceDraft } from "@/lib/catalog-pricing";
 import { modelPricingFromComposition, modelPricingFromMakerWorld, printerMatchesSliceModels, printerModelOptions, type ModelPricingEstimate } from "@/lib/model-pricing";
 import { bambuTaskPricing, bambuProjectPricing } from "@/lib/bambu-import-pricing";
 import { ImportedProductPricing, type ImportedProductPrice } from "@/components/comercial/ImportedProductPricing";
+import { ChannelPricingPanel, type ChannelPricingSelection } from "@/components/comercial/ChannelPricingPanel";
+import { readCatalogChannelPricingDraft, type CatalogChannelPricingDraft } from "@/lib/channel-policy";
 import { SavedProductImportPricing } from "@/components/comercial/SavedProductImportPricing";
 import { buildImportedPricingPlan } from "@/lib/imported-pricing-plan";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -16,7 +19,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
 import { PageHeader } from "@/components/shared/PageHeader";
 import {
-  Plus, Search, MoreHorizontal, Package, Package2, Edit, Trash2, Loader2, Image, CloudDownload, FolderOpen, History, Globe, Link, Calculator, Upload, X, Settings2,
+  Plus, Search, MoreHorizontal, Package, Package2, Edit, Trash2, Loader2, Image, CloudDownload, FolderOpen, History, Globe, Link, Calculator, Upload, X,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
@@ -76,7 +79,7 @@ const categoryLabels: Record<string, string> = {
 
 const categoryFilter: string[] = ["all", ...Object.keys(categoryLabels)];
 
-type ExtraItem = { name: string; cost: number; costInput?: string };
+type ExtraItem = ProductExtraDraft;
 type ProductSubitemLink = { id: string; product_id: string; component_product_id: string; quantity_per_product: number | null };
 type CatalogView = "produtos" | "pecas" | "todos";
 
@@ -189,7 +192,11 @@ export default function Produtos() {
   const [manualPlateDraft, setManualPlateDraft] = useState(false);
   const [filamentBusy, setFilamentBusy] = useState(false);
   const [filamentDraft, setFilamentDraft] = useState(false);
-  const printSourceBusy = sourceBusy || recipeBusy || manualPlateBusy || filamentBusy || savedPricingBusy;
+  const [channelBusy, setChannelBusy] = useState(false);
+  const [channelPricing, setChannelPricing] = useState<ChannelPricingSelection>({ channel: "factory", result: null, error: "", catalogDraft: null });
+  const [initialCatalogChannel, setInitialCatalogChannel] = useState<CatalogChannelPricingDraft | null>(null);
+  const [channelTransferError, setChannelTransferError] = useState("");
+  const printSourceBusy = sourceBusy || recipeBusy || manualPlateBusy || filamentBusy || savedPricingBusy || channelBusy;
   const hasProductionDraft = sourceDraft || recipeDraft || manualPlateDraft || filamentDraft || savedPricingDraft;
   const reportManualPlateBusy = useCallback((_id: string, value: boolean) => setManualPlateBusy(value), []);
   const reportManualPlateDraft = useCallback((_id: string, value: boolean) => setManualPlateDraft(value), []);
@@ -199,7 +206,7 @@ export default function Produtos() {
   const [numColors, setNumColors] = useState("1");
   const [extras, setExtras] = useState<ExtraItem[]>([]);
   const [printsPerPlate, setPrintsPerPlate] = useState("1");
-  const [kitComponents, setKitComponents] = useState<{ productId: string; qty: number }[]>([]);
+  const [kitComponents, setKitComponents] = useState<ProductKitExtraDraft[]>([]);
   const beginImportedPricing = useCallback((estimate: ModelPricingEstimate | null, error = "", initial?: PreparedPricingSourceTransfer["calculated"]) => {
     setTransferredPricingSource(null); transferredScope.current = null; setMissingPricingSource(false);
     initialImportCalculation.current = initial ?? null;
@@ -247,15 +254,6 @@ export default function Produtos() {
   const [kitDescription, setKitDescription] = useState("");
   const [kitMarginAdjust, setKitMarginAdjust] = useState("0"); // % de desconto/acréscimo sobre soma dos preços
   const [kitItems, setKitItems] = useState<{ productId: string; qty: number }[]>([{ productId: "", qty: 1 }]);
-
-  // Marketplace fee config
-  const [channelConfig, setChannelConfig] = useState([
-    { key: "shopee", name: "Shopee", fee: 0, freeShipping: false, freeShippingExtra: 0, freeShippingType: "percent" as "percent" | "fixed", enabled: true },
-    { key: "ml", name: "Mercado Livre", fee: 0, freeShipping: false, freeShippingExtra: 0, freeShippingType: "percent" as "percent" | "fixed", enabled: true },
-    { key: "tiktok", name: "TikTok Shop", fee: 0, freeShipping: false, freeShippingExtra: 0, freeShippingType: "percent" as "percent" | "fixed", enabled: true },
-    { key: "particular", name: "Particular", fee: 0, freeShipping: false, freeShippingExtra: 0, freeShippingType: "percent" as "percent" | "fixed", enabled: true },
-  ]);
-  const [showChannelConfig, setShowChannelConfig] = useState(false);
 
   const { data: products = [], isLoading, isFetching: productsFetching, error: productsError, refetch: refetchProducts } = useQuery({
     queryKey: ["products", profile?.tenant_id],
@@ -413,6 +411,8 @@ export default function Produtos() {
     photoLoadVersion.current += 1;
     setPhotosLoading(false);
     setPrintSourceBusy(false); setRecipeBusy(false); setSavedPricingBusy(false); setSavedPricingDraft(false);
+    setChannelBusy(false); setChannelPricing({ channel: "factory", result: null, error: "", catalogDraft: null });
+    setInitialCatalogChannel(null); setChannelTransferError("");
     setSourceDraft(false); setRecipeDraft(false);
     setManualPlateDraft(false); setFilamentBusy(false); setFilamentDraft(false);
     setFormTab("dados"); setAccessoryCost("0"); setOtherCost("0"); setBarcode(""); setMaxStock("0"); setMarkup(""); setStockQuantity("0"); setStockUnit("un"); setMinStock("0"); setStockEnabled(true);
@@ -444,7 +444,7 @@ export default function Produtos() {
     const source = sourceRequired ? consumePricingSourceTransfer(routePricing.sourceToken, { tenantId: profile!.tenant_id, userId: user!.id }) : null;
     receivedPricing.current = location.key; resetForm(); pricingTransfer.current = transfer;
     setName(transfer.name); setCostEstimate(String(transfer.cost)); setSalePrice(String(transfer.price)); setCreateOpen(true); setFormTab("valores");
-    if (source && (["name", "cost", "price", "quantity", "quote"] as const).every(key => source.accepted[key] === transfer[key])) {
+    if (source && (["name", "cost", "price", "quantity", "quote", "quotePrice"] as const).every(key => source.accepted[key] === transfer[key])) {
       setTransferredPricingSource(source); transferredScope.current = `${profile!.tenant_id}:${user!.id}`;
       setCompositionImport(source.composition); setExternalImport(source.externalImport);
       importedModelFile.current = source.sourceFile;
@@ -461,6 +461,13 @@ export default function Produtos() {
         const photos = importProductPhotos(source.externalImport); setPhotoUrl(photos[0] || ""); setExtraPhotos(photos.slice(1));
       }
     } else if (sourceRequired) setMissingPricingSource(true);
+    const channelData = source?.channelPricing ?? routePricing.channelPricing;
+    if (channelData != null) {
+      const channelDraft = readCatalogChannelPricingDraft(channelData);
+      if (channelDraft && channelDraft.quantity === transfer.quantity && channelDraft.unit_price === (transfer.quotePrice ?? transfer.price)
+        && Math.round(channelDraft.quoted_unit_cost * 10000) === Math.round(transfer.cost * 10000)) setInitialCatalogChannel(channelDraft);
+      else setChannelTransferError("As condições de venda não correspondem à simulação. Selecione o canal e confira seus valores neste cadastro.");
+    }
     navigate(location.pathname, { replace: true, state: null });
   }, [location.key, location.pathname, location.state?.pricing, navigate, profile, user]);
 
@@ -476,6 +483,8 @@ export default function Produtos() {
     setCompositionImport(null); setEditorImportUrl("");
     makerImportTarget.current = p.id;
     setPrintSourceBusy(false); setRecipeBusy(false); setSavedPricingBusy(false); setSavedPricingDraft(false);
+    setChannelBusy(false); setChannelPricing({ channel: "factory", result: null, error: "", catalogDraft: null });
+    setInitialCatalogChannel(null); setChannelTransferError("");
     setSourceDraft(false); setRecipeDraft(false);
     setManualPlateDraft(false); setFilamentBusy(false); setFilamentDraft(false);
     setStockQuantity(String(p.stock?.current_stock ?? 0)); setStockUnit(p.stock?.unit || "un"); setMinStock(String(p.stock?.min_stock ?? 0)); setStockEnabled(p.category !== "service" || !!p.stock_item_id);
@@ -489,23 +498,9 @@ export default function Produtos() {
     setEstTime(p.est_time_minutes ? (p.est_time_minutes / 60).toFixed(2) : ""); setPostMinutes(p.post_process_minutes?.toString() || "");
     setCostEstimate(String(p.catalog_details?.base_cost ?? p.cost_estimate ?? "")); setSalePrice(p.sale_price?.toString() || "");
     setPhotoUrl(p.photo_url || ""); setNotes(p.notes || ""); setPrinterId(""); setNumColors(String((p as any).num_colors || 1)); setPrintsPerPlate(String((p as any).prints_per_plate || 1));
-    const rawExtras = Array.isArray((p as any).extras) ? (p as any).extras : [];
-    // Separate kit components from regular extras
-    const kitItems: { productId: string; qty: number }[] = [];
-    const regularExtras: ExtraItem[] = [];
-    for (const e of rawExtras) {
-      if (e?._kit_product_id) {
-        kitItems.push({ productId: e._kit_product_id, qty: e._kit_qty || 1 });
-      } else {
-        regularExtras.push({
-          name: e?.name ?? "",
-          cost: typeof e?.cost === "number" ? e.cost : parseFloat(String(e?.cost || 0)) || 0,
-          costInput: typeof e?.cost === "number" ? e.cost.toFixed(2).replace(".", ",") : String(e?.cost || "").replace(".", ","),
-        });
-      }
-    }
-    setExtras(regularExtras);
-    setKitComponents(kitItems);
+    const extraDrafts = readProductExtraDrafts(p.extras);
+    setExtras(extraDrafts.regular);
+    setKitComponents(extraDrafts.kits);
     setExtraPhotos([]);
     const loadVersion = ++photoLoadVersion.current;
     // Keep the previous product's photos out of a newly opened editor.
@@ -745,21 +740,10 @@ ${selected?.name ? `Perfil: ${selected.name}
 
   // Build combined extras array (regular extras + kit components stored as special entries)
   const buildExtrasPayload = () => {
-    const regularExtras = extras
-      .filter((e) => e.name.trim())
-      .map(({ name: extraName, cost: extraCost }) => ({ name: extraName, cost: Math.round((extraCost || 0) * 100) / 100 }));
-    const kitEntries = kitComponents
-      .filter((kc) => kc.productId)
-      .map((kc) => {
-        const prod = products.find((p: any) => p.id === kc.productId);
-        return {
-          name: `🧩 ${prod?.name || "Produto"}${kc.qty > 1 ? ` ×${kc.qty}` : ""}`,
-          cost: Math.round(((prod as any)?.cost_estimate || 0) * kc.qty * 100) / 100,
-          _kit_product_id: kc.productId,
-          _kit_qty: kc.qty,
-        };
-      });
-    return [...regularExtras, ...kitEntries];
+    return serializeProductExtraDrafts(extras, kitComponents.filter(row => row.productId), id => {
+      const product = products.find(candidate => candidate.id === id);
+      return product ? { name: product.name, unitCost: product.cost_estimate } : undefined;
+    });
   };
 
   // Kit cost calculation
@@ -851,6 +835,8 @@ ${selected?.name ? `Perfil: ${selected.name}
     if (costSource === "composition" && !compositionReady) throw new Error("Atualize e complete a composição antes de salvar o custo calculado, ou informe um custo manual.");
     if (priceDraft.error) throw new Error(priceDraft.error);
     if (automaticImportCost && !importCostReady) throw new Error("Conclua o cálculo dos dados importados ou escolha informar o custo manualmente.");
+    if (channelPricing.channel !== "factory" && !channelPricing.catalogDraft) throw new Error(channelPricing.error || "Confira as condições do canal antes de salvar.");
+    if (channelTransferError) throw new Error(channelTransferError);
     if (priceSource === "markup" && priceDraft.price == null) throw new Error("Informe o custo e o lucro sobre o custo para calcular o preço de venda.");
     const baseCost = resolvedCostInput.trim() ? nonNegative(resolvedCostInput, "Preço de custo") : null;
     const expenses = nonNegative(accessoryCost, "Despesas acessórias") + nonNegative(otherCost, "Outras despesas");
@@ -920,9 +906,10 @@ ${selected?.name ? `Perfil: ${selected.name}
         num_colors: positiveInteger(numColors, "Número de cores", 16),
         prints_per_plate: positiveInteger(printsPerPlate, "Peças por placa", 10000),
         extras: buildExtrasPayload(),
-        ...(externalImport ? { external_import: externalImport } : {}),
+        ...(externalImport && (!editItem || JSON.stringify(externalImport) !== JSON.stringify(readProductExternalImport(editItem.external_import))) ? { external_import: externalImport } : {}),
         ...(savedComposition ? { [savedComposition.profile_id.startsWith("local:") ? "file_composition" : "import_composition"]: savedComposition } : {}),
         ...(importPricingPlan ? { import_pricing: importPricingPlan } : {}),
+        ...(channelPricing.catalogDraft ? { channel_pricing: [channelPricing.catalogDraft] } : {}),
       },
       p_photos: photos,
     };
@@ -940,7 +927,7 @@ ${selected?.name ? `Perfil: ${selected.name}
       if (createAnother.current && !result.imported) requestAnimationFrame(() => document.getElementById("product-name")?.focus());
       await qc.invalidateQueries({ queryKey: ["products"] });
       await qc.invalidateQueries({ queryKey: ["inventory_items"] });
-      if (transfer?.quote) { navigate("/comercial/orcamentos", { state: { pricingQuote: { product_id: result.id, quantity: transfer.quantity, unit_price: nonNegative(activeSalePrice, "Preço") } } }); return; }
+      if (transfer?.quote) { navigate("/comercial/orcamentos", { state: { pricingQuote: { product_id: result.id, quantity: transfer.quantity, unit_price: transfer.quotePrice ?? nonNegative(activeSalePrice, "Preço") } } }); return; }
       if (result.imported) {
         const refreshed = await refetchProducts(); const product = refreshed.data?.find(product => product.id === result.id);
         if (product) openEdit(product);
@@ -1068,7 +1055,9 @@ ${selected?.name ? `Perfil: ${selected.name}
         {finalProductCost != null && activeSalePrice.trim() && <p className="text-sm">Diferença entre preço e custo: <strong>{fmtCurrency(toNumber(activeSalePrice) - finalProductCost)}</strong> · Margem sobre a venda: <strong>{toNumber(activeSalePrice) > 0 ? ((toNumber(activeSalePrice)-finalProductCost)/toNumber(activeSalePrice)*100).toFixed(1) : '0'}%</strong></p>}
         <p className="text-xs text-muted-foreground">Preço base do cadastro. Taxas de marketplace, impostos e frete de venda precisam ser considerados conforme o canal.</p>
         {editItem?.id && <a href={`/comercial/precificacao?produto=${encodeURIComponent(editItem.id)}`} target="_blank" rel="noopener noreferrer" className="inline-block py-2 text-sm text-primary underline">Simular tarifas e condições de venda em outra aba</a>}
-      </>);
+              {channelTransferError && <div role="alert" className="space-y-2 text-sm text-destructive"><p>{channelTransferError}</p><Button type="button" variant="outline" onClick={() => setChannelTransferError("")}>Conferir o canal abaixo</Button></div>}
+        <ChannelPricingPanel key={`channel-${editItem?.id ?? "new"}`} productId={editItem?.id} unitCost={finalProductCost} initialDraft={initialCatalogChannel} onSelection={setChannelPricing} onBusy={setChannelBusy} />
+</>);
   const productProductionFields = (<>
         {editItem?.is_component && profile?.tenant_id && <PieceTechnicalSheet key={`technical-${editItem.id}`} productId={editItem.id} name={editItem.name} tenantId={profile.tenant_id} showSummary />}
         {editItem && formTab === "producao" && productModelFileField}
@@ -1225,16 +1214,9 @@ ${selected?.name ? `Perfil: ${selected.name}
                   setExtras(updated);
                 }}
                 onBlur={() => {
-                  const normalized = (extra.costInput || "").replace(",", ".");
-                  const parsed = parseFloat(normalized);
-                  const updated = [...extras];
-                  if (isNaN(parsed)) {
-                    updated[idx] = { ...updated[idx], cost: 0, costInput: "" };
-                  } else {
-                    const rounded = Math.round(parsed * 100) / 100;
-                    updated[idx] = { ...updated[idx], cost: rounded, costInput: rounded.toFixed(2).replace(".", ",") };
-                  }
-                  setExtras(updated);
+                  try {
+                    const updated = [...extras]; updated[idx] = normalizeProductExtraCost(extra); setExtras(updated);
+                  } catch (error) { toast({ title: "Confira o custo do adicional", description: (error as Error).message, variant: "destructive" }); }
                 }}
                 className="h-8 text-sm pl-7 text-right"
               />
@@ -1253,124 +1235,7 @@ ${selected?.name ? `Perfil: ${selected.name}
 
       <div className="space-y-2 rounded-lg border bg-primary/5 p-4"><h3 className="flex items-center gap-2 font-medium"><Calculator className="h-4 w-4" />Formação do preço</h3><p className="text-sm text-muted-foreground">Confira o custo e calcule o preço na aba Valores, sem sair do cadastro. A composição precisa ter materiais, rendimento e demais custos confirmados.</p><Button type="button" variant="outline" onClick={() => setFormTab("valores")}>Conferir custo e preço</Button></div>
 
-      {/* Marketplace fee simulator */}
-      {toNumber(activeSalePrice) > 0 && finalProductCost != null && finalProductCost > 0 && (() => {
-        const price = toNumber(activeSalePrice);
-        const cost = finalProductCost;
-        const updateChannel = (idx: number, field: string, value: any) => {
-          setChannelConfig(prev => prev.map((ch, i) => i === idx ? { ...ch, [field]: value } : ch));
-        };
-        return (
-          <div className="rounded-lg border bg-muted/30 p-3 space-y-3">
-            <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Simulação por Canal de Venda</p>
-              <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => setShowChannelConfig(!showChannelConfig)}>
-                <Settings2 className="h-3 w-3 mr-1" /> {showChannelConfig ? "Fechar" : "Taxas"}
-              </Button>
-            </div>
-            <p className="text-xs leading-relaxed text-muted-foreground">Preencha as taxas do seu contrato. Os valores começam em zero e esta simulação não é salva nem representa tarifas oficiais dos canais.</p>
 
-            {showChannelConfig && (
-              <div className="rounded-md border bg-background p-3 space-y-2">
-                <p className="text-xs font-medium text-muted-foreground mb-1">Configurar Taxas por Canal</p>
-                {channelConfig.map((ch, idx) => (
-                  <div key={ch.key} className="grid min-w-0 grid-cols-1 gap-3 rounded-md border p-3 text-xs sm:grid-cols-[minmax(0,1fr)_70px_auto_auto] sm:items-center sm:border-0 sm:p-0 [&>*]:min-w-0">
-                    <span className="font-medium">{ch.name}</span>
-                    <div className="flex items-center gap-1">
-                      <Input
-                        type="number" step="0.1" min="0" max="100"
-                        className="h-7 text-xs w-16 text-right"
-                        value={ch.fee}
-                        onChange={(e) => updateChannel(idx, "fee", parseFloat(e.target.value) || 0)}
-                      />
-                      <span className="text-muted-foreground">%</span>
-                    </div>
-                    {ch.key !== "particular" && (
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <Switch
-                          checked={ch.freeShipping}
-                          onCheckedChange={(v) => updateChannel(idx, "freeShipping", v)}
-                          className="scale-75"
-                        />
-                        <span className="text-muted-foreground whitespace-nowrap">Frete grátis</span>
-                        {ch.freeShipping && (
-                          <div className="flex items-center gap-1">
-                            <span className="text-muted-foreground">+</span>
-                            <Input
-                              type="number" step="0.01" min="0"
-                              className="h-7 text-xs w-16 text-right"
-                              value={ch.freeShippingExtra}
-                              onChange={(e) => updateChannel(idx, "freeShippingExtra", parseFloat(e.target.value) || 0)}
-                            />
-                            <button
-                              type="button"
-                              className={cn(
-                                "h-7 px-1.5 rounded text-xs font-medium border transition-colors",
-                                ch.freeShippingType === "percent"
-                                  ? "bg-primary/10 text-primary border-primary/30"
-                                  : "bg-muted text-muted-foreground border-border hover:bg-muted/80"
-                              )}
-                              onClick={() => updateChannel(idx, "freeShippingType", ch.freeShippingType === "percent" ? "fixed" : "percent")}
-                              title="Clique para alternar entre % e R$"
-                            >
-                              {ch.freeShippingType === "percent" ? "%" : "R$"}
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                    {ch.key === "particular" && <span />}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div className="overflow-x-auto"><div className="grid min-w-[470px] grid-cols-[1fr_auto_auto_auto_auto] gap-x-3 gap-y-1.5 text-xs items-center">
-              <span className="font-medium text-muted-foreground">Canal</span>
-              <span className="font-medium text-muted-foreground text-right">Taxa</span>
-              <span className="font-medium text-muted-foreground text-right">Líquido</span>
-              <span className="font-medium text-muted-foreground text-right">Custo</span>
-              <span className="font-medium text-muted-foreground text-right">Resultado estimado</span>
-              {channelConfig.filter(ch => ch.enabled).map(ch => {
-                const baseFeeAmount = price * (ch.fee / 100);
-                const shippingAmount = ch.freeShipping
-                  ? (ch.freeShippingType === "percent" ? price * (ch.freeShippingExtra / 100) : ch.freeShippingExtra)
-                  : 0;
-                const totalDeduction = baseFeeAmount + shippingAmount;
-                const net = price - totalDeduction;
-                const profit = net - cost;
-                const profitPct = price > 0 ? (profit / price) * 100 : 0;
-                const totalPct = ch.fee + (ch.freeShipping && ch.freeShippingType === "percent" ? ch.freeShippingExtra : 0);
-                return (
-                  <div key={ch.key} className="contents">
-                    <span className="font-medium">
-                      {ch.name}
-                      {ch.freeShipping && <span className="text-[10px] text-muted-foreground ml-1">(c/ frete grátis)</span>}
-                    </span>
-                    <span className="text-right font-mono">
-                      {totalDeduction > 0 ? (
-                        <span className="flex flex-col items-end leading-tight">
-                          <span>{fmtCurrency(totalDeduction)}</span>
-                          {ch.freeShipping && shippingAmount > 0 && (
-                            <span className="text-[10px] text-muted-foreground">
-                              {ch.fee}% + {ch.freeShippingType === "percent" ? `${ch.freeShippingExtra}%` : fmtCurrency(ch.freeShippingExtra)} frete
-                            </span>
-                          )}
-                        </span>
-                      ) : "—"}
-                    </span>
-                    <span className="text-right font-mono">{fmtCurrency(net)}</span>
-                    <span className="text-right font-mono text-muted-foreground">{fmtCurrency(cost)}</span>
-                    <span className={cn("text-right font-mono font-semibold", profit > 0 ? "text-success" : "text-destructive")}>
-                      {fmtCurrency(profit)} <span className="text-muted-foreground font-normal">({profitPct.toFixed(0)}%)</span>
-                    </span>
-                  </div>
-                );
-              })}
-            </div></div>
-          </div>
-        );
-      })()}
 </>);
   const formFields = (
     <Tabs value={!editItem && ["dados", "valores", "producao"].includes(formTab) ? "cadastro" : formTab} onValueChange={setFormTab} className="flex min-h-0 flex-1 flex-col gap-4 md:flex-row">

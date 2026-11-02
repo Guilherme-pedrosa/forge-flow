@@ -1,11 +1,10 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { allRows, currency } from "@/lib/finance";
 import { pricePrint } from "@/lib/print-pricing";
-import { readPricingSettings } from "@/lib/pricing-policy";
+import { importedWorkCosts, pricingPolicyFields, readPricingSettings } from "@/lib/pricing-policy";
 import { loadPricingFilaments, MISSING_FILAMENT_COST } from "@/lib/pricing-filaments";
 import { printerMachineHourCost, printerMatchesSliceModels, printerModelOptions, recommendFilamentsForEstimate, type ModelPricingEstimate } from "@/lib/model-pricing";
 import { SearchableItemSelect } from "@/components/shared/SearchableItemSelect";
@@ -17,6 +16,7 @@ import { FilamentRegistration } from "@/components/estoque/FilamentRegistration"
 import { MATERIAL_CODES } from "@/lib/material-identity";
 import { invalidateInventoryPricing } from "@/lib/inventory-cache";
 import type { FilamentRegistrationItem } from "@/lib/filament-registration";
+import { InlinePricingPolicy } from "./InlinePricingPolicy";
 
 export type ImportedProductPrice = { cost: number; price: number; materialId: string | null; materialSelections: Record<string, string>; printerId: string; quantity: number; marginPercent: number };
 interface Props {
@@ -51,8 +51,10 @@ function ProductImportCalculation({ estimate, error, onCalculated, existingMater
   const currentSource = useRef(source); currentSource.current = source;
   const [registration, setRegistration] = useState<{ source: string; key: string; materialCode: string | null; colorHex: string | null; item?: FilamentRegistrationItem } | null>(null);
   const [registrationBusy, setRegistrationBusy] = useState(false);
-  useEffect(() => { onAuxiliaryDraft?.(!!registration); return () => onAuxiliaryDraft?.(false); }, [onAuxiliaryDraft, registration]);
-  useEffect(() => { onAuxiliaryBusy?.(registrationBusy); return () => onAuxiliaryBusy?.(false); }, [onAuxiliaryBusy, registrationBusy]);
+  const [policyBusy, setPolicyBusy] = useState(false);
+  const [policyDirty, setPolicyDirty] = useState(false);
+  useEffect(() => { onAuxiliaryDraft?.(!!registration || policyDirty); return () => onAuxiliaryDraft?.(false); }, [onAuxiliaryDraft, registration, policyDirty]);
+  useEffect(() => { onAuxiliaryBusy?.(registrationBusy || policyBusy); return () => onAuxiliaryBusy?.(false); }, [onAuxiliaryBusy, registrationBusy, policyBusy]);
   const enabled = !!profile?.tenant_id && !!estimate;
   const company = useQuery({ queryKey: ["pricing_settings", profile?.tenant_id], enabled, queryFn: readPricingSettings });
   const printers = useQuery({ queryKey: ["import-pricing-printers", profile?.tenant_id], enabled,
@@ -109,20 +111,16 @@ function ProductImportCalculation({ estimate, error, onCalculated, existingMater
         throw new Error("O filamento escolhido não corresponde ao material do perfil. Confira o cadastro ou escolha outro perfil.");
       if (selectedFilaments.some(item => item?.cost_confirmed === false)) throw new Error(MISSING_FILAMENT_COST);
       const policy = company.data;
-      if ((policy.finishing_minutes_per_piece ?? 0) > 0 && estimate.partCount == null)
-        throw new Error("O modelo não informa a quantidade de peças para calcular o acabamento. Importe a composição completa.");
       const quantity = Number(edits.quantity);
-      const labor = (policy.handling_minutes_per_plate ?? 0) * estimate.plateCount
-        + (policy.finishing_minutes_per_piece ?? 0) * (estimate.partCount ?? 0)
-        + (policy.assembly_minutes_per_product ?? 0) * quantity;
+      const work = importedWorkCosts(policy, { plateCount: estimate.plateCount, partCount: estimate.partCount, quantity });
       const priced = pricePrint({ quantity: edits.quantity, hours: estimate.hours, watts: printer.power_watts ?? "",
         kwh: policy.energy_cost_kwh ?? "", machineHour: printerMachineHourCost(printer,
           policy.printer_hour_costs.find(rate => rate.printer_id === printer.id)?.hour_cost, policy.machine_hour_cost) ?? "",
-        laborMinutes: labor, laborHour: policy.labor_cost_hour ?? "", overhead: policy.overhead_percent ?? "",
+        laborMinutes: work.laborMinutes, laborHour: policy.labor_cost_hour ?? "", overhead: policy.overhead_percent ?? "",
         failure: 0, margin: policy.target_margin ?? "", target: "",
         materials: slots.map((slot, index) => ({ name: selectedFilaments[index]!.name, grams: slot.grams,
           kgPrice: selectedFilaments[index]!.avg_cost == null ? "" : selectedFilaments[index]!.avg_cost * (selectedFilaments[index]!.unit === "g" ? 1000 : 1) })),
-        extras: policy.extras_cost_per_product == null ? [] : [{ name: "Insumos padrão", cost: policy.extras_cost_per_product, basis: "unit" }],
+        extras: [{ name: "Insumos padrão", cost: work.extrasCostPerProduct, basis: "unit" }],
       });
       const materialIds = [...new Set(selectedFilaments.map(item => item!.id))];
       result = { cost: Math.round(priced.unit * 10000) / 10000, price: priced.suggested,
@@ -182,7 +180,8 @@ function ProductImportCalculation({ estimate, error, onCalculated, existingMater
       <div><dt>Custo por peça</dt><dd className="font-semibold">{currency(result.cost)}</dd></div>
       <div><dt>Preço sugerido</dt><dd className="font-semibold">{currency(result.price)}</dd></div>
     </dl> : <p role={loading ? "status" : "alert"} className="text-sm text-muted-foreground">{problem}</p>}
-    <Link className="text-xs underline" to="/configuracoes/precificacao">Configurações de custos da empresa</Link>
+    {estimate && company.data && <InlinePricingPolicy policy={company.data} printers={printers.data ?? []} onBusy={setPolicyBusy} onDraft={setPolicyDirty}
+      missingKeys={pricingPolicyFields.filter(field => company.data![field.key] == null && (field.key !== "machine_hour_cost" || !!printer && printerMachineHourCost(printer, company.data!.printer_hour_costs.find(rate => rate.printer_id === printer.id)?.hour_cost, company.data!.machine_hour_cost) == null)).map(field => field.key)} />}
     {registration && <FilamentRegistration key={`${registration.source}:${registration.key}`} item={registration.item} defaults={MATERIAL_CODES.some(([code]) => code !== "RESIN" && code === registration.materialCode) ? { material_code: registration.materialCode } : undefined}
       initialColor={{ hex: registration.colorHex ?? undefined }} onBusyChange={setRegistrationBusy}
       onClose={() => setRegistration(null)} onSaved={selectCreatedFilament} />}

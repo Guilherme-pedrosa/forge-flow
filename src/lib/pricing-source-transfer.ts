@@ -1,6 +1,7 @@
 import { importedComposition, type ImportedComposition } from "./imported-composition";
 import { buildImportedPricingPlan, type ImportedPricingPlan } from "./imported-pricing-plan";
 import type { ProductExternalImport } from "./makerworld-import";
+import { readCatalogChannelPricingDraft, type CatalogChannelPricingDraft } from "./channel-policy";
 import { modelPricingFromComposition, modelPricingFromMakerWorld, type ModelPricingEstimate } from "./model-pricing";
 import { readPricingTransfer, type PricingInput, type PricingTransfer } from "./print-pricing";
 
@@ -16,6 +17,7 @@ export type PricingSourceTransferInput = {
   calculated: PricingTransferCalculation;
   pricingInput: PricingInput;
   accepted: PricingTransfer;
+  channelPricing?: CatalogChannelPricingDraft;
 };
 export type PreparedPricingSourceTransfer = PricingSourceTransferInput & {
   composition: ImportedComposition;
@@ -53,11 +55,17 @@ export async function createPricingSourceTransfer(scope: PricingTransferScope, i
   clearPending();
   const accepted = readPricingTransfer(input.accepted);
   if (!accepted) throw new Error("Confira os valores da precificação antes de cadastrar o produto.");
+  const hasChannelPricing = input.channelPricing !== undefined;
+  const channelPricing = hasChannelPricing ? readCatalogChannelPricingDraft(input.channelPricing) : null;
+  if (hasChannelPricing && (!channelPricing || channelPricing.quantity !== accepted.quantity
+    || channelPricing.unit_price !== (accepted.quotePrice ?? accepted.price)
+    || Math.round(channelPricing.quoted_unit_cost * 10000) !== Math.round(accepted.cost * 10000)))
+    throw new Error("As condições do canal não correspondem aos valores aceitos. Confira novamente a simulação.");
   if (!!input.sourceFile === !!input.externalImport) throw new Error("Escolha um arquivo fatiado ou um perfil MakerWorld antes de cadastrar o produto.");
   // Snapshot the selections before reading the file asynchronously; later edits
   // must not mix another material/printer selection with this accepted price.
   const snapshot = structuredClone({ externalImport: input.externalImport, estimate: input.estimate,
-    calculated: input.calculated, pricingInput: input.pricingInput, accepted });
+    calculated: input.calculated, pricingInput: input.pricingInput, accepted, ...(channelPricing ? { channelPricing } : {}) });
   const sourceFile = input.sourceFile;
   let composition: ImportedComposition;
   let actualEstimate: ModelPricingEstimate;

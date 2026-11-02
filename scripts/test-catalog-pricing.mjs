@@ -20,7 +20,7 @@ for (const name of (await readdir(new URL('../supabase/migrations/', import.meta
   catch (error) { throw new Error(`Migration ${name}: ${error.message}`); }
 }
 const id = n => `71000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
-const tenant = id(1), owner = id(2), otherTenant = id(3), otherOwner = id(4), material = id(5);
+const tenant = id(1), owner = id(2), otherTenant = id(3), otherOwner = id(4), material = id(5), printer = id(6), secondMaterial = id(7);
 let sequence = 100;
 const next = () => id(sequence++);
 const scalar = async (sql, args = []) => Object.values((await db.query(sql, args)).rows[0])[0];
@@ -30,34 +30,43 @@ await db.query("INSERT INTO tenants(id,name,slug) VALUES($1,'Catalog QA','catalo
 await db.query("INSERT INTO profiles(user_id,tenant_id,display_name) VALUES($1,$3,'Owner'),($2,$4,'Other')", [owner, otherOwner, tenant, otherTenant]);
 await db.query("INSERT INTO user_roles(user_id,tenant_id,role) VALUES($1,$3,'owner'),($2,$4,'owner')", [owner, otherOwner, tenant, otherTenant]);
 await db.query("INSERT INTO inventory_items(id,tenant_id,name,unit,current_stock,avg_cost,material_code,color_code,color_hex,color) VALUES($1,$2,'PLA preto','kg',10,20,'PLA','BLACK','#000000','Preto')", [material, tenant]);
+await db.query("INSERT INTO inventory_items(id,tenant_id,name,unit,current_stock,avg_cost,material_code,color_code,color_hex,color) VALUES($1,$2,'PLA branco','kg',10,20,'PLA','WHITE','#FFFFFF','Branco')", [secondMaterial, tenant]);
+await db.query("INSERT INTO printers(id,tenant_id,name,model,power_watts) VALUES($1,$2,'A1 confirmada','A1',100)", [printer,tenant]);
 await db.exec('SET ROLE authenticated');
 const login = uid => db.query("SELECT set_config('request.jwt.claim.sub',$1,false)", [uid]);
 await login(owner);
 const save = (p, data, key = next(), photos = []) => scalar('SELECT save_product_with_photos($1,$2::jsonb,$3::jsonb,$4)', [p, JSON.stringify(data), JSON.stringify(photos), key]);
 const catalog = async p => (await scalar('SELECT product_material_recipe_catalog()')).find(x => x.id === p);
-const p = await save(null, { name: 'Vaso', category: 'printed_part', prints_per_plate: 2 });
-const recipe = (grams = 100, nonMaterial = 2) => scalar('SELECT save_product_material_recipe($1,NULL,$2,$3::jsonb,NULL,$4,$5)', [p, 'per_print', JSON.stringify([{ item_id: material, grams }]), next(), nonMaterial]);
+const policy = {energy_cost_kwh:0,labor_cost_hour:0,overhead_percent:0,target_margin:0,machine_hour_cost:4,handling_minutes_per_plate:0,finishing_minutes_per_piece:0,assembly_minutes_per_product:0,extras_cost_per_product:0};
+const setPolicy = async values => scalar('SELECT save_pricing_settings($1::jsonb,$2,$3)',[JSON.stringify(values),(await scalar('SELECT pricing_settings()')).revision,next()]);
+await setPolicy(policy);
+const p = await save(null, { name: 'Vaso', category: 'printed_part', prints_per_plate: 2, material_id:material,est_grams:100,est_time_minutes:60,post_process_minutes:0,extras:[] });
+await scalar('SELECT save_product_pricing_plan($1,$2::jsonb,$3,$4)',[p,JSON.stringify({printer_id:printer}),(await scalar('SELECT product_pricing_plan($1)',[p])).revision,next()]);
+const recipe = async (grams = 100, nonMaterial = 2) => {
+  // Legacy no-plate detailed pricing consumes these production inputs, while
+  // the recipe independently supplies the BOM and its concurrency revision.
+  await db.exec('RESET ROLE');
+  try { await db.query("UPDATE products SET material_id=$2,est_grams=$3,est_time_minutes=60,prints_per_plate=2,post_process_minutes=0,extras='[]' WHERE id=$1",[p,material,grams]); }
+  finally { await db.exec('SET ROLE authenticated'); }
+  return scalar('SELECT save_product_material_recipe($1,NULL,$2,$3::jsonb,NULL,$4,$5)', [p, 'per_print', JSON.stringify([{ item_id: material, grams }]), next(), nonMaterial]);
+};
 await recipe();
 const payload = async (changes = {}) => {
-  const c = await catalog(p);
-  return { name: 'Vaso', category: 'printed_part', prints_per_plate: 2, cost_estimate: c.cost_per_unit, manual_cost: c.cost_per_unit, sale_price: c.cost_per_unit * 1.5,
+  const c = await catalog(p), a = await row('SELECT * FROM products WHERE id=$1',[p]);
+  return { name: 'Vaso', category: 'printed_part', prints_per_plate: 2, material_id:a.material_id,est_grams:a.est_grams,est_time_minutes:a.est_time_minutes,post_process_minutes:a.post_process_minutes,num_colors:a.num_colors,extras:a.extras,cost_estimate: c.cost_per_unit, manual_cost: c.cost_per_unit, sale_price: c.cost_per_unit * 1.5,
     catalog_details: { base_cost: c.cost_per_unit, accessory_cost: 0, other_cost: 0 },
     catalog_pricing: { cost_source: 'composition', price_source: 'markup', markup_percent: 50, expected_composition_revision: c.revision }, ...changes };
 };
 let passed = 0;
 async function test(name, fn) { await fn(); console.log('PASS ' + name); passed++; }
 try {
-  await test('Category migration is retry-safe and refuses unreviewed function changes', async () => {
+  await test('The historical category migration refuses to downgrade newer catalog save wrappers', async () => {
     const correction = await readFile(new URL('../supabase/migrations/20261102150000_catalog_category_pricing.sql', import.meta.url), 'utf8');
     await db.exec('RESET ROLE');
     const definition = await scalar("SELECT pg_get_functiondef('public.save_product_with_photos(uuid,jsonb,jsonb,uuid)'::regprocedure)");
     try {
-      await db.exec(correction);
-      assert.equal(await scalar("SELECT pg_get_functiondef('public.save_product_with_photos(uuid,jsonb,jsonb,uuid)'::regprocedure)"), definition);
-      const drift = definition.replace('DECLARE t uuid:=erp_private.actor();', '-- Unreviewed live function change\nDECLARE t uuid:=erp_private.actor();');
-      assert.notEqual(drift, definition);
-      await db.exec(drift);
       await assert.rejects(db.exec(correction), /Review the live catalog pricing save function/);
+      assert.equal(await scalar("SELECT pg_get_functiondef('public.save_product_with_photos(uuid,jsonb,jsonb,uuid)'::regprocedure)"), definition);
     } finally {
       await db.exec(definition);
       await db.exec('SET ROLE authenticated');
@@ -65,7 +74,7 @@ try {
   });
   await test('Composition cost + markup persist without creating a manual override; retry is inert', async () => {
     const data = await payload(), key = next();
-    assert.equal(data.cost_estimate, 3); // 100g / 2 * R$20/kg + R$2 confirmed non-material costs.
+    assert.equal(data.cost_estimate, 3); // 100g / 2 * R$20/kg + 1h / 2 * R$4/h; other company costs explicitly zero.
     assert.equal(await save(p, data, key), p);
     const saved = await row('SELECT * FROM products WHERE id=$1', [p]);
     assert.equal(saved.manual_cost_override, null);
@@ -111,7 +120,7 @@ try {
   });
   await test('Commercial category correction does not allow same-save production changes', async () => {
     const changes = [
-      { prints_per_plate: 3 }, { material_id: material }, { est_grams: 101 },
+      { prints_per_plate: 3 }, { material_id: secondMaterial }, { est_grams: 101 },
       { est_time_minutes: 151 }, { post_process_minutes: 7 }, { num_colors: 2 },
       { extras: [{ name: 'Extra de produção novo', cost: 2 }] },
     ];
@@ -143,14 +152,16 @@ try {
     await assert.rejects(save(p, { ...manual, catalog_pricing: { cost_source: 'manual', price_source: 'markup', markup_percent: 50 } }), /percentual informado/);
     assert.equal(Number(await scalar('SELECT sale_price FROM products WHERE id=$1', [p])), 19.9);
   });
-  await test('Unknown recipe costs cannot become a final price; explicit zero markup is allowed', async () => {
-    await recipe(300, null);
+  await test('Unknown current company costs cannot become a final price; explicit zero markup is allowed', async () => {
+    await recipe(300, null); // Opaque legacy references do not substitute for the full current formula.
+    await setPolicy({...policy,handling_minutes_per_plate:null});
     const c = await catalog(p);
     await assert.rejects(save(p, { ...(await payload()), manual_cost: 0, cost_estimate: 0, sale_price: 0, catalog_details: { base_cost: 0, accessory_cost: 0, other_cost: 0 } }), /Complete a composição/);
     assert.equal(c.complete, false);
     await save(p, { name: 'Markup zero', prints_per_plate: 2, manual_cost: 10, cost_estimate: 10, sale_price: 10,
       catalog_details: { base_cost: 10, accessory_cost: 0, other_cost: 0 }, catalog_pricing: { cost_source: 'manual', price_source: 'markup', markup_percent: 0 } });
     assert.equal(Number(await scalar('SELECT sale_price FROM products WHERE id=$1', [p])), 10);
+    await setPolicy(policy);
   });
   await test('Half-cent markup uses decimal rounding compatible with the editor', async () => {
     await save(p, { name: 'Half cent', prints_per_plate: 2, manual_cost: 6.67, cost_estimate: 6.67, sale_price: 10.01,

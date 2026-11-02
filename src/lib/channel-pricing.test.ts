@@ -42,6 +42,21 @@ describe("commercial channel pricing", () => {
     expect(result.includedResult).toBe(28.5);
     expect(result.breakEven).toBe(18.83);
   });
+  it("charges a per-item fee for each item independently of the once-per-order expenses", () => {
+    const result = priceChannel({ ...input, unitCost: 10, orderQuantity: 3, commissionPercent: 10,
+      taxPercent: 5, fixedFeePerOrder: 4, fixedFeePerItem: 2, sellerShippingPerOrder: 12,
+      advertisingPerOrder: 2, marginPercent: 20, targetUnitPrice: 30 });
+    expect(result.fixedFee).toBe(4); expect(result.itemFees).toBe(6);
+    expect(result.orderExpenses).toBe(24); expect(result.includedResult).toBe(22.5);
+    expect(result.suggested).toBe(27.70);
+  });
+  it("requires explicit confirmation of every required assumption rather than treating blanks as free", () => {
+    for (const key of ["unitCost", "commissionPercent", "taxPercent", "fixedFeePerOrder", "sellerShippingPerOrder", "advertisingPerOrder", "otherCostPerOrder", "marginPercent"] as const) {
+      expect(() => priceChannel({ ...input, [key]: "" })).toThrow(/Confirme/);
+      expect(() => priceChannel({ ...input, [key]: "  " })).toThrow(/Confirme/);
+    }
+    expect(priceChannel({ ...input, fixedFeePerItem: undefined }).itemFees).toBe(0);
+  });
 
   it("shows contribution separately from result after the complete informed manufacturing cost", () => {
     const result = priceChannel({ ...input, unitCost: 30, variableUnitCost: 20,

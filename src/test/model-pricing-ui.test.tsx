@@ -172,4 +172,15 @@ describe("automatic file and filament pricing", () => {
     expect(screen.queryByText(/^Preço sugerido:/)).not.toBeInTheDocument();
     expect(screen.queryByText("Custo / unidade")).not.toBeInTheDocument();
   });
+
+  it.each(["handling_minutes_per_plate", "finishing_minutes_per_piece", "assembly_minutes_per_product", "extras_cost_per_product", "labor_cost_hour"])("keeps automatic file pricing pending for unknown company %s without dropping the native source", async key => {
+    mock.rpc.mockResolvedValue({ data: { ...policy, [key]: null }, error: null });
+    mount(); await loadAndChoose();
+    expect(await screen.findByText(/Confirme .*inclusive zero quando não se aplicar/)).toBeVisible();
+    expect(screen.queryByText("Custo / unidade")).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Preço sugerido:/)).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Tempo nativo")).toHaveTextContent("2 h");
+    expect(screen.getByLabelText("Filamento nativo")).toHaveTextContent("100 g");
+    expect(screen.getByLabelText("Unidades prontas no lote")).toHaveValue(1);
+  });
 });

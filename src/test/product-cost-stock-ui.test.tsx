@@ -4,7 +4,7 @@ import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import Produtos from '@/pages/comercial/Produtos';
 const mock=vi.hoisted(()=>({rpc:vi.fn(),toast:vi.fn(),existing:false,automatic:false,recipeCost:999 as number|null}));
-const product={id:'product',tenant_id:'tenant',name:'Produto com receita',category:'printed_part',is_active:true,cost_estimate:999,manual_cost_override:10,sale_price:25,prints_per_plate:1,num_colors:1,extras:[],stock_item_id:'stock',stock:{id:'stock',current_stock:20,unit:'un',min_stock:2,avg_cost:10}};
+const product={id:'product',tenant_id:'tenant',name:'Produto com receita',category:'printed_part',is_active:true,cost_estimate:999,manual_cost_override:10,sale_price:25,prints_per_plate:1,num_colors:1,extras:[] as Record<string,unknown>[],stock_item_id:'stock',stock:{id:'stock',current_stock:20,unit:'un',min_stock:2,avg_cost:10}};
 vi.mock('@/contexts/AuthContext',()=>({useAuth:()=>({profile:{tenant_id:'tenant',user_id:'user'}})}));
 vi.mock('@/hooks/use-toast',()=>({useToast:()=>({toast:mock.toast})}));
 vi.mock('@/integrations/supabase/client',()=>({supabase:{rpc:mock.rpc,from:(table:string)=>{
@@ -13,11 +13,23 @@ vi.mock('@/integrations/supabase/client',()=>({supabase:{rpc:mock.rpc,from:(tabl
 }}}));
 vi.mock('@/pages/comercial/ProductPrintSources',()=>({default:()=>null}));
 vi.mock('@/pages/comercial/ProductMaterialRecipe',()=>({default:()=>null}));
-beforeEach(()=>{mock.existing=false;mock.automatic=false;mock.recipeCost=999;mock.rpc.mockReset();mock.toast.mockReset();mock.rpc.mockImplementation(async(name:string)=>({data:name==='product_material_recipe_catalog'?[{id:'product',configured:true,complete:mock.recipeCost!=null,cost_per_unit:mock.recipeCost,revision:`recipe-${mock.recipeCost}`,missing:['Revise os materiais.'],plate_count:2}]:'saved',error:null}));});
+beforeEach(()=>{product.extras=[];mock.existing=false;mock.automatic=false;mock.recipeCost=999;mock.rpc.mockReset();mock.toast.mockReset();mock.rpc.mockImplementation(async(name:string)=>({data:name==='product_material_recipe_catalog'?[{id:'product',configured:true,complete:mock.recipeCost!=null,cost_per_unit:mock.recipeCost,revision:`recipe-${mock.recipeCost}`,missing:['Revise os materiais.'],plate_count:2}]:'saved',error:null}));});
 afterEach(cleanup);
 function LocationProof(){const location=useLocation();return <div data-testid="location">{location.pathname}{location.search}</div>;}
 function mount(){const client=new QueryClient({defaultOptions:{queries:{retry:false}}});render(<QueryClientProvider client={client}><MemoryRouter><Produtos/><LocationProof/></MemoryRouter></QueryClientProvider>);return client;}
 describe('Cadastro real de produto com custo e estoque',()=>{
+ it('preserva precisão e metadados de adicionais intactos ao editar dados comerciais e apenas desfocar o custo',async()=>{
+  mock.existing=true;mock.automatic=true;mock.recipeCost=12;
+  const original=[{name:'Laço',cost:0.12345,origin:{invoice_line:'original'}},{name:'Etiqueta',cost:0.000001,unit:'un'}];
+  product.extras=structuredClone(original);
+  mount();fireEvent.click(await screen.findByRole('button',{name:'Editar Produto com receita'}));
+  const input=screen.getByDisplayValue('0,12345');fireEvent.blur(input);
+  expect(input).toHaveValue('0,12345');
+  fireEvent.change(screen.getByLabelText('Nome *'),{target:{value:'Nome comercial atualizado'}});
+  await waitFor(()=>expect(screen.getByRole('button',{name:'Salvar'})).toBeEnabled());
+  fireEvent.click(screen.getByRole('button',{name:'Salvar'}));
+  await waitFor(()=>expect(mock.rpc).toHaveBeenCalledWith('save_product_with_photos',expect.objectContaining({p_product:expect.objectContaining({extras:original,name:'Nome comercial atualizado'})})));
+ });
  it('salva custo em reais com vírgula, venda e estoque no mesmo pedido sem receita',async()=>{
   mount();fireEvent.click(screen.getByRole('button',{name:'Novo Produto'}));
   fireEvent.change(screen.getByLabelText('Nome *'),{target:{value:'Produto completo'}});

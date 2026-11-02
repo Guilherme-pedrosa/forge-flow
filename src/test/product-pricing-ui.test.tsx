@@ -3,6 +3,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Precificacao from "@/pages/comercial/Precificacao";
+import { priceChannel } from "@/lib/channel-pricing";
+import type { ChannelAssumptions } from "@/lib/channel-policy";
 
 const productId = "00000000-0000-4000-8000-000000000001";
 const plateId = "00000000-0000-4000-8000-000000000002";
@@ -14,6 +16,7 @@ vi.mock("@/components/shared/PageHeader", () => ({ PageHeader: ({ title }: { tit
 vi.mock("@/components/shared/SearchableItemSelect", () => ({ SearchableItemSelect: ({ value, options, onChange, label, disabled }: { value: string; options: { id: string; label: string }[]; onChange: (id: string) => void; label: string; disabled?: boolean }) => <select aria-label={label} value={value} disabled={disabled} onChange={e => onChange(e.target.value)}><option value="">Selecionar</option>{options.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select> }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { from: mock.from, rpc: mock.rpc } }));
 const baseCosts = { material: 4, energy: 1, machine: 2, handling: 1, finishing: 0, assembly: 1, extras: 1, overhead: 0 };
+const channelDefaults: ChannelAssumptions = { commission_percent: 0, tax_percent: 0, fixed_fee_per_order: 0, fixed_fee_per_item: 0, seller_shipping_per_order: 0, advertising_per_order: 0, other_cost_per_order: 0, target_margin: 50 };
 function preview(quantity: number, overrides: Record<string, unknown>) {
   const exclusive = overrides.cost_basis === "exclusive_lot";
   const unit = exclusive ? 18 : 10;
@@ -36,6 +39,10 @@ const openAdvanced = (label: string) => {
   const summary = screen.getByText(label, { selector: "summary" });
   if (!(summary.parentElement as HTMLDetailsElement).open) fireEvent.click(summary);
 };
+async function chooseChannel() {
+  set("Canal de venda", "mercado_livre");
+  await waitFor(() => expect(screen.getByLabelText("Comissão sobre produtos (%)")).toHaveValue("0"));
+}
 beforeEach(() => {
   mock.pending = false; mock.saved = { handling_minutes_per_plate: 2, assembly_minutes_per_product: 3, consumables: [{ item_id: itemId, quantity: 1 }] }; mock.delay = null; mock.held = false; mock.salePrice = 42; mock.catalogError = false;
   mock.navigate.mockReset(); mock.from.mockReset(); mock.rpc.mockReset();
@@ -45,11 +52,24 @@ beforeEach(() => {
     return builder;
   });
   mock.rpc.mockImplementation(async (name: string, args: Record<string, unknown>) => {
+    if (name === "product_channel_price_catalog") return { data: [], error: null };
+    if (name === "channel_pricing_policy") return { data: { channel: args.p_channel, configured: true, revision: "channel-r1", assumptions: channelDefaults }, error: null };
     if (name === "pricing_settings") return { data: { machine_hour_cost: 5, energy_cost_kwh: 1, labor_cost_hour: 20, overhead_percent: 0, target_margin: 50, handling_minutes_per_plate: 2, assembly_minutes_per_product: 3, finishing_minutes_per_piece: 0, extras_cost_per_product: 0, printer_hour_costs: [], revision: "settings-1" }, error: null };
     if (name === "product_pricing_plan") return { data: { plan: mock.saved, revision: "plan-1" }, error: null };
     if (name === "product_pricing_preview") {
       if (mock.held) await new Promise<void>(resolve => { mock.delay = resolve; });
       return { data: preview(args.p_quantity as number, args.p_overrides as Record<string, unknown>), error: null };
+    }
+    if (name === "product_channel_pricing_preview") {
+      const context = args.p_cost_context as { quantity: number; overrides: Record<string, unknown> };
+      const unit = preview(context.quantity, context.overrides).breakdown.unit_cost;
+      const values = args.p_overrides as ChannelAssumptions;
+      return { data: { product_id: productId, channel: args.p_channel, quantity: args.p_quantity, complete: !mock.pending, missing: [], unit_cost: unit,
+        cost_source: "simulation", cost_revision: "cost-r1", policy_revision: "channel-r1", revision: "channel-preview-r1", assumptions: values,
+        policy: { channel: args.p_channel, configured: true, revision: "channel-r1", assumptions: channelDefaults }, cost_snapshot: { cost_context: context },
+        result: unit == null ? null : priceChannel({ unitCost: unit, orderQuantity: args.p_quantity as number, commissionPercent: values.commission_percent!, taxPercent: values.tax_percent!,
+          fixedFeePerOrder: values.fixed_fee_per_order!, fixedFeePerItem: values.fixed_fee_per_item!, sellerShippingPerOrder: values.seller_shipping_per_order!,
+          advertisingPerOrder: values.advertising_per_order!, otherCostPerOrder: values.other_cost_per_order!, marginPercent: values.target_margin!, targetUnitPrice: args.p_unit_price as number }) }, error: null };
     }
     if (name === "save_product_pricing_plan") mock.saved = args.p_plan as Record<string, unknown>;
     return { data: "acceptance-id", error: null };
@@ -65,11 +85,12 @@ describe("pricing from the saved product structure", () => {
     expect(screen.getByLabelText("Quantidade de produtos prontos")).toBeVisible();
     expect(screen.getByRole("button", { name: "Aplicar custo e preço ao cadastro" })).toBeVisible();
     expect(screen.getByRole("button", { name: "Usar preço no novo orçamento" })).toBeVisible();
-    for (const label of ["Custos e tempos", "Placas e composição", "Venda por canal"]) {
+    for (const label of ["Custos e tempos", "Placas e composição"]) {
       const summary = screen.getByText(label, { selector: "summary" });
       expect(summary.parentElement).not.toHaveAttribute("open");
       expect(breakdown.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     }
+    expect(screen.getByLabelText("Canal de venda")).toHaveValue("factory");
     expect(screen.getByLabelText("Preparação e retirada por placa (min)")).not.toBeVisible();
     expect(screen.getByTestId("pricing-production-plan")).not.toBeVisible();
     expect(screen.getByRole("button", { name: "Salvar tempos e insumos do produto" })).not.toBeVisible();
@@ -152,7 +173,8 @@ describe("pricing from the saved product structure", () => {
     }
     expect(mock.navigate).not.toHaveBeenCalled();
     set("Quantidade de produtos prontos", "100");
-    openAdvanced("Venda por canal"); set("Canal da simulação", "mercado_livre");
+    await chooseChannel();
+    expect(screen.getByRole("button", { name: "Usar preço base cadastrado no orçamento" })).toBe(quote);
     expect(screen.getByLabelText("Unidades por pedido / pacote")).toHaveValue(1);
     for (const quantity of ["", "0", "-1", "1.5", "10001"]) {
       set("Unidades por pedido / pacote", quantity);
@@ -163,7 +185,7 @@ describe("pricing from the saved product structure", () => {
     expect(quote).toBeEnabled(); fireEvent.click(quote);
     expect(mock.navigate).toHaveBeenCalledWith("/comercial/orcamentos", { state: { pricingQuote: { product_id: productId, quantity: 2, unit_price: 42 } } });
     expect(screen.getByLabelText("Quantidade de produtos prontos")).toHaveValue(100);
-    expect(screen.getByRole("button", { name: "Aplicar custo e preço ao cadastro" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Salvar preço deste canal" })).toBeDisabled();
   });
   it("blocks stale revisions while recalculating, then applies only the current preview", async () => {
     mount(); await screen.findByText("Peças e placas que formam Maçã");
@@ -178,8 +200,7 @@ describe("pricing from the saved product structure", () => {
   });
   it("uses the chosen product unit cost for an independently sized channel order without changing the catalogue", async () => {
     mount(); await screen.findByText("Peças e placas que formam Maçã");
-    openAdvanced("Venda por canal");
-    set("Quantidade de produtos prontos", "3"); set("Canal da simulação", "mercado_livre"); set("Unidades por pedido / pacote", "2"); set("Comissão sobre produtos (%)", "10"); set("Preço alvo por unidade (R$)", "30");
+    set("Quantidade de produtos prontos", "3"); await chooseChannel(); set("Unidades por pedido / pacote", "2"); set("Comissão sobre produtos (%)", "10"); set("Preço escolhido neste canal (R$)", "30");
     const channel = within(screen.getByTestId("product-channel-result"));
     expect(channel.getByText("Custo fabril").nextSibling).toHaveTextContent(brl(20));
     expect(screen.getByLabelText("Quantidade de produtos prontos")).toHaveValue(3);
@@ -199,11 +220,11 @@ describe("pricing from the saved product structure", () => {
       return Promise.resolve({ data: { ...value, breakdown, production_breakdown: breakdown, margin_percent: 30, suggested_unit_price: 48.58 }, error: null });
     });
     mount(); await screen.findByText("Peças e placas que formam Maçã");
-    openAdvanced("Venda por canal");
     expect(screen.queryByLabelText("Unidades por pedido / pacote")).not.toBeInTheDocument();
     set("Quantidade de produtos prontos", "100");
     await waitFor(() => expect(screen.getByRole("button", { name: "Usar preço no novo orçamento" })).toBeEnabled());
-    set("Canal da simulação", "mercado_livre");
+    await chooseChannel();
+    set("Margem desejada neste canal (%)", "30");
     set("Comissão sobre produtos (%)", "16"); set("Tributo sobre produtos (%)", "6"); set("Tarifa fixa por pedido (R$)", "14");
     // Independent monetary oracle: (34 + 14) / (1 - .16 - .06 - .30) = R$ 100.
     const channel = within(screen.getByTestId("product-channel-result"));
@@ -220,10 +241,9 @@ describe("pricing from the saved product structure", () => {
   it("preserves exclusive-lot production costs while the channel package starts at one and changes independently", async () => {
     mount(); await screen.findByText("Peças e placas que formam Maçã");
     openAdvanced("Custos e tempos");
-    openAdvanced("Venda por canal");
     set("Quantidade de produtos prontos", "3"); set("Base do custo e do preço", "exclusive_lot");
     await waitFor(() => expect(result().getByText("Custo por unidade").nextSibling).toHaveTextContent(brl(18)));
-    set("Canal da simulação", "mercado_livre");
+    await chooseChannel();
     expect(screen.getByLabelText("Unidades por pedido / pacote")).toHaveValue(1);
     expect(within(screen.getByTestId("product-channel-result")).getByText("Custo fabril").nextSibling).toHaveTextContent(brl(18));
     set("Unidades por pedido / pacote", "3");
@@ -233,26 +253,101 @@ describe("pricing from the saved product structure", () => {
     fireEvent.click(screen.getByRole("button", { name: "Usar preço no novo orçamento" }));
     expect(mock.navigate).toHaveBeenCalledWith("/comercial/orcamentos", { state: { pricingQuote: { product_id: productId, quantity: 3, unit_price: 36 } } });
   });
+  it("applies the channel price through its own revision-checked RPC while preserving the production lot and overrides", async () => {
+    mount(); await screen.findByText("Peças e placas que formam Maçã"); openAdvanced("Custos e tempos");
+    set("Quantidade de produtos prontos", "3"); set("Base do custo e do preço", "exclusive_lot"); set("Montagem por produto completo (min)", "4");
+    await waitFor(() => expect(result().getByText("Custo por unidade").nextSibling).toHaveTextContent(brl(18)));
+    await chooseChannel(); set("Unidades por pedido / pacote", "2"); set("Comissão sobre produtos (%)", "10"); set("Tarifa fixa por pedido (R$)", "4"); set("Margem desejada neste canal (%)", "20"); set("Preço escolhido neste canal (R$)", "30");
+    const apply = screen.getByRole("button", { name: "Salvar preço deste canal" });
+    await waitFor(() => expect(apply).toBeEnabled()); fireEvent.click(apply);
+    await screen.findByText("Preço do canal salvo. O preço base do produto foi preservado.");
+    const values = { ...channelDefaults, commission_percent: 10, fixed_fee_per_order: 4, target_margin: 20 };
+    const costContext = { quantity: 3, overrides: { cost_basis: "exclusive_lot", assembly_minutes_per_product: 4 }, expected_revision: "preview-3-exclusive_lot" };
+    expect(mock.rpc).toHaveBeenCalledWith("product_channel_pricing_preview", expect.objectContaining({ p_product_id: productId, p_channel: "mercado_livre", p_quantity: 2, p_unit_price: 30, p_overrides: values, p_cost_context: costContext }));
+    expect(mock.rpc).toHaveBeenCalledWith("apply_product_channel_pricing", expect.objectContaining({ p_product_id: productId, p_channel: "mercado_livre", p_quantity: 2, p_unit_price: 30, p_overrides: values,
+      p_cost_context: costContext, p_expected_cost_revision: "cost-r1", p_expected_policy_revision: "channel-r1", p_expected_revision: "channel-preview-r1", p_request_id: expect.any(String) }));
+    expect(mock.rpc.mock.calls.some(([name]) => name === "apply_product_pricing" || name === "save_product_pricing_plan")).toBe(false);
+    expect(mock.salePrice).toBe(42);
+    expect(screen.getByLabelText("Quantidade de produtos prontos")).toHaveValue(3);
+  });
+  it("does not apply a channel price if the server finds a newer policy than the chosen simulation", async () => {
+    const original = mock.rpc.getMockImplementation()!;
+    mock.rpc.mockImplementation(async (name: string, args: Record<string, unknown>) => {
+      const response = await original(name, args);
+      return name === "product_channel_pricing_preview" ? { ...response, data: { ...response.data, policy_revision: "changed-channel-r2" } } : response;
+    });
+    mount(); await screen.findByText("Peças e placas que formam Maçã"); await chooseChannel();
+    const apply = screen.getByRole("button", { name: "Salvar preço deste canal" });
+    await waitFor(() => expect(apply).toBeEnabled()); fireEvent.click(apply);
+    await screen.findByText("Os custos ou as condições do canal mudaram. Atualize a simulação antes de salvar.");
+    expect(mock.rpc.mock.calls.some(([name]) => name === "apply_product_channel_pricing" || name === "apply_product_pricing")).toBe(false);
+  });
+  it.each(["network", "empty"])("replays exactly one accepted channel request after a lost %s response without requesting another preview", async failure => {
+    const original = mock.rpc.getMockImplementation()!;
+    let acceptedPayload: Record<string, unknown> | null = null, attempts = 0, companyPolicyChanged = false;
+    mock.rpc.mockImplementation(async (name: string, args: Record<string, unknown>) => {
+      if (name === "product_channel_pricing_preview" && companyPolicyChanged)
+        return { data: null, error: { message: "A revisão mudou depois da primeira aceitação; não refaça a prévia de um pedido já confirmado." } };
+      if (name === "apply_product_channel_pricing") {
+        attempts++;
+        if (!acceptedPayload) {
+          acceptedPayload = structuredClone(args); companyPolicyChanged = true;
+          if (failure === "network") throw new Error("Resposta perdida após confirmar o preço do canal.");
+          return { data: null, error: null };
+        }
+        // Server idempotency replays a committed request before comparing the
+        // now-obsolete policy revision. A different request must not pass.
+        if (JSON.stringify(args) !== JSON.stringify(acceptedPayload)) return { data: null, error: { message: "As condições mudaram; este é outro pedido." } };
+        return { data: "channel-acceptance", error: null };
+      }
+      return original(name, args);
+    });
+    mount(); await screen.findByText("Peças e placas que formam Maçã");
+    set("Quantidade de produtos prontos", "3"); await chooseChannel();
+    set("Unidades por pedido / pacote", "2"); set("Preço escolhido neste canal (R$)", "30");
+    const button = screen.getByRole("button", { name: "Salvar preço deste canal" });
+    await waitFor(() => expect(button).toBeEnabled()); fireEvent.click(button);
+    await screen.findByText(failure === "network" ? "Resposta perdida após confirmar o preço do canal." : "Os dados do canal não foram confirmados. Atualize a simulação e tente novamente.");
+    expect(screen.queryByText("Preço do canal salvo. O preço base do produto foi preservado.")).not.toBeInTheDocument();
+    await waitFor(() => expect(button).toBeEnabled()); fireEvent.click(button);
+    await screen.findByText("Preço do canal salvo. O preço base do produto foi preservado.");
+    const writes = mock.rpc.mock.calls.filter(([name]) => name === "apply_product_channel_pricing");
+    expect(attempts).toBe(2); expect(writes[1][1]).toEqual(writes[0][1]);
+    expect(writes[0][1]).toMatchObject({ p_request_id: expect.any(String), p_quantity: 2, p_cost_context: { quantity: 3, expected_revision: "preview-3-unit" }, p_expected_policy_revision: "channel-r1" });
+    expect(mock.rpc.mock.calls.filter(([name]) => name === "product_channel_pricing_preview")).toHaveLength(1);
+    expect(mock.rpc.mock.calls.some(([name]) => name === "apply_product_pricing")).toBe(false);
+  });
   it("blocks invalid package quantities without changing or blocking the factory lot", async () => {
     mount(); await screen.findByText("Peças e placas que formam Maçã");
-    openAdvanced("Venda por canal");
     set("Quantidade de produtos prontos", "3");
     await waitFor(() => expect(screen.getByRole("button", { name: "Usar preço no novo orçamento" })).toBeEnabled());
-    set("Canal da simulação", "mercado_livre");
+    await chooseChannel();
     for (const quantity of ["", "0", "-1", "1.5", "10001"]) {
       set("Unidades por pedido / pacote", quantity);
       expect(screen.getByRole("alert")).toHaveTextContent(/Unidades por pedido.*inteiro entre 1 e 10000/);
       expect(screen.queryByTestId("product-channel-result")).not.toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Aplicar custo e preço ao cadastro" })).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Salvar preço deste canal" })).toBeDisabled();
       expect(screen.getByRole("button", { name: "Usar preço no novo orçamento" })).toBeDisabled();
       expect(screen.getByLabelText("Quantidade de produtos prontos")).toHaveValue(3);
     }
-    set("Canal da simulação", "factory");
+    set("Canal de venda", "factory");
     expect(screen.queryByLabelText("Unidades por pedido / pacote")).not.toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Usar preço no novo orçamento" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Usar preço no novo orçamento" }));
     expect(mock.navigate).toHaveBeenCalledWith("/comercial/orcamentos", { state: { pricingQuote: { product_id: productId, quantity: 3, unit_price: 20 } } });
+  });
+  it("restores the unchanged factory target after simulating a different channel price", async () => {
+    mount(); await screen.findByText("Peças e placas que formam Maçã"); set("Preço alvo por unidade (R$)", "22");
+    await chooseChannel(); set("Preço escolhido neste canal (R$)", "30");
+    expect(screen.queryByLabelText("Preço alvo por unidade (R$)")).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Usar preço no novo orçamento" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Usar preço no novo orçamento" }));
+    expect(mock.navigate).toHaveBeenLastCalledWith("/comercial/orcamentos", { state: { pricingQuote: { product_id: productId, quantity: 1, unit_price: 30 } } });
+    set("Canal de venda", "factory");
+    expect(screen.getByLabelText("Preço alvo por unidade (R$)")).toHaveValue(22);
+    fireEvent.click(screen.getByRole("button", { name: "Usar preço no novo orçamento" }));
+    expect(mock.navigate).toHaveBeenLastCalledWith("/comercial/orcamentos", { state: { pricingQuote: { product_id: productId, quantity: 1, unit_price: 22 } } });
   });
   it("blocks stale cached prices after a failed refresh until a new valid preview is loaded", async () => {
     mount(); await screen.findByText("Peças e placas que formam Maçã");

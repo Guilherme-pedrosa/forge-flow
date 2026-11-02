@@ -9,6 +9,8 @@ import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
 import { allRows } from "@/lib/finance";
 import { priceChannel } from "@/lib/channel-pricing";
+import { ChannelPricingPanel, type ChannelPricingSelection, type ChannelPricingPanelState } from "@/components/comercial/ChannelPricingPanel";
+import { readProductChannelPricing, applyProductChannelPricing, type ProductChannelPricingAcceptance } from "@/lib/channel-policy";
 import { readPricingSettings } from "@/lib/pricing-policy";
 import { orderRequest } from "@/lib/sales-order";
 import {
@@ -57,18 +59,20 @@ function ProductPricingSession({ productId, currentPrice }: { productId: string;
   const navigate = useNavigate();
   const qc = useQueryClient();
   const [quantityInput, setQuantityInput] = useState("1");
-  const [orderQuantityInput, setOrderQuantityInput] = useState("1");
   const [changes, setChanges] = useState<PricingPlan>({});
   const [fieldError, setFieldError] = useState("");
   const [message, setMessage] = useState("");
   const [target, setTarget] = useState("");
-  const [channel, setChannel] = useState("factory");
+  const [channelSelection, setChannelSelection] = useState<ChannelPricingSelection>({ channel: "factory", result: null, error: "", catalogDraft: null });
+  const [channelState, setChannelState] = useState<ChannelPricingPanelState | null>(null);
+  const [channelPolicyBusy, setChannelPolicyBusy] = useState(false);
+  const channel = channelSelection.channel;
   const saveRequest = useRef<ReturnType<typeof orderRequest> | null>(null);
   const applyRequest = useRef<ReturnType<typeof orderRequest> | null>(null);
-  const [channelInputs, setChannelInputs] = useState({ commissionPercent: "0", taxPercent: "0", fixedFeePerOrder: "0", sellerShippingPerOrder: "0", advertisingPerOrder: "0", otherCostPerOrder: "0", variableUnitCost: "" });
+  const channelApplyRequest = useRef<{ intent: string; acceptance: ProductChannelPricingAcceptance } | null>(null);
   const quantity = /^\d+$/.test(quantityInput) ? Number(quantityInput) : 0;
   const validQuantity = quantity >= 1 && quantity <= 10000;
-  const savedPriceQuantity = channel === "factory" ? quantity : /^\d+$/.test(orderQuantityInput) ? Number(orderQuantityInput) : 0;
+  const savedPriceQuantity = channel === "factory" ? quantity : channelState && /^\d+$/.test(channelState.quantity) ? Number(channelState.quantity) : 0;
   const canQuoteSavedPrice = typeof currentPrice === "number" && Number.isFinite(currentPrice) && currentPrice > 0 && currentPrice <= 1e9 && Number.isInteger(savedPriceQuantity) && savedPriceQuantity >= 1 && savedPriceQuantity <= 10000;
   const policy = useQuery({ queryKey: ["pricing_settings", tenant], queryFn: readPricingSettings, enabled: !!tenant });
   const plan = useQuery({ queryKey: ["product_pricing_plan", tenant, productId], queryFn: () => readProductPricingPlan(productId), enabled: !!tenant });
@@ -93,11 +97,7 @@ function ProductPricingSession({ productId, currentPrice }: { productId: string;
   });
   const result = validQuantity && !fieldError ? preview.data : undefined;
   const rows = result ? pricingProductionRows(result) : { components: [], plates: [], runs: [] };
-  const commercial = useMemo(() => {
-    if (channel === "factory" || !result?.complete) return { value: null, error: "" };
-    try { return { value: priceChannel({ ...channelInputs, orderQuantity: orderQuantityInput, unitCost: result.breakdown.unit_cost!, marginPercent: result.margin_percent!, targetUnitPrice: target }), error: "" }; }
-    catch (error) { return { value: null, error: (error as Error).message }; }
-  }, [channel, channelInputs, orderQuantityInput, result, target]);
+  const commercial = { value: channelSelection.result, error: channelSelection.error };
   let targetPrice: number | null = null;
   let targetError = "";
   try {
@@ -106,13 +106,13 @@ function ProductPricingSession({ productId, currentPrice }: { productId: string;
   }
   catch (error) { targetError = (error as Error).message; }
   const selectedPrice = channel === "factory" ? targetPrice : commercial.value?.target;
-  const canApply = !!result?.complete && validPlan && !preview.isError && !plan.isError && !preview.isFetching && !preview.isPlaceholderData && !targetError && !commercial.error && selectedPrice != null && selectedPrice >= .01;
+  const canApply = !!result?.complete && validPlan && !channelPolicyBusy && !preview.isError && !plan.isError && !preview.isFetching && !preview.isPlaceholderData && (channel !== "factory" || !targetError) && !commercial.error && selectedPrice != null && selectedPrice >= .01;
 
   async function invalidatePricing() {
     await Promise.all([
       qc.invalidateQueries({ queryKey: ["product_pricing_preview", tenant, productId] }),
       qc.invalidateQueries({ queryKey: ["products"] }), qc.invalidateQueries({ queryKey: ["product", productId] }),
-      qc.invalidateQueries({ queryKey: ["product-workspace"] }),
+      qc.invalidateQueries({ queryKey: ["product-workspace"] }), qc.invalidateQueries({ queryKey: ["product_channel_prices", tenant, productId] }),
     ]);
   }
   const savePlan = useMutation({
@@ -133,14 +133,34 @@ function ProductPricingSession({ productId, currentPrice }: { productId: string;
     mutationFn: async () => {
       if (!canApply || !result || selectedPrice == null) throw new Error("Atualize a prévia e resolva as pendências antes de aplicar.");
       const payload = { tenant, productId, quantity, overrides, revision: result.revision, price: selectedPrice };
-      applyRequest.current = orderRequest(applyRequest.current, JSON.stringify(payload));
-      await applyProductPricing(productId, quantity, overrides, result.revision, selectedPrice, applyRequest.current.id);
+      if (channel === "factory") {
+        applyRequest.current = orderRequest(applyRequest.current, JSON.stringify(payload));
+        await applyProductPricing(productId, quantity, overrides, result.revision, selectedPrice, applyRequest.current.id);
+      }
+      else {
+        const selected = channelSelection.catalogDraft;
+        if (!selected) throw new Error("Confira as condições deste canal.");
+        const selection = { productId, channel: selected.channel, quantity: selected.quantity, overrides: selected.assumptions, unitPrice: selectedPrice,
+          costContext: { quantity, overrides, expectedRevision: result.revision } };
+        const intent = JSON.stringify({ ...selection, expectedPolicyRevision: selected.expected_policy_revision });
+        if (channelApplyRequest.current?.intent !== intent) {
+          const current = await readProductChannelPricing(selection);
+          if (!current.complete || !current.result || current.policy_revision !== selected.expected_policy_revision
+            || Math.abs(Number(current.unit_cost) - Number(result.breakdown.unit_cost)) > 1e-7 || current.result.target !== selectedPrice)
+            throw new Error("Os custos ou as condições do canal mudaram. Atualize a simulação antes de salvar.");
+          const signature = JSON.stringify({ ...selection, costRevision: current.cost_revision, policyRevision: current.policy_revision, revision: current.revision });
+          applyRequest.current = orderRequest(applyRequest.current, signature);
+          channelApplyRequest.current = { intent, acceptance: { ...selection, expectedCostRevision: current.cost_revision,
+            expectedPolicyRevision: current.policy_revision, expectedRevision: current.revision, requestId: applyRequest.current.id } };
+        }
+        await applyProductChannelPricing(channelApplyRequest.current.acceptance);
+      }
       await Promise.all([qc.invalidateQueries({ queryKey: ["product_pricing_plan", tenant, productId] }), invalidatePricing()]);
     },
-    onSuccess: () => setMessage("Custo e preço aplicados ao cadastro do produto."),
+    onSuccess: () => setMessage(channel === "factory" ? "Custo e preço aplicados ao cadastro do produto." : "Preço do canal salvo. O preço base do produto foi preservado."),
     onError: () => setMessage(""),
   });
-  const pending = savePlan.isPending || apply.isPending;
+  const pending = savePlan.isPending || apply.isPending || channelPolicyBusy;
 
   function update(key: keyof PricingPlan, raw: string) {
     setMessage("");
@@ -171,16 +191,16 @@ function ProductPricingSession({ productId, currentPrice }: { productId: string;
       <h2 className="text-lg font-semibold">Custo e preço do produto</h2>
       <div><Label htmlFor="product-pricing-quantity">Quantidade de produtos prontos</Label><Input id="product-pricing-quantity" type="number" min="1" max="10000" step="1" value={quantityInput} disabled={pending} onChange={e => { setQuantityInput(e.target.value); setMessage(""); }} /></div>
       <div className="space-y-2 rounded-lg bg-muted p-3 text-sm">
-        <p>Preço atual no cadastro: <strong>{money(currentPrice)}</strong></p>
+        <p>{channel === "factory" ? "Preço atual no cadastro" : "Preço base cadastrado"}: <strong>{money(currentPrice)}</strong></p>
         <Button className="h-auto min-h-11 w-full whitespace-normal py-2" variant="outline" disabled={!canQuoteSavedPrice || pending} onClick={() => {
           if (!canQuoteSavedPrice || pending) return;
           navigate("/comercial/orcamentos", { state: { pricingQuote: { product_id: productId, quantity: savedPriceQuantity, unit_price: currentPrice! } } });
-        }}>Usar preço cadastrado no orçamento</Button>
-        <p className="text-xs text-muted-foreground">Usa o preço já salvo. Não depende do novo cálculo e não altera o cadastro.</p>
+        }}>{channel === "factory" ? "Usar preço cadastrado no orçamento" : "Usar preço base cadastrado no orçamento"}</Button>
+        <p className="text-xs text-muted-foreground">Reaproveita o preço base já aceito para o orçamento. Para calcular as condições do canal, complete os custos abaixo.</p>
       </div>
       {!validQuantity && <p role="alert" className="text-destructive">Informe uma quantidade inteira entre 1 e 10.000.</p>}
       {numberField("target_margin", "Margem desejada sobre a venda (%)", "Margem sobre o valor vendido, sem alterar o custo de produção.")}
-      <div><Label htmlFor="product-pricing-target">Preço alvo por unidade (R$)</Label><Input id="product-pricing-target" type="number" min="0" step=".01" value={target} disabled={pending} placeholder={money(channel === "factory" ? result?.suggested_unit_price : commercial.value?.suggested)} onChange={e => { setTarget(e.target.value); setMessage(""); }} /></div>
+      {channel === "factory" && <div><Label htmlFor="product-pricing-target">Preço alvo por unidade (R$)</Label><Input id="product-pricing-target" type="number" min="0" step=".01" value={target} disabled={pending} placeholder={money(result?.suggested_unit_price)} onChange={e => { setTarget(e.target.value); setMessage(""); }} /></div>}
       {[fieldError, targetError, commercial.error, plan.error?.message, preview.error?.message, savePlan.error?.message, apply.error?.message].filter(Boolean).map((error, i) => <p key={i} role="alert" className="text-sm text-destructive">{error}</p>)}
       {!validPlan && <p className="text-sm text-amber-700" role="status">Selecione cada insumo e informe uma quantidade maior que zero para atualizar o custo.</p>}
       {(plan.isLoading || preview.isFetching) && <p role="status" className="text-sm text-muted-foreground">Conferindo ficha, placas e custos...</p>}
@@ -197,8 +217,8 @@ function ProductPricingSession({ productId, currentPrice }: { productId: string;
         {commercial.value && <ChannelResult value={commercial.value} />}
         {selectedPrice != null && result.breakdown.unit_cost != null && selectedPrice < result.breakdown.unit_cost && <p role="status" className="text-sm text-destructive">O preço alvo não cobre o custo do produto.</p>}
       </>}
-      <Button className="h-auto min-h-11 w-full whitespace-normal py-3" disabled={!canApply || pending} onClick={() => { setMessage(""); apply.mutate(); }}>{apply.isPending ? "Aplicando..." : "Aplicar custo e preço ao cadastro"}</Button>
-      <p className="text-xs text-muted-foreground">Aplicar atualiza o custo e o preço do cadastro após conferir os dados. Para guardar ajustes de preparação, abra Custos e tempos.</p>
+      <Button className="h-auto min-h-11 w-full whitespace-normal py-3" disabled={!canApply || pending} onClick={() => { setMessage(""); apply.mutate(); }}>{apply.isPending ? "Aplicando..." : channel === "factory" ? "Aplicar custo e preço ao cadastro" : "Salvar preço deste canal"}</Button>
+      <p className="text-xs text-muted-foreground">{channel === "factory" ? "Aplicar atualiza o custo e o preço base após conferir os dados." : "O preço deste canal usa os custos da simulação e é salvo com suas condições, separado do preço base."} Para guardar ajustes de preparação, abra Custos e tempos.</p>
       <Button className="h-auto min-h-11 w-full whitespace-normal py-3" variant="outline" disabled={!canApply || pending} onClick={() => navigate("/comercial/orcamentos", { state: { pricingQuote: { product_id: productId, quantity: channel === "factory" ? quantity : commercial.value!.quantity, unit_price: selectedPrice! } } })}>Usar preço no novo orçamento</Button>
       {message && <p role="status" className="text-sm text-emerald-700">{message}</p>}
       {policy.error && <p className="text-sm text-destructive">Não foi possível carregar as configurações de custos. A prévia informa o que ainda falta confirmar.</p>}
@@ -288,20 +308,7 @@ function ProductPricingSession({ productId, currentPrice }: { productId: string;
         </section>
         </div>
       </details>}
-      <details className="rounded-xl border bg-card p-4"><summary className="cursor-pointer font-semibold">Venda por canal</summary>
-        <div className="space-y-3 pt-4">
-        <Label htmlFor="product-pricing-channel">Canal da simulação</Label><select id="product-pricing-channel" className={inputStyle} value={channel} disabled={pending} onChange={e => setChannel(e.target.value)}>
-          <option value="factory">Somente preço do produto</option><option value="direct">Venda direta / WhatsApp / Instagram</option><option value="mercado_livre">Mercado Livre</option><option value="shopee">Shopee</option><option value="other">Outro canal</option>
-        </select>
-        {channel !== "factory" && <><p className="text-sm text-muted-foreground">Informe as condições da sua conta. A escolha do canal não aplica tarifas automaticamente; o custo do produto vem da base selecionada acima.</p>
-          <div><Label htmlFor="product-channel-quantity">Unidades por pedido / pacote</Label><Input id="product-channel-quantity" type="number" min="1" max="10000" step="1" value={orderQuantityInput} disabled={pending} onChange={e => { setOrderQuantityInput(e.target.value); setMessage(""); }} /><p className="mt-1 text-xs text-muted-foreground">Quantidade vendida em um único pedido. O lote de produção acima continua separado; tarifa fixa e frete entram uma vez por pedido.</p></div>
-          <div className="grid gap-3 sm:grid-cols-2">{([
-            ["commissionPercent", "Comissão sobre produtos (%)"], ["taxPercent", "Tributo sobre produtos (%)"], ["fixedFeePerOrder", "Tarifa fixa por pedido (R$)"], ["sellerShippingPerOrder", "Frete próprio do pacote (R$)"], ["advertisingPerOrder", "Anúncios atribuídos ao pedido (R$)"], ["otherCostPerOrder", "Outros gastos do pedido (R$)"], ["variableUnitCost", "Parcela variável do custo / unidade (R$)"],
-          ] as const).map(([key, label]) => <div key={key}><Label htmlFor={`product-channel-${key}`}>{label}</Label><Input id={`product-channel-${key}`} type="number" min="0" step="any" value={channelInputs[key]} disabled={pending} onChange={e => setChannelInputs(current => ({ ...current, [key]: e.target.value }))} /></div>)}</div>
-          <p className="text-xs text-muted-foreground">Comissão e tributo incidem sobre a receita dos produtos. Os gastos fixos entram uma vez por pedido. Embalagens e insumos já incluídos no custo não devem ser repetidos aqui.</p>
-        </>}
-        </div>
-      </details>
+      <ChannelPricingPanel productId={productId} unitCost={result?.complete ? result.breakdown.unit_cost : null} disabled={pending} showResult={false} onSelection={setChannelSelection} onStateChange={setChannelState} onBusy={setChannelPolicyBusy} />
     </div>
 
   </div>;
