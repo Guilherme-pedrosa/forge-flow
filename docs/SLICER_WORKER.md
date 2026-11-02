@@ -1,6 +1,6 @@
 # Fatiador local do Forge
 
-O navegador envia STL/3MF para uma fila privada da empresa. O worker local executa o Bambu Studio oficial, devolve o 3MF fatiado e as estimativas nativas de tempo/filamento por placa. O componente `SlicingDialog` entrega um `File` validado para o fluxo de importação existente. Esse fluxo decide quando aplicar a composição ao produto.
+O diálogo prioriza a [extensão sob demanda para Chrome](CHROME_SLICER_EXTENSION.md) quando ela está conectada: o arquivo é fatiado localmente, sem fila ou credencial Supabase no conector. O worker descrito neste documento continua disponível como alternativa pela fila privada da empresa. Nesse modo, o navegador envia STL/3MF à fila e o worker local executa o Bambu Studio oficial. Ambos devolvem o 3MF fatiado e estimativas nativas por placa. O componente `SlicingDialog` entrega um `File` validado ao cadastro existente, que decide quando aplicar a composição.
 
 STL usa orientação/organização automáticas e o Generic PLA oficial. Projetos 3MF completos preservam suas placas, cópias, slots e cores, com orientação/organização desabilitadas. Nesse caso o perfil inicial A1/PLA usa os filamentos PLA embutidos e registra `filament_source=3mf_embedded_pla`; qualquer outro material falha antes de abrir o EXE. A importação direta de um 3MF já fatiado continua independente dessa restrição da simulação. Pós-condições conferem placas, cópias e slots após o CLI e recusam qualquer alteração inesperada.
 

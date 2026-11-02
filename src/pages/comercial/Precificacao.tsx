@@ -73,11 +73,11 @@ function PricingWorkspace() {
       <Button variant={mode === "free" ? "default" : "outline"} aria-pressed={mode === "free"} onClick={() => setMode("free")}>Simulação livre</Button>
       <Button variant={mode === "product" ? "default" : "outline"} aria-pressed={mode === "product"} onClick={() => setMode("product")}>Produto cadastrado</Button>
     </div>
-    {mode === "product" ? <ProductPricingWorkspace productId={productId} onProductChange={id => setParams(current => { const next = new URLSearchParams(current); if (id) next.set("produto", id); else next.delete("produto"); return next; })} /> : <FreePricingSimulator draft={freeDraft} setDraft={setFreeDraft} automatic={mode === "file"} />}
+    {mode === "product" ? <ProductPricingWorkspace productId={productId} onProductChange={id => setParams(current => { const next = new URLSearchParams(current); if (id) next.set("produto", id); else next.delete("produto"); return next; })} /> : <FreePricingSimulator draft={freeDraft} setDraft={setFreeDraft} automatic={mode === "file"} initialMakerUrl={params.get("makerworld") ?? ""} />}
   </div>;
 }
 
-function FreePricingSimulator({ draft, setDraft, automatic }: { draft: FreePricingDraft; setDraft: Dispatch<SetStateAction<FreePricingDraft>>; automatic: boolean }) {
+function FreePricingSimulator({ draft, setDraft, automatic, initialMakerUrl }: { draft: FreePricingDraft; setDraft: Dispatch<SetStateAction<FreePricingDraft>>; automatic: boolean; initialMakerUrl?: string }) {
   const { profile } = useAuth();
   const company = useQuery({
     queryKey: ["pricing_settings", profile?.tenant_id],
@@ -256,7 +256,7 @@ function FreePricingSimulator({ draft, setDraft, automatic }: { draft: FreePrici
         <div className="min-w-0 space-y-5">
           {automatic ? <section className="space-y-4 rounded-xl border bg-card p-4">
             <h2 className="font-semibold">O que vamos imprimir?</h2>
-            <PricingMakerWorldInput reference={draft.makerReference} ownedPrinters={printers.data ?? []} onLoaded={reference => {
+            <PricingMakerWorldInput reference={draft.makerReference} initialUrl={initialMakerUrl} ownedPrinters={printers.data ?? []} onLoaded={reference => {
               let estimate: ModelPricingEstimate | null = null, sourceError = "";
               if (reference) { try { estimate = modelPricingFromMakerWorld(reference); } catch (error) { sourceError = (error as Error).message; } }
               setDraft(current => ({ ...current, makerReference: reference, sourceFile: null, estimate, sourceError,

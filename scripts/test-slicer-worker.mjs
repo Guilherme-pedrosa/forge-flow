@@ -3,7 +3,11 @@ import { mkdtemp, mkdir, readFile, writeFile, rm, symlink } from 'node:fs/promis
 import os from 'node:os';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { API_ORIGIN, PROFILE, ENGINE_VERSION, CHUNK_BYTES, sha256, readZip, writeZip, parseXml, normalizeOutput, validateArchive, nativeProjectLayout, verifyNativeProject, readMetrics, runSimulation, processJob, createRpc, safeRemoveJob } from './forge-slicer-worker.mjs';
+const { build } = createRequire(createRequire(import.meta.url).resolve('vite/package.json'))('esbuild');
 
 const root = await mkdtemp(path.join(os.tmpdir(), 'forge-slicer-test-'));
 let passed = 0;
@@ -18,6 +22,21 @@ const report = { return_code: 0, sliced_plates: [{ id: 1, total_predication: 100
 const officialArgs = [['Bambu Lab A1 0.4 nozzle'], ['Direct Drive Standard']];
 
 try {
+  await test('Bundled native-host imports stay inert and do not activate the cloud queue CLI', async () => {
+    const worker = fileURLToPath(new URL('./forge-slicer-worker.mjs', import.meta.url));
+    const bundled = path.join(root, 'native-library-proof.mjs');
+    await build({ stdin: { contents: `import { sha256 } from ${JSON.stringify(worker)}; process.stdout.write(sha256(Buffer.from('library-only')));`, resolveDir: path.dirname(worker) },
+      outfile: bundled, bundle: true, platform: 'node', format: 'esm', target: 'node22', define: { FORGE_SLICER_LIBRARY: 'true' },
+      banner: { js: 'import { createRequire } from "node:module"; const require = createRequire(import.meta.url);' } });
+    const execute = filename => new Promise((resolve, reject) => {
+      const child = spawn(process.execPath, [filename], { windowsHide: true, shell: false, stdio: ['ignore', 'pipe', 'pipe'] });
+      let stdout = '', stderr = ''; child.stdout.on('data', data => { stdout += data; }); child.stderr.on('data', data => { stderr += data; });
+      child.once('error', reject); child.once('exit', code => resolve({ code, stdout, stderr }));
+    });
+    assert.deepEqual(await execute(bundled), { code: 0, stdout: sha256(Buffer.from('library-only')), stderr: '' });
+    const standalone = await execute(worker);
+    assert.equal(standalone.code, 1); assert.match(standalone.stderr, /Informe --config/);
+  });
   await test('ZIP guards reject traversal, duplicate paths, corruption, symlinks and encrypted members', async () => {
     assert.equal(readZip(archive()).length, 4);
     for (const badName of ['../escape', 'C:/escape', '\\server\\escape', '/root', 'a/../escape']) assert.throws(() => readZip(writeZip([member(badName, 'x')])), /Caminho/);
@@ -55,6 +74,26 @@ try {
     assert.equal(metrics.time_seconds, 100); assert.equal(metrics.weight_grams, 2.1); assert.equal(metrics.plates[0].filaments[0].length_meters, 0.7);
     assert.throws(() => readMetrics(entries.filter(e => !e.name.includes('slice_info')), report), /tempos e consumo/);
     assert.throws(() => readMetrics(entries, { ...report, sliced_plates: [{ ...report.sliced_plates[0], total_predication: 900 }] }), /não conferem/);
+  });
+  await test('Same-plate AMS uses total filament and time, retaining tower and flush exactly once', async () => {
+    // Statistics from the offline A1 proof: two physical colors on one plate,
+    // 100 filament changes, with real prime-tower and flush G-code generated.
+    const amsInfo = info.replace('value="100"', 'value="14645"').replace('value="2.1"', 'value="61.13"')
+      .replace(/<filament\b[^>]*\/>/, '<filament id="1" type="PLA" color="#FF0000" used_g="25.99" used_m="8.71"/><filament id="2" type="PLA" color="#00FF00" used_g="35.14" used_m="11.78"/>');
+    const entries = normalizeOutput(archive(), ...officialArgs).entries.map(entry => entry.name === 'Metadata/slice_info.config' ? member(entry.name, amsInfo) : entry);
+    const amsPlate = { id: 1, total_predication: 14645.9248046875, main_predication: 2975.26953125,
+      filament_change_times: 100, feature_type_times: { 'Prime tower': 1264.4354248046875, Flush: 10029.08203125 },
+      filaments: [{ id: 1, total_used_g: 25.989063262939453, main_used_g: 3.6341733932495117 },
+        { id: 2, total_used_g: 35.13887405395508, main_used_g: 1.5494918823242188 }] };
+    const amsReport = { return_code: 0, sliced_plates: [amsPlate] };
+    const metrics = readMetrics(entries, amsReport);
+    assert.equal(metrics.time_seconds, 14645);
+    assert.equal(metrics.weight_grams, 61.13);
+    assert.deepEqual(metrics.plates[0].filaments.map(filament => filament.weight_grams), [25.99, 35.14]);
+    assert(Math.abs(metrics.plates[0].filaments.reduce((total, filament) => total + filament.weight_grams, 0) - metrics.weight_grams) < 1e-9);
+    assert.throws(() => readMetrics(entries, { ...amsReport, sliced_plates: [{ ...amsPlate, total_predication: amsPlate.main_predication }] }), /não conferem/);
+    assert.throws(() => readMetrics(entries, { ...amsReport, sliced_plates: [{ ...amsPlate,
+      filaments: amsPlate.filaments.map(filament => ({ ...filament, total_used_g: filament.main_used_g })) }] }), /não conferem/);
   });
   const nativeSource = await readFile(new URL('./fixtures/slicer/two-plate-native-mono.3mf', import.meta.url));
   const nativeEntries = readZip(nativeSource), nativeLayout = nativeProjectLayout(nativeEntries);

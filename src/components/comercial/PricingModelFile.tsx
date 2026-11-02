@@ -97,7 +97,10 @@ export function PricingModelFile({ sourceFile, estimate, onLoaded, printer, mate
     // The worker profile is authoritative even when slice_info omits its model.
     const next = job.profile_id === "bambu-a1-04-pla-020-v1" && !result.estimate.printerModelIds.length
       ? { ...result.estimate, printerModelIds: ["Bambu Lab A1"] } : result.estimate;
-    deliver.current(original, next);
+    // The estimate belongs to these returned bytes. Keep the generated 3MF
+    // available for import and hashing instead of attaching the original STL.
+    expectedSource.current = file;
+    deliver.current(file, next);
     setError(""); setNotice("");
   }
 

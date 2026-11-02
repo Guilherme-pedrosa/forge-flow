@@ -12,6 +12,7 @@ interface Props {
   onLoaded: (reference: ProductExternalImport | null) => void;
   onPending?: () => void;
   ownedPrinters?: { model?: string | null; brand?: string | null; name?: string }[];
+  initialUrl?: string;
 }
 type Choice = { key: string; profileIndex: number; variant: MakerWorldVariant; label: string };
 function choicesFor(model: MakerWorldModel | null, ownedPrinters?: Props["ownedPrinters"]): Choice[] {
@@ -36,9 +37,12 @@ function choiceForReference(reference: ProductExternalImport | null) {
 }
 
 /** Reuses the existing MakerWorld import service; does not infer missing metrics. */
-export function PricingMakerWorldInput({ reference, onLoaded, onPending, ownedPrinters }: Props) {
+export function PricingMakerWorldInput({ reference, onLoaded, onPending, ownedPrinters, initialUrl }: Props) {
   const inputId = useId();
-  const [url, setUrl] = useState(reference?.source_url ?? "");
+  const [url, setUrl] = useState(() => {
+    if (reference?.source_url) return reference.source_url;
+    try { return initialUrl ? parseMakerWorldUrl(initialUrl).url : ""; } catch { return ""; }
+  });
   const [model, setModel] = useState<MakerWorldModel | null>(reference);
   const [sourceUrl, setSourceUrl] = useState(reference?.source_url ?? "");
   const [selected, setSelected] = useState(choiceForReference(reference));

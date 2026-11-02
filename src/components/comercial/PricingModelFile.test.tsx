@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PricingModelFile } from "./PricingModelFile";
 import type { ModelPricingEstimate } from "@/lib/model-pricing";
 import { useState } from "react";
+import { webcrypto } from "node:crypto";
 
 const mocks = vi.hoisted(() => ({ parse: vi.fn(), dispose: vi.fn(), pricing: vi.fn(), slicedFile: null as File | null }));
 vi.mock("@/lib/model-file", () => ({ parseModelFile: mocks.parse, disposeModel: mocks.dispose }));
@@ -82,14 +83,28 @@ describe("PricingModelFile automatic estimates", () => {
     expect(mocks.dispose).toHaveBeenCalledWith("allocated-model");
   });
 
-  it("uses the verified worker output while preserving the original name and authoritative printer profile", async () => {
+  it("replaces the original STL with the returned 3MF so the transferred bytes match its slice estimate", async () => {
     const original = modelFile("Minha peça.stl"), loaded = vi.fn();
-    mocks.slicedFile = modelFile("Minha peça-simulado.3mf");
-    render(<PricingModelFile sourceFile={original} estimate={null} printer={a1} materialCodes={["PLA"]} onLoaded={loaded} />);
+    const slicedBytes = new Uint8Array([80, 75, 3, 4, 99]);
+    mocks.slicedFile = modelFile("Minha peça-simulado.3mf", Promise.resolve(slicedBytes.buffer));
+    function Draft() {
+      const [file, setFile] = useState<File | null>(original);
+      const [estimate, setEstimate] = useState<ModelPricingEstimate | null>(null);
+      return <><PricingModelFile sourceFile={file} estimate={estimate} printer={a1} materialCodes={["PLA"]} onLoaded={(nextFile, nextEstimate) => {
+        loaded(nextFile, nextEstimate); setFile(nextFile); setEstimate(nextEstimate);
+      }} /><output aria-label="Arquivo a transferir">{file?.name}</output></>;
+    }
+    render(<Draft />);
     fireEvent.click(screen.getByRole("button", { name: "Calcular tempo e filamento" }));
     fireEvent.click(await screen.findByRole("button", { name: "Usar na precificação" }));
-    await waitFor(() => expect(loaded).toHaveBeenCalledWith(original, { ...native, printerModelIds: ["Bambu Lab A1"] }));
-    expect(mocks.parse).toHaveBeenCalledWith(new Uint8Array([1]), "Minha peça-simulado.3mf");
+    await waitFor(() => expect(loaded).toHaveBeenCalledExactlyOnceWith(mocks.slicedFile, { ...native, printerModelIds: ["Bambu Lab A1"] }));
+    expect(mocks.parse).toHaveBeenCalledWith(slicedBytes, "Minha peça-simulado.3mf");
+    expect(screen.getByLabelText("Arquivo a transferir")).toHaveTextContent("Minha peça-simulado.3mf");
+    expect(screen.getByText("Filamento total do arquivo")).toBeInTheDocument();
+    const transferred = loaded.mock.calls[0][0] as File;
+    const transferredHash = await webcrypto.subtle.digest("SHA-256", await transferred.arrayBuffer());
+    expect(new Uint8Array(transferredHash)).toEqual(new Uint8Array(await webcrypto.subtle.digest("SHA-256", slicedBytes)));
+    expect(new Uint8Array(transferredHash)).not.toEqual(new Uint8Array(await webcrypto.subtle.digest("SHA-256", await original.arrayBuffer())));
   });
 
   it("clears the previous cost immediately and keeps it cleared when its replacement fails", async () => {

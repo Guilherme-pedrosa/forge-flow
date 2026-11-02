@@ -86,9 +86,16 @@ beforeEach(() => {
   });
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
-function mount() {
-  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><Produtos /></MemoryRouter></QueryClientProvider>);
+function mount(path = "/comercial/produtos") {
+  render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><MemoryRouter initialEntries={[path]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><Produtos /></MemoryRouter></QueryClientProvider>);
 }
+it("opens the extension entry in the product form, prefilling only a supported public model link without starting an import", async () => {
+  mount("/comercial/produtos?novo=1&aba=producao&makerworld=" + encodeURIComponent("https://makerworld.com/models/744793"));
+  const editor = await screen.findByRole("dialog", { name: "Novo Produto" });
+  expect(within(editor).getByRole("tab", { name: "Composição / produção" })).toHaveAttribute("aria-selected", "true");
+  expect((within(editor).getByLabelText("Importar produto completo pelo link do MakerWorld") as HTMLInputElement).value).toContain("/models/744793");
+  expect(mock.rpc.mock.calls.some(([name]) => /request_makerworld|save_product/.test(name))).toBe(false);
+});
 async function newProduct() {
   fireEvent.click(screen.getByRole("button", { name: "Novo Produto" }));
   return screen.findByRole("dialog", { name: "Novo Produto" });

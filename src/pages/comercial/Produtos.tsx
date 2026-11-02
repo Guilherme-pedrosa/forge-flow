@@ -47,7 +47,7 @@ import ProductMaterialRecipe from "./ProductMaterialRecipe";
 import { PieceTechnicalSheet } from "@/components/production/PieceTechnicalSheet";
 import MakerWorldReference, { MakerWorldPrinterOption } from "./MakerWorldReference";
 import { fetchMakerWorldModel, externalImportReference, legacyMakerWorldUrl, readProductExternalImport, type ProductExternalImport } from "@/lib/makerworld-import";
-import { makerWorldImageUrl } from "../../../supabase/functions/_shared/makerworld";
+import { makerWorldImageUrl, parseMakerWorldUrl } from "../../../supabase/functions/_shared/makerworld";
 import { MakerWorldDescriptionTranslation } from "@/components/comercial/MakerWorldDescriptionTranslation";
 import { MakerWorldImageImport } from "@/components/comercial/MakerWorldImageImport";
 import { normalizePrintSourceUrl, safePrintFileName } from "@/lib/product-print-source";
@@ -87,6 +87,7 @@ export default function Produtos() {
   const requestedLegacyEdit = searchParams.get("editar") === "1";
   const requestedFormTab = searchParams.get("aba");
   const requestedPrintSourceId = searchParams.get("impressao");
+  const requestedNewProduct = searchParams.get("novo") === "1";
   const openedFromLink = useRef<string | null>(null);
   const { profile } = useAuth();
   const { toast } = useToast();
@@ -399,6 +400,14 @@ export default function Produtos() {
     setName(""); setDescription(""); setSku(""); setCategory("printed_part"); setMaterialId("");
     setEstGrams(""); setEstTime(""); setPostMinutes(""); setCostEstimate(""); setSalePrice(""); setPhotoUrl(""); setExtraPhotos([]); setNotes(""); setPrinterId(""); setNumColors("1"); setPrintsPerPlate("1"); setExtras([]); setKitComponents([]);
   };
+
+  useEffect(() => {
+    if (!requestedNewProduct || requestedProductId) return;
+    resetForm(); setCreateOpen(true); setFormTab("producao");
+    const link = searchParams.get("makerworld");
+    if (link) { try { setEditorImportUrl(parseMakerWorldUrl(link).url); } catch { /* only supported public model links prefill */ } }
+    setSearchParams(previous => { const next = new URLSearchParams(previous); next.delete("novo"); next.delete("makerworld"); next.delete("aba"); return next; }, { replace: true });
+  }, [requestedNewProduct, requestedProductId]);
 
   useEffect(() => {
     if (receivedPricing.current === location.key) return;

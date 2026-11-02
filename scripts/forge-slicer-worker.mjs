@@ -528,4 +528,4 @@ async function main() {
   } finally { activeChild?.kill(); await lock.close(); await rm(lockPath, { force: true }); }
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch(error => { console.error(error.message); process.exitCode = 1; });
+if (typeof FORGE_SLICER_LIBRARY === 'undefined' && process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch(error => { console.error(error.message); process.exitCode = 1; });

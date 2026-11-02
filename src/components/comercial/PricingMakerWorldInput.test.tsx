@@ -28,6 +28,13 @@ function submit() { fireEvent.click(screen.getByRole("button", { name: "Importar
 const completeCalls = (loaded: ReturnType<typeof vi.fn>) => loaded.mock.calls.filter(([reference]) => reference !== null);
 
 describe("PricingMakerWorldInput", () => {
+  it("prefills the extension's public model link and waits for an explicit import", async () => {
+    const loaded = vi.fn();
+    render(<PricingMakerWorldInput reference={null} onLoaded={loaded} initialUrl="https://makerworld.com/models/456?appSharePlatform=copy" />);
+    expect((screen.getByLabelText("Link do MakerWorld") as HTMLInputElement).value).toContain("/models/456");
+    expect(mock.rpc).not.toHaveBeenCalled();
+    submit(); await waitFor(() => expect(completeCalls(loaded)).toHaveLength(1));
+  });
   it("waits for submission, then imports a unique profile with its native data", async () => {
     const loaded = vi.fn();
     render(<PricingMakerWorldInput reference={null} onLoaded={loaded} />);

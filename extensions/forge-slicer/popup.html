@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Fatiador do Forge</title><link rel="stylesheet" href="popup.css"></head>
+<body><main>
+  <header><span class="symbol" aria-hidden="true">F</span><div><h1>Fatiador do Forge</h1><p>Bambu Studio neste computador</p></div></header>
+  <p class="intro">Escolha o arquivo no Forge e clique em <strong>Fatiar neste computador</strong>. A extensão aciona o fatiador local e devolve o 3MF com tempo e consumo.</p>
+  <button id="open-forge" type="button">Cadastrar e precificar no Forge</button>
+  <p id="maker-notice" class="hint" hidden>O link do MakerWorld desta aba será preenchido no Forge.</p>
+  <section aria-label="Conexão local"><button id="check" class="secondary" type="button">Verificar conexão</button><p id="status" role="status">O fatiador é acionado somente quando você solicita.</p></section>
+  <details><summary>Primeira instalação</summary><p>Baixe e extraia o pacote. Siga o LEIA-ME para conectar o Bambu Studio e carregar a pasta <strong>chrome</strong> em <strong>chrome://extensions</strong>.</p><a href="https://elevare3d.lovable.app/downloads/forge-slicer-extension.zip" target="_blank" rel="noopener noreferrer">Baixar pacote de instalação</a></details>
+  <footer>Perfil disponível: A1 · bico 0,4 mm · PLA · camada 0,20 mm. Projetos 3MF preservam placas e cores. Outro modelo/material exige um 3MF já fatiado no perfil correto.</footer>
+</main><script type="module" src="popup.js"></script></body></html>
