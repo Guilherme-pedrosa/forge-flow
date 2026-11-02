@@ -11,18 +11,41 @@ const pending = { id, name: "ELEVARE3D", channel: "mercado_livre" as const, exte
 const result = { connected: true, account_id: id, seller_id: "new-elevare", nickname: "ELEVARE3D", replayed: false };
 beforeEach(() => { mock.begin.mockReset().mockResolvedValue({ authorization_url: "official-provider-url", attempt_id: "attempt-a", expires_at: "2026-11-03T00:00:00Z" }); mock.finish.mockReset().mockResolvedValue(result); mock.open.mockReset(); });
 afterEach(cleanup);
-function mount(options: { receipt?: string; allowed?: boolean; strict?: boolean } = {}) {
+function mount(options: { receipt?: string; allowed?: boolean | null; configured?: boolean | null; strict?: boolean; accounts?: typeof pending[]; expectedClientId?: string } = {}) {
   const connected = vi.fn(), consumed = vi.fn(), busy = vi.fn();
   let currentReceipt = options.receipt;
-  const ui = (tenant = "tenant-a", user = "operator-a") => <IntegradorAccountConnection key={`${tenant}:${user}`} binding={binding} tenantId={tenant} userId={user} accounts={[pending, { ...pending, id: "legacy-account", name: "Outra loja", external_seller_id: "old-seller" }]} allowed={options.allowed ?? true} configured callbackReceipt={currentReceipt} onConnected={connected} onReceiptConsumed={consumed} onBusyChange={busy} />;
-  const view = render(options.strict ? <StrictMode>{ui()}</StrictMode> : ui()); return { ...view, connected, consumed, busy, changeScope: () => view.rerender(ui("tenant-b", "operator-b")), changeReceipt: (next: string) => { currentReceipt = next; view.rerender(ui()); } };
+  let expectedClientId = options.expectedClientId;
+  let currentAccounts = options.accounts ?? [pending, { ...pending, id: "legacy-account", name: "Outra loja", external_seller_id: "old-seller" }];
+  const ui = (tenant = "tenant-a", user = "operator-a") => <IntegradorAccountConnection key={`${tenant}:${user}`} binding={binding} tenantId={tenant} userId={user} accounts={currentAccounts} allowed={options.allowed === undefined ? true : options.allowed} configured={options.configured === undefined ? true : options.configured} expectedClientId={expectedClientId} callbackReceipt={currentReceipt} onConnected={connected} onReceiptConsumed={consumed} onBusyChange={busy} />;
+  const view = render(options.strict ? <StrictMode>{ui()}</StrictMode> : ui()); return { ...view, connected, consumed, busy, changeScope: () => view.rerender(ui("tenant-b", "operator-b")), changeReceipt: (next: string) => { currentReceipt = next; view.rerender(ui()); }, changeAccounts: (next: typeof pending[]) => { currentAccounts = next; view.rerender(ui()); }, changeApp: (next: string) => { expectedClientId = next; view.rerender(ui()); } };
 }
 const choose = (target = id) => fireEvent.change(screen.getByLabelText("Cadastro no Forge para esta conexão"), { target: { value: target } });
 describe("new Elevare Mercado Livre enrollment", () => {
-  it("works with no approved sellers and waits for an explicit pending-account choice before leaving for the provider", async () => {
-    const view = mount(); expect(mock.begin).not.toHaveBeenCalled(); expect(mock.finish).not.toHaveBeenCalled(); expect(screen.getByRole("button", { name: "Conectar Mercado Livre" })).toBeDisabled(); expect(screen.queryByRole("option", { name: /Outra loja/ })).not.toBeInTheDocument();
-    choose(); fireEvent.click(screen.getByRole("button", { name: "Conectar Mercado Livre" })); await waitFor(() => expect(mock.open).toHaveBeenCalledWith("official-provider-url"));
+  it("lets the server confirm unknown prerequisites only after an explicit connection attempt", async () => {
+    mount({ allowed: null, configured: null }); choose(); expect(screen.getByRole("button", { name: "Conectar Mercado Livre" })).toBeEnabled(); expect(screen.getByText(/Ao continuar, vamos validar o acesso/)).toBeInTheDocument(); expect(screen.queryByText(/aplicativo.*precisa estar configurado no servidor/)).not.toBeInTheDocument(); expect(mock.begin).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Conectar Mercado Livre" })); await waitFor(() => expect(mock.begin).toHaveBeenCalledOnce()); expect(mock.begin.mock.calls[0][1]).toBe(id);
+  });
+  it("does not automatically finish an authorization when the prerequisite query is unknown", async () => {
+    const view = mount({ receipt, allowed: null, configured: null }); await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); }); expect(mock.finish).not.toHaveBeenCalled(); expect(view.consumed).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Conferir conclusão desta conexão" })); await screen.findByText(/Conta conectada: ELEVARE3D/); expect(mock.finish).toHaveBeenCalledOnce();
+  });
+  it("does not finish an old receipt while own API configuration is explicitly missing", async () => {
+    const view = mount({ receipt, configured: false }); await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); }); expect(mock.finish).not.toHaveBeenCalled(); expect(view.consumed).not.toHaveBeenCalled(); expect(screen.getByText(/Salve e confirme a configuração da sua API na etapa 1/)).toBeInTheDocument();
+  });
+  it.each([{ allowed: false, configured: true }, { allowed: true, configured: false }])("does not bypass an explicitly rejected prerequisite %s", async options => {
+    mount(options); choose(); expect(screen.getByRole("button", { name: "Conectar Mercado Livre" })).toBeDisabled(); expect(mock.begin).not.toHaveBeenCalled();
+  });
+  it("selects the sole pending account without starting any authorization before the operator clicks connect", async () => {
+    const view = mount(); expect(mock.begin).not.toHaveBeenCalled(); expect(mock.finish).not.toHaveBeenCalled(); expect(screen.getByLabelText("Cadastro no Forge para esta conexão")).toHaveValue(id); expect(screen.getByRole("button", { name: "Conectar Mercado Livre" })).toBeEnabled(); expect(screen.queryByRole("option", { name: /Outra loja/ })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Conectar Mercado Livre" })); await waitFor(() => expect(mock.open).toHaveBeenCalledWith("official-provider-url"));
     expect(mock.begin).toHaveBeenCalledWith(binding, id, window.location.origin, expect.any(String), expect.objectContaining({ userId: "operator-a", signal: expect.any(AbortSignal) })); expect(view.connected).not.toHaveBeenCalled(); expect(mock.finish).not.toHaveBeenCalled();
+  });
+  it("requires a choice with multiple pending accounts and preserves the operator selection after the list changes", () => {
+    const view = mount({ accounts: [pending, { ...pending, id: "22222222-2222-4222-8222-222222222222", name: "Outro cadastro pendente" }] }); expect(screen.getByLabelText("Cadastro no Forge para esta conexão")).toHaveValue(""); expect(screen.getByRole("button", { name: "Conectar Mercado Livre" })).toBeDisabled();
+    choose("new"); view.changeAccounts([pending]); expect(screen.getByLabelText("Cadastro no Forge para esta conexão")).toHaveValue("new"); expect(mock.begin).not.toHaveBeenCalled();
+  });
+  it("does not refill a pending account that the operator deliberately cleared", () => {
+    const view = mount(); choose(""); view.changeAccounts([pending]); expect(screen.getByLabelText("Cadastro no Forge para esta conexão")).toHaveValue(""); expect(screen.getByRole("button", { name: "Conectar Mercado Livre" })).toBeDisabled(); expect(mock.begin).not.toHaveBeenCalled();
   });
   it("creates a new local account only when the operator explicitly selects new", async () => {
     mount(); choose("new"); fireEvent.click(screen.getByRole("button", { name: "Conectar Mercado Livre" })); await waitFor(() => expect(mock.begin).toHaveBeenCalledWith(binding, null, window.location.origin, expect.any(String), expect.anything()));
@@ -61,5 +84,9 @@ describe("new Elevare Mercado Livre enrollment", () => {
     let resolve!: (value: unknown) => void; mock.begin.mockReturnValueOnce(new Promise(done => { resolve = done; })); mock.finish.mockRejectedValue(new Error("O retorno expirou."));
     const view = mount(); choose(); fireEvent.click(screen.getByRole("button", { name: "Conectar Mercado Livre" })); await waitFor(() => expect(mock.begin).toHaveBeenCalledOnce()); view.changeReceipt(receipt); await waitFor(() => expect(mock.finish).toHaveBeenCalledOnce());
     await act(async () => { resolve({ authorization_url: "obsolete-provider-url" }); }); expect(mock.open).not.toHaveBeenCalled(); expect(view.consumed).not.toHaveBeenCalled(); expect(view.connected).not.toHaveBeenCalled();
+  });
+  it("discards a pending login URL after the own API Client ID changes", async () => {
+    let resolve!: (value: unknown) => void; mock.begin.mockReturnValueOnce(new Promise(done => { resolve = done; })); const view = mount({ expectedClientId: "123456" }); fireEvent.click(screen.getByRole("button", { name: "Conectar Mercado Livre" })); await waitFor(() => expect(mock.begin).toHaveBeenCalledOnce()); const signal = mock.begin.mock.calls[0][4].signal;
+    view.changeApp("654321"); await act(async () => { resolve({ authorization_url: "https://auth.mercadolivre.com.br/authorization?client_id=123456" }); }); expect(signal.aborted).toBe(true); expect(mock.open).not.toHaveBeenCalled(); expect(view.consumed).not.toHaveBeenCalled(); expect(view.busy).toHaveBeenLastCalledWith(false); expect(screen.getByLabelText("Cadastro no Forge para esta conexão")).toHaveValue(id);
   });
 });

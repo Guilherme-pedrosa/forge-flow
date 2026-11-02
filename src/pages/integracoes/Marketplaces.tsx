@@ -70,7 +70,8 @@ function MarketplacesSession() {
   const sourceEnrollmentAccount = account?.channel === "mercado_livre" && !!sourceBinding.data?.allow_enrollment && !sourceOwnsAccount && !account.external_seller_id && ["pending_credentials", "pending_access", "import_only"].includes(account.connection_state);
   const sourceReadiness = useQuery({ queryKey: ["integrador_readiness", profile?.tenant_id ?? "", user?.id ?? profile?.user_id ?? "", sourceBinding.data?.bridge_id, sourceBinding.data?.revision],
     enabled: !!sourceLink, retry: false, queryFn: ({ signal }) => readIntegradorReadiness(sourceBinding.data!, { userId: user?.id ?? profile?.user_id ?? "", signal }) });
-  const sourceOrdersReady = !!sourceLink && !!sourceReadiness.data?.settings.configured && !!sourceReadiness.data.source_accounts.find(row => row.seller_id === sourceLink.source_seller_id)?.credentials_configured && !sourceReadiness.isFetching;
+  const sourceAppReady = sourceBinding.data?.allow_enrollment ? sourceReadiness.data?.enrollment_app?.configured === true && sourceReadiness.data.enrollment?.configured === true : !!sourceReadiness.data?.settings.configured;
+  const sourceOrdersReady = !!sourceLink && sourceAppReady && !!sourceReadiness.data.source_accounts.find(row => row.seller_id === sourceLink.source_seller_id)?.credentials_configured && !sourceReadiness.isFetching;
   const inbox = useQuery({ queryKey: ["marketplace_orders", effectiveAccountId, profile?.tenant_id, user?.id], enabled: !!profile && !!effectiveAccountId, queryFn: async () => {
     const { data, error } = await marketplaceDb.from("marketplace_orders").select("*,items:marketplace_order_items(*)").eq("tenant_id", profile!.tenant_id).eq("account_id", effectiveAccountId).order("imported_at", { ascending: false }).limit(100); if (error) throw error; return data as MarketplaceInboxOrder[];
   } });

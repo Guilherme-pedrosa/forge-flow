@@ -2,33 +2,59 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MercadoLivreSettings } from "./MercadoLivreSettings";
-const mock = vi.hoisted(() => ({ binding: vi.fn(), readiness: vi.fn(), verify: vi.fn(), listings: vi.fn(), link: vi.fn(), tenant: "tenant-a", user: "operator-a" }));
+const mock = vi.hoisted(() => ({ binding: vi.fn(), readiness: vi.fn(), verify: vi.fn(), listings: vi.fn(), link: vi.fn(), begin: vi.fn(), open: vi.fn(), saveApp: vi.fn(), tenant: "tenant-a", user: "operator-a" }));
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ profile: { tenant_id: mock.tenant }, user: { id: mock.user } }) }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {} }));
-vi.mock("@/lib/mercado-livre-integration", async original => ({ ...await original<typeof import("@/lib/mercado-livre-integration")>(), readIntegradorBridgeBinding: mock.binding, readIntegradorReadiness: mock.readiness, revalidateIntegradorAccount: mock.verify, fetchIntegradorListings: mock.listings, linkIntegradorMarketplaceAccount: mock.link }));
+vi.mock("@/lib/mercado-livre-integration", async original => ({ ...await original<typeof import("@/lib/mercado-livre-integration")>(), readIntegradorBridgeBinding: mock.binding, readIntegradorReadiness: mock.readiness, revalidateIntegradorAccount: mock.verify, fetchIntegradorListings: mock.listings, linkIntegradorMarketplaceAccount: mock.link, beginIntegradorEnrollment: mock.begin, openIntegradorAuthorization: mock.open, saveIntegradorEnrollmentApp: mock.saveApp }));
 const source = { seller_id: "seller-a", nickname: "Loja A", credentials_configured: true, expires_at: "2026-11-03T10:00:00Z" };
 const local = { id: "local-a", channel: "mercado_livre" as const, name: "Cadastro Elevare", external_seller_id: "seller-a", connection_state: "import_only", last_sync_at: null };
+const missingApp = { client_id: null, client_secret_configured: false, configured: false, redirect_uri: "https://integradorwedo.lovable.app/api/public/hooks/ml-oauth", revision: "app-none", can_manage: true };
+const ownReady = { settings: { client_id: "999999", client_secret_configured: true, configured: true, read_only: true }, source_accounts: [], enrollment: { allowed: true, configured: true, connected_seller_count: 0 }, enrollment_app: { ...missingApp, client_id: "654321", client_secret_configured: true, configured: true, revision: "app-r1" } };
+const providerUrl = "https://auth.mercadolivre.com.br/authorization?client_id=654321";
 const page = { items: [{ id: "MLB123", title: "Presépio", status: "active", permalink: "https://produto.mercadolivre.com.br/MLB123", thumbnail: null, currency_id: "BRL", price: 39.9, available_quantity: 5, sku: null, variations: [{ id: "VAR-RED", sku: "RED", price: 39.9, available_quantity: 2, attributes: [{ name: "Cor", value_name: "Vermelho" }] }] }], offset: 0, limit: 20, total: 21, next_offset: 20 };
 beforeEach(() => {
   mock.tenant = "tenant-a"; mock.user = "operator-a";
   mock.binding.mockReset().mockResolvedValue({ configured: true, enabled: true, bridge_id: "public-id", source_url: "https://integradorwedo.lovable.app", revision: "r1", approved_seller_ids: ["seller-a", "seller-b"], account_mappings: [{ account_id: "local-a", source_seller_id: "seller-a", bridge_id: "public-id" }] });
   mock.readiness.mockReset().mockResolvedValue({ settings: { client_id: "1234", client_secret_configured: true, redirect_uri: "https://integradorwedo.lovable.app/retorno", configured: true }, source_accounts: [source, { ...source, seller_id: "seller-b", nickname: "Loja B", credentials_configured: false }] });
-  mock.verify.mockReset().mockResolvedValue(source); mock.listings.mockReset().mockResolvedValue(page); mock.link.mockReset().mockResolvedValue("local-a");
+  mock.verify.mockReset().mockResolvedValue(source); mock.listings.mockReset().mockResolvedValue(page); mock.link.mockReset().mockResolvedValue("local-a"); mock.begin.mockReset().mockResolvedValue({ authorization_url: providerUrl }); mock.open.mockReset();
+  mock.saveApp.mockReset().mockResolvedValue(ownReady);
 });
 afterEach(cleanup);
 function mount(activeAccount = local) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const linked = vi.fn(), select = vi.fn(), busy = vi.fn();
   const ui = () => <QueryClientProvider client={client}><MercadoLivreSettings accounts={[local, { ...local, id: "pending", external_seller_id: null }]} activeAccount={activeAccount} onAccountLinked={linked} onSelectListing={select} onBusyChange={busy} /></QueryClientProvider>;
-  const view = render(ui()); return { ...view, linked, select, busy, changeScope: () => view.rerender(ui()) };
+  const view = render(ui()); return { ...view, client, linked, select, busy, changeScope: () => view.rerender(ui()) };
 }
 async function choose(id = "seller-a") { await screen.findByRole("option", { name: /Loja A/ }); fireEvent.change(screen.getByLabelText("Vendedor do Integrador"), { target: { value: id } }); }
 describe("concrete Integrador operations in Forge", () => {
-  it("offers the new Elevare account flow with an empty approved scope and keeps global settings read only", async () => {
+  it("keeps the own API form visible after a failed query and prevents login before its app is confirmed", async () => {
     mock.binding.mockResolvedValue({ configured: true, enabled: true, bridge_id: "public-id", source_url: "https://integradorwedo.lovable.app", revision: "r1", allow_enrollment: true, approved_seller_ids: [], account_mappings: [] });
-    mock.readiness.mockResolvedValue({ settings: { client_id: "1234", client_secret_configured: true, configured: true, read_only: true, full_scope: false }, source_accounts: [], enrollment: { allowed: true, configured: true, connected_seller_count: 0 } }); mount();
+    mock.readiness.mockRejectedValue(new Error("A consulta não foi confirmada. Confira o acesso e tente novamente.")); mount();
+    await screen.findByText("A consulta não foi confirmada. Confira o acesso e tente novamente."); expect(screen.getByRole("form", { name: "Configurar minha API Mercado Livre" })).toBeInTheDocument(); expect(screen.getByLabelText("Client ID da sua API")).toHaveValue(""); expect(screen.getByLabelText("Client Secret da sua API")).toBeEnabled(); expect(screen.getByRole("region", { name: "Conectar minha conta Mercado Livre" })).toBeInTheDocument(); expect(screen.getByRole("button", { name: "Conectar Mercado Livre" })).toBeDisabled(); expect(mock.begin).not.toHaveBeenCalled(); expect(mock.open).not.toHaveBeenCalled();
+  });
+  it("preserves the selected pending account while retrying readiness and keeps an explicit denial blocked", async () => {
+    mock.binding.mockResolvedValue({ configured: true, enabled: true, bridge_id: "public-id", source_url: "https://integradorwedo.lovable.app", revision: "r1", allow_enrollment: true, approved_seller_ids: [], account_mappings: [] });
+    mock.readiness.mockRejectedValueOnce(new Error("Falha temporária")).mockResolvedValue({ settings: { configured: true }, source_accounts: [], enrollment: { allowed: false, configured: true, connected_seller_count: 0 } }); mount();
+    await screen.findByText("Falha temporária"); fireEvent.change(screen.getByLabelText("Cadastro no Forge para esta conexão"), { target: { value: "pending" } }); fireEvent.click(screen.getByRole("button", { name: "Tentar consultar o Integrador novamente" }));
+    await screen.findByText(/A conexão de novas contas precisa ser habilitada/); expect(screen.getByLabelText("Cadastro no Forge para esta conexão")).toHaveValue("pending"); expect(screen.getByRole("button", { name: "Conectar Mercado Livre" })).toBeDisabled(); expect(mock.begin).not.toHaveBeenCalled();
+  });
+  it("shows separate own-API fields instead of inheriting the legacy global app in an empty seller scope", async () => {
+    mock.binding.mockResolvedValue({ configured: true, enabled: true, bridge_id: "public-id", source_url: "https://integradorwedo.lovable.app", revision: "r1", allow_enrollment: true, approved_seller_ids: [], account_mappings: [] });
+    mock.readiness.mockResolvedValue({ settings: { client_id: "1234", client_secret_configured: true, configured: true, read_only: true, full_scope: false }, source_accounts: [], enrollment: { allowed: true, configured: false, connected_seller_count: 0 }, enrollment_app: missingApp }); mount();
     await screen.findByRole("button", { name: "Conectar Mercado Livre" }); expect(screen.queryByLabelText("Vendedor do Integrador")).not.toBeInTheDocument(); expect(screen.queryByText(/Loja A|Loja B/)).not.toBeInTheDocument(); expect(screen.getByRole("option", { name: /Cadastro Elevare · cadastro pendente/ })).toBeInTheDocument(); expect(mock.link).not.toHaveBeenCalled(); expect(mock.verify).not.toHaveBeenCalled();
-    expect(screen.getByText(/Esta conexão permite consultar a configuração/)).toBeInTheDocument(); expect(screen.queryByRole("button", { name: /Salvar configuração/ })).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Client ID da sua API")).toHaveValue(""); expect(screen.getByLabelText("Client Secret da sua API")).toHaveValue(""); expect(screen.getByRole("button", { name: "Conectar Mercado Livre" })).toBeDisabled(); expect(screen.queryByText(/Configuração do aplicativo/)).not.toBeInTheDocument();
+  });
+  it("enables account login only after the own API save confirms its private configuration", async () => {
+    mock.binding.mockResolvedValue({ configured: true, enabled: true, bridge_id: "public-id", source_url: "https://integradorwedo.lovable.app", revision: "r1", allow_enrollment: true, approved_seller_ids: [], account_mappings: [] });
+    mock.readiness.mockResolvedValue({ ...ownReady, enrollment: { allowed: true, configured: false, connected_seller_count: 0 }, enrollment_app: missingApp }); const view = mount(); await screen.findByLabelText("Client ID da sua API"); expect(screen.getByRole("button", { name: "Conectar Mercado Livre" })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("Client ID da sua API"), { target: { value: "654321" } }); fireEvent.change(screen.getByLabelText("Client Secret da sua API"), { target: { value: "private-client-secret" } }); fireEvent.click(screen.getByRole("button", { name: "Salvar minha API" }));
+    await screen.findByText(/Sua API foi salva/); await waitFor(() => expect(screen.getByRole("button", { name: "Conectar Mercado Livre" })).toBeEnabled()); expect(mock.begin).not.toHaveBeenCalled(); expect(JSON.stringify(view.client.getQueryCache().getAll().map(query => query.state.data))).not.toContain("private-client-secret");
+    fireEvent.click(screen.getByRole("button", { name: "Conectar Mercado Livre" })); await waitFor(() => expect(mock.open).toHaveBeenCalledWith(providerUrl)); expect(mock.begin).toHaveBeenCalledWith(expect.anything(), "pending", window.location.origin, expect.any(String), expect.objectContaining({ userId: "operator-a" }));
+  });
+  it("refuses an official login URL that uses the legacy app instead of the own saved Client ID", async () => {
+    mock.binding.mockResolvedValue({ configured: true, enabled: true, bridge_id: "public-id", source_url: "https://integradorwedo.lovable.app", revision: "r1", allow_enrollment: true, approved_seller_ids: [], account_mappings: [] }); mock.readiness.mockResolvedValue(ownReady); mock.begin.mockResolvedValue({ authorization_url: "https://auth.mercadolivre.com.br/authorization?client_id=999999" }); mount();
+    const connect = await screen.findByRole("button", { name: "Conectar Mercado Livre" }); await waitFor(() => expect(connect).toBeEnabled()); fireEvent.click(connect); await screen.findByText(/A autorização retornou outro aplicativo/); expect(mock.open).not.toHaveBeenCalled();
   });
   it("reads only safe app/account status and requires explicit seller choice and remote verification", async () => {
     mount(); await screen.findByRole("option", { name: /Loja A/ });

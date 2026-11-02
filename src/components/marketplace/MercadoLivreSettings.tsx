@@ -7,6 +7,7 @@ import { Label } from "@/components/ui/label";
 import { orderRequest } from "@/lib/sales-order";
 import { IntegradorConfigurationEditor } from "./IntegradorConfigurationEditor";
 import { IntegradorAccountConnection } from "./IntegradorAccountConnection";
+import { MercadoLivreApiSetup } from "./MercadoLivreApiSetup";
 import type { MarketplaceAccount } from "@/lib/marketplace-orders";
 import { fetchIntegradorListings, integrationErrorMessage, linkIntegradorMarketplaceAccount, listingIdentity, publicListingUrl, readIntegradorBridgeBinding, readIntegradorReadiness, revalidateIntegradorAccount,
   type IntegradorBridgeBinding, type IntegradorSourceAccount, type MarketplaceListingIdentity, type MercadoLivreListings, type MercadoLivreReadiness } from "@/lib/mercado-livre-integration";
@@ -28,15 +29,16 @@ function IntegratorSettings(props: Props) {
   const userId = user?.id ?? profile?.user_id ?? "", tenantId = profile?.tenant_id ?? "";
   const alive = useRef(true); useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const [sellerId, setSellerId] = useState("");
-  const [sourceBusy, setSourceBusy] = useState(false), [settingsBusy, setSettingsBusy] = useState(false), [connectionBusy, setConnectionBusy] = useState(false);
+  const [sourceBusy, setSourceBusy] = useState(false), [settingsBusy, setSettingsBusy] = useState(false), [connectionBusy, setConnectionBusy] = useState(false), [appBusy, setAppBusy] = useState(false);
   const onBusyChange = props.onBusyChange;
-  useEffect(() => { onBusyChange?.(sourceBusy || settingsBusy || connectionBusy); return () => onBusyChange?.(false); }, [sourceBusy, settingsBusy, connectionBusy, onBusyChange]);
+  useEffect(() => { onBusyChange?.(sourceBusy || settingsBusy || connectionBusy || appBusy); return () => onBusyChange?.(false); }, [sourceBusy, settingsBusy, connectionBusy, appBusy, onBusyChange]);
   const binding = useQuery({ queryKey: ["integrador_bridge_binding", tenantId, userId], enabled: !!tenantId,
     queryFn: readIntegradorBridgeBinding, retry: false });
   const readiness = useQuery({ queryKey: ["integrador_readiness", tenantId, userId, binding.data?.bridge_id, binding.data?.revision],
     enabled: !!tenantId && !!binding.data?.configured && binding.data.enabled,
     queryFn: ({ signal }) => readIntegradorReadiness(binding.data!, { userId, signal }), retry: false });
   const selected = readiness.data?.source_accounts.find(account => account.seller_id === sellerId);
+  const ownAppReady = readiness.data?.enrollment_app?.configured === true && readiness.data.enrollment?.configured === true;
   return <section aria-label="Integração Mercado Livre" className="space-y-4 rounded-xl border bg-card p-4">
     <div><h2 className="font-semibold">Mercado Livre</h2><p className="text-sm text-muted-foreground">Conecte a conta da Elevare3D para conferir seus anúncios, produtos e pedidos no Forge.</p></div>
     {binding.isLoading && <p role="status">Conferindo a conexão desta empresa…</p>}
@@ -44,20 +46,24 @@ function IntegratorSettings(props: Props) {
     {binding.data && (!binding.data.configured || !binding.data.enabled) && <div className="space-y-2 text-sm"><p role="status">A conexão desta empresa com o Integrador ainda precisa de associação autorizada.</p><p>As contas locais e os pedidos importados continuam disponíveis abaixo.</p><Button variant="outline" onClick={() => void binding.refetch()}>Recarregar conexão com o Integrador</Button></div>}
     {readiness.isFetching && binding.data?.enabled && <p role="status">Consultando a configuração e as contas autorizadas…</p>}
     {readiness.error && <div role="alert" className="space-y-2 text-sm text-destructive"><p>{integrationErrorMessage(readiness.error)}</p><Button variant="outline" onClick={() => void readiness.refetch()}>Tentar consultar o Integrador novamente</Button></div>}
-    {readiness.data && <>
-      {binding.data?.allow_enrollment && <IntegradorAccountConnection key={`${tenantId}:${userId}:${binding.data.bridge_id}`} binding={binding.data} tenantId={tenantId} userId={userId} accounts={props.accounts}
-        allowed={!!readiness.data.enrollment?.allowed} configured={!!readiness.data.enrollment?.configured} callbackReceipt={props.enrollmentReceipt} callbackError={props.enrollmentError} onReceiptConsumed={props.onEnrollmentReceiptConsumed}
-        disabled={props.disabled || sourceBusy || settingsBusy || readiness.isFetching} onBusyChange={setConnectionBusy}
+    {binding.data?.configured && binding.data.enabled && binding.data.allow_enrollment && <>
+      <MercadoLivreApiSetup key={`api:${tenantId}:${userId}:${binding.data.bridge_id}`} binding={binding.data} tenantId={tenantId} userId={userId} value={readiness.data?.enrollment_app ?? null}
+        disabled={props.disabled || sourceBusy || settingsBusy || connectionBusy || readiness.isFetching} onBusyChange={setAppBusy}
+        onConfirmed={latest => { if (alive.current) qc.setQueryData(["integrador_readiness", tenantId, userId, binding.data?.bridge_id, binding.data?.revision], latest); }} />
+      <IntegradorAccountConnection key={`${tenantId}:${userId}:${binding.data.bridge_id}`} binding={binding.data} tenantId={tenantId} userId={userId} accounts={props.accounts}
+        allowed={readiness.data?.enrollment?.allowed ?? null} configured={ownAppReady} expectedClientId={readiness.data?.enrollment_app?.client_id ?? null} callbackReceipt={props.enrollmentReceipt} callbackError={props.enrollmentError} onReceiptConsumed={props.onEnrollmentReceiptConsumed}
+        disabled={props.disabled || sourceBusy || settingsBusy || appBusy || readiness.isFetching} onBusyChange={setConnectionBusy}
         onConnected={async result => {
           if (!alive.current) return; await qc.invalidateQueries({ queryKey: ["marketplace_accounts", tenantId] });
           if (!alive.current) return; await qc.invalidateQueries({ queryKey: ["integrador_bridge_binding", tenantId, userId] });
           if (!alive.current) return; setSellerId(result.seller_id); await props.onAccountLinked(result.account_id);
-        }} />}
-      <AppConfiguration value={readiness.data} binding={binding.data!} userId={userId} onRefresh={() => void readiness.refetch()} busy={readiness.isFetching || !!props.disabled || sourceBusy || settingsBusy || connectionBusy} onBusyChange={setSettingsBusy}
-        onConfirmed={latest => qc.setQueryData(["integrador_readiness", tenantId, userId, binding.data?.bridge_id, binding.data?.revision], latest)} />
-      {!!readiness.data.source_accounts.length && <div className="space-y-2"><Label htmlFor="integrador-seller">Vendedor do Integrador</Label><select id="integrador-seller" className={selectClass} value={sellerId} disabled={props.disabled || readiness.isFetching || settingsBusy || connectionBusy} onChange={event => setSellerId(event.target.value)}><option value="">Escolha o vendedor desta empresa</option>{readiness.data.source_accounts.map(account => <option key={account.seller_id} value={account.seller_id}>{account.nickname || "Vendedor"} · {account.seller_id}{account.credentials_configured ? " · autorização armazenada" : " · autorização pendente"}</option>)}</select></div>}
+        }} /></>}
+    {readiness.data && <>
+      {!binding.data?.allow_enrollment && <AppConfiguration value={readiness.data} binding={binding.data!} userId={userId} onRefresh={() => void readiness.refetch()} busy={readiness.isFetching || !!props.disabled || sourceBusy || settingsBusy || connectionBusy || appBusy} onBusyChange={setSettingsBusy}
+        onConfirmed={latest => qc.setQueryData(["integrador_readiness", tenantId, userId, binding.data?.bridge_id, binding.data?.revision], latest)} />}
+      {!!readiness.data.source_accounts.length && <div className="space-y-2"><Label htmlFor="integrador-seller">Vendedor do Integrador</Label><select id="integrador-seller" className={selectClass} value={sellerId} disabled={props.disabled || readiness.isFetching || settingsBusy || connectionBusy || appBusy} onChange={event => setSellerId(event.target.value)}><option value="">Escolha o vendedor desta empresa</option>{readiness.data.source_accounts.map(account => <option key={account.seller_id} value={account.seller_id}>{account.nickname || "Vendedor"} · {account.seller_id}{account.credentials_configured ? " · autorização armazenada" : " · autorização pendente"}</option>)}</select></div>}
       {!readiness.data.source_accounts.length && <p className="text-sm text-muted-foreground">Nenhuma conta Mercado Livre foi conectada a esta empresa. As contas de outros vendedores não são associadas automaticamente.</p>}
-      {selected && binding.data && <SourceAccountOperations key={`${tenantId}:${userId}:${selected.seller_id}`} {...props} disabled={props.disabled || settingsBusy || connectionBusy} onBusyChange={setSourceBusy} binding={binding.data} sourceAccount={selected} settingsReady={readiness.data.settings.configured} userId={userId} tenantId={tenantId} />}
+      {selected && binding.data && <SourceAccountOperations key={`${tenantId}:${userId}:${selected.seller_id}`} {...props} disabled={props.disabled || settingsBusy || connectionBusy || appBusy} onBusyChange={setSourceBusy} binding={binding.data} sourceAccount={selected} settingsReady={binding.data.allow_enrollment ? ownAppReady : readiness.data.settings.configured} userId={userId} tenantId={tenantId} />}
     </>}
   </section>;
 }

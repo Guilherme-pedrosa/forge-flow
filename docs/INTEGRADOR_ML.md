@@ -27,6 +27,16 @@ A implementação da ponte está no [commit do Integrador](https://github.com/Gu
 
 ## Nova conta Elevare3D
 
+### Primeiro configure o aplicativo
+
+O fluxo começa em **Configurar API da Elevare3D**, dentro do Forge. No [DevCenter oficial](https://developers.mercadolivre.com.br/devcenter), entre na conta proprietária Elevare3D, vincule o cadastro de desenvolvedor e crie ou edite o aplicativo. O retorno OAuth deve ser exatamente `https://integradorwedo.lovable.app/api/public/hooks/ml-oauth`. O fluxo usa Authorization Code, renovação por Refresh Token e PKCE S256. Anúncios, estoque e preços precisam de permissão de publicação e sincronização; a consulta de pedidos e envios precisa da permissão correspondente. Não configure notificações para uma rota sem processamento do Forge.
+
+Cadastre o Client ID e o Client Secret nos campos próprios do Forge. O segredo segue por HTTPS ao Integrador e fica em armazenamento privado da ponte, sem leitura pelo navegador, respostas, logs ou cache de consultas. O formulário limpa o segredo depois da confirmação; deixá-lo vazio preserva uma chave já configurada para o mesmo aplicativo. Salvar credenciais confirma armazenamento, e não valida ainda a autorização no provedor. A conexão da loja permanece bloqueada até essa configuração própria ser confirmada.
+
+As credenciais da Elevare3D não são herdadas do aplicativo global usado pelas outras operações. A autorização inicial e a renovação dos tokens da conta gerenciada usam o mesmo aplicativo da ponte. Alterar o aplicativo não pode deixar tokens ou autorizações pendentes vinculados a outro Client ID. Os parâmetros globais e as contas anteriores continuam com suas credenciais e permissões próprias.
+
+Criar o aplicativo no provedor, aceitar seus termos e concluir CAPTCHA são etapas do titular no Mercado Livre. Depois, o operador volta ao Forge e usa **Conectar Mercado Livre** para autorizar a loja. Referências: [criação do aplicativo](https://developers.mercadolivre.com.br/pt_br/realizacao-de-testes/crie-uma-aplicacao-no-mercado-livre) e [autenticação e autorização](https://developers.mercadolivre.com.br/autenticacao-e-autorizacao).
+
 Uma aprovação inicial com zero vendedores permite iniciar a autorização sem associar contas antigas. A nova conta gerenciada pelo Forge fica permanentemente fora das rotinas legadas de estoque, preços e vendas do GC, inclusive enquanto a conexão está pendente ou revogada. A autorização usa código e desafio PKCE S256, estado de uso único e recibo com expiração. A prova entre os servidores é privada; apenas seu hash fica no Forge. Credenciais só são ativadas depois da confirmação financeira. Falhas intermediárias podem ser retomadas sem outro cadastro, e uma conta já pertencente a outra operação não é reutilizada.
 
 O operador deve entrar na conta administradora Elevare3D no Mercado Livre antes de autorizar e conferir a conta apresentada pelo provedor. O sistema não acrescenta parâmetros não documentados para forçar a troca de login. A aplicação Mercado Livre deve estar configurada para PKCE; os testes locais verificam a construção S256 e a validação do fluxo, mas não alteram nem comprovam a configuração do painel do provedor.

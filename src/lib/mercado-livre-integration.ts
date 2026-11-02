@@ -6,13 +6,14 @@ import type { MarketplaceStockPreview } from "./marketplace-stock-preview";
 // This origin/path is pinned before obtaining a session. A database value or a listing URL never chooses where the JWT is sent.
 export const INTEGRADOR_ORIGIN = "https://integradorwedo.lovable.app";
 export const INTEGRADOR_BRIDGE_ENDPOINT = `${INTEGRADOR_ORIGIN}/api/public/hooks/forge-bridge`;
+export const INTEGRADOR_OAUTH_CALLBACK = `${INTEGRADOR_ORIGIN}/api/public/hooks/ml-oauth`;
 export function integradorAuthorizationUrl(value: string): string {
   try {
     const url = new URL(value), callback = new URL(url.searchParams.get("redirect_uri") || "");
     if (url.origin !== "https://auth.mercadolivre.com.br" || url.pathname !== "/authorization" || url.username || url.password || url.hash
       || url.searchParams.get("response_type") !== "code" || !/^\d{1,40}$/.test(url.searchParams.get("client_id") || "") || !/^forge1\.[a-f0-9]{64}$/.test(url.searchParams.get("state") || "")
       || url.searchParams.get("code_challenge_method") !== "S256" || !/^[\w-]{43}$/.test(url.searchParams.get("code_challenge") || "")
-      || callback.href !== `${INTEGRADOR_ORIGIN}/api/public/hooks/ml-oauth`
+      || callback.href !== INTEGRADOR_OAUTH_CALLBACK
       || ["access_token", "refresh_token", "id_token", "client_secret", "code"].some(key => url.searchParams.has(key))) throw new Error();
     return url.href;
   } catch { throw new Error("O endereço de autorização não corresponde ao Mercado Livre e ao retorno aprovado do Integrador."); }
@@ -23,10 +24,13 @@ const nullableText = text.nullable().optional().default(null);
 const identifier = z.string().min(1).max(160);
 const quantity = z.number().finite().nonnegative().nullable().optional().default(null);
 const sourceAccount = z.object({ seller_id: identifier, nickname: nullableText, credentials_configured: z.boolean(), expires_at: nullableText });
+const enrollmentAppSchema = z.object({ client_id: nullableText, client_secret_configured: z.boolean(), configured: z.boolean(), redirect_uri: z.literal(INTEGRADOR_OAUTH_CALLBACK), revision: z.string().min(1).max(200), can_manage: z.boolean() });
+export type IntegradorEnrollmentApp = z.infer<typeof enrollmentAppSchema>;
+export type IntegradorEnrollmentAppChanges = { client_id: string; client_secret?: string };
 const settings = z.object({ client_id: nullableText, client_secret_configured: z.boolean(), redirect_uri: nullableText,
   configured: z.boolean(), configuration_source: z.enum(["integrador", "tenant", "server", "none"]).optional().default("integrador"), revision: nullableText,
   enabled: z.boolean().nullable().optional().default(null), markup_percent: quantity, stock_safety: quantity,
-  listing_type_default: z.enum(["gold_special", "gold_pro"]).nullable().optional().default(null), tipo_valor_venda: nullableText,
+  listing_type_default: z.preprocess(value => value === "" ? null : value, z.enum(["gold_special", "gold_pro"]).nullable().optional().default(null)), tipo_valor_venda: nullableText,
   full_scope: z.boolean().optional().default(false), can_manage_settings: z.boolean().optional().default(false), can_manage_app: z.boolean().optional().default(false), read_only: z.boolean().optional().default(true) });
 const readinessSchema = z.object({
   settings,
@@ -36,6 +40,7 @@ const readinessSchema = z.object({
   capabilities: z.object({ read_listings: z.boolean(), write_stock: z.literal(false), write_prices: z.literal(false) }).optional(),
   manual_operations: z.object({ available: z.boolean(), automatic_writes: z.literal(false), ownership_confirmation_required: z.literal(true), accepted_forge_channel_price_required: z.literal(true) }).optional(),
   enrollment: z.object({ allowed: z.boolean(), configured: z.boolean(), connected_seller_count: z.number().int().nonnegative() }).optional(),
+  enrollment_app: enrollmentAppSchema.nullable().optional().default(null),
 });
 export type MercadoLivreReadiness = z.infer<typeof readinessSchema>;
 export type IntegradorSettings = MercadoLivreReadiness["settings"];
@@ -55,7 +60,7 @@ export type MercadoLivreListing = z.infer<typeof listing>;
 export type MercadoLivreListings = z.infer<typeof listingsSchema>;
 export type MarketplaceListingIdentity = { external_item_id: string; external_variant_id: string; external_sku: string };
 
-function parsed<T>(schema: z.ZodType<T>, value: unknown): T {
+function parsed<T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, value: unknown): T {
   const result = schema.safeParse(value);
   if (!result.success) throw new Error("O Integrador retornou dados incompletos. Recarregue a conexão antes de continuar.");
   return result.data;
@@ -73,9 +78,9 @@ function assertSource(binding: IntegradorBridgeBinding) {
   if (!binding.configured || !binding.enabled || !binding.bridge_id) throw new Error("A conexão desta empresa com o Integrador precisa ser associada antes da consulta.");
   if (![INTEGRADOR_ORIGIN, `${INTEGRADOR_ORIGIN}/`, INTEGRADOR_BRIDGE_ENDPOINT].includes(binding.source_url ?? "")) throw new Error("O endereço do Integrador não corresponde à conexão aprovada desta empresa.");
 }
-type BridgeAction = "settings_readiness" | "revalidate_account" | "fetch_listings" | "fetch_orders" | "fetch_recent_orders" | "settings_save" | "stock_preview" | "takeover_stock" | "sync_stock" | "sync_price" | "enrollment_begin" | "enrollment_finish";
+type BridgeAction = "settings_readiness" | "revalidate_account" | "fetch_listings" | "fetch_orders" | "fetch_recent_orders" | "settings_save" | "stock_preview" | "takeover_stock" | "sync_stock" | "sync_price" | "enrollment_begin" | "enrollment_finish" | "enrollment_app_save";
 async function sourceRequest(binding: IntegradorBridgeBinding, action: BridgeAction, args: { source_seller_id?: string; offset?: number; limit?: number; order_ids?: string[]; from?: string; to?: string;
-  settings?: IntegradorSettingsChanges; expected_revision?: string; request_id?: string; acknowledge_scheduled_effects?: true; account_id?: string | null; product_ids?: string[]; acknowledge_takeover?: true; acknowledge_marketplace_write?: true; return_origin?: string; receipt?: string }, context: { userId: string; signal?: AbortSignal }): Promise<unknown> {
+  settings?: IntegradorSettingsChanges; expected_revision?: string; request_id?: string; acknowledge_scheduled_effects?: true; account_id?: string | null; product_ids?: string[]; acknowledge_takeover?: true; acknowledge_marketplace_write?: true; return_origin?: string; receipt?: string; app?: IntegradorEnrollmentAppChanges }, context: { userId: string; signal?: AbortSignal }): Promise<unknown> {
   assertSource(binding); context.signal?.throwIfAborted();
   if (args.source_seller_id && !binding.approved_seller_ids.includes(args.source_seller_id)) throw new Error("Selecione um vendedor aprovado para esta empresa.");
   const controller = new AbortController();
@@ -106,9 +111,17 @@ async function sourceRequest(binding: IntegradorBridgeBinding, action: BridgeAct
   return value;
   } finally { clearTimeout(timer); context.signal?.removeEventListener("abort", abort); }
 }
-export async function readIntegradorReadiness(binding: IntegradorBridgeBinding, context: { userId: string; signal?: AbortSignal }): Promise<MercadoLivreReadiness> {
-  const result = readMercadoLivreReadiness(await sourceRequest(binding, "settings_readiness", {}, context));
+function approvedReadiness(binding: IntegradorBridgeBinding, value: unknown): MercadoLivreReadiness {
+  const result = readMercadoLivreReadiness(value);
   return { ...result, source_accounts: result.source_accounts.filter(account => binding.approved_seller_ids.includes(account.seller_id)) };
+}
+export async function readIntegradorReadiness(binding: IntegradorBridgeBinding, context: { userId: string; signal?: AbortSignal }): Promise<MercadoLivreReadiness> {
+  return approvedReadiness(binding, await sourceRequest(binding, "settings_readiness", {}, context));
+}
+export async function saveIntegradorEnrollmentApp(binding: IntegradorBridgeBinding, app: IntegradorEnrollmentAppChanges, revision: string, requestId: string, context: { userId: string; signal?: AbortSignal }): Promise<MercadoLivreReadiness> {
+  const clientId = app.client_id.trim(), secret = app.client_secret?.trim();
+  if (!binding.allow_enrollment || !/^\d{1,40}$/.test(clientId) || !revision || secret && secret.length > 400) throw new Error("Confira o Client ID e a configuração da sua API antes de salvar.");
+  return approvedReadiness(binding, await sourceRequest(binding, "enrollment_app_save", { app: { client_id: clientId, ...(secret ? { client_secret: secret } : {}) }, expected_revision: revision, request_id: requestId }, context));
 }
 const enrollmentReceipt = /^[\da-f]{64}$/;
 export function validIntegradorEnrollmentReceipt(value: string): boolean { return enrollmentReceipt.test(value); }

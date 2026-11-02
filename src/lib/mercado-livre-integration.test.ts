@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { INTEGRADOR_BRIDGE_ENDPOINT, fetchIntegradorListings, fetchIntegradorMarketplaceOrders, integradorSettingsDraft, prepareIntegradorSettingsChanges, readIntegradorReadiness, readMercadoLivreReadiness, revalidateIntegradorAccount, saveIntegradorSettings, readIntegradorStockPreview, takeoverIntegradorStock, syncIntegradorManual, integradorAuthorizationUrl, beginIntegradorEnrollment, finishIntegradorEnrollment, type IntegradorBridgeBinding } from "./mercado-livre-integration";
+import { INTEGRADOR_BRIDGE_ENDPOINT, INTEGRADOR_OAUTH_CALLBACK, fetchIntegradorListings, fetchIntegradorMarketplaceOrders, integradorSettingsDraft, prepareIntegradorSettingsChanges, readIntegradorReadiness, readMercadoLivreReadiness, revalidateIntegradorAccount, saveIntegradorSettings, readIntegradorStockPreview, takeoverIntegradorStock, syncIntegradorManual, integradorAuthorizationUrl, beginIntegradorEnrollment, finishIntegradorEnrollment, saveIntegradorEnrollmentApp, type IntegradorBridgeBinding } from "./mercado-livre-integration";
 const mock = vi.hoisted(() => ({ getSession: vi.fn(), rpc: vi.fn(), fetch: vi.fn() }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { auth: { getSession: mock.getSession } } }));
 vi.mock("./marketplace-orders", async original => ({ ...await original<typeof import("./marketplace-orders")>(), marketplaceRpc: mock.rpc }));
@@ -48,6 +48,11 @@ describe("pinned authenticated Integrador client", () => {
   it("does not turn missing credential status into a connected account", () => {
     expect(() => readMercadoLivreReadiness({ ...readiness, source_accounts: [{ seller_id: "seller-a" }] })).toThrow("dados incompletos");
   });
+  it("accepts the API2 empty optional listing type as unknown without inventing a default or losing enrollment status", () => {
+    const value = readMercadoLivreReadiness({ settings: { client_id: "1234", client_secret_configured: true, redirect_uri: "https://integradorwedo.lovable.app/api/public/hooks/ml-oauth", revision: "r1", configured: true, configuration_source: "integrador", enabled: false, markup_percent: null, stock_safety: null, listing_type_default: "", tipo_valor_venda: "", full_scope: false, read_only: true, can_manage_settings: false, can_manage_app: false },
+      bridge: { configured: true, bridge_id: "bridge-a", seller_ids: [], source_url: "https://integradorwedo.lovable.app", token_owner: "integrador" }, source_accounts: [], source_jobs: { pending_stock_jobs: 0, running_stock_jobs: null, failed_stock_jobs: 0 }, capabilities: { read_listings: true, write_stock: false, write_prices: false }, manual_operations: { available: true, automatic_writes: false, ownership_confirmation_required: true, accepted_forge_channel_price_required: true }, enrollment: { allowed: true, configured: true, connected_seller_count: 0 }, bridge_version: "2026-11-02.2" });
+    expect(value.settings.listing_type_default).toBeNull(); expect(value.settings.markup_percent).toBeNull(); expect(value.enrollment?.allowed).toBe(true); expect(value.source_accounts).toEqual([]);
+  });
   it("bounds a stalled session lookup without sending the JWT", async () => {
     vi.useFakeTimers(); mock.getSession.mockReturnValue(new Promise(() => {}));
     try { const result = readIntegradorReadiness(binding, { userId: "operator-a" }); const assertion = expect(result).rejects.toThrow("demorou"); await vi.advanceTimersByTimeAsync(20001); await assertion; expect(mock.fetch).not.toHaveBeenCalled(); } finally { vi.useRealTimers(); }
@@ -79,6 +84,28 @@ const localAccount = "11111111-1111-4111-8111-111111111111", productId = "222222
 const manualBinding: IntegradorBridgeBinding = { ...binding, account_mappings: [{ account_id: localAccount, source_seller_id: "seller-a", bridge_id: binding.bridge_id! }] };
 const selection = { account_id: localAccount, source_seller_id: "seller-a", product_ids: [productId] };
 const manualContext = { userId: "operator-a", tenantId: "tenant-a" };
+describe("private bridge developer application", () => {
+  const appBinding = { ...binding, allow_enrollment: true, approved_seller_ids: [] };
+  const app = { client_id: "654321", client_secret_configured: true, configured: true, redirect_uri: INTEGRADOR_OAUTH_CALLBACK, revision: "app-r1", can_manage: true };
+  it("keeps an unknown own application separate from a configured legacy global application", () => {
+    expect(readMercadoLivreReadiness(readiness).enrollment_app).toBeNull();
+    const value = readMercadoLivreReadiness({ ...readiness, enrollment_app: { ...app, client_id: null, client_secret_configured: false, configured: false } });
+    expect(value.enrollment_app?.client_id).toBeNull(); expect(value.enrollment_app?.configured).toBe(false); expect(value.settings.client_id).toBe("1234");
+  });
+  it("sends a revisioned own-app save only in the pinned authenticated POST and strips returned secrets", async () => {
+    mock.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ ...readiness, enrollment_app: { ...app, client_secret: "private-secret", refresh_token: "forbidden" }, enrollment: { allowed: true, configured: true, connected_seller_count: 0 } }) });
+    const result = await saveIntegradorEnrollmentApp(appBinding, { client_id: "654321", client_secret: "private-secret" }, "none", productId, manualContext);
+    expect(JSON.parse(mock.fetch.mock.calls[0][1].body)).toEqual({ bridge_id: binding.bridge_id, action: "enrollment_app_save", app: { client_id: "654321", client_secret: "private-secret" }, expected_revision: "none", request_id: productId }); expect(mock.fetch.mock.calls[0][0]).toBe(INTEGRADOR_BRIDGE_ENDPOINT); expect(mock.fetch.mock.calls[0][1].credentials).toBe("omit"); expect(result.enrollment_app?.client_id).toBe("654321"); expect(JSON.stringify(result)).not.toMatch(/private-secret|forbidden/); expect(result.source_accounts).toEqual([]);
+  });
+  it("preserves an omitted or blank saved secret instead of sending an empty replacement", async () => {
+    mock.fetch.mockResolvedValue({ ok: true, json: async () => ({ ...readiness, enrollment_app: app }) });
+    await saveIntegradorEnrollmentApp(appBinding, { client_id: "654321", client_secret: "  " }, "app-r1", productId, manualContext);
+    expect(JSON.parse(mock.fetch.mock.calls[0][1].body).app).toEqual({ client_id: "654321" });
+  });
+  it("rejects an arbitrary own-app callback rather than using it for authorization", () => {
+    expect(() => readMercadoLivreReadiness({ ...readiness, enrollment_app: { ...app, redirect_uri: "https://attacker.example/callback" } })).toThrow("dados incompletos");
+  });
+});
 describe("new-account enrollment with empty approved seller scope", () => {
   const emptyBinding = { ...binding, approved_seller_ids: [], allow_enrollment: true };
   const authUrl = () => { const url = new URL("https://auth.mercadolivre.com.br/authorization"); url.search = new URLSearchParams({ response_type: "code", client_id: "1234", state: `forge1.${"a".repeat(64)}`, code_challenge_method: "S256", code_challenge: "A".repeat(43), redirect_uri: "https://integradorwedo.lovable.app/api/public/hooks/ml-oauth" }).toString(); return url.href; };
