@@ -5,22 +5,27 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { externalImportReference, fetchMakerWorldModel, type ProductExternalImport } from "@/lib/makerworld-import";
 import { parseMakerWorldUrl, type MakerWorldModel, type MakerWorldVariant } from "../../../supabase/functions/_shared/makerworld";
+import { printerMatchesSliceModels } from "@/lib/model-pricing";
 
 interface Props {
   reference: ProductExternalImport | null;
   onLoaded: (reference: ProductExternalImport | null) => void;
   onPending?: () => void;
+  ownedPrinters?: { model?: string | null; brand?: string | null; name?: string }[];
 }
 type Choice = { key: string; profileIndex: number; variant: MakerWorldVariant; label: string };
-function choicesFor(model: MakerWorldModel | null): Choice[] {
+function choicesFor(model: MakerWorldModel | null, ownedPrinters?: Props["ownedPrinters"]): Choice[] {
   return model?.profiles.flatMap((profile, profileIndex) => {
     const seen = new Set<string>();
     return [profile, ...profile.variants].flatMap((variant, variantIndex) => {
       const identity = variant.profile_id ?? `unknown-${variantIndex}`;
       if (seen.has(identity)) return [];
       seen.add(identity);
+      if (ownedPrinters && !ownedPrinters.some(printer => printerMatchesSliceModels(printer,
+        [variant.printer_model || variant.printer_code || ""]) === true)) return [];
       return [{ key: `${profileIndex}:${variantIndex}`, profileIndex, variant,
         label: [profile.name || `Perfil ${profileIndex + 1}`, variant.printer_model || variant.printer_code,
+          profile.need_ams === true ? "com AMS" : profile.need_ams === false ? "sem AMS" : null,
           variant.nozzle_diameter ? `bico ${variant.nozzle_diameter.toLocaleString("pt-BR")} mm` : null].filter(Boolean).join(" · ") }];
     });
   }) ?? [];
@@ -31,7 +36,7 @@ function choiceForReference(reference: ProductExternalImport | null) {
 }
 
 /** Reuses the existing MakerWorld import service; does not infer missing metrics. */
-export function PricingMakerWorldInput({ reference, onLoaded, onPending }: Props) {
+export function PricingMakerWorldInput({ reference, onLoaded, onPending, ownedPrinters }: Props) {
   const inputId = useId();
   const [url, setUrl] = useState(reference?.source_url ?? "");
   const [model, setModel] = useState<MakerWorldModel | null>(reference);
@@ -42,9 +47,10 @@ export function PricingMakerWorldInput({ reference, onLoaded, onPending }: Props
   const [error, setError] = useState("");
   const request = useRef<AbortController | null>(null);
   const expected = useRef(reference);
+  const fleet = useRef(ownedPrinters); fleet.current = ownedPrinters;
   const deliver = useRef(onLoaded), pending = useRef(onPending);
   deliver.current = onLoaded; pending.current = onPending;
-  const choices = choicesFor(model);
+  const choices = choicesFor(model, ownedPrinters);
 
   useEffect(() => () => { request.current?.abort(); }, []);
   useEffect(() => {
@@ -55,6 +61,18 @@ export function PricingMakerWorldInput({ reference, onLoaded, onPending }: Props
     setUrl(reference?.source_url ?? ""); setSourceUrl(reference?.source_url ?? "");
     setModel(reference); setSelected(choiceForReference(reference));
   }, [reference]);
+
+  // The import may finish before the fleet query. Reconcile once the owned
+  // models arrive instead of leaving a loaded model without a selectable plan.
+  useEffect(() => {
+    if (!model || busy || selected || !choices.length) return;
+    let requestedId: string | null = null;
+    try { requestedId = parseMakerWorldUrl(sourceUrl).instanceId; } catch { /* supplied reference may lack a usable link */ }
+    const requested = requestedId ? choices.filter(choice => model.profiles[choice.profileIndex].instance_id === requestedId) : [];
+    const automatic = requested.length === 1 ? requested[0] : choices.length === 1 ? choices[0] : null;
+    if (automatic) selectChoice(model, sourceUrl, automatic);
+    else if (!chooseProfile) setChooseProfile(true);
+  }, [model, busy, selected, sourceUrl, ownedPrinters, chooseProfile]);
 
   function emit(next: ProductExternalImport | null) {
     expected.current = next; deliver.current(next);
@@ -79,7 +97,7 @@ export function PricingMakerWorldInput({ reference, onLoaded, onPending }: Props
       const next = await fetchMakerWorldModel(source.url, current.signal);
       if (current.signal.aborted || request.current !== current) return;
       setModel(next); setSourceUrl(source.url);
-      const all = choicesFor(next);
+      const all = choicesFor(next, fleet.current);
       const requested = source.instanceId ? all.filter(choice => next.profiles[choice.profileIndex].instance_id === source.instanceId) : [];
       const automatic = requested.length === 1 ? requested[0] : all.length === 1 ? all[0] : null;
       if (automatic) selectChoice(next, source.url, automatic);
@@ -115,7 +133,7 @@ export function PricingMakerWorldInput({ reference, onLoaded, onPending }: Props
         </select>
       </div>}
       {!chooseProfile && choices.length > 1 && <Button type="button" variant="link" className="h-auto p-0" onClick={() => setChooseProfile(true)}>Trocar perfil de impressão</Button>}
-      {!choices.length && <p className="text-muted-foreground">O link não disponibilizou um perfil de impressão. Envie o 3MF para obter tempo e filamento.</p>}
+      {!choices.length && <p className="text-muted-foreground">Não há perfil disponível para os modelos cadastrados na sua empresa. Envie um 3MF fatiado para o seu modelo.</p>}
     </div>}
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
   </section>;

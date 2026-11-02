@@ -6,7 +6,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import Produtos from "@/pages/comercial/Produtos";
 import type { ImportedComposition } from "@/lib/imported-composition";
 
-const mock = vi.hoisted(() => ({ rpc: vi.fn(), toast: vi.fn(), upload: vi.fn(), parsedOnly: vi.fn(), useCubeMetrics: false }));
+const mock = vi.hoisted(() => ({ rpc: vi.fn(), toast: vi.fn(), upload: vi.fn(), parsedOnly: vi.fn(), useCubeMetrics: false, useMultiplePlates: false }));
 const abortDescriptor = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "throwIfAborted");
 beforeAll(() => { if (!abortDescriptor) Object.defineProperty(AbortSignal.prototype, "throwIfAborted", { configurable: true, value(this: AbortSignal) { if (this.aborted) throw new DOMException("Consulta cancelada", "AbortError"); } }); });
 afterAll(() => { if (!abortDescriptor) delete (AbortSignal.prototype as unknown as Record<string, unknown>).throwIfAborted; });
@@ -28,18 +28,34 @@ vi.mock("@/components/comercial/ModelFileInput", () => ({ default: ({ onParsed, 
     composition.plates[0].time_seconds = 1351;
     composition.plates[0].slicer_estimates!.filaments[0].weight_grams = 3.63;
   }
-  onParsed({ ...composition, file_sha256: hash });
+  if (mock.useMultiplePlates) {
+    const second = structuredClone(composition.plates[0]);
+    composition.enabled = true;
+    composition.plates[0].weight_grams = 40; composition.plates[0].time_seconds = 1800;
+    composition.plates[0].slicer_estimates!.filaments = [
+      { id: 1, material_code: "PLA", color_hex: "#FF0000", weight_grams: 12, length_meters: null },
+      { id: 2, material_code: "PLA", color_hex: "#00FF00", weight_grams: 28, length_meters: null },
+    ];
+    second.index = 2; second.label = "Tampa"; second.weight_grams = 60; second.time_seconds = 5400;
+    second.slicer_estimates!.filaments = [
+      { id: 1, material_code: "PLA", color_hex: "#FF0000", weight_grams: 58, length_meters: null },
+      { id: 2, material_code: "PLA", color_hex: "#00FF00", weight_grams: 2, length_meters: null },
+    ];
+    composition.plates.push(second);
+  }
+  onParsed({ ...composition, profile_id: `local:${hash}`, file_sha256: hash });
 }}>Ler 3MF fatiado de teste</button> }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: {
   rpc: mock.rpc, functions: { invoke: async () => ({ data: { projects: [] }, error: null }) },
   storage: { from: () => ({ upload: mock.upload, getPublicUrl: () => ({ data: { publicUrl: "https://example.test/model.3mf" } }) }) },
   from: (table: string) => {
     const query = { select: () => query, eq: () => query, is: () => query, in: () => query, order: () => query, range: () => query, single: () => query, limit: () => query,
-      then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) => Promise.resolve({ data: table === "inventory_items" ? [filament] : table === "printers" ? [printer] : table === "tenants" ? { settings: {} } : [], error: null }).then(resolve, reject) };
+      then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) => Promise.resolve({ data: table === "inventory_items" ? (mock.useMultiplePlates ? [filament, greenFilament] : [filament]) : table === "printers" ? [printer] : table === "tenants" ? { settings: {} } : [], error: null }).then(resolve, reject) };
     return query;
   },
 } }));
 const filament = { id: "pla", name: "PLA vermelho cadastrado", category: "filament", unit: "kg", avg_cost: 80, freight_cost: 0, loss_coefficient: 0, material_code: "PLA", color_hex: "#FF0000", is_active: true };
+const greenFilament = { ...filament, id: "pla-green", name: "PLA verde cadastrado", color_hex: "#00FF00" };
 const printer = { id: "a1", name: "A1 oficina", brand: "Bambu Lab", model: "A1", power_watts: 100, depreciation_per_hour: 0.4, maintenance_cost_per_hour: 0.1, acquisition_cost: 4000, useful_life_hours: 10000, is_active: true };
 const policy = { machine_hour_cost: 2, energy_cost_kwh: 1, labor_cost_hour: 20, overhead_percent: 0, target_margin: 50,
   handling_minutes_per_plate: 0, finishing_minutes_per_piece: 0, assembly_minutes_per_product: 0, extras_cost_per_product: 0,
@@ -59,6 +75,7 @@ beforeEach(() => {
   vi.stubGlobal("crypto", webcrypto);
   mock.rpc.mockReset(); mock.toast.mockReset(); mock.upload.mockReset().mockResolvedValue({ data: { path: "saved.3mf" }, error: null }); mock.parsedOnly.mockReset();
   mock.useCubeMetrics = false;
+  mock.useMultiplePlates = false;
   mock.rpc.mockImplementation(async (name: string) => {
     if (name === "pricing_settings") return { data: policy, error: null };
     if (name === "product_material_recipe_catalog") return { data: [], error: null };
@@ -94,10 +111,15 @@ describe("automatic costs in the product import editor", () => {
     expect(within(editor).getByLabelText("Preço de custo (R$)")).toHaveAttribute("readonly");
     expect(within(editor).getByLabelText("Preço unitário (R$)")).toHaveValue("24.40");
     expect(within(editor).getByLabelText("Lucro sobre o custo (%)")).toHaveValue("100");
-    fireEvent.click(within(editor).getByRole("button", { name: "Criar", exact: true }));
+    fireEvent.click(within(editor).getByRole("button", { name: /^Criar$/ }));
     await waitFor(() => expect(saved()).toBeDefined());
     expect(saved()!.p_product).toMatchObject({ cost_estimate: 12.2, manual_cost: 12.2, sale_price: 24.4, material_id: "pla", margin_percent: 50 });
     expect(saved()!.p_product.file_composition.file_path).toContain("tenant-1/");
+    expect(saved()!.p_product.import_pricing).toEqual({ version: 1, printer_id: "a1", quantity: 1,
+      source_profile_id: saved()!.p_product.file_composition.profile_id, source_file_sha256: saved()!.p_product.file_composition.file_sha256,
+      materials: [{ source_key: JSON.stringify([1, "PLA", "#FF0000"]), item_id: "pla", material_code: "PLA", color_hex: "#FF0000", slot_id: 1 }],
+      plates: [{ index: 1, units_per_plate: 1, lines: [{ item_id: "pla", grams: 100 }] }] });
+    expect(saved()!.p_product.file_composition.profile_id).toBe(`local:${saved()!.p_product.file_composition.file_sha256}`);
     expect(mock.upload).toHaveBeenCalledTimes(1);
   });
 
@@ -109,9 +131,11 @@ describe("automatic costs in the product import editor", () => {
     await waitFor(() => expect(within(editor).getByLabelText("Preço de custo (R$)")).toHaveValue("6.1"));
     expect(within(editor).getByLabelText("Lucro sobre o custo (%)")).toHaveValue("50");
     expect(within(editor).getByLabelText("Preço unitário (R$)")).toHaveValue("9.15");
-    fireEvent.click(within(editor).getByRole("button", { name: "Criar", exact: true }));
+    fireEvent.click(within(editor).getByRole("button", { name: /^Criar$/ }));
     await waitFor(() => expect(saved()).toBeDefined());
     expect(saved()!.p_product).toMatchObject({ cost_estimate: 6.1, sale_price: 9.15, prints_per_plate: 2 });
+    expect(saved()!.p_product.import_pricing).toMatchObject({ printer_id: "a1", quantity: 2,
+      plates: [{ index: 1, units_per_plate: 2, lines: [{ item_id: "pla", grams: 100 }] }] });
   });
 
   it("preserves decimal consumption and native seconds when pricing and saving captured cube metrics", async () => {
@@ -121,10 +145,28 @@ describe("automatic costs in the product import editor", () => {
     mock.useCubeMetrics = true;
     mount(); const editor = await loadNative("1.0785");
     expect(within(editor).getByLabelText("Preço unitário (R$)")).toHaveValue("2.16");
-    fireEvent.click(within(editor).getByRole("button", { name: "Criar", exact: true }));
+    fireEvent.click(within(editor).getByRole("button", { name: /^Criar$/ }));
     await waitFor(() => expect(saved()).toBeDefined());
     expect(saved()!.p_product).toMatchObject({ cost_estimate: 1.0785, manual_cost: 1.0785, sale_price: 2.16, est_grams: 3.63 });
     expect(saved()!.p_product.file_composition.plates[0]).toMatchObject({ weight_grams: 3.63, time_seconds: 1351 });
+    expect(saved()!.p_product.import_pricing).toMatchObject({ printer_id: "a1", quantity: 1,
+      plates: [{ index: 1, units_per_plate: 1, lines: [{ item_id: "pla", grams: 3.63 }] }] });
+  });
+
+  it("saves both native plates' actual material distribution together with the cost", async () => {
+    mock.useMultiplePlates = true;
+    mount(); const editor = await loadNative();
+    fireEvent.click(within(editor).getByRole("button", { name: /^Criar$/ }));
+    await waitFor(() => expect(saved()).toBeDefined());
+    expect(saved()!.p_product).toMatchObject({ cost_estimate: 12.2, sale_price: 24.4 });
+    expect(saved()!.p_product.import_pricing).toMatchObject({ printer_id: "a1", quantity: 1,
+      materials: [
+        { source_key: JSON.stringify([1, "PLA", "#FF0000"]), item_id: "pla", slot_id: 1 },
+        { source_key: JSON.stringify([2, "PLA", "#00FF00"]), item_id: "pla-green", slot_id: 2 },
+      ], plates: [
+        { index: 1, units_per_plate: 1, lines: [{ item_id: "pla", grams: 12 }, { item_id: "pla-green", grams: 28 }] },
+        { index: 2, units_per_plate: 1, lines: [{ item_id: "pla", grams: 58 }, { item_id: "pla-green", grams: 2 }] },
+      ] });
   });
 
   it("fills cost and price in the same editor after importing a MakerWorld link", async () => {
@@ -136,9 +178,12 @@ describe("automatic costs in the product import editor", () => {
     const imported = await screen.findByRole("dialog", { name: "Novo Produto" });
     await waitFor(() => expect(within(imported).getByLabelText("Preço de custo (R$)")).toHaveValue("12.2"));
     expect(within(imported).getByLabelText("Preço unitário (R$)")).toHaveValue("24.40");
-    fireEvent.click(within(imported).getByRole("button", { name: "Criar", exact: true }));
+    fireEvent.click(within(imported).getByRole("button", { name: /^Criar$/ }));
     await waitFor(() => expect(saved()).toBeDefined());
     expect(saved()!.p_product).toMatchObject({ name: "Produto MakerWorld", cost_estimate: 12.2, sale_price: 24.4, material_id: "pla" });
     expect(saved()!.p_product.external_import).toMatchObject({ selected_profile_id: "101", selected_variant_profile_id: "501" });
+    expect(saved()!.p_product.import_pricing).toEqual({ version: 1, printer_id: "a1", quantity: 1, source_profile_id: "501",
+      materials: [{ source_key: JSON.stringify(["makerworld", "PLA", "#FF0000"]), item_id: "pla", material_code: "PLA", color_hex: "#FF0000", slot_id: null }],
+      plates: [{ index: 1, units_per_plate: 1, lines: [{ item_id: "pla", grams: 100 }] }] });
   });
 });

@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import ProductPrintPlates from "@/pages/comercial/ProductPrintPlates";
 import { supabase } from "@/integrations/supabase/client";
@@ -22,7 +23,7 @@ vi.mock("@/integrations/supabase/client", () => ({ supabase: {
   },
 } }));
 const base = { tenant_id: "tenant-1", product_id: "product-1", source_id: "source-1", units_per_plate: 1, material_id: "material-1", printer_id: "printer-1", est_grams: null, est_time_seconds: null, est_cost_per_unit: null, actual_grams_per_unit: 10, actual_seconds_per_unit: 600, actual_sample_units: 4, actual_source: "measured", actual_updated_at: null, model_id: "model-1", profile_id: "profile-1", is_active: true };
-const mount = (client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }), sourceId: string | null = "source-1") => render(<QueryClientProvider client={client}><ProductPrintPlates productId="product-1" tenantId="tenant-1" sourceId={sourceId} showProductTotal /></QueryClientProvider>);
+const mount = (client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } }), sourceId: string | null = "source-1") => render(<QueryClientProvider client={client}><MemoryRouter><ProductPrintPlates productId="product-1" tenantId="tenant-1" sourceId={sourceId} showProductTotal /></MemoryRouter></QueryClientProvider>);
 beforeEach(() => {
   mock.rpc.mockReset(); mock.rpc.mockImplementation(async (name: string) => ({ data: name === "product_plate_learning" ? mock.learned : "plate-3", error: null })); mock.toast.mockClear();
   mock.sources = [{ id: "source-1", file_sha256: null, profile_id: "profile-1", is_active: true }]; mock.sourceError=false; mock.learned = null; mock.bindings=[];
@@ -34,6 +35,28 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("product plate configuration", () => {
+  it("mantém os custos técnicos nos detalhes e não mostra uma estimativa anterior vazia como preço do produto", async () => {
+    mock.plates = [{ ...base, id: "plate-1", plate_index: 1, label: "Importada", units_per_plate: null, est_grams: 119, est_time_seconds: 16372, actual_sample_units: 0, imported_filaments: [{ type: "PLA", color: "#FCECD6", grams: 119 }] }];
+    mock.rpc.mockImplementation(async name => ({ data: name === "product_print_plate_preparation" ? { material_cost_per_print: null, energy_cost_per_print: null, machine_cost_per_print: null, known_cost_per_print: null, missing: ["Selecione a impressora da placa."] } : null, error: null }));
+    mount();
+    await screen.findByText("Placa 1 · Importada");
+    const detail = screen.getByText("Detalhes técnicos desta impressão", { selector: "summary" }).parentElement;
+    expect(detail).toHaveProperty("open", false);
+    expect(await screen.findByText("Custos técnicos desta impressão")).not.toBeVisible();
+    expect(screen.queryByText(/^Estimativa técnica anterior por unidade:/)).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Editar impressão no cadastro" })).toHaveAttribute("href", "/comercial/produtos?produto=product-1&editar=1&aba=valores&impressao=source-1");
+    expect(screen.queryByRole("button", { name: "Preparar materiais e rendimento" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("Detalhes técnicos desta impressão", { selector: "summary" }));
+    expect(screen.getByText("Custos técnicos desta impressão")).toBeVisible();
+    expect(screen.getByText("Selecione a impressora da placa.")).toBeVisible();
+  });
+  it("permite revisar uma impressão já preparada sem pedir nova preparação", async () => {
+    mock.plates = [{ ...base, source_id: null, id: "plate-1", plate_index: 1, label: "Preparada", actual_sample_units: 0 }];
+    mock.rpc.mockImplementation(async name => ({ data: name === "product_material_recipe_preview" ? { plates: [{ id: "plate-1", recipe: { complete: true, cost_per_unit: 12 } }], complete: true, cost_per_unit: 12 } : null, error: null }));
+    mount(undefined, null);
+    expect(await screen.findByRole("button", { name: "Editar materiais e rendimento" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Preparar materiais e rendimento" })).not.toBeInTheDocument();
+  });
   it("exibe placas importadas em preparação com tempo, filamentos e custos por impressão, preservando rendimento nulo ao editar", async () => {
     mock.plates = [{ ...base, id: "plate-1", plate_index: 1, label: "Base importada", units_per_plate: null, actual_sample_units: 0, est_grams: 125, est_time_seconds: 3600, imported_filaments: [{ type: "PLA", color: "#FF0000", grams: 100 }, { type: "PETG", color: "#0000FF", grams: 25 }] }];
     mock.rpc.mockImplementation(async (name: string) => ({ data: name === "product_print_plate_preparation" ? { material_cost_per_print: 12.5, energy_cost_per_print: 1, machine_cost_per_print: 2, known_cost_per_print: 15.5, missing: ["Confirme o rendimento da placa"] } : name === "product_plate_learning" ? null : "plate-1", error: null }));
@@ -113,7 +136,7 @@ describe("product plate configuration", () => {
   });
   it("binds the selected execution to the lid plate, not just to its source or product", async () => {
     mount();
-    const details = await screen.findAllByText("Custos, impressora e histórico"); fireEvent.click(details[1]);
+    const details = await screen.findAllByText("Detalhes técnicos desta impressão"); fireEvent.click(details[1]);
     const bindButtons = await screen.findAllByRole("button", { name: "Vincular impressão desta placa" });
     fireEvent.click(bindButtons[1]);
     await screen.findByRole("option", { name: /Tampa do produto.*#101/ });
@@ -130,7 +153,7 @@ describe("product plate configuration", () => {
       if(name==="bind_file_plate_execution")mock.bindings=[{id:"binding-1",tenant_id:"tenant-1",plate_id:"plate-1",source_id:"source-1",file_sha256:hash,remote_plate_index:2,confirmation:"file_confirmation",confirmed_at:"2026-10-25T12:00:00Z"}];
       return{data:"plate-1",error:null};
     });
-    mount(); fireEvent.click(await screen.findByText("Custos, impressora e histórico"));
+    mount(); fireEvent.click(await screen.findByText("Detalhes técnicos desta impressão"));
     fireEvent.click(screen.getByRole("button",{name:"Vincular impressão desta placa"}));
     await screen.findByRole("option",{name:/Tampa do produto.*#101/});
     fireEvent.change(screen.getByRole("combobox",{name:"Impressão Bambu da placa 1"}),{target:{value:"task-1"}});
@@ -147,7 +170,7 @@ describe("product plate configuration", () => {
     const hash="a".repeat(64);
     mock.sources=[{id:"source-1",file_sha256:"b".repeat(64),file_name:"changed.3mf",profile_id:`local:${hash}`,is_active:true}];
     mock.plates=[{...base,id:"plate-1",plate_index:1,label:"Folhas",imported_plate_metadata:{file_sha256:hash,file_profile_id:`local:${hash}`}}];
-    mount(); fireEvent.click(await screen.findByText("Custos, impressora e histórico")); fireEvent.click(screen.getByRole("button",{name:"Vincular impressão desta placa"}));
+    mount(); fireEvent.click(await screen.findByText("Detalhes técnicos desta impressão")); fireEvent.click(screen.getByRole("button",{name:"Vincular impressão desta placa"}));
     await screen.findByRole("option",{name:/Tampa do produto.*#101/}); fireEvent.change(screen.getByRole("combobox",{name:"Impressão Bambu da placa 1"}),{target:{value:"task-1"}});
     expect(screen.getByText(/O arquivo ativo ainda não está verificado ou mudou de revisão/)).toBeInTheDocument();
     expect(screen.getByRole("button",{name:"Confirmar vínculo desta placa"})).toBeDisabled();
@@ -157,7 +180,7 @@ describe("product plate configuration", () => {
     const hash="a".repeat(64);
     mock.sources=[{id:"source-1",file_sha256:hash,file_name:"folhas.3mf",profile_id:`local:${hash}`,is_active:true}];
     mock.plates=[{...base,id:"plate-1",plate_index:1,label:"Folhas",imported_plate_metadata:{file_sha256:hash}}];
-    mount(); fireEvent.click(await screen.findByText("Custos, impressora e histórico")); fireEvent.click(screen.getByRole("button",{name:"Vincular impressão desta placa"}));
+    mount(); fireEvent.click(await screen.findByText("Detalhes técnicos desta impressão")); fireEvent.click(screen.getByRole("button",{name:"Vincular impressão desta placa"}));
     await screen.findByRole("option",{name:/Tampa do produto.*#101/}); const select=screen.getByRole("combobox",{name:"Impressão Bambu da placa 1"});
     fireEvent.change(select,{target:{value:"task-1"}}); const checkbox=screen.getByRole("checkbox",{name:"Esta impressão foi feita com este arquivo e esta placa"}); fireEvent.click(checkbox); expect(checkbox).toBeChecked();
     fireEvent.change(select,{target:{value:""}}); fireEvent.change(select,{target:{value:"task-1"}}); expect(checkbox).not.toBeChecked(); expect(screen.getByRole("button",{name:"Confirmar vínculo desta placa"})).toBeDisabled();
@@ -167,7 +190,7 @@ describe("product plate configuration", () => {
     mock.sources=[{id:"source-1",file_sha256:hash,file_name:"folhas.3mf",profile_id:`local:${hash}`,is_active:true}];
     mock.plates=[{...base,id:"plate-1",plate_index:1,label:"Folhas",est_grams:30,est_time_seconds:600,actual_sample_units:0,imported_plate_metadata:{file_sha256:hash}}];
     const client=new QueryClient({defaultOptions:{queries:{retry:false,staleTime:Infinity},mutations:{retry:false}}}); mount(client);
-    fireEvent.click(await screen.findByText("Custos, impressora e histórico")); await screen.findByText(/A referência Bambu aparece após apuração/);
+    fireEvent.click(await screen.findByText("Detalhes técnicos desta impressão")); await screen.findByText(/A referência Bambu aparece após apuração/);
     mock.learned={source:"bambu",grams:3,print_seconds:120,estimated_cost:1,materials:[{item_id:"material-1",material:"PLA",color:"Verde",grams:3,cost_per_kg:null}],sample_units:10,sample_runs:2,file_sha256:hash,project_key:"execution-1",updated_at:"2026-10-25T12:00:00Z",consumption_source:"slicer_completed",time_source:"elapsed_start_end"};
     await Promise.all(productionQueryKeys.map(key=>client.invalidateQueries({queryKey:[key]})));
     expect(await screen.findByText("Referência Bambu de impressões aprovadas no QC")).toBeInTheDocument();
@@ -179,7 +202,7 @@ describe("product plate configuration", () => {
     mock.sources=[{id:"source-1",file_sha256:hash,file_name:"folhas.3mf",profile_id:`local:${hash}`,is_active:true}];
     mock.plates=[{...base,id:"plate-1",plate_index:1,label:"Folhas",imported_plate_metadata:{file_sha256:hash}}];
     const client=new QueryClient({defaultOptions:{queries:{retry:false},mutations:{retry:false}}}); mount(client);
-    fireEvent.click(await screen.findByText("Custos, impressora e histórico")); fireEvent.click(screen.getByRole("button",{name:"Vincular impressão desta placa"}));
+    fireEvent.click(await screen.findByText("Detalhes técnicos desta impressão")); fireEvent.click(screen.getByRole("button",{name:"Vincular impressão desta placa"}));
     await screen.findByRole("option",{name:/Tampa do produto.*#101/}); fireEvent.change(screen.getByRole("combobox",{name:"Impressão Bambu da placa 1"}),{target:{value:"task-1"}});
     fireEvent.click(screen.getByRole("checkbox",{name:"Esta impressão foi feita com este arquivo e esta placa"}));
     mock.sources=[{...mock.sources[0],file_sha256:nextHash,profile_id:`local:${nextHash}`,file_name:"folhas-revisadas.3mf"}];

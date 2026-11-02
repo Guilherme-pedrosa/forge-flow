@@ -25,6 +25,7 @@ const rawDesign = { id: 456, title: "Conjunto Maker", cover: photos[0], images: 
   ],
 };
 const inventoryItem = { id: "manual-material", name: "Material definido no estoque", unit: "g", avg_cost: .05, loss_coefficient: 0, material_code: "PETG", color: "Azul", color_code: "BLUE", material_identified_at: "2026-09-13", current_stock: 100, is_active: true };
+const ownedPrinters = ["A1", "P1S", "X1C"].map(model => ({ id: `printer-${model}`, name: `Oficina ${model}`, brand: "Bambu Lab", model, is_active: true }));
 const existingProduct = { id: "product-1", tenant_id: "tenant-1", name: "Nome comercial manual", description: "Descrição manual", sku: "SKU-MANUAL", category: "printed_part", is_active: true,
   material_id: inventoryItem.id, cost_estimate: 3.5, sale_price: 79.9, prints_per_plate: 3, est_grams: 88, est_time_minutes: 120, post_process_minutes: 7, num_colors: 2,
   extras: [{ name: "Embalagem manual", cost: 1.25 }], photo_url: "https://own.example.test/principal.jpg", notes: "Importado do MakerWorld — ID: 456\nObservação manual" };
@@ -38,7 +39,7 @@ vi.mock("@/integrations/supabase/client", () => ({ supabase: {
   rpc: mock.rpc, functions: { invoke: async () => ({ data: { projects: [] }, error: null }) },
   from: (table: string) => {
     const query = { select: () => query, eq: () => query, is: () => query, in: () => query, order: () => query, range: () => query, single: () => query, limit: () => query,
-      then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) => Promise.resolve({ data: table === "products" ? mock.products : table === "product_photos" ? mock.photos : table === "tenants" ? { settings: {} } : table === "inventory_items" ? [inventoryItem] : [], error: null }).then(resolve, reject) };
+      then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) => Promise.resolve({ data: table === "products" ? mock.products : table === "product_photos" ? mock.photos : table === "tenants" ? { settings: {} } : table === "inventory_items" ? [inventoryItem] : table === "printers" ? ownedPrinters : [], error: null }).then(resolve, reject) };
     return query;
   },
 } }));

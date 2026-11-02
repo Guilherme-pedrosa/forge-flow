@@ -15,7 +15,7 @@ await db.exec(`CREATE ROLE authenticated; CREATE ROLE anon; CREATE ROLE service_
  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO authenticated;`);
 for (const name of (await readdir(new URL('../supabase/migrations/', import.meta.url))).filter(n => n.endsWith('.sql')).sort()) {
   // Diagnostic baseline: exercise the same public call before the fix.
-  if (process.argv.includes('--baseline') && name === '20261029220000_catalog_live_pricing.sql') continue;
+  if (process.argv.includes('--baseline') && ['20261029220000_catalog_live_pricing.sql', '20261102150000_catalog_category_pricing.sql'].includes(name)) continue;
   try { await db.exec((await readFile(new URL('../supabase/migrations/' + name, import.meta.url), 'utf8')).replace(/CREATE EXTENSION IF NOT EXISTS (pg_cron|pg_net);/g, '')); }
   catch (error) { throw new Error(`Migration ${name}: ${error.message}`); }
 }
@@ -47,6 +47,22 @@ const payload = async (changes = {}) => {
 let passed = 0;
 async function test(name, fn) { await fn(); console.log('PASS ' + name); passed++; }
 try {
+  await test('Category migration is retry-safe and refuses unreviewed function changes', async () => {
+    const correction = await readFile(new URL('../supabase/migrations/20261102150000_catalog_category_pricing.sql', import.meta.url), 'utf8');
+    await db.exec('RESET ROLE');
+    const definition = await scalar("SELECT pg_get_functiondef('public.save_product_with_photos(uuid,jsonb,jsonb,uuid)'::regprocedure)");
+    try {
+      await db.exec(correction);
+      assert.equal(await scalar("SELECT pg_get_functiondef('public.save_product_with_photos(uuid,jsonb,jsonb,uuid)'::regprocedure)"), definition);
+      const drift = definition.replace('DECLARE t uuid:=erp_private.actor();', '-- Unreviewed live function change\nDECLARE t uuid:=erp_private.actor();');
+      assert.notEqual(drift, definition);
+      await db.exec(drift);
+      await assert.rejects(db.exec(correction), /Review the live catalog pricing save function/);
+    } finally {
+      await db.exec(definition);
+      await db.exec('SET ROLE authenticated');
+    }
+  });
   await test('Composition cost + markup persist without creating a manual override; retry is inert', async () => {
     const data = await payload(), key = next();
     assert.equal(data.cost_estimate, 3); // 100g / 2 * R$20/kg + R$2 confirmed non-material costs.
@@ -67,6 +83,44 @@ try {
     const saved = await row('SELECT name,stock_item_id FROM products WHERE id=$1', [p]);
     assert.equal(saved.name, 'Vaso'); assert.equal(saved.stock_item_id, null);
     assert.equal(await scalar('SELECT count(*)::integer FROM product_photos WHERE product_id=$1', [p]), 0);
+  });
+  await test('Category changes preserve automatic composition pricing without introducing a manual override', async () => {
+    const data = await payload();
+    await save(p, data);
+    const before = await catalog(p), key = next();
+    const categoryChange = { ...(await payload()), category: 'seasonal' };
+    assert.equal(await save(p, categoryChange, key), p);
+    assert.equal(await save(p, categoryChange, key), p);
+    const saved = await row('SELECT category,cost_estimate,sale_price,manual_cost_override,catalog_details FROM products WHERE id=$1', [p]);
+    assert.equal(saved.category, 'seasonal');
+    assert.equal(Number(saved.cost_estimate), data.cost_estimate);
+    assert.equal(Number(saved.sale_price), data.sale_price);
+    assert.equal(saved.manual_cost_override, null);
+    assert.equal(saved.catalog_details.cost_source, 'composition');
+    assert.equal(saved.catalog_details.price_source, 'markup');
+    assert.equal((await catalog(p)).cost_per_unit, before.cost_per_unit);
+    assert.notEqual((await catalog(p)).revision, before.revision);
+    // The category exclusion is local to this save's post-check. Another
+    // session holding the old complete snapshot must still refresh first.
+    await assert.rejects(save(p, { ...data, name: 'STALE CATEGORY', stock: { unit: 'un', avg_cost: 4, current_stock: 5 } }, next(), ['https://qa.invalid/stale-category.png']), /composição ou seus custos mudaram/);
+    assert.equal(await scalar('SELECT name FROM products WHERE id=$1', [p]), 'Vaso');
+    assert.equal(await scalar('SELECT stock_item_id FROM products WHERE id=$1', [p]), null);
+    assert.equal(await scalar('SELECT count(*)::integer FROM product_photos WHERE product_id=$1', [p]), 0);
+    await save(p, await payload()); // Return to the original classification.
+    assert.equal(await scalar('SELECT category FROM products WHERE id=$1', [p]), 'printed_part');
+  });
+  await test('Commercial category correction does not allow same-save production changes', async () => {
+    const changes = [
+      { prints_per_plate: 3 }, { material_id: material }, { est_grams: 101 },
+      { est_time_minutes: 151 }, { post_process_minutes: 7 }, { num_colors: 2 },
+      { extras: [{ name: 'Extra de produção novo', cost: 2 }] },
+    ];
+    const before = await row('SELECT * FROM products WHERE id=$1', [p]);
+    for (const change of changes) {
+      await assert.rejects(save(p, { ...(await payload()), category: 'seasonal', ...change }, next(), ['https://qa.invalid/production-change.png']), /composição mudou neste cadastro/);
+      assert.deepEqual(await row('SELECT * FROM products WHERE id=$1', [p]), before);
+      assert.equal(await scalar('SELECT count(*)::integer FROM product_photos WHERE product_id=$1', [p]), 0);
+    }
   });
   await test('Changing yield in the same save cannot invalidate the recipe behind the price', async () => {
     const data = await payload();

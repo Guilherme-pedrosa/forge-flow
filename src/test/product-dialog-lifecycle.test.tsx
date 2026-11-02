@@ -7,7 +7,7 @@ import Produtos from "@/pages/comercial/Produtos";
 const mock = vi.hoisted(() => ({ rpc: vi.fn(), toast: vi.fn(), holdPhotos: false, hasPlate: false }));
 const product = { id: "product-1", tenant_id: "tenant-1", name: "Produto de teste", category: "printed_part", is_active: true, cost_estimate: 1, sale_price: 10, prints_per_plate: 1, extras: [], num_colors: 1 };
 const source = { id: "source-1", tenant_id: "tenant-1", product_id: "product-1", label: "Arquivo de teste", is_active: true, file_path: "tenant-1/base.3mf", file_name: "base.3mf", created_at: "2026-09-13" };
-const plate = { id: "plate-1", tenant_id: "tenant-1", product_id: "product-1", source_id: "source-1", plate_index: 1, label: "Base", units_per_plate: 2, is_active: true, recipe: null };
+const plate = { id: "plate-1", tenant_id: "tenant-1", product_id: "product-1", source_id: "source-1" as string | null, plate_index: 1, label: "Base", units_per_plate: 2, is_active: true, recipe: null };
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ profile: { tenant_id: "tenant-1" } }) }));
 vi.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: mock.toast }) }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: mock.rpc, from: (table: string) => {
@@ -18,6 +18,7 @@ vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: mock.rpc, fr
 const preview = { schema_version: 1, product, recipe: null, plates: [], components: [], complete: false, missing: [], cost_per_unit: null };
 beforeEach(() => {
   mock.holdPhotos = false; mock.hasPlate = false; mock.toast.mockClear(); mock.rpc.mockReset();
+  plate.source_id = "source-1";
   mock.rpc.mockImplementation(async (name: string) => ({ data: name === "product_material_recipe_catalog" ? [{ id: product.id, configured: false, complete: false, plate_count: mock.hasPlate ? 1 : 0 }] : name === "product_material_recipe_preview" ? { ...preview, plates: mock.hasPlate ? [plate] : [] } : "saved-product", error: null }));
 });
 afterEach(cleanup);
@@ -99,6 +100,7 @@ describe("fechamento do editor do produto", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
   it("fechar receita aninhada preserva o produto aberto e não herda a trava de edição", async () => {
+    plate.source_id = null;
     mock.hasPlate = true; mount(); const productDialog = await openProduct();
     fireEvent.click(await within(productDialog).findByRole("button", { name: "Preparar materiais e rendimento" }));
     const recipeDialog = await screen.findByRole("dialog", { name: "Receita da placa" });

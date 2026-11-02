@@ -35,13 +35,13 @@ function mount() {
   return render(<QueryClientProvider client={client}><MemoryRouter initialEntries={["/comercial/precificacao"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><Precificacao /></MemoryRouter></QueryClientProvider>);
 }
 function choose(label: string, value: string) {
-  const select = screen.getByLabelText(label.startsWith("Bambu") ? "Impressora da impressão" : "Filamento do slot 1");
+  const select = screen.getByLabelText(label.startsWith("Bambu") ? "Modelo de impressão" : "Filamento do slot 1");
   fireEvent.change(select, { target: { value } });
 }
 const expectCost = (value: RegExp) => expect(screen.getByText("Custo / unidade").parentElement?.querySelector("dd")).toHaveTextContent(value);
 async function loadAndChoose() {
   fireEvent.click(screen.getByRole("button", { name: "Carregar modelo de teste" }));
-  await waitFor(() => expect(screen.getByLabelText("Impressora da impressão")).toHaveTextContent("Bambu A1"));
+  await waitFor(() => expect(screen.getByLabelText("Modelo de impressão")).toHaveTextContent("A1"));
   choose("Bambu A1", "a1");
   choose("PLA vermelho", "pla");
 }

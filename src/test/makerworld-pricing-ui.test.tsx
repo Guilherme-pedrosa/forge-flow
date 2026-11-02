@@ -76,7 +76,7 @@ describe("MakerWorld link to per-piece cost", () => {
     submit();
     // R$8 PLA + 2h × R$2 machine + 2h × 0.1kW × R$1 = R$12.20.
     await waitFor(() => expectCost(/R\$\s*12,20/));
-    expect(screen.getByLabelText("Impressora da impressão")).toHaveValue("a1");
+    expect(screen.getByLabelText("Modelo de impressão")).toHaveValue("a1");
     expect(screen.getByLabelText("Filamento 1")).toHaveValue("pla-red");
     expect(screen.getByText(/^Preço sugerido:/)).toHaveTextContent(/R\$\s*24,40/);
     expect(screen.queryByLabelText("Qual perfil de impressão você vai usar?")).not.toBeInTheDocument();
@@ -92,7 +92,7 @@ describe("MakerWorld link to per-piece cost", () => {
     fireEvent.change(chooser, { target: { value: "1:0" } });
     // This profile publishes 200g and 1h, giving R$16 + R$2 + R$0.10.
     await waitFor(() => expectCost(/R\$\s*18,10/));
-    expect(screen.getByLabelText("Impressora da impressão")).toHaveValue("a1");
+    expect(screen.getByLabelText("Modelo de impressão")).toHaveValue("a1");
     expect(screen.getByLabelText("Filamento 1")).toHaveValue("pla-red");
   });
 

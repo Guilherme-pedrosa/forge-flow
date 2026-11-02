@@ -20,6 +20,7 @@ export type ModelPricingEstimate = {
   partCount: number | null;
   printerModelIds: string[];
   nozzleDiameters: string[];
+  needAms?: boolean | null;
   materials: ModelPricingMaterial[];
 };
 
@@ -50,8 +51,9 @@ export function printerMachineHourCost(
 }
 
 type PrinterIdentity = { brand?: string | null; model?: string | null; name?: string };
+const normalizedPrinterModel = (value: string) => value.trim().toUpperCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
 function bambuModel(value: string): string | null {
-  const normalized = value.trim().toUpperCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ");
+  const normalized = normalizedPrinterModel(value);
   // Codes and labels captured together in the MakerWorld reference fixtures.
   const codes: Record<string, string> = { N1: "A1 MINI", N2S: "A1", C11: "P1P", C12: "P1S", C13: "X1E", "BL P001": "X1 CARBON", "BL P002": "X1", O1D: "H2D", O1E: "H2D PRO", O1C2: "H2C" };
   if (codes[normalized]) return codes[normalized];
@@ -64,10 +66,38 @@ function bambuModel(value: string): string | null {
 export function printerMatchesSliceModels(printer: PrinterIdentity, models: string[]): boolean | null {
   if (!models.length) return null;
   const selected = bambuModel(printer.model?.trim() || printer.name || "");
-  const sliced = models.map(bambuModel);
-  if (!selected || sliced.some(model => !model)) return null;
-  if (printer.brand?.trim() && !/bambu/i.test(printer.brand)) return false;
-  return sliced.every(model => model === selected);
+  const matches = models.map(model => {
+    const sliced = bambuModel(model);
+    if (sliced) {
+      if (printer.brand?.trim() && !/bambu/i.test(printer.brand)) return false;
+      if (selected) return sliced === selected;
+      if (printer.model?.trim()) return false;
+    }
+    if (printer.model?.trim() && normalizedPrinterModel(printer.model) === normalizedPrinterModel(model)) return true;
+    return null;
+  });
+  if (matches.includes(false)) return false;
+  return matches.includes(null) ? null : true;
+}
+
+/** Operators choose a registered model. Preserve a saved physical printer as
+ * that model's cost representative, without presenting the fleet's nicknames. */
+export function printerModelOptions<T extends PrinterIdentity & { id: string; is_active?: boolean }>(
+  printers: T[], preferredId?: string | null,
+): { id: string; label: string; description?: string }[] {
+  const groups = new Map<string, { label: string; printers: T[] }>();
+  for (const printer of printers) {
+    if (printer.is_active === false || !printer.model?.trim()) continue;
+    const label = bambuModel(printer.model) || normalizedPrinterModel(printer.model);
+    const key = label;
+    const group = groups.get(key);
+    if (group) group.printers.push(printer);
+    else groups.set(key, { label, printers: [printer] });
+  }
+  return [...groups.values()].map(group => ({
+    id: group.printers.find(printer => printer.id === preferredId)?.id || group.printers.map(printer => printer.id).sort()[0],
+    label: group.label,
+  })).sort((left, right) => left.label.localeCompare(right.label, "pt-BR") || left.id.localeCompare(right.id));
 }
 
 /** Defaults stay visible and editable. Never choose a different machine model
@@ -88,6 +118,7 @@ export function recommendFilamentsForEstimate(
   items: { id: string; material_code?: string | null; color_hex?: string | null; is_active?: boolean }[],
 ): Record<string, string> {
   const result: Record<string, string> = {};
+  const multipleColors = new Set(estimate.materials.map(material => normalizedColor(material.colorHex)).filter(Boolean)).size > 1;
   for (const material of estimate.materials) {
     const code = material.materialCode?.trim().toUpperCase();
     if (!code) continue;
@@ -95,7 +126,7 @@ export function recommendFilamentsForEstimate(
     const color = normalizedColor(material.colorHex);
     const exact = color ? candidates.filter(item => normalizedColor(item.color_hex) === color) : [];
     if (exact.length === 1) result[material.key] = exact[0].id;
-    else if (!exact.length && candidates.length === 1) result[material.key] = candidates[0].id;
+    else if (!multipleColors && !exact.length && candidates.length === 1) result[material.key] = candidates[0].id;
   }
   return result;
 }
@@ -184,6 +215,7 @@ export function modelPricingFromMakerWorld(reference: MakerWorldPricingReference
     plateCount: plates.length || declaredPlates!, partCount,
     printerModelIds: variant.printer_model ? [variant.printer_model] : variant.printer_code ? [variant.printer_code] : [],
     nozzleDiameters: variant.nozzle_diameter != null ? [String(variant.nozzle_diameter)] : [],
+    needAms: profile.need_ams,
     materials: [...materials.values()],
   };
 }
@@ -249,6 +281,7 @@ export function modelPricingFromComposition(composition: ImportedComposition): M
     hours: timeSeconds / 3600, timeSeconds, weightGrams,
     plateCount: composition.plates.length, partCount,
     printerModelIds: [...printers], nozzleDiameters: [...nozzles],
+    needAms: null,
     materials: [...materials.values()],
   };
 }

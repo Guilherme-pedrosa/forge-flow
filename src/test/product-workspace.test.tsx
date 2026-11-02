@@ -14,7 +14,7 @@ vi.mock("@/lib/assembly", () => ({ assemblyKeys: ["products", "assembly_status",
 vi.mock("@/components/shared/SearchableItemSelect", () => ({ SearchableItemSelect: ({ label, value, onChange, options }: { label: string; value: string; onChange: (v: string) => void; options: { id: string; label: string }[] }) => <select aria-label={label} value={value} onChange={e => onChange(e.target.value)}><option value="">Escolher</option>{options.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}</select> }));
 vi.mock("@/components/production/AssemblyWorkspace", () => ({ AssemblyWorkspace: ({ onEditComposition }: { onEditComposition: () => void }) => <div>Montagem em contexto<button onClick={onEditComposition}>Voltar às peças</button></div> }));
 vi.mock("@/pages/comercial/ProductPrintSources", () => ({ default: () => <div>Arquivos de impressão</div> }));
-vi.mock("@/pages/comercial/ProductPrintPlates", () => ({ default: () => <div>Placas de impressão</div> }));
+vi.mock("@/pages/comercial/ProductPrintPlates", () => ({ default: () => <div>Placas de impressão<p>Preparação da impressão pendente</p></div> }));
 beforeEach(() => {
   mock.rows.mockReset(); mock.rpc.mockReset(); mock.status.mockReset();
   mock.status.mockResolvedValue({ product_id: "apple", name: "Maçã", individual_stock: true, enabled: true, components: [part] });
@@ -25,6 +25,29 @@ afterEach(cleanup);
 function mount(path = "/comercial/produtos/apple") { render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><MemoryRouter initialEntries={[path]}><Routes><Route path="/comercial/produtos/:productId" element={<ProductWorkspace />} /></Routes></MemoryRouter></QueryClientProvider>); }
 
 describe("Produto e suas peças no mesmo contexto", () => {
+  it("mantém custo e venda cadastrados visíveis quando a impressão ainda está pendente e usa um único editor", async () => {
+    mount("/comercial/produtos/apple?aba=impressao");
+    await screen.findByText("Preparação da impressão pendente");
+    const summary = screen.getByRole("region", { name: "Resumo do produto" });
+    expect(within(summary).getByText("Custo cadastrado").parentElement).toHaveTextContent(/R\$\s*3,00/);
+    expect(within(summary).getByText("Preço de venda cadastrado").parentElement).toHaveTextContent(/R\$\s*20,00/);
+    expect(screen.getByRole("link", { name: "Editar preço e produção" })).toHaveAttribute("href", "/comercial/produtos?produto=apple&editar=1&aba=valores&retorno=apple");
+    expect(screen.getByRole("link", { name: "Simulação avançada" })).not.toBeVisible();
+    fireEvent.click(screen.getByText("Mais opções", { selector: "summary" }));
+    expect(screen.getByRole("link", { name: "Simulação avançada" })).toHaveAttribute("href", "/comercial/precificacao?produto=apple");
+    fireEvent.click(screen.getByRole("tab", { name: "Descrição" }));
+    expect(screen.getAllByText("Custo cadastrado")).toHaveLength(1);
+    expect(screen.getAllByText("Preço de venda cadastrado")).toHaveLength(1);
+    expect(screen.getByRole("region", { name: "Resumo do produto" })).toBeVisible();
+  });
+  it("mantém custo ausente como pendência sem apagar o preço de venda já salvo", async () => {
+    const read = mock.rows.getMockImplementation()!;
+    mock.rows.mockImplementation(async (table, ...args) => table === "products" ? [{ ...parent, manual_cost_override: null, cost_estimate: null }, child] : read(table, ...args));
+    mount();
+    const summary = await screen.findByRole("region", { name: "Resumo do produto" });
+    expect(within(summary).getByText("Custo cadastrado").parentElement).toHaveTextContent("A completar");
+    expect(within(summary).getByText("Preço de venda cadastrado").parentElement).toHaveTextContent(/R\$\s*20,00/);
+  });
   it("mostra quantidade, estoque e ficha da peça e salva identidade e técnica juntas", async () => {
     mount();
     const card = await screen.findByRole("article", { name: "Peça Folha" });

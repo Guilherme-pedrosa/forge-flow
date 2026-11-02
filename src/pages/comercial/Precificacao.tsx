@@ -17,7 +17,7 @@ import { nonNegative, positiveInteger } from "@/lib/production";
 import { PricingModelFile } from "@/components/comercial/PricingModelFile";
 import { PricingMakerWorldInput } from "@/components/comercial/PricingMakerWorldInput";
 import type { ProductExternalImport } from "@/lib/makerworld-import";
-import { modelPricingFromMakerWorld, recommendPrinterForEstimate, recommendFilamentsForEstimate, printerMachineHourCost, printerMatchesSliceModels, type ModelPricingEstimate } from "@/lib/model-pricing";
+import { modelPricingFromMakerWorld, recommendPrinterForEstimate, recommendFilamentsForEstimate, printerMachineHourCost, printerMatchesSliceModels, printerModelOptions, type ModelPricingEstimate } from "@/lib/model-pricing";
 const money = (n: number) =>
   n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const initial: PricingInput = {
@@ -257,7 +257,7 @@ function FreePricingSimulator({ draft, setDraft, automatic }: { draft: FreePrici
         <div className="min-w-0 space-y-5">
           {automatic ? <section className="space-y-4 rounded-xl border bg-card p-4">
             <h2 className="font-semibold">O que vamos imprimir?</h2>
-            <PricingMakerWorldInput reference={draft.makerReference} onLoaded={reference => {
+            <PricingMakerWorldInput reference={draft.makerReference} ownedPrinters={printers.data ?? []} onLoaded={reference => {
               let estimate: ModelPricingEstimate | null = null, sourceError = "";
               if (reference) { try { estimate = modelPricingFromMakerWorld(reference); } catch (error) { sourceError = (error as Error).message; } }
               setDraft(current => ({ ...current, makerReference: reference, sourceFile: null, estimate, sourceError,
@@ -270,8 +270,8 @@ function FreePricingSimulator({ draft, setDraft, automatic }: { draft: FreePrici
                 filamentIds: { default: current.filamentIds.default ?? "" }, name: file.name.replace(/\.(?:stl|3mf)$/i, "").slice(0, 200) }))} />
             {draft.sourceError && <p role="alert" className="text-sm text-amber-800">{draft.sourceError}</p>}
             {draft.makerReference && draft.estimate && <p className="rounded-lg bg-muted p-3 text-sm">{draft.estimate.hours.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} h · {draft.estimate.weightGrams.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} g · {draft.estimate.plateCount} placa(s), conforme o perfil do MakerWorld.</p>}
-            {(draft.sourceFile || draft.estimate) && <SearchableItemSelect value={printerId} options={(printers.data ?? []).map(p => ({ id: p.id, label: p.name, description: p.model }))}
-              label="Impressora da impressão" emptyLabel="Qual impressora foi usada no fatiamento?" searchPlaceholder="Buscar impressora..."
+            {(draft.sourceFile || draft.estimate) && <SearchableItemSelect value={printerId} options={printerModelOptions(printers.data ?? [], printerId)}
+              label="Modelo de impressão" emptyLabel="Qual modelo foi usado no fatiamento?" searchPlaceholder="Buscar modelo..."
               onChange={id => setDraft(current => ({ ...current, printerId: id, confirmedPrinterId: id }))} />}
             {draft.sourceFile && !slots.length && <SearchableItemSelect value={draft.filamentIds.default ?? ""}
               options={(materials.data ?? []).map(m => ({ id: m.id, label: m.name, description: m.material_code ?? undefined }))}
@@ -595,13 +595,10 @@ function FreePricingSimulator({ draft, setDraft, automatic }: { draft: FreePrici
             </Button>
             {!automatic && <SearchableItemSelect
               value={printerId}
-              options={(printers.data || []).map((p) => ({
-                id: p.id,
-                label: p.name,
-              }))}
-              label="Impressora de referência"
-              emptyLabel="Preencher com uma impressora"
-              searchPlaceholder="Digitar impressora..."
+              options={printerModelOptions(printers.data || [], printerId)}
+              label="Modelo de referência"
+              emptyLabel="Usar os custos de um modelo cadastrado"
+              searchPlaceholder="Buscar modelo..."
               onChange={(id) => {
                 const p = printers.data?.find((p) => p.id === id);
                 setPrinterId(id);

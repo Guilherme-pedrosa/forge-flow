@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ImportedComponent, ImportedComposition } from "./imported-composition";
-import { modelPricingFromComposition, modelPricingFromMakerWorld, printerMachineHourCost, printerMatchesSliceModels, recommendFilamentsForEstimate, recommendPrinterForEstimate } from "./model-pricing";
+import { modelPricingFromComposition, modelPricingFromMakerWorld, printerMachineHourCost, printerMatchesSliceModels, printerModelOptions, recommendFilamentsForEstimate, recommendPrinterForEstimate } from "./model-pricing";
 import { normalizeMakerWorldDesign } from "../../supabase/functions/_shared/makerworld";
 
 function plate(index: number, grams = 20, seconds = 1800): ImportedComponent {
@@ -96,6 +96,19 @@ describe("printer pricing defaults", () => {
 });
 
 describe("sliced printer compatibility", () => {
+  it("recognizes an exact registered custom model without inventing model aliases", () => {
+    expect(printerMatchesSliceModels({ model: "A2L" }, [" a2l "])).toBe(true);
+    expect(printerMatchesSliceModels({ model: "A1" }, ["A2L"])).toBeNull();
+    expect(printerMatchesSliceModels({ model: "A2L" }, ["Bambu Lab A1"])).toBe(false);
+    expect(printerMatchesSliceModels({ name: "A2L" }, ["A2L"])).toBeNull();
+    expect(printerMatchesSliceModels({ model: "A2L" }, ["unknown"])).toBeNull();
+  });
+  it("groups registered models and retains a saved physical printer only as a model representative", () => {
+    const printers = [{ id: "a1-b", model: "A1", name: "Babi" }, { id: "a1-a", model: "Bambu Lab A1", name: "Bambina" },
+      { id: "a2l", model: "A2L", name: "Bentolino" }, { id: "inactive", model: "A1 mini", is_active: false }, { id: "unknown", name: "Sem modelo" }];
+    expect(printerModelOptions(printers)).toEqual([{ id: "a1-a", label: "A1" }, { id: "a2l", label: "A2L" }]);
+    expect(printerModelOptions(printers, "a1-b")[0]).toEqual({ id: "a1-b", label: "A1" });
+  });
   it("compares machine model rather than loose substrings", () => {
     expect(printerMatchesSliceModels({ brand: "Bambu Lab", model: "A1" }, ["Bambu Lab A1 0.4 nozzle"])).toBe(true);
     expect(printerMatchesSliceModels({ model: "A1" }, ["N2S"])).toBe(true);
@@ -123,6 +136,14 @@ function makerWorldReference() {
 }
 
 describe("MakerWorld pricing estimates", () => {
+  it("preserves the selected profile's explicit AMS requirement", () => {
+    const reference = makerWorldReference();
+    reference.profiles[0].need_ams = true;
+    expect(modelPricingFromMakerWorld(reference).needAms).toBe(true);
+    reference.profiles[0].need_ams = false;
+    expect(modelPricingFromMakerWorld(reference).needAms).toBe(false);
+    expect(modelPricingFromComposition(composition(plate(1))).needAms).toBeNull();
+  });
   it("uses one selected configuration's plate totals and material consumption without inventing slots or product yield", () => {
     const reference = makerWorldReference();
     reference.profiles[0].weight_grams = 999; // A profile total is never added to its plates.
@@ -203,5 +224,11 @@ describe("minimal-question resource suggestions", () => {
     expect(recommendFilamentsForEstimate(estimate(), [only, { ...only, id: "blue", color_hex: "#0000FF" }])).toEqual({});
     expect(recommendFilamentsForEstimate(estimate(), [{ ...only, is_active: false }])).toEqual({});
     expect(recommendFilamentsForEstimate(estimate(), [{ ...only, material_code: "PETG" }])).toEqual({});
+  });
+  it("requires exact colors for a multicolor model instead of assigning all colors to the only spool", () => {
+    const multi = estimate();
+    multi.materials.push({ ...multi.materials[0], key: "green", colorHex: "#00FF00" });
+    expect(recommendFilamentsForEstimate(multi, [{ id: "white", material_code: "PLA", color_hex: "#FFFFFF" }])).toEqual({});
+    expect(recommendFilamentsForEstimate(multi, [{ id: "red", material_code: "PLA", color_hex: "#FF0000FF" }])).toEqual({ [multi.materials[0].key]: "red" });
   });
 });

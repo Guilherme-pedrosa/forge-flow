@@ -20,7 +20,7 @@ beforeEach(() => {
   mock.rpc.mockImplementation(async (name: string, payload: Record<string, unknown>) => {
     if (name === "product_material_recipe_preview") return { data: preview(), error: null };
     if (name === "product_print_plate_preparation") return { data: { filaments: [], missing: [], material_cost_per_print: 2, energy_cost_per_print: .25, machine_cost_per_print: .75, known_cost_per_print: 3, non_material_cost_per_unit_suggestion: .25 }, error: null };
-    if (name === "save_product_print_plate") { mock.plates = [{ id: "plate-1", product_id: "product-1", tenant_id: "tenant-1", source_id: "source-1", is_active: true, ...(payload.p_plate as object) }]; return { data: "plate-1", error: null }; }
+    if (name === "save_product_print_plate") { mock.plates = [{ id: "plate-1", product_id: "product-1", tenant_id: "tenant-1", source_id: null, is_active: true, ...(payload.p_plate as object) }]; return { data: "plate-1", error: null }; }
     return mock.saveError ? { data: null, error: { message: "Resposta interrompida" } } : { data: "version-1", error: null };
   });
 });
@@ -50,10 +50,10 @@ describe("edição da composição física", () => {
     expect(screen.getByLabelText(/Demais custos por unidade:/)).toHaveValue("");
   });
   it("confirma rendimento e composição importada em uma gravação, preservando fechamento e reabertura", async () => {
-    mock.plates = [{ id: "plate-1", source_id: "source-1", is_active: true, plate_index: 1, label: "Base", units_per_plate: null, imported_filaments: [{ type: "PLA", color: "#FF0000", grams: 100 }] }];
+    mock.plates = [{ id: "plate-1", source_id: null, is_active: true, plate_index: 1, label: "Base", units_per_plate: null, imported_filaments: [{ type: "PLA", color: "#FF0000", grams: 100 }] }];
     let finish!: (result: unknown) => void; const base = mock.rpc.getMockImplementation()!;
     mock.rpc.mockImplementation((name: string, args: Record<string, unknown>) => name === "prepare_product_plate_recipe" ? new Promise(resolve => { finish = resolve; }) : base(name, args));
-    mount(<ProductPrintPlates productId="product-1" tenantId="tenant-1" sourceId="source-1" />);
+    mount(<ProductPrintPlates productId="product-1" tenantId="tenant-1" sourceId={null} />);
     fireEvent.click(await screen.findByRole("button", { name: "Preparar materiais e rendimento" }));
     const yieldInput = await screen.findByLabelText("Quantas unidades do produto esta impressão atende?");
     expect(screen.getByLabelText("Gramas / impressão inteira")).toHaveValue("100");
@@ -145,10 +145,10 @@ describe("edição da composição física", () => {
     await waitFor(() => expect(draft).toHaveBeenLastCalledWith(false));
   });
   it("atualiza o preview ao criar uma placa e permite definir sua receita imediatamente", async () => {
-    mount(<ProductPrintPlates productId="product-1" tenantId="tenant-1" sourceId="source-1" showProductTotal />);
+    mount(<ProductPrintPlates productId="product-1" tenantId="tenant-1" sourceId={null} showProductTotal />);
     await waitFor(() => expect(mock.rpc).toHaveBeenCalledWith("product_material_recipe_preview", { p_product_id: "product-1" }));
     const prior = mock.rpc.mock.calls.filter(call => call[0] === "product_material_recipe_preview").length;
-    fireEvent.click(screen.getByRole("button", { name: "Adicionar placa" }));
+    fireEvent.click(screen.getByRole("button", { name: "Adicionar placa manual" }));
     fireEvent.change(screen.getByLabelText("Unidades do produto atendidas por impressão desta placa"), { target: { value: "2" } });
     fireEvent.click(screen.getByRole("button", { name: "Salvar placa" }));
     await waitFor(() => expect(mock.rpc.mock.calls.filter(call => call[0] === "product_material_recipe_preview").length).toBeGreaterThan(prior));
@@ -170,27 +170,27 @@ describe("edição da composição física", () => {
     view.unmount(); expect(draft).toHaveBeenLastCalledWith(false);
   });
   it("o X e Fechar composição encerram a receita da placa durante edição e reabrem sem trava", async () => {
-    mock.plates = [{ id: "plate-1", product_id: "product-1", source_id: "source-1", plate_index: 1, units_per_plate: 2, label: "Base" }];
-    const busy = vi.fn(); const draft = vi.fn(); mount(<ProductPrintPlates productId="product-1" tenantId="tenant-1" sourceId="source-1" onBusyChange={busy} onDraftChange={draft} />);
+    mock.plates = [{ id: "plate-1", product_id: "product-1", source_id: null, plate_index: 1, units_per_plate: 2, label: "Base" }];
+    const busy = vi.fn(); const draft = vi.fn(); mount(<ProductPrintPlates productId="product-1" tenantId="tenant-1" sourceId={null} onBusyChange={busy} onDraftChange={draft} />);
     fireEvent.click(await screen.findByRole("button", { name: "Preparar materiais e rendimento" }));
     fireEvent.click(await screen.findByRole("button", { name: "Definir composição" }));
-    expect(busy).not.toHaveBeenCalledWith("source-1", true);
-    expect(draft).toHaveBeenLastCalledWith("source-1", true);
+    expect(busy).not.toHaveBeenCalledWith("manual", true);
+    expect(draft).toHaveBeenLastCalledWith("manual", true);
     const close = screen.getByRole("button", { name: "Fechar" });
     expect(close).toBeEnabled(); expect(close).toHaveClass("h-11", "w-11"); fireEvent.click(close);
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    expect(draft).toHaveBeenLastCalledWith("source-1", false);
+    expect(draft).toHaveBeenLastCalledWith("manual", false);
     fireEvent.click(screen.getByRole("button", { name: "Preparar materiais e rendimento" }));
     expect(await screen.findByRole("button", { name: "Definir composição" })).toBeEnabled();
     fireEvent.click(screen.getByRole("button", { name: "Fechar composição" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
   it("bloqueia o X somente durante a escrita e o libera após erro ou refetch pendente", async () => {
-    mock.plates = [{ id: "plate-1", product_id: "product-1", source_id: "source-1", plate_index: 1, units_per_plate: 2, label: "Base" }];
+    mock.plates = [{ id: "plate-1", product_id: "product-1", source_id: null, plate_index: 1, units_per_plate: 2, label: "Base" }];
     let resolveWrite!: (response: unknown) => void;
     let holdPreview = false;
     mock.rpc.mockImplementation((name: string) => name === "save_product_material_recipe" ? new Promise(resolve => { resolveWrite = resolve; }) : name === "product_material_recipe_preview" && holdPreview ? new Promise(() => {}) : Promise.resolve({ data: preview(), error: null }));
-    mount(<ProductPrintPlates productId="product-1" tenantId="tenant-1" sourceId="source-1" />);
+    mount(<ProductPrintPlates productId="product-1" tenantId="tenant-1" sourceId={null} />);
     fireEvent.click(await screen.findByRole("button", { name: "Preparar materiais e rendimento" }));
     fireEvent.click(await screen.findByRole("button", { name: "Definir composição" }));
     await screen.findByRole("option", { name: /PLA vermelho · PLA/ });

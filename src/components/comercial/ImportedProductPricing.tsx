@@ -6,35 +6,38 @@ import { supabase } from "@/integrations/supabase/client";
 import { allRows, currency } from "@/lib/finance";
 import { pricePrint } from "@/lib/print-pricing";
 import { readPricingSettings } from "@/lib/pricing-policy";
-import { printerMachineHourCost, printerMatchesSliceModels, recommendFilamentsForEstimate, recommendPrinterForEstimate, type ModelPricingEstimate } from "@/lib/model-pricing";
+import { printerMachineHourCost, printerMatchesSliceModels, printerModelOptions, recommendFilamentsForEstimate, type ModelPricingEstimate } from "@/lib/model-pricing";
 import { SearchableItemSelect } from "@/components/shared/SearchableItemSelect";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 
-export type ImportedProductPrice = { cost: number; price: number; materialId: string | null; printerId: string; quantity: number; marginPercent: number };
+export type ImportedProductPrice = { cost: number; price: number; materialId: string | null; materialSelections: Record<string, string>; printerId: string; quantity: number; marginPercent: number };
 interface Props {
   estimate: ModelPricingEstimate | null;
   error?: string;
   onCalculated: (value: ImportedProductPrice | null) => void;
   existingMaterialId?: string | null;
   existingPrinterId?: string | null;
+  initialQuantity?: number;
+  initialSelections?: Record<string, string>;
+  showTotals?: boolean;
 }
-type Selection = { source: string; printerId: string; materialIds: Record<string, string>; quantity: string; editing: boolean; singleConfirmed: boolean };
-const blankSelection = (source: string): Selection => ({ source, printerId: "", materialIds: {}, quantity: "1", editing: false, singleConfirmed: false });
+type Selection = { source: string; printerId: string; materialIds: Record<string, string>; quantity: string; editing: boolean; singleConfirmed: boolean; sameFilamentConfirmed: boolean; productionMode: "imported" | "separate" };
+const blankSelection = (source: string, quantity?: number, materialIds?: Record<string, string>): Selection => ({ source, printerId: "", materialIds: { ...materialIds }, quantity: quantity != null && Number.isInteger(quantity) && quantity > 0 && quantity <= 10000 ? String(quantity) : "1", editing: false, singleConfirmed: false, sameFilamentConfirmed: false, productionMode: "imported" });
 
 export function ImportedProductPricing(props: Props) {
   const { profile, user } = useAuth();
   return <ProductImportCalculation key={`${profile?.tenant_id ?? "none"}:${user?.id ?? "none"}`} {...props} />;
 }
 
-function ProductImportCalculation({ estimate, error, onCalculated, existingMaterialId, existingPrinterId }: Props) {
+function ProductImportCalculation({ estimate, error, onCalculated, existingMaterialId, existingPrinterId, initialQuantity, initialSelections, showTotals = true }: Props) {
   const { profile } = useAuth();
   const quantityId = useId();
   const source = JSON.stringify(estimate);
-  const [selection, setSelection] = useState(() => blankSelection(source));
-  const edits = selection.source === source ? selection : blankSelection(source);
+  const [selection, setSelection] = useState(() => blankSelection(source, initialQuantity, initialSelections));
+  const edits = selection.source === source ? selection : blankSelection(source, initialQuantity, initialSelections);
   const update = (patch: Partial<Selection>) => setSelection({ ...edits, ...patch });
   const deliver = useRef(onCalculated); deliver.current = onCalculated;
   const enabled = !!profile?.tenant_id && !!estimate;
@@ -48,11 +51,17 @@ function ProductImportCalculation({ estimate, error, onCalculated, existingMater
       .select("id,name,unit,avg_cost,material_code,color_hex").eq("is_active", true).eq("category", "filament")
       .in("unit", ["g", "kg"]).order("name").order("id").range(a, b)) });
   const slots = estimate?.materials ?? [];
-  const compatiblePrinters = estimate ? (printers.data ?? []).filter(printer => printerMatchesSliceModels(printer, estimate.printerModelIds) === true) : [];
-  const suggestedPrinter = estimate && compatiblePrinters.length === 1 ? recommendPrinterForEstimate(estimate, compatiblePrinters) : null;
+  const colorIdentity = (color: string | null) => color?.trim().toUpperCase().replace(/^(#[0-9A-F]{6})FF$/, "$1") || null;
+  const multipleColors = new Set(slots.map(slot => colorIdentity(slot.colorHex)).filter(Boolean)).size > 1;
+  const mixedPlate = slots.some((slot, index) => slots.slice(index + 1).some(other => slot.plateIndices.some(plate => other.plateIndices.includes(plate))));
+  const showProductionMode = estimate?.needAms === true || (multipleColors && mixedPlate);
+  const modelOptions = printerModelOptions(printers.data ?? [], edits.printerId || existingPrinterId);
+  const compatibleOptions = estimate ? modelOptions.filter(option => printerMatchesSliceModels(printers.data!.find(printer => printer.id === option.id)!, estimate.printerModelIds) === true) : [];
+  const suggestedOption = compatibleOptions.length === 1 ? compatibleOptions[0] : modelOptions.length === 1 && estimate
+    && printerMatchesSliceModels(printers.data!.find(printer => printer.id === modelOptions[0].id)!, estimate.printerModelIds) !== false ? modelOptions[0] : null;
   const existingPrinter = printers.data?.find(printer => printer.id === existingPrinterId
     && estimate && printerMatchesSliceModels(printer, estimate.printerModelIds) !== false);
-  const printerId = edits.printerId || existingPrinter?.id || suggestedPrinter?.id || "";
+  const printerId = edits.printerId || existingPrinter?.id || suggestedOption?.id || "";
   const printer = printers.data?.find(candidate => candidate.id === printerId);
   const suggestedFilaments = estimate ? recommendFilamentsForEstimate(estimate, filaments.data ?? []) : {};
   const unknownSingle = slots.length === 1 && !slots[0].materialCode && slots[0].slotId == null;
@@ -62,6 +71,7 @@ function ProductImportCalculation({ estimate, error, onCalculated, existingMater
     const id = edits.materialIds[slot.key] || existing?.id || suggestedFilaments[slot.key];
     return filaments.data?.find(item => item.id === id);
   });
+  const sameFilamentForAllColors = multipleColors && selectedFilaments.every(Boolean) && new Set(selectedFilaments.map(item => item!.id)).size === 1;
   const loading = !!estimate && (company.isPending || printers.isPending || filaments.isPending);
   let result: ImportedProductPrice | null = null, problem = error ?? "";
   if (!problem) {
@@ -73,10 +83,14 @@ function ProductImportCalculation({ estimate, error, onCalculated, existingMater
         throw new Error("Não foi possível carregar os custos cadastrados. Tente novamente.");
       if (!slots.length || !Number.isFinite(estimate.hours) || estimate.hours <= 0)
         throw new Error("O arquivo não informa tempo e consumo completos. Importe um 3MF fatiado.");
-      if (!printer) throw new Error("Escolha a impressora usada neste perfil de impressão.");
+      if (edits.productionMode === "separate")
+        throw new Error("Para produzir sem AMS em placas separadas, separe as peças no fatiador e importe o novo 3MF fatiado. O tempo e o consumo do perfil atual não servem para essa configuração.");
+      if (!printer) throw new Error("Escolha o modelo de impressão usado neste perfil.");
       if (printerMatchesSliceModels(printer, estimate.printerModelIds) === false)
         throw new Error("O perfil foi fatiado para outra impressora. Escolha uma impressora compatível ou outro perfil.");
       if (selectedFilaments.some(item => !item)) throw new Error("Escolha o filamento do estoque para calcular o custo.");
+      if (sameFilamentForAllColors && !edits.sameFilamentConfirmed)
+        throw new Error("O perfil tem cores diferentes. Confirme se deseja produzir todas com o mesmo filamento.");
       if (unknownSingle && !edits.singleConfirmed) throw new Error("Confirme que esta impressão usa um único filamento.");
       if (selectedFilaments.some((item, index) => !item?.material_code
         || (slots[index].materialCode ? item.material_code.trim().toUpperCase() !== slots[index].materialCode!.trim().toUpperCase()
@@ -100,7 +114,9 @@ function ProductImportCalculation({ estimate, error, onCalculated, existingMater
       });
       const materialIds = [...new Set(selectedFilaments.map(item => item!.id))];
       result = { cost: Math.round(priced.unit * 10000) / 10000, price: priced.suggested,
-        materialId: materialIds.length === 1 ? materialIds[0] : null, printerId: printer.id, quantity: priced.quantity, marginPercent: policy.target_margin! };
+        materialId: materialIds.length === 1 ? materialIds[0] : null,
+        materialSelections: Object.fromEntries(slots.map((slot, index) => [slot.key, selectedFilaments[index]!.id])),
+        printerId: printer.id, quantity: priced.quantity, marginPercent: policy.target_margin! };
     } catch (failure) { problem = failure instanceof Error ? failure.message : "Não foi possível calcular o custo."; }
   }
   const signature = JSON.stringify(result);
@@ -111,25 +127,29 @@ function ProductImportCalculation({ estimate, error, onCalculated, existingMater
     <h3 className="font-medium">Custo da impressão</h3>
     {estimate && <>
       <p className="text-sm text-muted-foreground">{estimate.hours.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} h · {estimate.weightGrams.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} g · {estimate.plateCount} placa(s) no perfil.</p>
+      <p className="text-xs text-muted-foreground">Tempo e gramas vêm do fatiamento escolhido. A purga só entra quando já está incluída no consumo informado pelo perfil; não acrescentamos uma taxa fixa de AMS.</p>
+      {estimate.needAms === true ? <p className="text-sm">Este perfil informa uso de AMS.</p> : estimate.needAms === false ? <p className="text-sm">Este perfil foi informado sem necessidade de AMS.</p> : mixedPlate ? <p className="text-sm">Há mais de um filamento na mesma placa. O arquivo não confirma se usa AMS.</p> : null}
+      {showProductionMode && <fieldset className="space-y-2"><legend className="text-sm font-medium">Como você vai produzir?</legend><div className="flex flex-wrap gap-2"><Button type="button" variant={edits.productionMode === "imported" ? "default" : "outline"} aria-pressed={edits.productionMode === "imported"} onClick={() => update({ productionMode: "imported" })}>Como o perfil importado (AMS/multicor)</Button><Button type="button" variant={edits.productionMode === "separate" ? "default" : "outline"} aria-pressed={edits.productionMode === "separate"} onClick={() => update({ productionMode: "separate" })}>Sem AMS, em placas separadas</Button></div></fieldset>}
       {!loading && showSelectors && <div className="space-y-3">
-        {(edits.editing || !printer) && <SearchableItemSelect label="Impressora do produto importado" value={printerId}
-          options={(printers.data ?? []).map(item => ({ id: item.id, label: item.name, description: item.model }))}
-          emptyLabel="Qual impressora você vai usar?" onChange={id => update({ printerId: id })} />}
+        {(edits.editing || !printer) && <SearchableItemSelect label="Modelo de impressão" value={printerId}
+          options={modelOptions}
+          emptyLabel="Qual modelo você vai usar?" onChange={id => update({ printerId: id })} />}
         {slots.map((slot, index) => (edits.editing || !selectedFilaments[index]) && <div key={slot.key} className="space-y-1">
           <p className="text-xs text-muted-foreground">{slot.name} · {slot.grams.toLocaleString("pt-BR")} g</p>
           <SearchableItemSelect label={`Filamento ${index + 1} do produto importado`} value={selectedFilaments[index]?.id ?? ""}
             options={(filaments.data ?? []).map(item => ({ id: item.id, label: item.name, description: item.material_code ?? undefined }))}
-            emptyLabel="Qual filamento do estoque você vai usar?" onChange={id => update({ materialIds: { ...edits.materialIds, [slot.key]: id } })} />
+            emptyLabel="Qual filamento do estoque você vai usar?" onChange={id => update({ materialIds: { ...edits.materialIds, [slot.key]: id }, sameFilamentConfirmed: false })} />
         </div>)}
       </div>}
-      {printer && <p className="text-sm">Impressora: {printer.name}</p>}
-      {selectedFilaments.every(Boolean) && !!slots.length && <p className="text-sm">Filamento: {[...new Set(selectedFilaments.map(item => item!.name))].join(", ")}</p>}
+      {printer && <p className="text-sm">Modelo: {modelOptions.find(option => option.id === printer.id)?.label || printer.model || "Modelo não informado"}</p>}
+      {selectedFilaments.every(Boolean) && !!slots.length && (slots.length === 1 ? <p className="text-sm">Filamento: {selectedFilaments[0]!.name}</p> : !showSelectors && <dl aria-label="Filamentos do perfil" className="space-y-2 text-sm">{slots.map((slot, index) => <div key={slot.key}><dt className="text-xs text-muted-foreground">{slot.name} · {slot.grams.toLocaleString("pt-BR")} g</dt><dd>{selectedFilaments[index]!.name}</dd></div>)}</dl>)}
       {unknownSingle && <div className="flex items-center gap-2"><Checkbox id={`${quantityId}-single`} checked={edits.singleConfirmed} onCheckedChange={checked => update({ singleConfirmed: checked === true })} /><Label htmlFor={`${quantityId}-single`}>Esta impressão usa um único filamento</Label></div>}
-      {!showSelectors && <Button type="button" variant="link" className="h-auto p-0" onClick={() => update({ editing: true })}>Alterar impressora ou filamento</Button>}
+      {sameFilamentForAllColors && <div className="flex items-center gap-2"><Checkbox id={`${quantityId}-same`} checked={edits.sameFilamentConfirmed} onCheckedChange={checked => update({ sameFilamentConfirmed: checked === true })} /><Label htmlFor={`${quantityId}-same`}>Quero produzir todas as cores com o mesmo filamento</Label></div>}
+      {!showSelectors && <Button type="button" variant="link" className="h-auto p-0" onClick={() => update({ editing: true })}>Alterar modelo ou filamento</Button>}
       <div><Label htmlFor={quantityId}>Produtos completos neste perfil</Label><Input id={quantityId} type="number" min={1} max={10000} step={1} value={edits.quantity} onChange={event => update({ quantity: event.target.value })} /></div>
       <p className="text-xs text-muted-foreground">Começa com um produto completo. Se este perfil produz mais unidades, ajuste a quantidade para dividir o custo.</p>
     </>}
-    {result ? <dl className="grid grid-cols-2 gap-3 text-sm" role="status">
+    {result ? showTotals && <dl className="grid grid-cols-2 gap-3 text-sm" role="status">
       <div><dt>Custo por peça</dt><dd className="font-semibold">{currency(result.cost)}</dd></div>
       <div><dt>Preço sugerido</dt><dd className="font-semibold">{currency(result.price)}</dd></div>
     </dl> : <p role={loading ? "status" : "alert"} className="text-sm text-muted-foreground">{problem}</p>}

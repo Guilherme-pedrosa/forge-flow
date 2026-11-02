@@ -5,9 +5,11 @@ import { useState, useMemo, useEffect, useRef, useCallback, lazy, Suspense } fro
 import { Link as RouterLink, useSearchParams, useLocation, useNavigate } from "react-router-dom";
 import { readPricingTransfer, type PricingTransfer } from "@/lib/print-pricing";
 import { catalogAmountInput, catalogPriceDraft } from "@/lib/catalog-pricing";
-import { modelPricingFromComposition, modelPricingFromMakerWorld, type ModelPricingEstimate } from "@/lib/model-pricing";
+import { modelPricingFromComposition, modelPricingFromMakerWorld, printerMatchesSliceModels, printerModelOptions, type ModelPricingEstimate } from "@/lib/model-pricing";
 import { bambuTaskPricing, bambuProjectPricing } from "@/lib/bambu-import-pricing";
 import { ImportedProductPricing, type ImportedProductPrice } from "@/components/comercial/ImportedProductPricing";
+import { SavedProductImportPricing } from "@/components/comercial/SavedProductImportPricing";
+import { buildImportedPricingPlan } from "@/lib/imported-pricing-plan";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -84,6 +86,7 @@ export default function Produtos() {
   const requestedProductId = searchParams.get("produto");
   const requestedLegacyEdit = searchParams.get("editar") === "1";
   const requestedFormTab = searchParams.get("aba");
+  const requestedPrintSourceId = searchParams.get("impressao");
   const openedFromLink = useRef<string | null>(null);
   const { profile } = useAuth();
   const { toast } = useToast();
@@ -124,6 +127,7 @@ export default function Produtos() {
   const [importCostReady, setImportCostReady] = useState(false);
   const importPricingVersion = useRef(0);
   const initializeImportedPrice = useRef(true);
+  const importedCalculation = useRef<ImportedProductPrice | null>(null);
   const [editorImportUrl, setEditorImportUrl] = useState("");
   const [readingMetadataFile, setReadingImportFile] = useState(false);
   const [readingModelFile, setReadingModelFile] = useState(false);
@@ -188,6 +192,8 @@ export default function Produtos() {
   const beginImportedPricing = useCallback((estimate: ModelPricingEstimate | null, error = "") => {
     importPricingVersion.current += 1;
     initializeImportedPrice.current = true;
+    importedCalculation.current = null;
+    if (estimate) setNumColors(String(Math.max(1, new Set(estimate.materials.map(material => material.colorHex || material.key)).size)));
     setImportedPricing({ estimate, error }); setAutomaticImportCost(true); setImportCostReady(false);
     setCostSource("manual"); setCostEstimate(""); setSalePrice(""); setMarkup(""); setPriceSource("manual");
   }, []);
@@ -200,6 +206,7 @@ export default function Produtos() {
   }, [beginImportedPricing]);
   const receiveImportCalculation = useCallback((value: ImportedProductPrice | null) => {
     if (!automaticImportCost) return;
+    importedCalculation.current = value;
     setImportCostReady(!!value);
     setCostEstimate(value ? catalogAmountInput(value.cost) : "");
     if (!value) { if (initializeImportedPrice.current) setSalePrice(""); return; }
@@ -303,7 +310,7 @@ export default function Produtos() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("printers")
-        .select("id, name, power_watts, depreciation_per_hour, maintenance_cost_per_hour, acquisition_cost, useful_life_hours")
+        .select("id, name, brand, model, power_watts, depreciation_per_hour, maintenance_cost_per_hour, acquisition_cost, useful_life_hours")
         .eq("tenant_id", profile!.tenant_id)
         .eq("is_active", true)
         .order("name");
@@ -373,6 +380,7 @@ export default function Produtos() {
   }, [products, search, showArchived, catalogView, parentsByPart, partsByProduct, productById]);
 
   const resetForm = () => {
+    importedCalculation.current = null;
     setImportedPricing(null); setAutomaticImportCost(false); setImportCostReady(false); initializeImportedPrice.current = true;
     setCostSource("manual"); setPriceSource("manual");
     importedModelFile.current = null; uploadedModelFile.current = null;
@@ -401,6 +409,7 @@ export default function Produtos() {
   }, [location.key]);
 
   const openEdit = (p: any) => {
+    importedCalculation.current = null;
     setImportedPricing(null); setAutomaticImportCost(false); setImportCostReady(false);
     setPhotoLink("");
     makerRequest.current?.abort(); setMakerWorldLoading(false);
@@ -561,13 +570,16 @@ export default function Produtos() {
     toast({ title: "Dados importados", description: "Confira o perfil importado para calcular o custo e o preço." });
   };
 
+  const ownedVariantIndex = (entry: any) => [entry, ...(entry?.variants || [])].findIndex(variant => printers.some(printer =>
+    printerMatchesSliceModels(printer, [variant?.printer_model || variant?.printer_code || ""]) === true));
   const importFromMakerWorld = (model: any, selectedProfileIndex?: number, selectedVariantIndex = 0) => {
     const profiles = Array.isArray(model.profiles) ? model.profiles : [];
     if (selectedProfileIndex == null && profiles.length > 0) {
       setMakerModelToImport(model);
-      const requested = profiles.findIndex((entry: any) => entry.instance_id === model.selected_instance_id);
-      setMakerOptionIndex(String(Math.max(0, requested)));
-      setMakerVariantIndex("0");
+      const requested = profiles.findIndex((entry: any) => entry.instance_id === model.selected_instance_id && ownedVariantIndex(entry) >= 0);
+      const initial = requested >= 0 ? requested : profiles.findIndex((entry: any) => ownedVariantIndex(entry) >= 0);
+      setMakerOptionIndex(initial >= 0 ? String(initial) : "");
+      setMakerVariantIndex(initial >= 0 ? String(ownedVariantIndex(profiles[initial])) : "");
       setBambuImportOpen(false);
       setMakerOptionOpen(true);
       return;
@@ -815,6 +827,10 @@ ${selected?.name ? `Perfil: ${selected.name}
       }
       savedComposition = { ...savedComposition, file_path: uploadedModelFile.current.path, file_name: modelFile.name };
     }
+    const importPricingPlan = automaticImportCost && importedCalculation.current && importedPricing?.estimate && savedComposition
+      ? buildImportedPricingPlan(importedPricing.estimate, savedComposition, importedCalculation.current,
+        importedPricing.estimate.source === "makerworld" ? externalImport : null)
+      : null;
     const payload = {
       p_product_id: productId,
       p_product: {
@@ -842,6 +858,7 @@ ${selected?.name ? `Perfil: ${selected.name}
         extras: buildExtrasPayload(),
         ...(externalImport ? { external_import: externalImport } : {}),
         ...(savedComposition ? { [savedComposition.profile_id.startsWith("local:") ? "file_composition" : "import_composition"]: savedComposition } : {}),
+        ...(importPricingPlan ? { import_pricing: importPricingPlan } : {}),
       },
       p_photos: photos,
     };
@@ -942,10 +959,15 @@ ${selected?.name ? `Perfil: ${selected.name}
       <TabsContent forceMount value="valores" className={tabClass}>
         <div><h3 className="text-lg font-semibold">Custo e preço de venda</h3><p className="text-sm text-muted-foreground">Confira o custo e informe quanto deseja acrescentar sobre ele. O preço é calculado aqui e gravado ao salvar o produto.</p></div>
         {automaticImportCost && importedPricing && <div className="space-y-2">
-          <ImportedProductPricing key={importPricingVersion.current} estimate={importedPricing.estimate} error={importedPricing.error} onCalculated={receiveImportCalculation} />
+          <ImportedProductPricing key={importPricingVersion.current} estimate={importedPricing.estimate} error={importedPricing.error} onCalculated={receiveImportCalculation} showTotals={false}
+            initialQuantity={compositionImport?.plates.length === 1 ? compositionImport.plates[0].units_per_plate ?? undefined : undefined} />
           {!importedPricing.estimate && <Button type="button" variant="outline" onClick={() => setFormTab("producao")}>Importar ou fatiar o 3MF para calcular</Button>}
           <Button type="button" variant="link" className="px-0" onClick={() => { setAutomaticImportCost(false); setImportCostReady(false); }}>Prefiro informar o custo manualmente</Button>
         </div>}
+        {editItem?.id && !automaticImportCost && <SavedProductImportPricing key={editItem.id} productId={editItem.id}
+          externalImport={externalImport} savedPlan={currentProduct?.catalog_details?.import_pricing ?? editItem.catalog_details?.import_pricing}
+          existingMaterialId={materialId} initialQuantity={Number(printsPerPlate)} requestedSourceId={requestedPrintSourceId}
+          onBusy={setRecipeBusy} />}
         {(currentProduct?.recipe_configured || costSource === "composition") && <div className="space-y-2">
           <Label htmlFor="product-cost-source">Origem do custo</Label>
           <select id="product-cost-source" className="h-11 w-full rounded-md border bg-background px-3" value={costSource} onChange={e => setCostSource(e.target.value as "manual" | "composition")}>
@@ -1078,7 +1100,7 @@ ${selected?.name ? `Perfil: ${selected.name}
         </div>
         <div><Label htmlFor="product-grams">Peso por placa (g)</Label><Input id="product-grams" type="number" min="0" step="0.01" value={estGrams} onChange={(e) => setEstGrams(e.target.value)} placeholder="45" /></div>
         <div><Label>Impressora de referência</Label>
-          <SearchableItemSelect label="Impressora de referência do produto" value={printerId} onChange={setPrinterId} emptyLabel="Selecionar para calcular" options={printers.map(p => ({ id: p.id, label: p.name }))} />
+          <SearchableItemSelect label="Modelo de referência do produto" value={printerId} onChange={setPrinterId} emptyLabel="Selecionar modelo para calcular" options={printerModelOptions(printers, printerId)} />
         </div>
         <div><Label htmlFor="product-hours">Impressão por placa (h)</Label><Input id="product-hours" type="number" min="0" step="0.1" value={estTime} onChange={(e) => setEstTime(e.target.value)} placeholder="2.5" /></div>
         <div><Label htmlFor="product-post">Acabamento por placa (min)</Label><Input id="product-post" type="number" min="0" value={postMinutes} onChange={(e) => setPostMinutes(e.target.value)} placeholder="15" /></div>
@@ -1758,18 +1780,19 @@ ${selected?.name ? `Perfil: ${selected.name}
           <DialogHeader className="pr-10">
             <DialogTitle>Escolha a opção de impressão</DialogTitle>
             <DialogDescription>
-              Escolha o perfil e a impressora. Todas as fotos, placas e opções ficam guardadas no cadastro; as previsões variam conforme esta escolha.
+              Escolha o perfil para um dos modelos que você possui. Tempo, consumo e uso de AMS vêm desse fatiamento.
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-2 max-h-[50vh] overflow-y-auto">
             {(makerModelToImport?.profiles || []).map((p: any, idx: number) => {
+              if (ownedVariantIndex(p) < 0) return null;
               const isActive = makerOptionIndex === String(idx);
               return (
                 <button
                   key={`${makerModelToImport?.id || "model"}-${idx}`}
                   type="button"
-                  onClick={() => { setMakerOptionIndex(String(idx)); setMakerVariantIndex("0"); }}
+                  onClick={() => { setMakerOptionIndex(String(idx)); setMakerVariantIndex(String(ownedVariantIndex(p))); }}
                   className={cn(
                     "w-full rounded-lg border p-3 text-left transition-colors",
                     isActive ? "border-primary bg-primary/5" : "hover:bg-muted/40"
@@ -1777,6 +1800,7 @@ ${selected?.name ? `Perfil: ${selected.name}
                 >
                   <p className="text-sm font-medium text-foreground">{p.name || `Opção ${idx + 1}`}</p>
                   <div className="mt-1 flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
+                    {typeof p.need_ams === "boolean" && <span>{p.need_ams ? "Com AMS" : "Sem AMS"}</span>}
                     {p.plates > 0 && <span>📋 {p.plates} placas</span>}
                     {p.filaments?.length > 0 && <span>🎨 {p.filaments.length} cores</span>}
                     {p.weight_grams > 0 && <span>⚖ {p.weight_grams}g</span>}
@@ -1787,7 +1811,8 @@ ${selected?.name ? `Perfil: ${selected.name}
             })}
           </div>
 
-          <MakerWorldPrinterOption profile={makerModelToImport?.profiles?.[Number(makerOptionIndex)]} value={makerVariantIndex} onChange={setMakerVariantIndex} />
+          {makerOptionIndex === "" && <p role="status" className="text-sm text-muted-foreground">Não há perfil para os seus modelos cadastrados. Importe um 3MF fatiado para a sua impressora.</p>}
+          <MakerWorldPrinterOption profile={makerOptionIndex !== "" ? makerModelToImport?.profiles?.[Number(makerOptionIndex)] : undefined} value={makerVariantIndex} onChange={setMakerVariantIndex} ownedPrinters={printers} />
           <DialogFooter className="gap-2">
             <Button className="min-h-11" variant="outline" onClick={() => {
               setMakerOptionOpen(false);
@@ -1801,7 +1826,7 @@ ${selected?.name ? `Perfil: ${selected.name}
                 if (!makerModelToImport) return;
                 importFromMakerWorld(makerModelToImport, Number(makerOptionIndex), Number(makerVariantIndex));
               }}
-              disabled={!makerModelToImport}
+              disabled={!makerModelToImport || makerOptionIndex === "" || makerVariantIndex === ""}
             >
               Importar esta opção
             </Button>

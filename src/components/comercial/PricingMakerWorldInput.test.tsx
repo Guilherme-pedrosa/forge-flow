@@ -51,6 +51,58 @@ describe("PricingMakerWorldInput", () => {
     expect(screen.getByRole("button", { name: "Trocar perfil de impressão" })).toBeInTheDocument();
   });
 
+  it("automatically selects the owned A1 model and hides unowned P1S options", async () => {
+    mock.rpc.mockImplementation(async (name: string) => ({ data: name === "request_makerworld_import" ? "request-1" : { status: "ready", payload: design(true) }, error: null }));
+    const loaded = vi.fn();
+    render(<PricingMakerWorldInput reference={null} onLoaded={loaded} ownedPrinters={[
+      { name: "A1 oficina 1", brand: "Bambu Lab", model: "A1" },
+      { name: "A1 oficina 2", brand: "Bambu Lab", model: "A1" },
+    ]} />);
+    // Even a pasted P1S profile cannot select a model absent from the fleet.
+    enter("https://makerworld.com/pt/models/456#profileId-102"); submit();
+    await waitFor(() => expect(completeCalls(loaded)).toHaveLength(1));
+    expect(completeCalls(loaded)[0][0]).toMatchObject({ selected_profile_id: "101", selected_variant_profile_id: "501" });
+    expect(screen.queryByLabelText("Qual perfil de impressão você vai usar?")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Trocar perfil de impressão" })).not.toBeInTheDocument();
+    expect(screen.getByText(/Perfil A1/)).toBeVisible();
+    expect(screen.queryByText(/P1S/)).not.toBeInTheDocument();
+  });
+
+  it("uses the fleet that finished loading while the MakerWorld request was pending", async () => {
+    let finish!: (value: { data: unknown; error: null }) => void;
+    mock.rpc.mockImplementation((name: string) => name === "request_makerworld_import"
+      ? Promise.resolve({ data: "request-1", error: null }) : new Promise(resolve => { finish = resolve; }));
+    const loaded = vi.fn();
+    const result = render(<PricingMakerWorldInput reference={null} onLoaded={loaded} ownedPrinters={[]} />);
+    enter(); submit(); await waitFor(() => expect(mock.rpc).toHaveBeenCalledTimes(2));
+    result.rerender(<PricingMakerWorldInput reference={null} onLoaded={loaded} ownedPrinters={[
+      { brand: "Bambu Lab", model: "A1" }, { brand: "Bambu Lab", model: "P1S" },
+    ]} />);
+    await act(async () => { finish({ data: { status: "ready", payload: design(true) }, error: null }); });
+    const chooser = await screen.findByLabelText("Qual perfil de impressão você vai usar?");
+    expect(chooser).toHaveTextContent("Perfil A1");
+    expect(chooser).toHaveTextContent("Perfil P1S");
+    expect(completeCalls(loaded)).toHaveLength(0);
+    fireEvent.change(chooser, { target: { value: "1:0" } });
+    expect(completeCalls(loaded)[0][0]).toMatchObject({ selected_profile_id: "102", selected_variant_profile_id: "502" });
+  });
+
+  it("offers the loaded profiles when fleet data arrives after the import response", async () => {
+    mock.rpc.mockImplementation(async (name: string) => ({ data: name === "request_makerworld_import" ? "request-1" : { status: "ready", payload: design(true) }, error: null }));
+    const loaded = vi.fn();
+    const result = render(<PricingMakerWorldInput reference={null} onLoaded={loaded} ownedPrinters={[]} />);
+    enter(); submit();
+    await screen.findByText(/Não há perfil disponível para os modelos cadastrados/);
+    result.rerender(<PricingMakerWorldInput reference={null} onLoaded={loaded} ownedPrinters={[
+      { brand: "Bambu Lab", model: "A1" }, { brand: "Bambu Lab", model: "P1S" },
+    ]} />);
+    const chooser = await screen.findByLabelText("Qual perfil de impressão você vai usar?");
+    expect(chooser).toHaveTextContent("Perfil A1");
+    expect(chooser).toHaveTextContent("Perfil P1S");
+    fireEvent.change(chooser, { target: { value: "0:0" } });
+    expect(completeCalls(loaded).at(-1)?.[0]).toMatchObject({ selected_profile_id: "101", selected_variant_profile_id: "501" });
+  });
+
   it("uses a specific profile already selected in the pasted link without asking again", async () => {
     mock.rpc.mockImplementation(async (name: string) => ({ data: name === "request_makerworld_import" ? "request-1" : { status: "ready", payload: design(true) }, error: null }));
     const loaded = vi.fn(); render(<PricingMakerWorldInput reference={null} onLoaded={loaded} />);

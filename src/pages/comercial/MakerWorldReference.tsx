@@ -3,18 +3,21 @@ import { ExternalLink, Image as ImageIcon } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import type { ProductExternalImport } from "@/lib/makerworld-import";
 import type { MakerWorldVariant, MakerWorldProfile } from "../../../supabase/functions/_shared/makerworld";
+import { printerMatchesSliceModels } from "@/lib/model-pricing";
 
 const grams = (value: number | null | undefined) => value == null ? "Peso não informado" : `${value.toLocaleString("pt-BR")} g`;
 const duration = (value: number | null | undefined) => value == null ? "Tempo não informado" : `${Math.floor(value / 3600)}h ${Math.ceil(value % 3600 / 60)}min`;
 
-export function MakerWorldPrinterOption({ profile, value, onChange }: { profile?: MakerWorldProfile; value: string; onChange: (value: string) => void }) {
+export function MakerWorldPrinterOption({ profile, value, onChange, ownedPrinters }: { profile?: MakerWorldProfile; value: string; onChange: (value: string) => void;
+  ownedPrinters?: { model?: string | null; brand?: string | null; name?: string }[] }) {
   if (!profile) return null;
   return <div className="space-y-2"><label htmlFor="maker-printer-variant" className="text-sm font-medium">Configuração da impressora</label>
     <select id="maker-printer-variant" className="min-h-11 w-full min-w-0 rounded-lg border bg-background px-3 text-base" value={value} onChange={event => onChange(event.target.value)}>
       <option value="" disabled>Selecione a impressora e o bico</option>
-      {[profile, ...profile.variants].map((variant, index) => <option key={index} value={index}>{variant.printer_model || "Impressora não informada"}{variant.nozzle_diameter ? ` · bico ${variant.nozzle_diameter} mm` : ""} · {grams(variant.weight_grams)} · {duration(variant.time_seconds)}</option>)}
+      {[profile, ...profile.variants].map((variant, index) => (!ownedPrinters || ownedPrinters.some(printer => printerMatchesSliceModels(printer,
+        [variant.printer_model || variant.printer_code || ""]) === true)) && <option key={index} value={index}>{variant.printer_model || "Modelo não informado"}{variant.nozzle_diameter ? ` · bico ${variant.nozzle_diameter} mm` : ""} · {grams(variant.weight_grams)} · {duration(variant.time_seconds)}</option>)}
     </select>
-    <p className="text-xs text-muted-foreground">Use a configuração correspondente à impressora que produzirá o item.</p>
+    <p className="text-xs text-muted-foreground">{profile.need_ams === true ? "Perfil com AMS. " : profile.need_ams === false ? "Perfil sem AMS. " : ""}Use o fatiamento correspondente ao modelo e ao modo de produção.</p>
   </div>;
 }
 
