@@ -5,6 +5,9 @@ import { useState, useMemo, useEffect, useRef, useCallback, lazy, Suspense } fro
 import { Link as RouterLink, useSearchParams, useLocation, useNavigate } from "react-router-dom";
 import { readPricingTransfer, type PricingTransfer } from "@/lib/print-pricing";
 import { catalogAmountInput, catalogPriceDraft } from "@/lib/catalog-pricing";
+import { modelPricingFromComposition, modelPricingFromMakerWorld, type ModelPricingEstimate } from "@/lib/model-pricing";
+import { bambuTaskPricing, bambuProjectPricing } from "@/lib/bambu-import-pricing";
+import { ImportedProductPricing, type ImportedProductPrice } from "@/components/comercial/ImportedProductPricing";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/contexts/AuthContext";
@@ -116,13 +119,18 @@ export default function Produtos() {
   const [makerVariantIndex, setMakerVariantIndex] = useState("0");
   const [externalImport, setExternalImport] = useState<ProductExternalImport | null>(null);
   const [compositionImport, setCompositionImport] = useState<ImportedComposition | null>(null);
+  const [importedPricing, setImportedPricing] = useState<{ estimate: ModelPricingEstimate | null; error: string } | null>(null);
+  const [automaticImportCost, setAutomaticImportCost] = useState(false);
+  const [importCostReady, setImportCostReady] = useState(false);
+  const importPricingVersion = useRef(0);
+  const initializeImportedPrice = useRef(true);
   const [editorImportUrl, setEditorImportUrl] = useState("");
   const [readingMetadataFile, setReadingImportFile] = useState(false);
   const [readingModelFile, setReadingModelFile] = useState(false);
   const importedModelFile = useRef<File | null>(null);
   const uploadedModelFile = useRef<{ file: File; path: string } | null>(null);
   const receiveModelFile = useCallback((file: File) => { importedModelFile.current = file; uploadedModelFile.current = null; }, []);
-  const reportModelReading = useCallback((busy: boolean) => { setReadingModelFile(busy); if (busy) { importedModelFile.current = null; uploadedModelFile.current = null; setCompositionImport(previous => previous?.profile_id.startsWith("local:") ? null : previous); } }, []);
+  const reportModelReading = useCallback((busy: boolean) => { setReadingModelFile(busy); if (busy) { importedModelFile.current = null; uploadedModelFile.current = null; setCompositionImport(previous => previous?.profile_id.startsWith("local:") ? null : previous); setImportCostReady(false); setCostEstimate(""); setSalePrice(""); setImportedPricing(null); } }, []);
   const readingImportFile = readingMetadataFile || readingModelFile;
   const makerRequest = useRef<AbortController | null>(null);
   const makerImportTarget = useRef<string | null>(null);
@@ -177,6 +185,35 @@ export default function Produtos() {
   const [extras, setExtras] = useState<ExtraItem[]>([]);
   const [printsPerPlate, setPrintsPerPlate] = useState("1");
   const [kitComponents, setKitComponents] = useState<{ productId: string; qty: number }[]>([]);
+  const beginImportedPricing = useCallback((estimate: ModelPricingEstimate | null, error = "") => {
+    importPricingVersion.current += 1;
+    initializeImportedPrice.current = true;
+    setImportedPricing({ estimate, error }); setAutomaticImportCost(true); setImportCostReady(false);
+    setCostSource("manual"); setCostEstimate(""); setSalePrice(""); setMarkup(""); setPriceSource("manual");
+  }, []);
+  const receiveImportedComposition = useCallback((composition: ImportedComposition) => {
+    setCompositionImport(composition);
+    try {
+      beginImportedPricing(modelPricingFromComposition(composition));
+      setFormTab("valores");
+    } catch (error) { beginImportedPricing(null, (error as Error).message); }
+  }, [beginImportedPricing]);
+  const receiveImportCalculation = useCallback((value: ImportedProductPrice | null) => {
+    if (!automaticImportCost) return;
+    setImportCostReady(!!value);
+    setCostEstimate(value ? catalogAmountInput(value.cost) : "");
+    if (!value) { if (initializeImportedPrice.current) setSalePrice(""); return; }
+    setMaterialId(value.materialId ?? ""); setPrinterId(value.printerId);
+    if (importedPricing?.estimate?.plateCount === 1 && value.materialId) {
+      setEstGrams(String(importedPricing.estimate.weightGrams)); setEstTime(String(importedPricing.estimate.hours)); setPrintsPerPlate(String(value.quantity));
+    } else if (importedPricing?.estimate) { setEstGrams(""); setEstTime(""); }
+    if (initializeImportedPrice.current) {
+      const percentage = value.marginPercent / (100 - value.marginPercent) * 100;
+      if (Number.isFinite(percentage) && percentage <= 100000) { setMarkup(String(Number(percentage.toPrecision(12)))); setPriceSource("markup"); }
+      else { setSalePrice(String(value.price)); setPriceSource("manual"); }
+      initializeImportedPrice.current = false;
+    }
+  }, [automaticImportCost, importedPricing]);
 
   // Standalone Kit Builder dialog
   const [kitBuilderOpen, setKitBuilderOpen] = useState(false);
@@ -336,6 +373,7 @@ export default function Produtos() {
   }, [products, search, showArchived, catalogView, parentsByPart, partsByProduct, productById]);
 
   const resetForm = () => {
+    setImportedPricing(null); setAutomaticImportCost(false); setImportCostReady(false); initializeImportedPrice.current = true;
     setCostSource("manual"); setPriceSource("manual");
     importedModelFile.current = null; uploadedModelFile.current = null;
     pricingTransfer.current = null;
@@ -363,6 +401,7 @@ export default function Produtos() {
   }, [location.key]);
 
   const openEdit = (p: any) => {
+    setImportedPricing(null); setAutomaticImportCost(false); setImportCostReady(false);
     setPhotoLink("");
     makerRequest.current?.abort(); setMakerWorldLoading(false);
     setExternalImport(readProductExternalImport(p.external_import));
@@ -499,7 +538,9 @@ export default function Produtos() {
     setNotes(`Importado da Bambu Lab — Task ID: ${task.bambu_task_id}\nPeso e tempo previstos pelo fatiador para a placa; consumo realizado é apurado na produção.`);
     setBambuImportOpen(false);
     setCreateOpen(true);
-    toast({ title: "Dados importados", description: "Preencha custo e preço para finalizar o cadastro." });
+    const pricing = bambuTaskPricing(task);
+    beginImportedPricing(pricing.estimate, pricing.error); setFormTab("valores");
+    toast({ title: "Dados importados", description: "O custo será calculado com os filamentos e as tarifas cadastrados." });
   };
 
   const importFromBambuProject = (proj: any) => {
@@ -515,7 +556,9 @@ export default function Produtos() {
     setNotes(`Importado da Bambu Lab — Projeto: ${proj.project_id}${filamentInfo ? `\nFilamentos: ${filamentInfo}` : ""}`);
     setBambuImportOpen(false);
     setCreateOpen(true);
-    toast({ title: "Dados importados", description: "Preencha custo e preço para finalizar o cadastro." });
+    const pricing = bambuProjectPricing(proj);
+    beginImportedPricing(pricing.estimate, pricing.error); setFormTab("valores");
+    toast({ title: "Dados importados", description: "Confira o perfil importado para calcular o custo e o preço." });
   };
 
   const importFromMakerWorld = (model: any, selectedProfileIndex?: number, selectedVariantIndex = 0) => {
@@ -541,6 +584,10 @@ export default function Produtos() {
     const imported = externalImportReference(model, model.source_url, index);
     imported.selected_variant_profile_id = variant?.profile_id || null;
     setExternalImport(imported);
+    if (!updating) {
+      try { beginImportedPricing(modelPricingFromMakerWorld(imported)); }
+      catch (error) { beginImportedPricing(null, (error as Error).message); }
+    }
     const composition = importedComposition(imported);
     setCompositionImport(composition && updating ? { ...composition, enabled: !!editItem.assembly_enabled } : composition);
     setDescription(previous => updating && previous.trim() ? previous : model.description || "");
@@ -556,6 +603,7 @@ ${selected?.name ? `Perfil: ${selected.name}
     }
     setMakerOptionOpen(false); setMakerModelToImport(null); setBambuImportOpen(false);
     if (!updating) setCreateOpen(true);
+    setFormTab("valores");
     if (updating) toast({ title: "Dados carregados para revisão", description: `${images.length} fotos e ${variant?.plate_details?.length || 0} placas nesta configuração.` });
   };
 
@@ -728,6 +776,7 @@ ${selected?.name ? `Perfil: ${selected.name}
     if (uploadingPhoto || photosLoading || printSourceBusy || makerWorldLoading || translatingDescription || readingImportFile) throw new Error("Aguarde o carregamento das fotos, fontes e descrição antes de salvar.");
     if (costSource === "composition" && !compositionReady) throw new Error("Atualize e complete a composição antes de salvar o custo calculado, ou informe um custo manual.");
     if (priceDraft.error) throw new Error(priceDraft.error);
+    if (automaticImportCost && !importCostReady) throw new Error("Conclua o cálculo dos dados importados ou escolha informar o custo manualmente.");
     if (priceSource === "markup" && priceDraft.price == null) throw new Error("Informe o custo e o lucro sobre o custo para calcular o preço de venda.");
     const baseCost = resolvedCostInput.trim() ? nonNegative(resolvedCostInput, "Preço de custo") : null;
     const expenses = nonNegative(accessoryCost, "Despesas acessórias") + nonNegative(otherCost, "Outras despesas");
@@ -892,6 +941,11 @@ ${selected?.name ? `Perfil: ${selected.name}
       </TabsContent>
       <TabsContent forceMount value="valores" className={tabClass}>
         <div><h3 className="text-lg font-semibold">Custo e preço de venda</h3><p className="text-sm text-muted-foreground">Confira o custo e informe quanto deseja acrescentar sobre ele. O preço é calculado aqui e gravado ao salvar o produto.</p></div>
+        {automaticImportCost && importedPricing && <div className="space-y-2">
+          <ImportedProductPricing key={importPricingVersion.current} estimate={importedPricing.estimate} error={importedPricing.error} onCalculated={receiveImportCalculation} />
+          {!importedPricing.estimate && <Button type="button" variant="outline" onClick={() => setFormTab("producao")}>Importar ou fatiar o 3MF para calcular</Button>}
+          <Button type="button" variant="link" className="px-0" onClick={() => { setAutomaticImportCost(false); setImportCostReady(false); }}>Prefiro informar o custo manualmente</Button>
+        </div>}
         {(currentProduct?.recipe_configured || costSource === "composition") && <div className="space-y-2">
           <Label htmlFor="product-cost-source">Origem do custo</Label>
           <select id="product-cost-source" className="h-11 w-full rounded-md border bg-background px-3" value={costSource} onChange={e => setCostSource(e.target.value as "manual" | "composition")}>
@@ -907,7 +961,7 @@ ${selected?.name ? `Perfil: ${selected.name}
           </div>}
         </div>}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div><Label htmlFor="product-cost">Preço de custo (R$)</Label><Input id="product-cost" inputMode="decimal" value={resolvedCostInput} readOnly={costSource === "composition"} onChange={e => setCostEstimate(e.target.value)} placeholder={costSource === "composition" ? "Aguardando composição" : "0,00"} /></div>
+        <div><Label htmlFor="product-cost">Preço de custo (R$)</Label><Input id="product-cost" inputMode="decimal" value={resolvedCostInput} readOnly={costSource === "composition" || automaticImportCost} onChange={e => setCostEstimate(e.target.value)} placeholder={costSource === "composition" || automaticImportCost ? "Aguardando cálculo" : "0,00"} /></div>
         <div><Label htmlFor="product-markup">Lucro sobre o custo (%)</Label><Input id="product-markup" inputMode="decimal" value={markup} onChange={e => { setMarkup(e.target.value); setPriceSource("markup"); }} placeholder="Ex.: 50"/><p className="mt-1 text-xs text-muted-foreground">Ex.: custo de R$ 10 + 50% = venda de R$ 15. Esse percentual não é a margem sobre a venda.</p></div>
       </div>
 
@@ -987,8 +1041,8 @@ ${selected?.name ? `Perfil: ${selected.name}
 </TabsContent>
       <TabsContent forceMount value="producao" className={tabClass}>
         {editItem?.is_component && profile?.tenant_id && <PieceTechnicalSheet key={`technical-${editItem.id}`} productId={editItem.id} name={editItem.name} tenantId={profile.tenant_id} showSummary />}
-        {formTab === "producao" && (!editItem || compositionImport) && <Suspense fallback={<p>Carregando leitor de arquivos…</p>}><ModelFileInput current={compositionImport?.profile_id.startsWith("local:") ? undefined : compositionImport || undefined} onChange={setCompositionImport} onFileReady={receiveModelFile} onBusyChange={reportModelReading} disabled={readingMetadataFile} /></Suspense>}
-        {compositionImport && <ImportedCompositionPreview key={compositionImport.profile_id} value={compositionImport} onChange={setCompositionImport} onBusyChange={setReadingImportFile} onFileReady={receiveModelFile} />}<p className="rounded-lg bg-muted p-3 text-sm">Configuração opcional para produtos fabricados. Custo, venda e estoque podem ser cadastrados sem composição.</p>      {productionReference && (
+        {formTab === "producao" && (!editItem || compositionImport) && <Suspense fallback={<p>Carregando leitor de arquivos…</p>}><ModelFileInput current={compositionImport?.profile_id.startsWith("local:") ? undefined : compositionImport || undefined} onChange={setCompositionImport} onParsed={receiveImportedComposition} onFileReady={receiveModelFile} onBusyChange={reportModelReading} disabled={readingMetadataFile} /></Suspense>}
+        {compositionImport && <ImportedCompositionPreview key={compositionImport.profile_id} value={compositionImport} onChange={setCompositionImport} onParsed={receiveImportedComposition} onBusyChange={setReadingImportFile} onFileReady={receiveModelFile} />}<p className="rounded-lg bg-muted p-3 text-sm">Configuração opcional para produtos fabricados. Custo, venda e estoque podem ser cadastrados sem composição.</p>      {productionReference && (
         <section aria-label="Referência da produção" className="rounded-xl border border-primary/20 bg-primary/5 p-4 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-sm font-semibold">Base na produção</h3>

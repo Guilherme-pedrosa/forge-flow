@@ -145,6 +145,9 @@ describe("importação MakerWorld no cadastro de produtos", () => {
     expect(within(editor).getAllByRole("button", { name: /^Ampliar foto \d+ do MakerWorld$/ })).toHaveLength(9);
     fireEvent.click(within(editor).getByText("Ver ficha técnica, placas e materiais"));
     expect(within(editor).getByText("A1 · selecionada")).toBeInTheDocument();
+    // This test exercises metadata preservation, independently of stock costs.
+    fireEvent.mouseDown(within(editor).getByRole("tab", { name: "Valores" }), { button: 0, ctrlKey: false });
+    fireEvent.click(within(editor).getByRole("button", { name: "Prefiro informar o custo manualmente" }));
     fireEvent.change(within(editor).getByLabelText("Preço unitário (R$)"), { target: { value: "39.9" } });
     const create = within(editor).getByRole("button", { name: "Criar" });
     await waitFor(() => expect(create).toBeEnabled()); fireEvent.click(create);
@@ -171,6 +174,9 @@ describe("importação MakerWorld no cadastro de produtos", () => {
     await waitFor(() => expect(mock.translate).toHaveBeenCalledTimes(1));
     const original = String(mock.translate.mock.calls[0][0]);
     expect(mock.translate).toHaveBeenCalledWith(original, "en", expect.any(AbortSignal));
+    // Translation remains the only pending operation in this metadata-only test.
+    fireEvent.mouseDown(within(editor).getByRole("tab", { name: "Valores" }), { button: 0, ctrlKey: false });
+    fireEvent.click(within(editor).getByRole("button", { name: "Prefiro informar o custo manualmente" }));
     const create = within(editor).getByRole("button", { name: "Criar" });
     expect(create).toBeDisabled();
     fireEvent.click(create);

@@ -136,6 +136,7 @@ export default function ModelFileInput({
   onChange,
   onBusyChange,
   onFileReady,
+  onParsed,
   revision = false,
   disabled = false,
 }: {
@@ -143,6 +144,7 @@ export default function ModelFileInput({
   onChange: (value: ImportedComposition) => void;
   onBusyChange?: (busy: boolean) => void;
   onFileReady?: (file: File) => void;
+  onParsed?: (composition: ImportedComposition) => void;
   revision?: boolean;
   disabled?: boolean;
 }) {
@@ -204,6 +206,7 @@ export default function ModelFileInput({
       setModel(loaded);
       if (fromSlicer) { onChange(loaded.composition); setUsed(true); }
       else if (loaded.composition.plates.some(plate => !plate.slicer_estimates)) setSlicingOpen(true);
+      onParsed?.(loaded.composition);
       loaded = null;
       return true;
     } catch (error) {
