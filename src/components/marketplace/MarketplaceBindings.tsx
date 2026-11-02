@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,6 +16,9 @@ type Props = {
   catalogLoading?: boolean;
   catalogError?: string | null;
   onCatalogRetry?: () => void;
+  initialIdentity?: Pick<Draft, "external_item_id" | "external_variant_id" | "external_sku"> | null;
+  disabled?: boolean;
+  onBusyChange?: (busy: boolean) => void;
 };
 const emptyDraft = (): Draft => ({ external_item_id: "", external_variant_id: "", external_sku: "", product_id: "", requires_manual_review: false });
 const pageSize = 20;
@@ -25,13 +28,15 @@ const errorMessage = (error: unknown) => error instanceof Error ? error.message 
 // A new account gets a fresh form, page and mutation state. A late response from
 // the previous account cannot replace this account's draft or error message.
 export function MarketplaceBindings(props: Props) {
-  return <AccountBindings key={`${props.tenantId}:${props.accountId}`} {...props} />;
+  return <AccountBindings key={`${props.tenantId}:${props.accountId}:${JSON.stringify(props.initialIdentity ?? null)}`} {...props} />;
 }
 
-function AccountBindings({ accountId, tenantId, productOptions, catalogLoading = false, catalogError, onCatalogRetry }: Props) {
+function AccountBindings({ accountId, tenantId, productOptions, catalogLoading = false, catalogError, onCatalogRetry, initialIdentity, disabled = false, onBusyChange }: Props) {
   const qc = useQueryClient();
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const [page, setPage] = useState(0);
-  const [draft, setDraft] = useState(emptyDraft);
+  const [draft, setDraft] = useState(() => ({ ...emptyDraft(), ...initialIdentity }));
   const [editing, setEditing] = useState<Binding | null>(null);
   const [saveError, setSaveError] = useState("");
   const [saved, setSaved] = useState(false);
@@ -54,8 +59,24 @@ function AccountBindings({ accountId, tenantId, productOptions, catalogLoading =
       return { rows: (response.data ?? []) as unknown as Binding[], count: response.count, reviewAvailable };
     },
   });
+  const seeded = useRef(false);
+  const sourceBinding = useQuery({ queryKey: ["marketplace_binding_selected", tenantId, accountId, initialIdentity],
+    enabled: !!initialIdentity && !!bindings.data && !bindings.error,
+    queryFn: async () => {
+      const columns = "id,external_item_id,external_variant_id,external_sku,product_id" + (bindings.data?.reviewAvailable ? ",requires_manual_review" : "");
+      const result = await marketplaceDb.from("marketplace_sku_bindings").select(columns).eq("tenant_id", tenantId).eq("account_id", accountId)
+        .eq("external_item_id", initialIdentity!.external_item_id).eq("external_variant_id", initialIdentity!.external_variant_id).eq("external_sku", initialIdentity!.external_sku).maybeSingle();
+      if (result.error) throw result.error;
+      return result.data as unknown as Binding | null;
+    } });
+  useEffect(() => {
+    if (!initialIdentity || !sourceBinding.isSuccess || seeded.current) return;
+    seeded.current = true;
+    if (sourceBinding.data) { setEditing(sourceBinding.data); setDraft({ ...sourceBinding.data, requires_manual_review: sourceBinding.data.requires_manual_review ?? false }); }
+  }, [initialIdentity, sourceBinding.isSuccess, sourceBinding.data]);
   const save = useMutation({
     mutationFn: async () => {
+      if (!alive.current) throw new Error("A conta mudou. Confira a seleção antes de salvar o vínculo.");
       // On an edit, use the stored identity, even if a form control was changed
       // outside the UI. This action corrects the destination, not the identity.
       const identity = editing ?? draft;
@@ -78,6 +99,7 @@ function AccountBindings({ accountId, tenantId, productOptions, catalogLoading =
           throw new Error("Já existe um vínculo com esta identidade. Use Corrigir produto para alterar o destino ou a conferência.");
         }
       }
+      if (!alive.current) throw new Error("A conta mudou. Confira a seleção antes de salvar o vínculo.");
       await marketplaceRpc("save_marketplace_sku_binding", {
         p_account_id: accountId, p_external_item_id: item, p_external_variant_id: variant,
         p_external_sku: sku, p_product_id: draft.product_id,
@@ -87,13 +109,15 @@ function AccountBindings({ accountId, tenantId, productOptions, catalogLoading =
       });
     },
     onSuccess: () => {
+      if (!alive.current) return;
       setSaveError(""); setSaved(true); setEditing(null); setDraft(emptyDraft());
       void qc.invalidateQueries({ queryKey: ["marketplace_sku_bindings", tenantId, accountId] });
       void qc.invalidateQueries({ queryKey: ["marketplace_review_bindings", tenantId, accountId] });
       void qc.invalidateQueries({ queryKey: ["marketplace_orders", accountId] });
     },
-    onError: error => { setSaveError(errorMessage(error)); setSaved(false); },
+    onError: error => { if (alive.current) { setSaveError(errorMessage(error)); setSaved(false); } },
   });
+  useEffect(() => { onBusyChange?.(save.isPending); return () => onBusyChange?.(false); }, [save.isPending, onBusyChange]);
   const patch = (change: Partial<Draft>) => { setDraft(current => ({ ...current, ...change })); setSaveError(""); setSaved(false); };
   function edit(row: Binding) {
     setEditing(row); setDraft({ external_item_id: row.external_item_id, external_variant_id: row.external_variant_id, external_sku: row.external_sku, product_id: row.product_id, requires_manual_review: row.requires_manual_review ?? false });
@@ -106,7 +130,7 @@ function AccountBindings({ accountId, tenantId, productOptions, catalogLoading =
     <p role="status" className="text-sm text-muted-foreground">O cadastro de vínculos ainda precisa ser ativado no banco.</p>
     <Button variant="outline" onClick={() => void bindings.refetch()}>Verificar ativação</Button>
   </section>;
-  const busy = save.isPending || bindings.isLoading || !!bindings.error || catalogLoading || !!catalogError || !tenantId || !accountId;
+  const busy = disabled || save.isPending || bindings.isLoading || !!bindings.error || !!initialIdentity && (!sourceBinding.isSuccess || sourceBinding.isFetching) || catalogLoading || !!catalogError || !tenantId || !accountId;
   const rows = bindings.data?.rows ?? [];
   const total = bindings.data?.count;
   const hasNext = total == null ? rows.length === pageSize : (page + 1) * pageSize < total;
@@ -116,6 +140,7 @@ function AccountBindings({ accountId, tenantId, productOptions, catalogLoading =
     </div>
     {bindings.error && <div role="alert" className="rounded-lg border border-destructive/30 p-3 text-sm">Não foi possível carregar os vínculos. {errorMessage(bindings.error)} <Button variant="outline" onClick={() => void bindings.refetch()}>Tentar novamente</Button></div>}
     {catalogError && <div role="alert" className="text-sm text-destructive">Não foi possível carregar os produtos. {catalogError}{onCatalogRetry && <Button variant="outline" onClick={onCatalogRetry}>Recarregar produtos</Button>}</div>}
+    {sourceBinding.error && <p role="alert" className="text-sm text-destructive">Não foi possível conferir o vínculo deste anúncio. <Button type="button" variant="outline" onClick={() => void sourceBinding.refetch()}>Conferir vínculo novamente</Button></p>}
     {bindings.data && !bindings.data.reviewAvailable && <p role="status" className="text-sm text-muted-foreground">A exigência de conferência dos vínculos ficará disponível após sua ativação no banco. O vínculo de produto continua disponível.</p>}
     <form onSubmit={submit} className="space-y-3">
       <fieldset disabled={busy} className="space-y-3">

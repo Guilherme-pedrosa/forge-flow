@@ -38,3 +38,10 @@ O [config.toml](../supabase/config.toml) mantém verificação JWT para os handl
 - **Estado publicado desconhecido:** arquivos e migrations demonstram a implementação pretendida. Não comprovam migrations aplicadas, Edge Functions publicadas, confirmação de e-mail, políticas adicionais ou segredos disponíveis no ambiente real.
 
 A [auditoria financeira e de acesso](finance-auth-audit.md) registra as correções anteriores de isolamento de sessão. Os testes de [auth-session-isolation](../src/test/auth-session-isolation.test.tsx) cobrem troca de usuário, saída, concorrência, timeout e recuperação de consultas.
+
+
+## Ponte com o IntegradorML
+
+Contas explicitamente associadas ao Integrador usam um caminho adicional: a tela obtém o token de acesso da sessão atual e o envia por HTTPS ao endpoint fixo do Integrador, sem cookies, redirecionamentos ou persistência desse token na ponte. O servidor consulta o Supabase Auth do Forge e os RPCs de empresa e permissões; em seguida, confere o vínculo aprovado na origem e no Forge. Alterações financeiras exigem o papel correspondente, e alterações globais exigem o escopo completo. A aprovação é revalidada durante operações remotas. O identificador público da ponte não é uma credencial.
+
+Access token e refresh token do Mercado Livre continuam nas tabelas protegidas do Integrador e são renovados pelo processo existente. Não vão para o navegador, a extensão ou a tabela de credenciais nativa do Forge. O banco impede criar credenciais ou estados OAuth nativos para uma conta cujo proprietário é o Integrador, inclusive no retorno de uma autorização antiga. Contas nativas não associadas continuam no fluxo próprio. Ver [componentes, operação e limites](INTEGRADOR_ML.md).

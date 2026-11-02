@@ -49,9 +49,9 @@ vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ profile: { tenant_i
 vi.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: mock.toast }) }));
 const products = [{ id: "product-a", name: "Produto A", sku: "PA" }, { id: "product-b", name: "Produto B", sku: "PB" }];
 const row = (changes: Partial<Row> = {}): Row => ({ id: "binding-1", tenant_id: "tenant-a", account_id: "account-a", external_item_id: "MLB123", external_variant_id: "BLUE", external_sku: "SKU-A", product_id: "product-a", requires_manual_review: false, ...changes });
-function mount(accountId = "account-a", productOptions = products) {
+function mount(accountId = "account-a", productOptions = products, initialIdentity?: { external_item_id: string; external_variant_id: string; external_sku: string }) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  const view = (account: string) => <QueryClientProvider client={client}><MarketplaceBindings accountId={account} tenantId="tenant-a" productOptions={productOptions} /></QueryClientProvider>;
+  const view = (account: string) => <QueryClientProvider client={client}><MarketplaceBindings accountId={account} tenantId="tenant-a" productOptions={productOptions} initialIdentity={initialIdentity} /></QueryClientProvider>;
   const result = render(view(accountId));
   return { ...result, client, changeAccount: (account: string) => result.rerender(view(account)) };
 }
@@ -67,6 +67,7 @@ beforeEach(() => {
   mock.rows = []; mock.reads = []; mock.readError = null; mock.reviewAvailable = true; mock.orders = []; mock.delayReview = null;
   mock.rpc.mockReset(); mock.toast.mockReset();
   mock.rpc.mockImplementation(async (_name: string, args: Record<string, unknown>) => {
+    if (_name === "integrador_bridge_binding") return { configured: false, enabled: false, approved_seller_ids: [] };
     const existing = mock.rows.find(item => item.account_id === args.p_account_id && item.external_item_id === args.p_external_item_id && item.external_variant_id === args.p_external_variant_id && item.external_sku === args.p_external_sku);
     if (existing) { existing.product_id = String(args.p_product_id); if (args.p_requires_manual_review != null) existing.requires_manual_review = !!args.p_requires_manual_review; }
     else mock.rows.push(row({ id: `binding-${mock.rows.length + 1}`, account_id: String(args.p_account_id), external_item_id: String(args.p_external_item_id), external_variant_id: String(args.p_external_variant_id), external_sku: String(args.p_external_sku), product_id: String(args.p_product_id), requires_manual_review: !!args.p_requires_manual_review }));
@@ -76,6 +77,20 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("marketplace bindings independent of orders", () => {
+  it("prefills an explicitly selected remote variation without creating a product or guessing a binding", async () => {
+    mount("account-a", products, { external_item_id: "MLB-SELECTED", external_variant_id: "90071992547409930", external_sku: "BLUE" }); await ready();
+    expect(screen.getByLabelText("Anúncio")).toHaveValue("MLB-SELECTED"); expect(screen.getByLabelText("Variação")).toHaveValue("90071992547409930"); expect(screen.getByLabelText("SKU externo")).toHaveValue("BLUE"); expect(screen.getByLabelText("Produto no ERP")).toHaveValue(""); expect(mock.rpc).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Produto no ERP"), { target: { value: "product-a" } }); fireEvent.click(createButton());
+    await waitFor(() => expect(mock.rpc).toHaveBeenCalledWith("save_marketplace_sku_binding", expect.objectContaining({ p_account_id: "account-a", p_external_item_id: "MLB-SELECTED", p_external_variant_id: "90071992547409930", p_external_sku: "BLUE", p_product_id: "product-a" })));
+  });
+  it("opens the existing selected identity as a correction and preserves its personalisation review requirement", async () => {
+    mock.rows = [row({ requires_manual_review: true })];
+    mount("account-a", products, { external_item_id: "MLB123", external_variant_id: "BLUE", external_sku: "SKU-A" });
+    const save = await screen.findByRole("button", { name: "Salvar destino" }); await waitFor(() => expect(save).toBeEnabled());
+    expect(screen.getByLabelText("Anúncio")).toBeDisabled(); expect(screen.getByRole("checkbox")).toBeChecked();
+    fireEvent.change(screen.getByLabelText("Produto no ERP"), { target: { value: "product-b" } }); fireEvent.click(save);
+    await waitFor(() => expect(mock.rpc).toHaveBeenCalledWith("save_marketplace_sku_binding", expect.objectContaining({ p_external_item_id: "MLB123", p_product_id: "product-b", p_requires_manual_review: true })));
+  });
   it("creates a tenant-scoped binding before any order and sends explicit personalisation review", async () => {
     mount(); await ready();
     expect(screen.getByText("Nenhum vínculo cadastrado nesta conta.")).toBeInTheDocument();
@@ -248,7 +263,7 @@ describe("marketplace bindings independent of orders", () => {
     expect(await within(inbox).findByText(/Este anúncio exige conferência e está fora da organização automática e em lote/)).toBeInTheDocument();
     expect(within(inbox).getByRole("link", { name: "Conferir em Pedidos" })).toHaveAttribute("href", "/comercial/pedidos?pedido=personalized%20%2F%201");
     expect(within(inbox).queryByRole("button", { name: "Organizar pedido" })).not.toBeInTheDocument();
-    expect(mock.rpc).not.toHaveBeenCalled();
+    expect(mock.rpc.mock.calls.filter(([name]) => name !== "integrador_bridge_binding")).toHaveLength(0);
   });
   it("disables inbox confirmation while an old unflagged binding cache is revalidated", async () => {
     mock.rows = [row()];
@@ -263,7 +278,7 @@ describe("marketplace bindings independent of orders", () => {
     const refresh = client.invalidateQueries({ queryKey: ["marketplace_review_bindings"] });
     await waitFor(() => expect(button).toBeDisabled());
     fireEvent.click(button);
-    expect(mock.rpc).not.toHaveBeenCalled();
+    expect(mock.rpc.mock.calls.filter(([name]) => name !== "integrador_bridge_binding")).toHaveLength(0);
     finish(); await refresh;
     expect(await screen.findByRole("link", { name: "Conferir em Pedidos" })).toHaveAttribute("href", "/comercial/pedidos?pedido=sale-1");
     expect(screen.queryByRole("button", { name: "Organizar pedido" })).not.toBeInTheDocument();
