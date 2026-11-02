@@ -21,6 +21,7 @@ export type SavedProductImportPricingProps = {
   initialQuantity?: number;
   requestedSourceId?: string | null;
   onBusy?: (busy: boolean) => void;
+  onDraft?: (open: boolean) => void;
 };
 type Source = { id: string; tenant_id: string; product_id: string; label: string; profile_id: string | null; design_id: string | null;
   file_sha256: string | null; file_path: string | null; file_name: string | null; is_active: boolean };
@@ -56,8 +57,10 @@ export function SavedProductImportPricing(props: SavedProductImportPricingProps)
 function SavedSourceSelection(props: SavedProductImportPricingProps & { tenantId: string }) {
   const [chosenSource, setChosenSource] = useState("");
   const [saving, setSaving] = useState(false);
-  const { productId, tenantId, requestedSourceId, onBusy } = props;
+  const [draftOpen, setDraftOpen] = useState(false);
+  const { productId, tenantId, requestedSourceId, onBusy, onDraft } = props;
   const reportBusy = useCallback((busy: boolean) => { setSaving(busy); onBusy?.(busy); }, [onBusy]);
+  const reportDraft = useCallback((open: boolean) => { setDraftOpen(open); onDraft?.(open); }, [onDraft]);
   const sources = useQuery({ queryKey: ["product_print_sources", tenantId, productId, "pricing"],
     queryFn: () => allRows((from, to) => db.from("product_print_sources")
       .select("id,tenant_id,product_id,label,profile_id,design_id,file_sha256,file_path,file_name,is_active")
@@ -88,7 +91,7 @@ function SavedSourceSelection(props: SavedProductImportPricingProps & { tenantId
     && (saved.source_file_sha256 ?? null) === (selected.composition.file_sha256 ?? null)
     && (saved.source_id ? saved.source_id === selected.source.id : sameProfileSources === 1);
   return <section aria-label="Dados da impressão cadastrada" className="space-y-3">
-    {candidates.length > 1 && <SearchableItemSelect label="Perfil de impressão do produto" value={selected?.source.id || ""} disabled={saving}
+    {candidates.length > 1 && <SearchableItemSelect label="Perfil de impressão do produto" value={selected?.source.id || ""} disabled={saving || draftOpen}
       options={candidates.map(candidate => ({ id: candidate.source.id, label: candidate.source.label || candidate.source.file_name || "Perfil de impressão" }))}
       emptyLabel="Escolha a impressão que deseja preparar" onChange={setChosenSource} />}
     {!selected ? requestedSourceId && !chosenSource && !candidates.some(candidate => candidate.source.id === requestedSourceId)
@@ -96,15 +99,16 @@ function SavedSourceSelection(props: SavedProductImportPricingProps & { tenantId
       : <p className="text-sm text-muted-foreground">Escolha o perfil para conferir os filamentos, a impressora e a quantidade.</p>
       : selected.error || !selected.composition ? <p role="alert" className="text-sm text-destructive">{selected.error} Importe novamente o 3MF fatiado na composição do produto.</p>
         : <SavedSourcePreparation key={selected.source.id} {...props} source={selected.source} plates={selected.plates} composition={selected.composition}
-          saved={matchesSaved ? saved : {}} allowLegacy={candidates.length === 1} onBusy={reportBusy} />}
+          saved={matchesSaved ? saved : {}} allowLegacy={candidates.length === 1} onBusy={reportBusy} onDraft={reportDraft} />}
   </section>;
 }
 
-function SavedSourcePreparation({ productId, tenantId, externalImport, existingMaterialId, initialQuantity, onBusy, source, plates, composition, saved, allowLegacy }:
+function SavedSourcePreparation({ productId, tenantId, externalImport, existingMaterialId, initialQuantity, onBusy, onDraft, source, plates, composition, saved, allowLegacy }:
   SavedProductImportPricingProps & { tenantId: string; source: Source; plates: Plate[]; composition: ImportedComposition; saved: Record<string, unknown>; allowLegacy: boolean }) {
   const { toast } = useToast();
   const qc = useQueryClient();
   const [calculated, setCalculated] = useState<ImportedProductPrice | null>(null);
+  const [auxiliaryBusy, setAuxiliaryBusy] = useState(false), [auxiliaryDraft, setAuxiliaryDraft] = useState(false);
   const request = useRef<{ signature: string; id: string } | null>(null);
   const prepared = useMemo(() => {
     try {
@@ -126,6 +130,7 @@ function SavedSourcePreparation({ productId, tenantId, externalImport, existingM
     catch (error) { problem = (error as Error).message; }
   }
   const save = useMutation({ mutationFn: async () => {
+    if (auxiliaryBusy || auxiliaryDraft) throw new Error("Conclua ou cancele o cadastro do filamento antes de salvar a impressão.");
     if (!plan) throw new Error(problem || "Confirme os dados da impressão antes de salvar.");
     const signature = JSON.stringify(plan);
     const transaction = request.current?.signature === signature ? request.current : { signature, id: crypto.randomUUID() };
@@ -138,15 +143,17 @@ function SavedSourcePreparation({ productId, tenantId, externalImport, existingM
       .map(key => qc.invalidateQueries({ queryKey: [key] })));
     toast({ title: "Dados da impressão salvos", description: "Filamentos, impressora e quantidade estão disponíveis nos detalhes e na produção." });
   }, onError: (error: Error) => toast({ title: "Não foi possível salvar a impressão", description: error.message, variant: "destructive" }) });
-  useEffect(() => { onBusy?.(save.isPending); return () => onBusy?.(false); }, [onBusy, save.isPending]);
+  useEffect(() => { onBusy?.(save.isPending || auxiliaryBusy); return () => onBusy?.(false); }, [onBusy, save.isPending, auxiliaryBusy]);
+  useEffect(() => { onDraft?.(auxiliaryDraft); return () => onDraft?.(false); }, [onDraft, auxiliaryDraft]);
   if (prepared.error) return <p role="alert" className="text-sm text-destructive">{prepared.error}</p>;
   return <fieldset className="space-y-3" disabled={save.isPending}>
     <ImportedProductPricing estimate={prepared.estimate} onCalculated={setCalculated} showTotals={false}
+      onAuxiliaryBusy={setAuxiliaryBusy} onAuxiliaryDraft={setAuxiliaryDraft}
       existingMaterialId={allowLegacy ? existingMaterialId : null}
       existingPrinterId={typeof saved.printer_id === "string" ? saved.printer_id : savedPrinters.length === 1 && plates.every(plate => plate.printer_id === savedPrinters[0]) ? savedPrinters[0] : null}
       initialQuantity={count(saved.quantity) ?? savedQuantity ?? (allowLegacy && composition.plates.length === 1 ? count(initialQuantity) : undefined)} initialSelections={mappings} />
     {problem && <p role="alert" className="text-sm text-destructive">{problem}</p>}
-    <Button type="button" disabled={!plan || save.isPending} onClick={() => save.mutate()}>{save.isPending ? "Salvando impressão…" : "Salvar dados da impressão"}</Button>
+    <Button type="button" disabled={!plan || save.isPending || auxiliaryBusy || auxiliaryDraft} onClick={() => save.mutate()}>{save.isPending ? "Salvando impressão…" : "Salvar dados da impressão"}</Button>
   </fieldset>;
 }
 

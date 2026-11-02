@@ -1,6 +1,6 @@
 # Extensão de fatiamento do Forge
 
-O botão da extensão abre **Novo Produto → Composição / produção** no Forge. Ao abrir a extensão numa página de modelo do MakerWorld, o link é preenchido nesse mesmo cadastro. A consulta do link e o fatiamento só começam por ação do operador. A extensão não baixa um projeto privado automaticamente nem acessa a conta Bambu.
+O botão da extensão abre **Novo Produto → Produto e preço** no Forge. Ao abrir a extensão numa página de modelo do MakerWorld, o link é preenchido nesse mesmo cadastro. A consulta do link e o fatiamento só começam por ação do operador. A extensão não baixa um projeto privado automaticamente nem acessa a conta Bambu.
 
 Escolha o STL ou 3MF no cadastro e use **Fatiar neste computador**. O conector executa o Bambu Studio oficial instalado, devolve o 3MF fatiado e encerra. **Usar no cadastro** importa esse arquivo resultante, com seu hash, placas e filamentos; a composição segue no mesmo formulário. O salvamento do produto continua explícito.
 

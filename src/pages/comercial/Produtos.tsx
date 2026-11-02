@@ -4,6 +4,7 @@ import { DeleteRecordDialog, type DeleteTarget } from "@/components/shared/Delet
 import { useState, useMemo, useEffect, useRef, useCallback, lazy, Suspense } from "react";
 import { Link as RouterLink, useSearchParams, useLocation, useNavigate } from "react-router-dom";
 import { readPricingTransfer, type PricingTransfer } from "@/lib/print-pricing";
+import { consumePricingSourceTransfer, MISSING_PRICING_SOURCE_TRANSFER, type PreparedPricingSourceTransfer } from "@/lib/pricing-source-transfer";
 import { catalogAmountInput, catalogPriceDraft } from "@/lib/catalog-pricing";
 import { modelPricingFromComposition, modelPricingFromMakerWorld, printerMatchesSliceModels, printerModelOptions, type ModelPricingEstimate } from "@/lib/model-pricing";
 import { bambuTaskPricing, bambuProjectPricing } from "@/lib/bambu-import-pricing";
@@ -89,7 +90,7 @@ export default function Produtos() {
   const requestedPrintSourceId = searchParams.get("impressao");
   const requestedNewProduct = searchParams.get("novo") === "1";
   const openedFromLink = useRef<string | null>(null);
-  const { profile } = useAuth();
+  const { profile, user } = useAuth();
   const { toast } = useToast();
   const qc = useQueryClient();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -126,16 +127,21 @@ export default function Produtos() {
   const [importedPricing, setImportedPricing] = useState<{ estimate: ModelPricingEstimate | null; error: string } | null>(null);
   const [automaticImportCost, setAutomaticImportCost] = useState(false);
   const [importCostReady, setImportCostReady] = useState(false);
+  const [transferredPricingSource, setTransferredPricingSource] = useState<PreparedPricingSourceTransfer | null>(null);
+  const [missingPricingSource, setMissingPricingSource] = useState(false);
+  const transferredScope = useRef<string | null>(null);
   const importPricingVersion = useRef(0);
   const initializeImportedPrice = useRef(true);
   const importedCalculation = useRef<ImportedProductPrice | null>(null);
+  const initialImportCalculation = useRef<PreparedPricingSourceTransfer["calculated"] | null>(null);
   const [editorImportUrl, setEditorImportUrl] = useState("");
   const [readingMetadataFile, setReadingImportFile] = useState(false);
   const [readingModelFile, setReadingModelFile] = useState(false);
+  const [modelReaderRevision, setModelReaderRevision] = useState(0);
   const importedModelFile = useRef<File | null>(null);
   const uploadedModelFile = useRef<{ file: File; path: string } | null>(null);
   const receiveModelFile = useCallback((file: File) => { importedModelFile.current = file; uploadedModelFile.current = null; }, []);
-  const reportModelReading = useCallback((busy: boolean) => { setReadingModelFile(busy); if (busy) { importedModelFile.current = null; uploadedModelFile.current = null; setCompositionImport(previous => previous?.profile_id.startsWith("local:") ? null : previous); setImportCostReady(false); setCostEstimate(""); setSalePrice(""); setImportedPricing(null); } }, []);
+  const reportModelReading = useCallback((busy: boolean) => { setReadingModelFile(busy); if (busy) { importedModelFile.current = null; uploadedModelFile.current = null; setCompositionImport(previous => previous?.profile_id.startsWith("local:") ? null : previous); importedCalculation.current = null; setImportCostReady(false); setCostEstimate(""); setSalePrice(""); setAutomaticImportCost(true); setImportedPricing({ estimate: null, error: "Conclua a leitura e o cálculo do arquivo ou escolha informar o custo manualmente." }); setTransferredPricingSource(null); transferredScope.current = null; } }, []);
   const readingImportFile = readingMetadataFile || readingModelFile;
   const makerRequest = useRef<AbortController | null>(null);
   const makerImportTarget = useRef<string | null>(null);
@@ -175,12 +181,16 @@ export default function Produtos() {
   const [photosLoading, setPhotosLoading] = useState(false);
   const [sourceBusy, setPrintSourceBusy] = useState(false);
   const [recipeBusy, setRecipeBusy] = useState(false);
+  const [savedPricingBusy, setSavedPricingBusy] = useState(false);
+  const [savedPricingDraft, setSavedPricingDraft] = useState(false);
   const [sourceDraft, setSourceDraft] = useState(false);
   const [recipeDraft, setRecipeDraft] = useState(false);
   const [manualPlateBusy, setManualPlateBusy] = useState(false);
   const [manualPlateDraft, setManualPlateDraft] = useState(false);
-  const printSourceBusy = sourceBusy || recipeBusy || manualPlateBusy;
-  const hasProductionDraft = sourceDraft || recipeDraft || manualPlateDraft;
+  const [filamentBusy, setFilamentBusy] = useState(false);
+  const [filamentDraft, setFilamentDraft] = useState(false);
+  const printSourceBusy = sourceBusy || recipeBusy || manualPlateBusy || filamentBusy || savedPricingBusy;
+  const hasProductionDraft = sourceDraft || recipeDraft || manualPlateDraft || filamentDraft || savedPricingDraft;
   const reportManualPlateBusy = useCallback((_id: string, value: boolean) => setManualPlateBusy(value), []);
   const reportManualPlateDraft = useCallback((_id: string, value: boolean) => setManualPlateDraft(value), []);
   const photoLoadVersion = useRef(0);
@@ -190,7 +200,9 @@ export default function Produtos() {
   const [extras, setExtras] = useState<ExtraItem[]>([]);
   const [printsPerPlate, setPrintsPerPlate] = useState("1");
   const [kitComponents, setKitComponents] = useState<{ productId: string; qty: number }[]>([]);
-  const beginImportedPricing = useCallback((estimate: ModelPricingEstimate | null, error = "") => {
+  const beginImportedPricing = useCallback((estimate: ModelPricingEstimate | null, error = "", initial?: PreparedPricingSourceTransfer["calculated"]) => {
+    setTransferredPricingSource(null); transferredScope.current = null; setMissingPricingSource(false);
+    initialImportCalculation.current = initial ?? null;
     importPricingVersion.current += 1;
     initializeImportedPrice.current = true;
     importedCalculation.current = null;
@@ -198,6 +210,11 @@ export default function Produtos() {
     setImportedPricing({ estimate, error }); setAutomaticImportCost(true); setImportCostReady(false);
     setCostSource("manual"); setCostEstimate(""); setSalePrice(""); setMarkup(""); setPriceSource("manual");
   }, []);
+  const chooseManualImportCost = () => {
+    importedCalculation.current = null;
+    setTransferredPricingSource(null); transferredScope.current = null; setMissingPricingSource(false);
+    setAutomaticImportCost(false); setImportCostReady(false);
+  };
   const receiveImportedComposition = useCallback((composition: ImportedComposition) => {
     setCompositionImport(composition);
     try {
@@ -382,9 +399,12 @@ export default function Produtos() {
 
   const resetForm = () => {
     importedCalculation.current = null;
+    initialImportCalculation.current = null;
+    setTransferredPricingSource(null); transferredScope.current = null; setMissingPricingSource(false);
     setImportedPricing(null); setAutomaticImportCost(false); setImportCostReady(false); initializeImportedPrice.current = true;
     setCostSource("manual"); setPriceSource("manual");
     importedModelFile.current = null; uploadedModelFile.current = null;
+    setModelReaderRevision(value => value + 1);
     pricingTransfer.current = null;
     setPhotoLink("");
     productRequest.current = null;
@@ -392,18 +412,24 @@ export default function Produtos() {
     setCompositionImport(null); setEditorImportUrl("");
     photoLoadVersion.current += 1;
     setPhotosLoading(false);
-    setPrintSourceBusy(false); setRecipeBusy(false);
+    setPrintSourceBusy(false); setRecipeBusy(false); setSavedPricingBusy(false); setSavedPricingDraft(false);
     setSourceDraft(false); setRecipeDraft(false);
-    setManualPlateDraft(false);
+    setManualPlateDraft(false); setFilamentBusy(false); setFilamentDraft(false);
     setFormTab("dados"); setAccessoryCost("0"); setOtherCost("0"); setBarcode(""); setMaxStock("0"); setMarkup(""); setStockQuantity("0"); setStockUnit("un"); setMinStock("0"); setStockEnabled(true);
     setShippingPackage(emptyShippingPackageDraft());
     setName(""); setDescription(""); setSku(""); setCategory("printed_part"); setMaterialId("");
     setEstGrams(""); setEstTime(""); setPostMinutes(""); setCostEstimate(""); setSalePrice(""); setPhotoUrl(""); setExtraPhotos([]); setNotes(""); setPrinterId(""); setNumColors("1"); setPrintsPerPlate("1"); setExtras([]); setKitComponents([]);
   };
+  const formScope = useRef(`${profile?.tenant_id}:${user?.id}`);
+  useEffect(() => {
+    const next = `${profile?.tenant_id}:${user?.id}`;
+    if (formScope.current === next) return;
+    formScope.current = next; setCreateOpen(false); setEditItem(null); resetForm();
+  }, [profile?.tenant_id, user?.id]);
 
   useEffect(() => {
     if (!requestedNewProduct || requestedProductId) return;
-    resetForm(); setCreateOpen(true); setFormTab("producao");
+    resetForm(); setCreateOpen(true); setFormTab("dados");
     const link = searchParams.get("makerworld");
     if (link) { try { setEditorImportUrl(parseMakerWorldUrl(link).url); } catch { /* only supported public model links prefill */ } }
     setSearchParams(previous => { const next = new URLSearchParams(previous); next.delete("novo"); next.delete("makerworld"); next.delete("aba"); return next; }, { replace: true });
@@ -411,23 +437,47 @@ export default function Produtos() {
 
   useEffect(() => {
     if (receivedPricing.current === location.key) return;
-    const transfer = readPricingTransfer(location.state?.pricing); if (!transfer) return;
+    const routePricing = location.state?.pricing;
+    const transfer = readPricingTransfer(routePricing); if (!transfer) return;
+    const sourceRequired = routePricing.sourceRequired === true || routePricing.sourceToken != null;
+    if (sourceRequired && (!profile?.tenant_id || !user?.id)) return;
+    const source = sourceRequired ? consumePricingSourceTransfer(routePricing.sourceToken, { tenantId: profile!.tenant_id, userId: user!.id }) : null;
     receivedPricing.current = location.key; resetForm(); pricingTransfer.current = transfer;
     setName(transfer.name); setCostEstimate(String(transfer.cost)); setSalePrice(String(transfer.price)); setCreateOpen(true); setFormTab("valores");
+    if (source && (["name", "cost", "price", "quantity", "quote"] as const).every(key => source.accepted[key] === transfer[key])) {
+      setTransferredPricingSource(source); transferredScope.current = `${profile!.tenant_id}:${user!.id}`;
+      setCompositionImport(source.composition); setExternalImport(source.externalImport);
+      importedModelFile.current = source.sourceFile;
+      setPrinterId(source.calculated.printerId);
+      const uniqueMaterials = [...new Set(Object.values(source.calculated.materialSelections))];
+      const singleMaterialId = uniqueMaterials.length === 1 ? uniqueMaterials[0] : "";
+      setMaterialId(singleMaterialId);
+      setNumColors(String(Math.max(1, new Set(source.estimate.materials.map(material => material.colorHex || material.key)).size)));
+      if (source.estimate.plateCount === 1 && singleMaterialId) {
+        setEstGrams(String(source.estimate.weightGrams)); setEstTime(String(source.estimate.hours)); setPrintsPerPlate(String(source.calculated.quantity));
+      }
+      if (source.externalImport) {
+        setDescription(source.externalImport.description ?? "");
+        const photos = importProductPhotos(source.externalImport); setPhotoUrl(photos[0] || ""); setExtraPhotos(photos.slice(1));
+      }
+    } else if (sourceRequired) setMissingPricingSource(true);
     navigate(location.pathname, { replace: true, state: null });
-  }, [location.key]);
+  }, [location.key, location.pathname, location.state?.pricing, navigate, profile, user]);
 
   const openEdit = (p: any) => {
     importedCalculation.current = null;
+    initialImportCalculation.current = null;
+    setTransferredPricingSource(null); transferredScope.current = null; setMissingPricingSource(false);
+    importedModelFile.current = null; uploadedModelFile.current = null; setModelReaderRevision(value => value + 1);
     setImportedPricing(null); setAutomaticImportCost(false); setImportCostReady(false);
     setPhotoLink("");
     makerRequest.current?.abort(); setMakerWorldLoading(false);
     setExternalImport(readProductExternalImport(p.external_import));
     setCompositionImport(null); setEditorImportUrl("");
     makerImportTarget.current = p.id;
-    setPrintSourceBusy(false); setRecipeBusy(false);
+    setPrintSourceBusy(false); setRecipeBusy(false); setSavedPricingBusy(false); setSavedPricingDraft(false);
     setSourceDraft(false); setRecipeDraft(false);
-    setManualPlateDraft(false);
+    setManualPlateDraft(false); setFilamentBusy(false); setFilamentDraft(false);
     setStockQuantity(String(p.stock?.current_stock ?? 0)); setStockUnit(p.stock?.unit || "un"); setMinStock(String(p.stock?.min_stock ?? 0)); setStockEnabled(p.category !== "service" || !!p.stock_item_id);
     setShippingPackage(readShippingPackageDraft(p.shipping_package));
     setFormTab("dados"); setAccessoryCost(String(p.catalog_details?.accessory_cost ?? 0)); setOtherCost(String(p.catalog_details?.other_cost ?? 0)); setBarcode(p.catalog_details?.barcode || ""); setMaxStock(String(p.stock?.max_stock ?? 0)); setMarkup("");
@@ -605,6 +655,7 @@ export default function Produtos() {
     const imported = externalImportReference(model, model.source_url, index);
     imported.selected_variant_profile_id = variant?.profile_id || null;
     setExternalImport(imported);
+    if (updating) { importedModelFile.current = null; uploadedModelFile.current = null; setModelReaderRevision(value => value + 1); }
     if (!updating) {
       try { beginImportedPricing(modelPricingFromMakerWorld(imported)); }
       catch (error) { beginImportedPricing(null, (error as Error).message); }
@@ -793,7 +844,9 @@ ${selected?.name ? `Perfil: ${selected.name}
     if (!profile) throw new Error("Sua sessão expirou. Entre novamente.");
     if (!name.trim()) throw new Error("Informe o nome do produto.");
     if (compositionImport) validateImportedComposition(compositionImport);
-    if (hasProductionDraft) throw new Error("Salve ou cancele a composição, fonte ou placa em edição antes de salvar o cadastro.");
+    if (hasProductionDraft) throw new Error("Conclua ou cancele o cadastro auxiliar, a composição ou a placa em edição antes de salvar o produto.");
+    if (missingPricingSource) throw new Error(MISSING_PRICING_SOURCE_TRANSFER);
+    if (transferredPricingSource && transferredScope.current !== `${profile.tenant_id}:${user?.id}`) throw new Error("Sua sessão mudou. Envie novamente a precificação antes de salvar.");
     if (uploadingPhoto || photosLoading || printSourceBusy || makerWorldLoading || translatingDescription || readingImportFile) throw new Error("Aguarde o carregamento das fotos, fontes e descrição antes de salvar.");
     if (costSource === "composition" && !compositionReady) throw new Error("Atualize e complete a composição antes de salvar o custo calculado, ou informe um custo manual.");
     if (priceDraft.error) throw new Error(priceDraft.error);
@@ -836,7 +889,9 @@ ${selected?.name ? `Perfil: ${selected.name}
       }
       savedComposition = { ...savedComposition, file_path: uploadedModelFile.current.path, file_name: modelFile.name };
     }
-    const importPricingPlan = automaticImportCost && importedCalculation.current && importedPricing?.estimate && savedComposition
+    const importPricingPlan = transferredPricingSource && savedComposition
+      ? buildImportedPricingPlan(transferredPricingSource.estimate, savedComposition, transferredPricingSource.calculated, transferredPricingSource.externalImport)
+      : automaticImportCost && importedCalculation.current && importedPricing?.estimate && savedComposition
       ? buildImportedPricingPlan(importedPricing.estimate, savedComposition, importedCalculation.current,
         importedPricing.estimate.source === "makerworld" ? externalImport : null)
       : null;
@@ -900,6 +955,7 @@ ${selected?.name ? `Perfil: ${selected.name}
     onError: (error: Error) => { toast({ title: "Não foi possível salvar", description: error.message, variant: "destructive" }); },
   });
   const editWritePending = updateMut.isPending || uploadingPhoto || printSourceBusy;
+  const createWritePending = createMut.isPending || uploadingPhoto || printSourceBusy;
   function clearLegacyEditorParams() {
     openedFromLink.current = null;
     const returnId = searchParams.get("retorno");
@@ -917,7 +973,7 @@ ${selected?.name ? `Perfil: ${selected.name}
     setEditItem(null); resetForm(); clearLegacyEditorParams();
   };
   const closeCreateProduct = () => {
-    if (createMut.isPending || uploadingPhoto) return;
+    if (createMut.isPending || uploadingPhoto || printSourceBusy) return;
     setCreateOpen(false); resetForm();
   };
   const deleteMut = useMutation({
@@ -940,19 +996,18 @@ ${selected?.name ? `Perfil: ${selected.name}
   const productionReference = productProductionReference(editItem);
 
   const finalProductCost = priceDraft.cost;
+  const showProductPricing = () => {
+    setFormTab(editItem ? "valores" : "cadastro");
+    requestAnimationFrame(() => document.getElementById("product-cost")?.scrollIntoView?.({ block: "center", behavior: "smooth" }));
+  };
   const tabClass = "m-0 space-y-5 data-[state=inactive]:hidden";
-  const formFields = (
-    <Tabs value={formTab} onValueChange={setFormTab} className="flex min-h-0 flex-1 flex-col gap-4 md:flex-row">
-      <TabsList aria-label="Cadastro do produto" className="h-auto w-full min-w-0 max-w-full shrink-0 justify-start gap-1 overflow-x-auto bg-muted/40 p-2 md:h-auto md:max-h-full md:w-44 md:flex-col md:items-stretch md:justify-start md:self-start md:overflow-x-hidden md:overflow-y-auto">
-        {[['dados','Dados'],['valores','Valores'],['estoque','Estoque'],['embalagem','Embalagem para envio'],['fotos','Fotos'],['producao','Composição / produção']].map(([value,label]) => <TabsTrigger className="justify-start whitespace-nowrap px-4 py-3 md:whitespace-normal" key={value} value={value}>{label}</TabsTrigger>)}
-      </TabsList>
-      <div ref={formScrollRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto px-1 pb-4">
-      <TabsContent forceMount value="dados" className={tabClass}>
+  const productSourceFields = (<>
         <div className="space-y-2 rounded-lg border bg-muted/20 p-3"><Label htmlFor="editor-makerworld-link">Importar produto completo pelo link do MakerWorld</Label><div className="flex flex-col gap-2 sm:flex-row"><Input id="editor-makerworld-link" placeholder="https://makerworld.com/pt/models/..." value={editorImportUrl} onChange={e => setEditorImportUrl(e.target.value)} /><Button type="button" variant="outline" disabled={!editorImportUrl.trim() || makerWorldLoading || printSourceBusy || photosLoading} onClick={() => { makerImportTarget.current = editItem?.id || null; void loadMakerWorld(editorImportUrl.trim(), true); }}>{makerWorldLoading ? "Carregando…" : "Carregar modelo"}</Button></div><p className="text-xs text-muted-foreground">O link da página traz descrição, fotos e placas. Um endereço terminado em .png contém apenas uma imagem.</p></div>
         {externalImport && <div className="grid grid-cols-[6rem_minmax(0,1fr)] gap-3 rounded-lg border p-3"><ImportedModelImage src={photoUrl || null} alt="Foto principal do produto importado" className="h-24 w-24 rounded-md bg-muted object-contain" /><div className="min-w-0"><p className="font-medium break-words">{name}</p><p className="mt-1 text-sm text-muted-foreground">{allPhotos.length} foto(s) · {compositionImport?.plates.length ?? selectedImportVariant(externalImport)?.plate_details.length ?? 0} placa(s)</p><p className="text-sm">{description.trim() ? "Descrição carregada abaixo." : "O autor não disponibilizou a descrição deste modelo."}</p><Button type="button" variant="link" className="h-auto px-0 py-1 whitespace-normal text-left" onClick={() => setFormTab("producao")}>Conferir peças e composição</Button></div></div>}
-        <div><h3 className="text-lg font-semibold">Dados do produto</h3><p className="text-sm text-muted-foreground">Preencha o nome e complete os valores e o estoque nas abas ao lado.</p></div>
-        <div className="sm:col-span-2"><Label htmlFor="product-name">Nome *</Label><Input autoFocus id="product-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Vaso Geométrico P" /></div>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+</>);
+  const productModelFileField = ((!editItem || compositionImport) && <Suspense fallback={<p>Carregando leitor de arquivos…</p>}><ModelFileInput key={modelReaderRevision} current={compositionImport?.profile_id.startsWith("local:") ? undefined : compositionImport || undefined} onChange={setCompositionImport} onParsed={receiveImportedComposition} onFileReady={receiveModelFile} onBusyChange={reportModelReading} disabled={readingMetadataFile || filamentBusy || filamentDraft} /></Suspense>);
+  const productNameField = (<div className="sm:col-span-2"><Label htmlFor="product-name">Nome *</Label><Input autoFocus id="product-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Vaso Geométrico P" /></div>);
+  const productMetadataFields = (<>      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div><Label>Categoria</Label>
           <Select value={category} onValueChange={setCategory}><SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>{Object.entries(categoryLabels).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent>
@@ -964,19 +1019,24 @@ ${selected?.name ? `Perfil: ${selected.name}
 
         <div><Label htmlFor="product-barcode">Código de barras</Label><Input id="product-barcode" value={barcode} onChange={e => setBarcode(e.target.value)} /></div>
         <div><Label>Observações</Label><Textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3}/></div>
-      </TabsContent>
-      <TabsContent forceMount value="valores" className={tabClass}>
+      </>);
+  const productDataFields = (<>{productSourceFields}<div><h3 className="text-lg font-semibold">Dados do produto</h3></div>{productNameField}{productMetadataFields}</>);
+  const productPriceFields = (<>
         <div><h3 className="text-lg font-semibold">Custo e preço de venda</h3><p className="text-sm text-muted-foreground">Confira o custo e informe quanto deseja acrescentar sobre ele. O preço é calculado aqui e gravado ao salvar o produto.</p></div>
+        {missingPricingSource && <div role="alert" className="space-y-2 rounded-lg border border-destructive/30 p-3 text-sm"><p>{MISSING_PRICING_SOURCE_TRANSFER}</p><Button type="button" variant="outline" onClick={() => setFormTab("producao")}>Importar novamente neste cadastro</Button><Button type="button" variant="link" onClick={chooseManualImportCost}>Continuar apenas com custo manual</Button></div>}
+        {transferredPricingSource && <section aria-label="Impressão trazida da precificação" className="space-y-2 rounded-lg border bg-muted/20 p-3 text-sm"><p className="font-medium">Impressão e valores preservados</p><p>{transferredPricingSource.sourceFile?.name || "Perfil MakerWorld"} · {transferredPricingSource.estimate.plateCount} placa(s) · {transferredPricingSource.estimate.weightGrams} g · {transferredPricingSource.calculated.quantity} produto(s) completo(s) por perfil.</p><p>O arquivo, as cores e os filamentos serão salvos com o produto. O custo e o preço aceitos, incluindo os adicionais da simulação, estão nos campos abaixo.</p><Button type="button" variant="outline" onClick={() => beginImportedPricing(transferredPricingSource.estimate, "", transferredPricingSource.calculated)}>Ajustar impressão e recalcular</Button></section>}
         {automaticImportCost && importedPricing && <div className="space-y-2">
           <ImportedProductPricing key={importPricingVersion.current} estimate={importedPricing.estimate} error={importedPricing.error} onCalculated={receiveImportCalculation} showTotals={false}
-            initialQuantity={compositionImport?.plates.length === 1 ? compositionImport.plates[0].units_per_plate ?? undefined : undefined} />
+            onAuxiliaryBusy={setFilamentBusy} onAuxiliaryDraft={setFilamentDraft}
+            existingPrinterId={initialImportCalculation.current?.printerId} initialSelections={initialImportCalculation.current?.materialSelections}
+            initialQuantity={initialImportCalculation.current?.quantity ?? (compositionImport?.plates.length === 1 ? compositionImport.plates[0].units_per_plate ?? undefined : undefined)} />
           {!importedPricing.estimate && <Button type="button" variant="outline" onClick={() => setFormTab("producao")}>Importar ou fatiar o 3MF para calcular</Button>}
-          <Button type="button" variant="link" className="px-0" onClick={() => { setAutomaticImportCost(false); setImportCostReady(false); }}>Prefiro informar o custo manualmente</Button>
+          <Button type="button" variant="link" className="px-0" onClick={chooseManualImportCost}>Prefiro informar o custo manualmente</Button>
         </div>}
         {editItem?.id && !automaticImportCost && <SavedProductImportPricing key={editItem.id} productId={editItem.id}
           externalImport={externalImport} savedPlan={currentProduct?.catalog_details?.import_pricing ?? editItem.catalog_details?.import_pricing}
           existingMaterialId={materialId} initialQuantity={Number(printsPerPlate)} requestedSourceId={requestedPrintSourceId}
-          onBusy={setRecipeBusy} />}
+          onBusy={setSavedPricingBusy} onDraft={setSavedPricingDraft} />}
         {(currentProduct?.recipe_configured || costSource === "composition") && <div className="space-y-2">
           <Label htmlFor="product-cost-source">Origem do custo</Label>
           <select id="product-cost-source" className="h-11 w-full rounded-md border bg-background px-3" value={costSource} onChange={e => setCostSource(e.target.value as "manual" | "composition")}>
@@ -1008,72 +1068,11 @@ ${selected?.name ? `Perfil: ${selected.name}
         {finalProductCost != null && activeSalePrice.trim() && <p className="text-sm">Diferença entre preço e custo: <strong>{fmtCurrency(toNumber(activeSalePrice) - finalProductCost)}</strong> · Margem sobre a venda: <strong>{toNumber(activeSalePrice) > 0 ? ((toNumber(activeSalePrice)-finalProductCost)/toNumber(activeSalePrice)*100).toFixed(1) : '0'}%</strong></p>}
         <p className="text-xs text-muted-foreground">Preço base do cadastro. Taxas de marketplace, impostos e frete de venda precisam ser considerados conforme o canal.</p>
         {editItem?.id && <a href={`/comercial/precificacao?produto=${encodeURIComponent(editItem.id)}`} target="_blank" rel="noopener noreferrer" className="inline-block py-2 text-sm text-primary underline">Simular tarifas e condições de venda em outra aba</a>}
-      </TabsContent>
-      <TabsContent forceMount value="estoque" className={tabClass}>      <section className="rounded-lg border p-4 space-y-3" aria-label="Estoque do produto"><div className="flex flex-wrap items-center justify-between gap-3"><h3 className="font-medium">Estoque</h3><label className="flex min-h-11 items-center gap-2 text-sm"><Switch checked={stockEnabled} onCheckedChange={setStockEnabled} disabled={!!editItem?.stock_item_id} />Controlar estoque</label></div>
-        {stockEnabled && <><div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3"><div><Label htmlFor="product-stock">{editItem?.stock_item_id ? "Quantidade em estoque" : "Estoque inicial"}</Label><Input id="product-stock" inputMode="decimal" value={stockQuantity} onChange={e => setStockQuantity(e.target.value)} /></div><div><Label htmlFor="product-unit">Unidade</Label><select id="product-unit" className="h-10 w-full rounded-md border bg-background px-3" value={stockUnit} onChange={e => setStockUnit(e.target.value)}>{["un", "kg", "g", "m", "l", "ml"].map(u => <option key={u} value={u}>{u}</option>)}</select></div><div><Label htmlFor="product-min-stock">Estoque mínimo</Label><Input id="product-min-stock" inputMode="decimal" value={minStock} onChange={e => setMinStock(e.target.value)} /></div><div><Label htmlFor="product-max-stock">Estoque máximo</Label><Input id="product-max-stock" inputMode="decimal" value={maxStock} onChange={e => setMaxStock(e.target.value)} /></div></div><p className="text-xs text-muted-foreground">O saldo é salvo junto com o produto e fica disponível nas compras e nas movimentações. Alterações de quantidade ficam no histórico.</p>
-        {editItem?.stock_item_id && <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" size="sm" asChild><RouterLink to={`/estoque/movimentacoes?item=${editItem.stock_item_id}`}>Registrar entrada / saída</RouterLink></Button><Button type="button" variant="outline" size="sm" asChild><RouterLink to={`/estoque/movimentacoes?item=${editItem.stock_item_id}&historico=1`}>Ver movimentações</RouterLink></Button></div>}</>}
-      </section>
-</TabsContent>
-      <TabsContent forceMount value="embalagem" className={tabClass}>
-        <section aria-label="Embalagem para envio" className="space-y-4">
-          <div><h3 className="text-lg font-semibold">Embalagem para envio</h3><p className="mt-1 text-sm text-muted-foreground">Informe as medidas externas da caixa e o peso de uma unidade do produto pronta para despachar, incluindo embalagem e proteção.</p></div>
-          <div className="grid gap-4 sm:grid-cols-2">{shippingPackageFields.map(([key, label]) => <div key={key}><Label htmlFor={`product-shipping-${key}`}>{label}</Label><Input id={`product-shipping-${key}`} inputMode="decimal" value={shippingPackage[key]} onChange={event => setShippingPackage(current => ({ ...current, [key]: event.target.value }))} placeholder={key === "weight_grams" ? "Ex.: 350" : "Ex.: 20"} /></div>)}</div>
-          <p className={`rounded-lg border p-3 text-sm ${shippingPackageDraftComplete(shippingPackage) ? "border-primary/30 bg-primary/5" : "bg-muted/30 text-muted-foreground"}`} role="status">{shippingPackageDraftComplete(shippingPackage) ? "As quatro medidas estão preenchidas para a cotação de frete." : "Você pode salvar o cadastro e completar depois. O cálculo de frete precisa das três dimensões e do peso total embalado."}</p>
-          <p className="text-xs leading-relaxed text-muted-foreground">Meça o produto completo embalado, incluindo todas as peças do conjunto. O peso de filamento e o tamanho do modelo 3D são informações de produção; o transporte usa a caixa e o peso final para envio.</p>
-        </section>
-      </TabsContent>
-      <TabsContent forceMount value="fotos" className={tabClass}>      {/* Photos gallery */}
-      <div>
-        <Label className="mb-2 block">Fotos do Produto</Label>
-        <div className="flex flex-wrap gap-2">
-          {allPhotos.map((url, i) => (
-            <div key={i} className="relative group">
-              <ImportedModelImage src={url} alt={`Foto ${i + 1}`} className="w-20 h-20 rounded-lg object-contain border" />
-              {i === 0 && <span className="absolute bottom-0 left-0 right-0 bg-primary/80 text-primary-foreground text-[9px] text-center rounded-b-lg">Principal</span>}
-              <button
-                type="button"
-                onClick={() => removePhoto(url)}
-                aria-label={`Remover foto ${i + 1}`}
-                className="absolute -top-1.5 -right-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-destructive text-destructive-foreground transition-opacity md:opacity-0 md:group-hover:opacity-100 md:focus:opacity-100"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </div>
-          ))}
-          {/* Upload button */}
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploadingPhoto}
-            className="w-20 h-20 rounded-lg border-2 border-dashed border-muted-foreground/30 flex flex-col items-center justify-center gap-1 text-muted-foreground hover:border-primary hover:text-primary transition-colors"
-          >
-            {uploadingPhoto ? <Loader2 className="h-5 w-5 animate-spin" /> : <Upload className="h-5 w-5" />}
-            <span className="text-[10px]">{uploadingPhoto ? "..." : "Adicionar"}</span>
-          </button>
-        </div>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          multiple
-          className="hidden"
-          onChange={handlePhotoUpload}
-        />
-        <div className="mt-3 space-y-1.5">
-          <Label htmlFor="product-photo-link">Link da imagem</Label>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <Input id="product-photo-link" type="url" placeholder="https://..." value={photoLink}
-              onChange={e => setPhotoLink(e.target.value)}
-              onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addPhotoLink(); } }} />
-            <Button type="button" variant="outline" disabled={!photoLink.trim()} onClick={addPhotoLink}>Adicionar imagem</Button>
-          </div>
-        </div>
-      </div>
-</TabsContent>
-      <TabsContent forceMount value="producao" className={tabClass}>
+      </>);
+  const productProductionFields = (<>
         {editItem?.is_component && profile?.tenant_id && <PieceTechnicalSheet key={`technical-${editItem.id}`} productId={editItem.id} name={editItem.name} tenantId={profile.tenant_id} showSummary />}
-        {formTab === "producao" && (!editItem || compositionImport) && <Suspense fallback={<p>Carregando leitor de arquivos…</p>}><ModelFileInput current={compositionImport?.profile_id.startsWith("local:") ? undefined : compositionImport || undefined} onChange={setCompositionImport} onParsed={receiveImportedComposition} onFileReady={receiveModelFile} onBusyChange={reportModelReading} disabled={readingMetadataFile} /></Suspense>}
-        {compositionImport && <ImportedCompositionPreview key={compositionImport.profile_id} value={compositionImport} onChange={setCompositionImport} onParsed={receiveImportedComposition} onBusyChange={setReadingImportFile} onFileReady={receiveModelFile} />}<p className="rounded-lg bg-muted p-3 text-sm">Configuração opcional para produtos fabricados. Custo, venda e estoque podem ser cadastrados sem composição.</p>      {productionReference && (
+        {editItem && formTab === "producao" && productModelFileField}
+        {compositionImport && <ImportedCompositionPreview key={compositionImport.profile_id} value={compositionImport} showFileCompletion={!!editItem} confirmedQuantity={transferredPricingSource?.calculated.quantity ?? importedCalculation.current?.quantity} onChange={setCompositionImport} onParsed={receiveImportedComposition} onBusyChange={setReadingImportFile} onFileReady={receiveModelFile} />}<p className="rounded-lg bg-muted p-3 text-sm">Configuração opcional para produtos fabricados. Custo, venda e estoque podem ser cadastrados sem composição.</p>      {productionReference && (
         <section aria-label="Referência da produção" className="rounded-xl border border-primary/20 bg-primary/5 p-4 space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-sm font-semibold">Base na produção</h3>
@@ -1372,8 +1371,83 @@ ${selected?.name ? `Perfil: ${selected.name}
           </div>
         );
       })()}
+</>);
+  const formFields = (
+    <Tabs value={!editItem && ["dados", "valores", "producao"].includes(formTab) ? "cadastro" : formTab} onValueChange={setFormTab} className="flex min-h-0 flex-1 flex-col gap-4 md:flex-row">
+      <TabsList aria-label="Cadastro do produto" className="h-auto w-full min-w-0 max-w-full shrink-0 justify-start gap-1 overflow-x-auto bg-muted/40 p-2 md:h-auto md:max-h-full md:w-44 md:flex-col md:items-stretch md:justify-start md:self-start md:overflow-x-hidden md:overflow-y-auto">
+        {(editItem ? [['dados','Dados'],['valores','Valores'],['estoque','Estoque'],['embalagem','Embalagem para envio'],['fotos','Fotos'],['producao','Composição / produção']] : [['cadastro','Produto e preço'],['estoque','Estoque'],['embalagem','Embalagem para envio'],['fotos','Fotos']]).map(([value,label]) => <TabsTrigger className="justify-start whitespace-nowrap px-4 py-3 md:whitespace-normal" key={value} value={value}>{label}</TabsTrigger>)}
+      </TabsList>
+      <div ref={formScrollRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto px-1 pb-4">
+      {!editItem && <TabsContent forceMount value="cadastro" className={tabClass}>
+        {productNameField}
+        {productSourceFields}
+        {productModelFileField}
+        {productPriceFields}
+        <details className="space-y-4 rounded-lg border p-4"><summary className="cursor-pointer font-medium">Descrição e dados comerciais</summary>{productMetadataFields}</details>
+        <details open={formTab === "producao" || undefined} className="space-y-4 rounded-lg border p-4"><summary className="cursor-pointer font-medium">Peças, composição e referências de produção</summary>{productProductionFields}</details>
+      </TabsContent>}
+      {editItem && <TabsContent forceMount value="dados" className={tabClass}>{productDataFields}</TabsContent>}    {editItem && <TabsContent forceMount value="valores" className={tabClass}>{productPriceFields}</TabsContent>}    <TabsContent forceMount value="estoque" className={tabClass}>      <section className="rounded-lg border p-4 space-y-3" aria-label="Estoque do produto"><div className="flex flex-wrap items-center justify-between gap-3"><h3 className="font-medium">Estoque</h3><label className="flex min-h-11 items-center gap-2 text-sm"><Switch checked={stockEnabled} onCheckedChange={setStockEnabled} disabled={!!editItem?.stock_item_id} />Controlar estoque</label></div>
+        {stockEnabled && <><div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3"><div><Label htmlFor="product-stock">{editItem?.stock_item_id ? "Quantidade em estoque" : "Estoque inicial"}</Label><Input id="product-stock" inputMode="decimal" value={stockQuantity} onChange={e => setStockQuantity(e.target.value)} /></div><div><Label htmlFor="product-unit">Unidade</Label><select id="product-unit" className="h-10 w-full rounded-md border bg-background px-3" value={stockUnit} onChange={e => setStockUnit(e.target.value)}>{["un", "kg", "g", "m", "l", "ml"].map(u => <option key={u} value={u}>{u}</option>)}</select></div><div><Label htmlFor="product-min-stock">Estoque mínimo</Label><Input id="product-min-stock" inputMode="decimal" value={minStock} onChange={e => setMinStock(e.target.value)} /></div><div><Label htmlFor="product-max-stock">Estoque máximo</Label><Input id="product-max-stock" inputMode="decimal" value={maxStock} onChange={e => setMaxStock(e.target.value)} /></div></div><p className="text-xs text-muted-foreground">O saldo é salvo junto com o produto e fica disponível nas compras e nas movimentações. Alterações de quantidade ficam no histórico.</p>
+        {editItem?.stock_item_id && <div className="flex flex-wrap gap-2"><Button type="button" variant="outline" size="sm" asChild><RouterLink to={`/estoque/movimentacoes?item=${editItem.stock_item_id}`}>Registrar entrada / saída</RouterLink></Button><Button type="button" variant="outline" size="sm" asChild><RouterLink to={`/estoque/movimentacoes?item=${editItem.stock_item_id}&historico=1`}>Ver movimentações</RouterLink></Button></div>}</>}
+      </section>
 </TabsContent>
+      <TabsContent forceMount value="embalagem" className={tabClass}>
+        <section aria-label="Embalagem para envio" className="space-y-4">
+          <div><h3 className="text-lg font-semibold">Embalagem para envio</h3><p className="mt-1 text-sm text-muted-foreground">Informe as medidas externas da caixa e o peso de uma unidade do produto pronta para despachar, incluindo embalagem e proteção.</p></div>
+          <div className="grid gap-4 sm:grid-cols-2">{shippingPackageFields.map(([key, label]) => <div key={key}><Label htmlFor={`product-shipping-${key}`}>{label}</Label><Input id={`product-shipping-${key}`} inputMode="decimal" value={shippingPackage[key]} onChange={event => setShippingPackage(current => ({ ...current, [key]: event.target.value }))} placeholder={key === "weight_grams" ? "Ex.: 350" : "Ex.: 20"} /></div>)}</div>
+          <p className={`rounded-lg border p-3 text-sm ${shippingPackageDraftComplete(shippingPackage) ? "border-primary/30 bg-primary/5" : "bg-muted/30 text-muted-foreground"}`} role="status">{shippingPackageDraftComplete(shippingPackage) ? "As quatro medidas estão preenchidas para a cotação de frete." : "Você pode salvar o cadastro e completar depois. O cálculo de frete precisa das três dimensões e do peso total embalado."}</p>
+          <p className="text-xs leading-relaxed text-muted-foreground">Meça o produto completo embalado, incluindo todas as peças do conjunto. O peso de filamento e o tamanho do modelo 3D são informações de produção; o transporte usa a caixa e o peso final para envio.</p>
+        </section>
+      </TabsContent>
+      <TabsContent forceMount value="fotos" className={tabClass}>      {/* Photos gallery */}
+      <div>
+        <Label className="mb-2 block">Fotos do Produto</Label>
+        <div className="flex flex-wrap gap-2">
+          {allPhotos.map((url, i) => (
+            <div key={i} className="relative group">
+              <ImportedModelImage src={url} alt={`Foto ${i + 1}`} className="w-20 h-20 rounded-lg object-contain border" />
+              {i === 0 && <span className="absolute bottom-0 left-0 right-0 bg-primary/80 text-primary-foreground text-[9px] text-center rounded-b-lg">Principal</span>}
+              <button
+                type="button"
+                onClick={() => removePhoto(url)}
+                aria-label={`Remover foto ${i + 1}`}
+                className="absolute -top-1.5 -right-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-destructive text-destructive-foreground transition-opacity md:opacity-0 md:group-hover:opacity-100 md:focus:opacity-100"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </div>
+          ))}
+          {/* Upload button */}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploadingPhoto}
+            className="w-20 h-20 rounded-lg border-2 border-dashed border-muted-foreground/30 flex flex-col items-center justify-center gap-1 text-muted-foreground hover:border-primary hover:text-primary transition-colors"
+          >
+            {uploadingPhoto ? <Loader2 className="h-5 w-5 animate-spin" /> : <Upload className="h-5 w-5" />}
+            <span className="text-[10px]">{uploadingPhoto ? "..." : "Adicionar"}</span>
+          </button>
+        </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={handlePhotoUpload}
+        />
+        <div className="mt-3 space-y-1.5">
+          <Label htmlFor="product-photo-link">Link da imagem</Label>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Input id="product-photo-link" type="url" placeholder="https://..." value={photoLink}
+              onChange={e => setPhotoLink(e.target.value)}
+              onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); addPhotoLink(); } }} />
+            <Button type="button" variant="outline" disabled={!photoLink.trim()} onClick={addPhotoLink}>Adicionar imagem</Button>
+          </div>
+        </div>
       </div>
+</TabsContent>
+      {editItem && <TabsContent forceMount value="producao" className={tabClass}>{productProductionFields}</TabsContent>}    </div>
     </Tabs>
   );
 
@@ -1514,9 +1588,9 @@ ${selected?.name ? `Perfil: ${selected.name}
 
       {/* Create dialog */}
       <Dialog open={createOpen} onOpenChange={open => { if (open) setCreateOpen(true); else closeCreateProduct(); }}>
-        <DialogContent className="flex h-[94dvh] w-[96vw] max-w-6xl flex-col gap-4 p-4 sm:p-6" closeDisabled={createMut.isPending || uploadingPhoto}><DialogHeader className="pr-10"><DialogTitle>Novo Produto</DialogTitle><DialogDescription>Dados, valores, estoque e fotos em um único cadastro.</DialogDescription></DialogHeader>
+        <DialogContent className="flex h-[94dvh] w-[96vw] max-w-6xl flex-col gap-4 p-4 sm:p-6" closeDisabled={createWritePending}><DialogHeader className="pr-10"><DialogTitle>Novo Produto</DialogTitle><DialogDescription>Dados, valores, estoque e fotos em um único cadastro.</DialogDescription></DialogHeader>
           {formFields}
-          <DialogFooter className="gap-2"><Button type="button" className="min-h-11" variant="outline" disabled={createMut.isPending || uploadingPhoto} onClick={closeCreateProduct}>Cancelar</Button><Button type="button" variant="outline" disabled={!name.trim() || createMut.isPending || uploadingPhoto || photosLoading || makerWorldLoading || translatingDescription || readingImportFile} onClick={() => setFormTab("valores")}><Calculator className="mr-2 h-4 w-4" />Conferir preço</Button><Button type="button" className="min-h-11" onClick={() => { createAnother.current = false; createMut.mutate(); }} disabled={!name.trim() || createMut.isPending || uploadingPhoto || photosLoading || makerWorldLoading || translatingDescription}>{createMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Criar</Button><Button type="button" variant="outline" disabled={!name.trim() || createMut.isPending || uploadingPhoto || photosLoading || makerWorldLoading || translatingDescription} onClick={() => { createAnother.current = true; createMut.mutate(); }}>Salvar e cadastrar outro</Button></DialogFooter>
+          <DialogFooter className="gap-2"><Button type="button" className="min-h-11" variant="outline" disabled={createWritePending} onClick={closeCreateProduct}>Cancelar</Button><Button type="button" variant="outline" disabled={!name.trim() || createWritePending || hasProductionDraft || photosLoading || makerWorldLoading || translatingDescription || readingImportFile} onClick={showProductPricing}><Calculator className="mr-2 h-4 w-4" />Conferir preço</Button><Button type="button" className="min-h-11" onClick={() => { createAnother.current = false; createMut.mutate(); }} disabled={!name.trim() || createWritePending || hasProductionDraft || photosLoading || makerWorldLoading || translatingDescription || readingImportFile}>{createMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} Criar</Button><Button type="button" variant="outline" disabled={!name.trim() || createWritePending || hasProductionDraft || photosLoading || makerWorldLoading || translatingDescription || readingImportFile} onClick={() => { createAnother.current = true; createMut.mutate(); }}>Salvar e cadastrar outro</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -1526,7 +1600,7 @@ ${selected?.name ? `Perfil: ${selected.name}
           {formFields}
           {printSourceBusy && <p role="status" className="text-xs text-muted-foreground">Salvando composição ou fonte de impressão. Aguarde a confirmação.</p>}
           {hasProductionDraft && !printSourceBusy && <p role="status" className="text-xs text-amber-800 dark:text-amber-300">Salve ou cancele a composição, fonte ou placa em edição antes de salvar o cadastro. Fechar ou cancelar o produto descarta esses rascunhos.</p>}
-          <DialogFooter className="gap-2"><Button type="button" className="min-h-11" variant="outline" disabled={editWritePending} onClick={closeEditProduct}>Cancelar</Button><Button type="button" variant="outline" disabled={!name.trim() || editWritePending || hasProductionDraft || photosLoading || makerWorldLoading || translatingDescription || readingImportFile} onClick={() => setFormTab("valores")}><Calculator className="mr-2 h-4 w-4" />Conferir preço</Button><Button type="button" className="min-h-11" onClick={() => updateMut.mutate()} disabled={!name.trim() || editWritePending || hasProductionDraft || photosLoading || makerWorldLoading || translatingDescription}>{updateMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} {photosLoading ? "Carregando fotos..." : "Salvar"}</Button></DialogFooter>
+          <DialogFooter className="gap-2"><Button type="button" className="min-h-11" variant="outline" disabled={editWritePending} onClick={closeEditProduct}>Cancelar</Button><Button type="button" variant="outline" disabled={!name.trim() || editWritePending || hasProductionDraft || photosLoading || makerWorldLoading || translatingDescription || readingImportFile} onClick={showProductPricing}><Calculator className="mr-2 h-4 w-4" />Conferir preço</Button><Button type="button" className="min-h-11" onClick={() => updateMut.mutate()} disabled={!name.trim() || editWritePending || hasProductionDraft || photosLoading || makerWorldLoading || translatingDescription || readingImportFile}>{updateMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} {photosLoading ? "Carregando fotos..." : "Salvar"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 

@@ -19,6 +19,18 @@ beforeEach(() => { mock.rpc.mockReset().mockResolvedValue({ data: item.id, error
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); });
 
 describe("stock-first filament registration", () => {
+  it("uses an exact source palette color but asks for the name of an unknown source hex", async () => {
+    show({ defaults: { material_code: "PETG" }, initialColor: { hex: "#FCECD6" } });
+    expect(screen.getByLabelText("Material")).toHaveValue("PETG");
+    expect(screen.getByLabelText("Cor *")).toHaveValue("");
+    expect(screen.getByText(/Cor do arquivo:/)).toHaveTextContent("#FCECD6");
+    submit(); expect(await screen.findByRole("alert")).toHaveTextContent("Informe a cor do filamento"); expect(mock.rpc).not.toHaveBeenCalled();
+  });
+  it("prefills only an exact known palette color without changing add-another-color defaults", async () => {
+    show({ initialColor: { hex: "#FFFFFFFF" } });
+    expect(screen.getByLabelText("Cor *")).toHaveValue("Branco"); submit();
+    await waitFor(() => expect(mock.rpc).toHaveBeenCalledWith("save_inventory_catalog", expect.objectContaining({ p_item: expect.objectContaining({ color: "Branco", color_code: "WHITE", color_hex: "#FFFFFF", current_stock: 0 }) })));
+  });
   it("creates a zero-balance filament with material and color only, without capacity or spool questions", async () => {
     show();
     expect(screen.getByLabelText("Material")).toHaveValue("PLA");

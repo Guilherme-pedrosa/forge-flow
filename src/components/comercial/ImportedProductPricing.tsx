@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { supabase } from "@/integrations/supabase/client";
@@ -13,6 +13,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { FilamentRegistration } from "@/components/estoque/FilamentRegistration";
+import { MATERIAL_CODES } from "@/lib/material-identity";
+import { invalidateInventoryPricing } from "@/lib/inventory-cache";
+import type { FilamentRegistrationItem } from "@/lib/filament-registration";
 
 export type ImportedProductPrice = { cost: number; price: number; materialId: string | null; materialSelections: Record<string, string>; printerId: string; quantity: number; marginPercent: number };
 interface Props {
@@ -24,6 +28,8 @@ interface Props {
   initialQuantity?: number;
   initialSelections?: Record<string, string>;
   showTotals?: boolean;
+  onAuxiliaryBusy?: (busy: boolean) => void;
+  onAuxiliaryDraft?: (open: boolean) => void;
 }
 type Selection = { source: string; printerId: string; materialIds: Record<string, string>; quantity: string; editing: boolean; singleConfirmed: boolean; sameFilamentConfirmed: boolean; productionMode: "imported" | "separate" };
 const blankSelection = (source: string, quantity?: number, materialIds?: Record<string, string>): Selection => ({ source, printerId: "", materialIds: { ...materialIds }, quantity: quantity != null && Number.isInteger(quantity) && quantity > 0 && quantity <= 10000 ? String(quantity) : "1", editing: false, singleConfirmed: false, sameFilamentConfirmed: false, productionMode: "imported" });
@@ -33,14 +39,20 @@ export function ImportedProductPricing(props: Props) {
   return <ProductImportCalculation key={`${profile?.tenant_id ?? "none"}:${user?.id ?? "none"}`} {...props} />;
 }
 
-function ProductImportCalculation({ estimate, error, onCalculated, existingMaterialId, existingPrinterId, initialQuantity, initialSelections, showTotals = true }: Props) {
+function ProductImportCalculation({ estimate, error, onCalculated, existingMaterialId, existingPrinterId, initialQuantity, initialSelections, showTotals = true, onAuxiliaryBusy, onAuxiliaryDraft }: Props) {
   const { profile } = useAuth();
+  const qc = useQueryClient();
   const quantityId = useId();
   const source = JSON.stringify(estimate);
   const [selection, setSelection] = useState(() => blankSelection(source, initialQuantity, initialSelections));
   const edits = selection.source === source ? selection : blankSelection(source, initialQuantity, initialSelections);
   const update = (patch: Partial<Selection>) => setSelection({ ...edits, ...patch });
   const deliver = useRef(onCalculated); deliver.current = onCalculated;
+  const currentSource = useRef(source); currentSource.current = source;
+  const [registration, setRegistration] = useState<{ source: string; key: string; materialCode: string | null; colorHex: string | null; item?: FilamentRegistrationItem } | null>(null);
+  const [registrationBusy, setRegistrationBusy] = useState(false);
+  useEffect(() => { onAuxiliaryDraft?.(!!registration); return () => onAuxiliaryDraft?.(false); }, [onAuxiliaryDraft, registration]);
+  useEffect(() => { onAuxiliaryBusy?.(registrationBusy); return () => onAuxiliaryBusy?.(false); }, [onAuxiliaryBusy, registrationBusy]);
   const enabled = !!profile?.tenant_id && !!estimate;
   const company = useQuery({ queryKey: ["pricing_settings", profile?.tenant_id], enabled, queryFn: readPricingSettings });
   const printers = useQuery({ queryKey: ["import-pricing-printers", profile?.tenant_id], enabled,
@@ -122,7 +134,22 @@ function ProductImportCalculation({ estimate, error, onCalculated, existingMater
   const signature = JSON.stringify(result);
   useEffect(() => { deliver.current(JSON.parse(signature) as ImportedProductPrice | null); }, [signature, source]);
 
-  const showSelectors = edits.editing || !printer || selectedFilaments.some(item => !item);
+  async function selectCreatedFilament(itemId: string) {
+    const target = registration;
+    if (!target) return;
+    await invalidateInventoryPricing(qc);
+    if (currentSource.current !== target.source) { setRegistration(null); return; }
+    const refreshed = qc.getQueryData<Awaited<ReturnType<typeof loadPricingFilaments>>>(["import-pricing-filaments", profile?.tenant_id]);
+    if (!refreshed?.some(item => item.id === itemId))
+      throw new Error("O filamento foi salvo, mas não foi possível atualizar a lista. Tente novamente para selecioná-lo.");
+    setSelection(previous => {
+      const current = previous.source === target.source ? previous : blankSelection(target.source, initialQuantity, initialSelections);
+      return { ...current, materialIds: { ...current.materialIds, [target.key]: itemId }, sameFilamentConfirmed: false };
+    });
+    setRegistration(null);
+  }
+
+  const showSelectors = edits.editing || !printer || selectedFilaments.some(item => !item || item.cost_confirmed === false);
   return <section aria-label="Custo do produto importado" className="space-y-3 rounded-lg border bg-muted/20 p-4">
     <h3 className="font-medium">Custo da impressão</h3>
     {estimate && <>
@@ -134,11 +161,13 @@ function ProductImportCalculation({ estimate, error, onCalculated, existingMater
         {(edits.editing || !printer) && <SearchableItemSelect label="Modelo de impressão" value={printerId}
           options={modelOptions}
           emptyLabel="Qual modelo você vai usar?" onChange={id => update({ printerId: id })} />}
-        {slots.map((slot, index) => (edits.editing || !selectedFilaments[index]) && <div key={slot.key} className="space-y-1">
+        {slots.map((slot, index) => (edits.editing || !selectedFilaments[index] || selectedFilaments[index]?.cost_confirmed === false) && <div key={slot.key} className="space-y-1">
           <p className="text-xs text-muted-foreground">{slot.name} · {slot.grams.toLocaleString("pt-BR")} g</p>
           <SearchableItemSelect label={`Filamento ${index + 1} do produto importado`} value={selectedFilaments[index]?.id ?? ""}
             options={(filaments.data ?? []).map(item => ({ id: item.id, label: item.name, description: item.material_code ?? undefined }))}
             emptyLabel="Qual filamento do estoque você vai usar?" onChange={id => update({ materialIds: { ...edits.materialIds, [slot.key]: id }, sameFilamentConfirmed: false })} />
+          <Button type="button" variant="link" className="h-auto px-0 text-xs" aria-label={`Cadastrar filamento ${index + 1} do produto importado`} onClick={() => setRegistration({ source, key: slot.key, materialCode: slot.materialCode, colorHex: slot.colorHex })}>Cadastrar filamento</Button>
+          {selectedFilaments[index]?.cost_confirmed === false && <Button type="button" variant="link" className="h-auto px-0 text-xs" aria-label={`Informar custo do filamento ${index + 1}`} onClick={() => setRegistration({ source, key: slot.key, materialCode: slot.materialCode, colorHex: slot.colorHex, item: selectedFilaments[index] })}>Informar custo do filamento</Button>}
         </div>)}
       </div>}
       {printer && <p className="text-sm">Modelo: {modelOptions.find(option => option.id === printer.id)?.label || printer.model || "Modelo não informado"}</p>}
@@ -154,5 +183,8 @@ function ProductImportCalculation({ estimate, error, onCalculated, existingMater
       <div><dt>Preço sugerido</dt><dd className="font-semibold">{currency(result.price)}</dd></div>
     </dl> : <p role={loading ? "status" : "alert"} className="text-sm text-muted-foreground">{problem}</p>}
     <Link className="text-xs underline" to="/configuracoes/precificacao">Configurações de custos da empresa</Link>
+    {registration && <FilamentRegistration key={`${registration.source}:${registration.key}`} item={registration.item} defaults={MATERIAL_CODES.some(([code]) => code !== "RESIN" && code === registration.materialCode) ? { material_code: registration.materialCode } : undefined}
+      initialColor={{ hex: registration.colorHex ?? undefined }} onBusyChange={setRegistrationBusy}
+      onClose={() => setRegistration(null)} onSaved={selectCreatedFilament} />}
   </section>;
 }

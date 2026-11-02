@@ -39,7 +39,7 @@ describe('Cadastro real de produto com custo e estoque',()=>{
   mount();fireEvent.click(screen.getByRole('button',{name:'Novo Produto'}));
   fireEvent.change(screen.getByLabelText('Nome *'),{target:{value:'Produto para precificar'}});
   fireEvent.click(screen.getByRole('button',{name:'Conferir preço'}));
-  expect(screen.getByRole('tab',{name:'Valores'})).toHaveAttribute('data-state','active');
+  expect(screen.getByRole('tab',{name:'Produto e preço'})).toHaveAttribute('data-state','active');
   expect(mock.rpc.mock.calls.filter(([name])=>name==='save_product_with_photos')).toHaveLength(0);
   fireEvent.change(screen.getByLabelText('Preço de custo (R$)'),{target:{value:'12,50'}});
   fireEvent.change(screen.getByLabelText('Lucro sobre o custo (%)'),{target:{value:'50'}});

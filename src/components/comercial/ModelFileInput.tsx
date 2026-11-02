@@ -155,6 +155,7 @@ export default function ModelFileInput({
   const [used, setUsed] = useState(false);
   const [sourceFile, setSourceFile] = useState<File | null>(null);
   const [slicingOpen, setSlicingOpen] = useState(false);
+  const [showPreview, setShowPreview] = useState(false);
   const sequence = useRef(0);
   const activeModel = useRef<ModelFile | null>(null);
   useEffect(
@@ -176,6 +177,7 @@ export default function ModelFileInput({
     setUsed(false);
     setModel(null);
     setSelected("");
+    setShowPreview(false);
     if (!fromSlicer) setSourceFile(null);
     let loaded: ModelFile | null = null;
     try {
@@ -253,11 +255,12 @@ export default function ModelFileInput({
       )}
       {model && (
         <>
-          <ModelCanvas
+          <Button type="button" variant="link" className="h-auto px-0" onClick={() => setShowPreview(value => !value)}>{showPreview ? "Ocultar visualização 3D" : "Visualizar modelo em 3D"}</Button>
+          {showPreview && <ModelCanvas
             model={model}
             selected={selected}
             onSelect={setSelected}
-          />
+          />}
           <div className="flex flex-wrap gap-2">
             {model.composition.plates.flatMap((p) =>
               p.parts.map((part) => (

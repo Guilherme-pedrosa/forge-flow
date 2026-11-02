@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -32,15 +32,107 @@ beforeEach(() => {
   });
   mock.rpc.mockReset().mockImplementation(async (name: string) => name === "pricing_settings" ? { data: mock.policy, error: null } : { data: null, error: { message: "Unexpected write" } });
 });
-function mount(value: ModelPricingEstimate | null = estimate, loaded = vi.fn(), error?: string, options: { initialQuantity?: number; initialSelections?: Record<string, string>; showTotals?: boolean; existingPrinterId?: string } = {}) {
+function mount(value: ModelPricingEstimate | null = estimate, loaded = vi.fn(), error?: string, options: { initialQuantity?: number; initialSelections?: Record<string, string>; showTotals?: boolean; existingPrinterId?: string; onAuxiliaryBusy?: (busy: boolean) => void; onAuxiliaryDraft?: (open: boolean) => void } = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const ui = (next: ModelPricingEstimate | null, nextError?: string) => <QueryClientProvider client={client}><MemoryRouter><ImportedProductPricing estimate={next} error={nextError} onCalculated={loaded} {...options} /></MemoryRouter></QueryClientProvider>;
   const result = render(ui(value, error));
   return { loaded, rerender: (next: ModelPricingEstimate | null, nextError?: string) => result.rerender(ui(next, nextError)) };
 }
 const cost = () => screen.getByText("Custo por peça").parentElement?.querySelector("dd");
+const createdId = "84000000-0000-4000-8000-000000000001";
+function inventoryWriter(lostResponse = false) {
+  const read = mock.rpc.getMockImplementation()!;
+  let committed = false, lost = lostResponse;
+  mock.rpc.mockImplementation(async (name: string, args: Record<string, unknown>) => {
+    if (name !== "save_inventory_catalog") return read(name, args);
+    const data = args.p_item as Record<string, unknown>;
+    if (args.p_item_id) {
+      const existing = mock.filaments.find(item => item.id === args.p_item_id)!; Object.assign(existing, data);
+    } else if (!committed) { mock.filaments.push({ id: createdId, ...data }); committed = true; }
+    if (lost) { lost = false; throw new Error("A conexão caiu após o cadastro"); }
+    return { data: args.p_item_id || createdId, error: null };
+  });
+}
+function editField(label: string, value: string) { fireEvent.change(screen.getByLabelText(label, { exact: true }), { target: { value } }); }
 
 describe("ImportedProductPricing", () => {
+  it("creates the missing color in place and assigns it only to the intended slot without resetting the sliced source or quantity", async () => {
+    mock.filaments.push({ ...pla, id: "green", color_hex: "#00FF00", name: "PLA verde" });
+    inventoryWriter(); const draft = vi.fn();
+    const { loaded } = mount(multicolor, vi.fn(), undefined, { onAuxiliaryDraft: draft });
+    await screen.findByLabelText("Filamento 3 do produto importado"); editField("Produtos completos neste perfil", "2");
+    fireEvent.click(screen.getByRole("button", { name: "Cadastrar filamento 3 do produto importado" }));
+    const dialog = await screen.findByRole("dialog", { name: "Cadastrar filamento" });
+    expect(within(dialog).getByLabelText("Material")).toHaveValue("PLA");
+    expect(within(dialog).getByLabelText("Cor *")).toHaveValue("");
+    expect(within(dialog).getByText(/Cor do arquivo:/)).toHaveTextContent("#0000FF");
+    expect(draft).toHaveBeenLastCalledWith(true); editField("Cor *", "Azul"); editField("Custo médio (R$/kg)", "100");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cadastrar filamento" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(loaded.mock.calls.at(-1)?.[0]).toMatchObject({ quantity: 2, cost: 6.6, materialSelections: { red: "pla", green: "green", blue: createdId } }));
+    expect(screen.getByLabelText("Produtos completos neste perfil")).toHaveValue(2);
+    expect(screen.getByText(/2 h · 100 g · 1 placa/)).toBeInTheDocument();
+    expect(draft).toHaveBeenLastCalledWith(false);
+    expect(mock.rpc.mock.calls.find(([name]) => name === "save_inventory_catalog")?.[1]).toMatchObject({ p_item: { current_stock: 0, color_hex: "#0000FF" } });
+  });
+  it("preserves a valid calculation and selections after cancelling inline registration", async () => {
+    const { loaded } = mount(); await waitFor(() => expect(cost()).toHaveTextContent("12,20"));
+    editField("Produtos completos neste perfil", "3");
+    await waitFor(() => expect(loaded.mock.calls.at(-1)?.[0]?.quantity).toBe(3));
+    const previous = loaded.mock.calls.at(-1)?.[0];
+    fireEvent.click(screen.getByRole("button", { name: "Alterar modelo ou filamento" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cadastrar filamento 1 do produto importado" }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Cancelar" }));
+    expect(screen.getByLabelText("Produtos completos neste perfil")).toHaveValue(3);
+    expect(screen.getByLabelText("Filamento 1 do produto importado")).toHaveValue("pla");
+    expect(loaded.mock.calls.at(-1)?.[0]).toEqual(previous);
+    expect(mock.rpc.mock.calls.every(([name]) => name === "pricing_settings")).toBe(true);
+  });
+  it("retries the same inline creation after a lost response without losing its source or making another stock item", async () => {
+    mock.filaments = []; inventoryWriter(true);
+    const { loaded } = mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Cadastrar filamento 1 do produto importado" }));
+    const dialog = await screen.findByRole("dialog"); editField("Cor *", "Vermelho"); editField("Custo médio (R$/kg)", "80");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cadastrar filamento" }));
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent("A conexão caiu após o cadastro");
+    expect(within(dialog).getByLabelText("Cor *")).toHaveValue("Vermelho");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cadastrar filamento" }));
+    await waitFor(() => expect(loaded.mock.calls.at(-1)?.[0]).toMatchObject({ cost: 12.2, materialSelections: { red: createdId } }));
+    const writes = mock.rpc.mock.calls.filter(([name]) => name === "save_inventory_catalog");
+    expect(writes).toHaveLength(2); expect(writes[0]).toEqual(writes[1]); expect(mock.filaments).toHaveLength(1);
+  });
+  it("keeps a created zero-stock color's unknown cost pending and lets its rate be completed in place without touching stock", async () => {
+    mock.filaments = []; inventoryWriter(); const { loaded } = mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Cadastrar filamento 1 do produto importado" }));
+    let dialog = await screen.findByRole("dialog"); editField("Cor *", "Vermelho");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cadastrar filamento" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByRole("alert")).toHaveTextContent("Informe o custo deste filamento"); expect(loaded).toHaveBeenLastCalledWith(null);
+    fireEvent.click(screen.getByRole("button", { name: "Informar custo do filamento 1" }));
+    dialog = await screen.findByRole("dialog", { name: "Editar filamento" });
+    expect(within(dialog).getByLabelText("Estoque atual (g)")).toHaveValue("0"); editField("Custo médio (R$/kg)", "80");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Salvar filamento" }));
+    await waitFor(() => expect(loaded.mock.calls.at(-1)?.[0]?.cost).toBe(12.2));
+    const write = mock.rpc.mock.calls.filter(([name]) => name === "save_inventory_catalog").at(-1)?.[1];
+    expect(write).toMatchObject({ p_item_id: createdId, p_item: { avg_cost: .08 } });
+    expect(write.p_item).not.toHaveProperty("current_stock"); expect(write.p_item).not.toHaveProperty("expected_stock");
+  });
+  it("reports pending auxiliary writes and never applies the saved stock id to a replacement source", async () => {
+    mock.filaments = []; const read = mock.rpc.getMockImplementation()!;
+    let finish!: (result: unknown) => void;
+    mock.rpc.mockImplementation((name: string, args: Record<string, unknown>) => name === "save_inventory_catalog" ? new Promise(resolve => { finish = resolve; mock.filaments.push({ id: createdId, ...args.p_item as Record<string, unknown> }); }) : read(name, args));
+    const busy = vi.fn(), draft = vi.fn(); const { rerender, loaded } = mount(estimate, vi.fn(), undefined, { onAuxiliaryBusy: busy, onAuxiliaryDraft: draft });
+    fireEvent.click(await screen.findByRole("button", { name: "Cadastrar filamento 1 do produto importado" }));
+    const dialog = await screen.findByRole("dialog"); editField("Cor *", "Vermelho"); editField("Custo médio (R$/kg)", "80");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cadastrar filamento" }));
+    await waitFor(() => expect(busy).toHaveBeenLastCalledWith(true));
+    expect(within(dialog).getByRole("button", { name: "Cancelar" })).toBeDisabled();
+    rerender({ ...estimate, hours: 3, timeSeconds: 10800, materials: [{ ...estimate.materials[0], materialCode: "PETG", name: "PETG vermelho" }] });
+    await act(async () => finish({ data: createdId, error: null }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByLabelText("Filamento 1 do produto importado")).toHaveValue(""); expect(loaded).toHaveBeenLastCalledWith(null);
+    expect(busy).toHaveBeenLastCalledWith(false); expect(draft).toHaveBeenLastCalledWith(false);
+  });
   it.each([0, null])("keeps a new color's %s acquisition rate pending instead of presenting a complete cost", async avg_cost => {
     mock.filaments = [{ ...pla, avg_cost }];
     const { loaded } = mount();

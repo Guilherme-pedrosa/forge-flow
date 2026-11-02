@@ -1,11 +1,11 @@
-import { useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { MaterialColorPicker } from "./MaterialColorPicker";
+import { MATERIAL_COLOR_PRESETS, MaterialColorPicker } from "./MaterialColorPicker";
 import { MATERIAL_CODES } from "@/lib/material-identity";
 import { orderRequest } from "@/lib/sales-order";
 import { supabase } from "@/integrations/supabase/client";
@@ -15,15 +15,28 @@ import { filamentName, filamentRegistrationPayload, newFilamentDraft, readFilame
 export type FilamentRegistrationProps = {
   item?: FilamentRegistrationItem | null;
   defaults?: Partial<FilamentRegistrationItem>;
+  initialColor?: { name?: string; hex?: string };
+  onBusyChange?: (busy: boolean) => void;
   onClose: () => void;
   onSaved: (itemId: string) => void | Promise<void>;
 };
 const selectStyle = "mt-1 h-11 w-full rounded-md border bg-background px-3";
 const rpc = supabase.rpc.bind(supabase) as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
 
-export function FilamentRegistration({ item, defaults, onClose, onSaved }: FilamentRegistrationProps) {
+export function FilamentRegistration({ item, defaults, initialColor, onBusyChange, onClose, onSaved }: FilamentRegistrationProps) {
   const id = useId();
-  const [draft, setDraft] = useState(() => newFilamentDraft(item, defaults));
+  const [draft, setDraft] = useState(() => {
+    const next = newFilamentDraft(item, defaults);
+    if (!item && initialColor) {
+      const hex = initialColor.hex?.trim().toUpperCase().replace(/^(#[0-9A-F]{6})FF$/, "$1") || "";
+      const validHex = /^#[0-9A-F]{6}$/.test(hex) ? hex : "";
+      const preset = MATERIAL_COLOR_PRESETS.find(value => value.hex === validHex);
+      const name = initialColor.name?.trim() || preset?.name || "";
+      next.color = { hex: validHex, name, code: preset && name === preset.name ? preset.code : "" };
+    }
+    return next;
+  });
+  const expectedHex = initialColor?.hex?.trim().toUpperCase().replace(/^(#[0-9A-F]{6})FF$/, "$1") || "";
   const request = useRef<ReturnType<typeof orderRequest> | null>(null);
   const inFlight = useRef(false);
   const save = useMutation({ mutationFn: async () => {
@@ -33,6 +46,7 @@ export function FilamentRegistration({ item, defaults, onClose, onSaved }: Filam
     if (result.error) throw new Error(result.error.message);
     return readFilamentRegistrationId(result.data);
   }, onSuccess: itemId => onSaved(itemId) });
+  useEffect(() => { onBusyChange?.(save.isPending); return () => onBusyChange?.(false); }, [onBusyChange, save.isPending]);
   const change = <K extends keyof FilamentRegistrationDraft>(key: K, value: FilamentRegistrationDraft[K]) => {
     if (inFlight.current) return;
     save.reset(); setDraft(previous => ({ ...previous, [key]: value }));
@@ -54,6 +68,7 @@ export function FilamentRegistration({ item, defaults, onClose, onSaved }: Filam
             <div><Label htmlFor={`${id}-brand`}>Marca (opcional)</Label><Input id={`${id}-brand`} className="mt-1" value={draft.brand} onChange={event => change("brand", event.target.value)} placeholder="Ex.: F3D, Bambu Lab" /></div>
             <div><Label htmlFor={`${id}-palette`}>Amostra visual (opcional)</Label><div className="mt-1"><MaterialColorPicker id={`${id}-palette`} value={draft.color} onChange={value => change("color", value)} /></div></div>
           </div>
+          {!item && /^#[0-9A-F]{6}$/.test(expectedHex) && <p className="text-xs text-muted-foreground">Cor do arquivo: <strong>{expectedHex}</strong>. Confira o nome da cor do seu filamento.</p>}
           <p className="text-sm text-muted-foreground">Nome no cadastro: <strong>{draft.name.trim() || filamentName(draft)}</strong></p>
           <div className="grid gap-4 border-t pt-4 sm:grid-cols-2">
             <div><Label htmlFor={`${id}-quantity`}>{item ? "Estoque atual" : "Estoque inicial"} ({draft.quantityUnit})</Label><Input id={`${id}-quantity`} className="mt-1" inputMode="decimal" value={draft.quantity} onChange={event => change("quantity", event.target.value)} />{!item && <select aria-label="Unidade da quantidade informada" className={selectStyle} value={draft.quantityUnit} onChange={event => {

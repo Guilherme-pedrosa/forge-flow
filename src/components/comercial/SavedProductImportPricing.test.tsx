@@ -1,5 +1,5 @@
 import { webcrypto } from "node:crypto";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -60,6 +60,28 @@ function mount(props: Partial<SavedProductImportPricingProps> = {}) {
 const writes = () => mock.rpc.mock.calls.filter(([name]) => name === "save_product_import_pricing");
 
 describe("repairing the saved import's printing data", () => {
+  it("propagates inline filament draft and busy guards and keeps technical saving blocked until the child closes", async () => {
+    const busy = vi.fn(), draft = vi.fn(), secondHash = "b".repeat(64);
+    mock.rows.product_print_sources.push(source("second", secondHash)); mock.rows.product_print_plates.push(plate("second", secondHash));
+    let finish!: (value: unknown) => void;
+    const original = mock.rpc.getMockImplementation()!;
+    mock.rpc.mockImplementation((name: string, args: unknown) => name === "save_inventory_catalog" ? new Promise(resolve => { finish = resolve; }) : original(name, args));
+    mount({ requestedSourceId: "source", onBusy: busy, onDraft: draft });
+    const technicalSave = await screen.findByRole("button", { name: "Salvar dados da impressão" }); await waitFor(() => expect(technicalSave).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Alterar modelo ou filamento" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cadastrar filamento 1 do produto importado" }));
+    const dialog = await screen.findByRole("dialog", { name: "Cadastrar filamento" });
+    expect(draft).toHaveBeenLastCalledWith(true); expect(technicalSave).toBeDisabled(); expect(screen.getByLabelText("Perfil de impressão do produto")).toBeDisabled();
+    fireEvent.change(within(dialog).getByLabelText("Cor *"), { target: { value: "Vermelho" } });
+    fireEvent.change(within(dialog).getByLabelText("Custo médio (R$/kg)"), { target: { value: "80" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cadastrar filamento" }));
+    await waitFor(() => expect(busy).toHaveBeenLastCalledWith(true)); expect(within(dialog).getByRole("button", { name: "Cancelar" })).toBeDisabled();
+    await act(async () => finish({ data: null, error: { message: "Falha no cadastro" } }));
+    await waitFor(() => expect(busy).toHaveBeenLastCalledWith(false)); expect(technicalSave).toBeDisabled(); expect(draft).toHaveBeenLastCalledWith(true);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancelar" }));
+    await waitFor(() => expect(draft).toHaveBeenLastCalledWith(false)); expect(technicalSave).toBeEnabled();
+    expect(screen.getByLabelText("Perfil de impressão do produto")).toBeEnabled(); expect(writes()).toHaveLength(0);
+  });
   it("reuses the exact saved printer, spool and quantity and writes only the technical plan", async () => {
     mock.rows.printers.push({ ...printer, id: "saved-a1", name: "A1 escolhida" });
     mock.rows.inventory_items.push({ ...filament, id: "saved-spool", name: "Bobina escolhida", avg_cost: 100 });

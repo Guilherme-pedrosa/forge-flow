@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type Dispatch, type SetStateAction } from "react";
+import { useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/components/shared/PageHeader";
@@ -13,6 +13,7 @@ import { allRows } from "@/lib/finance";
 import { useAuth } from "@/contexts/AuthContext";
 import { readPricingSettings } from "@/lib/pricing-policy";
 import { loadPricingFilaments, MISSING_FILAMENT_COST } from "@/lib/pricing-filaments";
+import { createPricingSourceTransfer, discardPricingSourceTransfer } from "@/lib/pricing-source-transfer";
 import ProductPricingWorkspace from "./ProductPricingWorkspace";
 import { nonNegative, positiveInteger } from "@/lib/production";
 import { PricingModelFile } from "@/components/comercial/PricingModelFile";
@@ -78,7 +79,14 @@ function PricingWorkspace() {
 }
 
 function FreePricingSimulator({ draft, setDraft, automatic, initialMakerUrl }: { draft: FreePricingDraft; setDraft: Dispatch<SetStateAction<FreePricingDraft>>; automatic: boolean; initialMakerUrl?: string }) {
-  const { profile } = useAuth();
+  const { profile, user } = useAuth();
+  const [transferring, setTransferring] = useState(false);
+  const [transferError, setTransferError] = useState("");
+  const transferBusy = useRef(false), transferAlive = useRef(true);
+  const latestTransfer = useRef({ draft, automatic, tenantId: profile?.tenant_id, userId: user?.id });
+  latestTransfer.current = { draft, automatic, tenantId: profile?.tenant_id, userId: user?.id };
+  useEffect(() => { transferAlive.current = true; return () => { transferAlive.current = false; }; }, []);
+  useEffect(() => { setTransferError(""); }, [automatic, draft.sourceFile, draft.makerReference, draft.estimate, draft.filamentIds, draft.printerId]);
   const company = useQuery({
     queryKey: ["pricing_settings", profile?.tenant_id],
     enabled: !!profile?.tenant_id,
@@ -221,19 +229,39 @@ function FreePricingSimulator({ draft, setDraft, automatic, initialMakerUrl }: {
       />
     </div>
   );
-  const transfer = (quote: boolean) => {
-    if (result && canTransfer && name.trim())
+  const transfer = async (quote: boolean) => {
+    if (!result || !canTransfer || !name.trim() || transferBusy.current) return;
+    const current = latestTransfer.current;
+    transferBusy.current = true; setTransferring(true); setTransferError("");
+    let sourceToken: string | undefined;
+    try {
+      const pricing = { name: name.trim(), cost: Math.round(result.unit * 10000) / 10000,
+        price: selectedPrice!, quantity: selectedQuantity!, quote };
+      if (automatic) {
+        if (!draft.estimate || !profile?.tenant_id || !user?.id) throw new Error("Sua sessão expirou. Entre novamente antes de cadastrar o produto.");
+        sourceToken = await createPricingSourceTransfer({ tenantId: profile.tenant_id, userId: user.id }, {
+          sourceFile: draft.sourceFile, externalImport: draft.makerReference, estimate: draft.estimate,
+          calculated: { printerId, quantity: result.quantity,
+            materialSelections: Object.fromEntries(slots.map((slot, index) => [slot.key, selectedMaterials[index]!.id])) },
+          pricingInput: input, accepted: pricing,
+        });
+        const latest = latestTransfer.current;
+        if (!transferAlive.current || latest.draft !== current.draft || latest.automatic !== current.automatic
+          || latest.tenantId !== current.tenantId || latest.userId !== current.userId)
+          throw new Error("A peça ou a seleção mudou. Confira novamente os valores antes de cadastrar.");
+      } else discardPricingSourceTransfer();
       navigate("/comercial/produtos", {
         state: {
-          pricing: {
-            name: name.trim(),
-            cost: Math.round(result.unit * 10000) / 10000,
-            price: selectedPrice!,
-            quantity: selectedQuantity!,
-            quote,
-          },
+          pricing: { ...pricing, ...(sourceToken ? { sourceToken, sourceRequired: true } : {}) },
         },
       });
+    } catch (problem) {
+      if (sourceToken) discardPricingSourceTransfer(sourceToken);
+      if (transferAlive.current) setTransferError(problem instanceof Error ? problem.message : "Não foi possível manter os dados da impressão. Envie novamente o arquivo.");
+    } finally {
+      transferBusy.current = false;
+      if (transferAlive.current) setTransferring(false);
+    }
   };
   const channelField = (key: keyof typeof initialChannel, label: string, placeholder?: string) => (
     <div key={key}>
@@ -522,19 +550,21 @@ function FreePricingSimulator({ draft, setDraft, automatic, initialMakerUrl }: {
               </p>
               <Button
                 className="w-full"
-                disabled={!name.trim() || !canTransfer}
-                onClick={() => transfer(false)}
+                disabled={!name.trim() || !canTransfer || transferring}
+                onClick={() => void transfer(false)}
               >
                 Cadastrar produto com estes valores
               </Button>
               <Button
                 className="w-full"
                 variant="outline"
-                disabled={!name.trim() || !canTransfer}
-                onClick={() => transfer(true)}
+                disabled={!name.trim() || !canTransfer || transferring}
+                onClick={() => void transfer(true)}
               >
                 Cadastrar produto e orçar
               </Button>
+              {transferring && <p role="status" className="text-sm text-muted-foreground">Preparando os dados da impressão para o cadastro…</p>}
+              {transferError && <p role="alert" className="text-sm text-destructive">{transferError}</p>}
               <div className="space-y-2 border-t pt-4">
                 <Label>Ou usar um produto já cadastrado</Label>
                 <SearchableItemSelect

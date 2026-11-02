@@ -7,7 +7,7 @@ export const MISSING_FILAMENT_COST = "Informe o custo deste filamento ou registr
  * explicit zero-cost receipt can confirm that zero really means free material. */
 export async function loadPricingFilaments() {
   const items = await allRows((from, to) => supabase.from("inventory_items")
-    .select("id,name,unit,avg_cost,material_code,color_hex")
+    .select("id,name,unit,current_stock,avg_cost,material_code,material_description,material_type,color,color_code,color_hex,brand,sku,diameter,notes")
     .eq("is_active", true).eq("category", "filament").in("unit", ["g", "kg"])
     .order("name").order("id").range(from, to));
   const zeroIds = items.filter(item => item.avg_cost === 0).map(item => item.id);

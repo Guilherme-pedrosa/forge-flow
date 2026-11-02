@@ -30,7 +30,7 @@ describe("confirmed filament acquisition rates", () => {
     const result = await loadPricingFilaments();
     expect(result.map(value => [value.id, value.avg_cost, value.cost_confirmed])).toEqual([["red", .08, true], ["blue", 80, true]]);
     expect(mock.from).toHaveBeenCalledExactlyOnceWith("inventory_items");
-    expect(mock.reads[0].columns).toBe("id,name,unit,avg_cost,material_code,color_hex");
+    expect(mock.reads[0].columns).toBe("id,name,unit,current_stock,avg_cost,material_code,material_description,material_type,color,color_code,color_hex,brand,sku,diameter,notes");
   });
 
   it("keeps identity-only zero, missing and invalid rates unknown without creating artificial free acquisitions", async () => {

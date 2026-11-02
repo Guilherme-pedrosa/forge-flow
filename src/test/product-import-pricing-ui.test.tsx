@@ -92,8 +92,14 @@ function mount(path = "/comercial/produtos") {
 it("opens the extension entry in the product form, prefilling only a supported public model link without starting an import", async () => {
   mount("/comercial/produtos?novo=1&aba=producao&makerworld=" + encodeURIComponent("https://makerworld.com/models/744793"));
   const editor = await screen.findByRole("dialog", { name: "Novo Produto" });
-  expect(within(editor).getByRole("tab", { name: "Composição / produção" })).toHaveAttribute("aria-selected", "true");
-  expect((within(editor).getByLabelText("Importar produto completo pelo link do MakerWorld") as HTMLInputElement).value).toContain("/models/744793");
+  expect(within(editor).getByRole("tab", { name: "Produto e preço" })).toHaveAttribute("aria-selected", "true");
+  const cadastro = within(editor).getByRole("tabpanel", { name: "Produto e preço" });
+  expect(within(cadastro).getByLabelText("Nome *")).toBeVisible();
+  expect(within(cadastro).getByLabelText("Importar produto completo pelo link do MakerWorld")).toBeVisible();
+  expect((within(cadastro).getByLabelText("Importar produto completo pelo link do MakerWorld") as HTMLInputElement).value).toContain("/models/744793");
+  expect(within(cadastro).getByRole("button", { name: "Ler 3MF fatiado de teste" })).toBeVisible();
+  expect(within(cadastro).getByLabelText("Preço de custo (R$)")).toBeVisible();
+  expect(within(cadastro).getByLabelText("Preço unitário (R$)")).toBeVisible();
   expect(mock.rpc.mock.calls.some(([name]) => /request_makerworld|save_product/.test(name))).toBe(false);
 });
 async function newProduct() {
@@ -104,7 +110,7 @@ const saved = () => mock.rpc.mock.calls.find(([name]) => name === "save_product_
 async function loadNative(expectedCost = "12.2") {
   const editor = await newProduct();
   fireEvent.change(within(editor).getByLabelText("Nome *"), { target: { value: "Produto do arquivo" } });
-  fireEvent.mouseDown(within(editor).getByRole("tab", { name: "Composição / produção" }), { button: 0, ctrlKey: false });
+  expect(within(editor).getByRole("tab", { name: "Produto e preço" })).toHaveAttribute("aria-selected", "true");
   fireEvent.click(await within(editor).findByRole("button", { name: "Ler 3MF fatiado de teste" }));
   await waitFor(() => expect(within(editor).getByLabelText("Preço de custo (R$)")).toHaveValue(expectedCost));
   return editor;
@@ -114,7 +120,7 @@ describe("automatic costs in the product import editor", () => {
   it("fills and saves native 3MF cost and sale price as soon as the file is parsed", async () => {
     mount(); const editor = await loadNative();
     expect(mock.parsedOnly).toHaveBeenCalledTimes(1);
-    expect(within(editor).getByRole("tab", { name: "Valores" })).toHaveAttribute("data-state", "active");
+    expect(within(editor).getByRole("tab", { name: "Produto e preço" })).toHaveAttribute("data-state", "active");
     expect(within(editor).getByLabelText("Preço de custo (R$)")).toHaveAttribute("readonly");
     expect(within(editor).getByLabelText("Preço unitário (R$)")).toHaveValue("24.40");
     expect(within(editor).getByLabelText("Lucro sobre o custo (%)")).toHaveValue("100");

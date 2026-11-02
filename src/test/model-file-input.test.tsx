@@ -4,14 +4,14 @@ import { webcrypto } from "node:crypto";
 import { zipSync, strToU8 } from "fflate";
 import ModelFileInput from "@/components/comercial/ModelFileInput";
 import ImportedSlice from "./fixtures/bambu-cube-slice-info.config?raw";
-const worker = vi.hoisted(() => ({ result: null as File | null }));
+const worker = vi.hoisted(() => ({ result: null as File | null, webgl: vi.fn() }));
 vi.mock("@/components/comercial/SlicingDialog", () => ({ SlicingDialog: ({ onSliced }: { onSliced: (file: File) => void }) => <div role="dialog" aria-label="Simular impressão"><button onClick={() => onSliced(worker.result!)}>Usar resultado do fatiador</button></div> }));
 
 vi.mock("three", async () => ({
   ...await vi.importActual<typeof import("three")>("three"),
-  WebGLRenderer: class { constructor() { throw new Error("No WebGL in jsdom"); } },
+  WebGLRenderer: class { constructor() { worker.webgl(); throw new Error("No WebGL in jsdom"); } },
 }));
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); worker.webgl.mockClear(); });
 
 describe("direct 3MF upload", () => {
   it("opens the slicer for an STL and returns the verified result to the existing-product review", async () => {
@@ -53,6 +53,13 @@ describe("direct 3MF upload", () => {
     fireEvent.change(screen.getByLabelText("Abrir projeto 3MF ou peça STL"), { target: { files: [file] } });
     await screen.findByText(/3.63 g · 23 min · estimativa do fatiador para a placa inteira/);
     expect(screen.getByText(/Filamento 1: PLA #00AE42 · 3.63 g/)).toBeInTheDocument();
+    expect(worker.webgl).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText("Modelo 3D interativo")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Visualizar modelo em 3D" }));
+    await screen.findByText(/A visualização 3D não está disponível/);
+    expect(worker.webgl).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: "Ocultar visualização 3D" }));
+    expect(screen.queryByLabelText("Modelo 3D interativo")).not.toBeInTheDocument();
     expect(onChange).not.toHaveBeenCalled();
     expect(onFileReady).toHaveBeenLastCalledWith(file);
     fireEvent.click(screen.getByRole("button", { name: "Usar estas peças no produto" }));
