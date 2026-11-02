@@ -5,6 +5,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, Loader2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/AuthContext";
 import { orderRequest } from "@/lib/sales-order";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,41 +18,60 @@ type Address = { _key: string; type: string; cep: string; street: string; number
 type Contact = { name: string; role: string; email: string; phone: string };
 type Details = { person_type?: string; trade_name?: string; mobile?: string; state_registration?: string; municipal_registration?: string; taxpayer_type?: string; responsible?: string; addresses?: Address[]; contacts?: Contact[]; [key: string]: unknown };
 export type Partner = { id: string; name: string; email: string | null; phone: string | null; document: string | null; notes: string | null; address: unknown; birthday?: string | null; is_active: boolean; updated_at: string; registration_details?: Details };
+export type PartnerInitialValues = Partial<Pick<Partner, "name" | "document" | "email" | "phone" | "address" | "registration_details">>;
+export type PartnerDialogProps = { kind: PartnerKind; open: boolean; record?: Partner | null; initialValues?: PartnerInitialValues; onClose: () => void; onSaved?: (id: string, name: string) => void; onBusyChange?: (busy: boolean) => void };
 const blankAddress = (): Address => ({ _key: crypto.randomUUID(), type: "Principal", cep: "", street: "", number: "", complement: "", neighborhood: "", city: "", state: "" });
 const blank = () => ({ name: "", email: "", phone: "", document: "", birthday: "", notes: "", is_active: true, person_type: "individual", trade_name: "", mobile: "", state_registration: "", municipal_registration: "", taxpayer_type: "", responsible: "" });
 const rpc = supabase.rpc.bind(supabase) as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ data: string | null; error: { message: string } | null }>;
 export const partnerQueryKeys = ["customers", "vendors", "quote_customers", "order_customers", "ledger_partners"];
 
-export function PartnerDialog({ kind, open, record, onClose, onSaved }: { kind: PartnerKind; open: boolean; record?: Partner | null; onClose: () => void; onSaved?: (id: string, name: string) => void }) {
+export function PartnerDialog(props: PartnerDialogProps) {
+  const { profile, user } = useAuth();
+  const scope = `${profile?.tenant_id ?? "none"}:${user?.id ?? profile?.user_id ?? "none"}`;
+  return <PartnerDialogSession key={`${scope}:${props.kind}:${props.record?.id ?? "new"}`} {...props} tenantId={profile?.tenant_id} scope={scope} />;
+}
+
+function PartnerDialogSession({ kind, open, record, initialValues, onClose, onSaved, onBusyChange, tenantId, scope }: PartnerDialogProps & { tenantId?: string; scope: string }) {
   const qc = useQueryClient(); const { toast } = useToast();
+  const alive = useRef(true), current = useRef({ open, scope }); current.current = { open, scope };
+  const initial = useRef(initialValues); initial.current = initialValues;
+  const details = useRef<Details>({});
+  const active = () => alive.current && current.current.open && current.current.scope === scope;
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const [form, setForm] = useState(blank); const [addresses, setAddresses] = useState<Address[]>([blankAddress()]); const [contacts, setContacts] = useState<Contact[]>([]); const [lookupBusy, setLookupBusy] = useState<Record<string, boolean>>({});
   const lookup = Object.values(lookupBusy).some(Boolean);
   const request = useRef<{ signature: string; id: string } | null>(null);
   const label = kind === "customer" ? "cliente" : "fornecedor";
   useEffect(() => {
     request.current = null; setLookupBusy({});
-    const d = record?.registration_details || {};
-    setForm({ ...blank(), ...(record ? { name: record.name, email: record.email || "", phone: record.phone || "", document: record.document || "", birthday: record.birthday || "", notes: record.notes || "", is_active: record.is_active } : {}),
-      person_type: String(d.person_type || (cleanDocument(record?.document || "").length === 14 ? "company" : "individual")),
+    const source = record ?? initial.current, d = source?.registration_details || {};
+    details.current = structuredClone(d);
+    setForm({ ...blank(), ...(record ? { name: record.name, email: record.email || "", phone: record.phone || "", document: record.document || "", birthday: record.birthday || "", notes: record.notes || "", is_active: record.is_active }
+      : source ? { name: source.name || "", email: source.email || "", phone: source.phone || "", document: source.document || "" } : {}),
+      person_type: String(d.person_type || (cleanDocument(source?.document || "").length === 14 ? "company" : "individual")),
       ...Object.fromEntries(["trade_name", "mobile", "state_registration", "municipal_registration", "taxpayer_type", "responsible"].map(key => [key, String(d[key] || "")])) });
-    setAddresses(d.addresses?.length ? d.addresses.map(a => ({ ...blankAddress(), ...a })) : [{ ...blankAddress(), ...(record?.address && typeof record.address === "object" ? record.address : {}) }]);
+    setAddresses(d.addresses?.length ? d.addresses.map(a => ({ ...blankAddress(), ...a })) : [{ ...blankAddress(), ...(source?.address && typeof source.address === "object" ? source.address : {}) }]);
     setContacts(d.contacts || []);
   }, [open, record]);
   const change = (key: keyof ReturnType<typeof blank>, value: string | boolean) => setForm(current => ({ ...current, [key]: value }));
   const save = useMutation({ mutationFn: async () => {
+    if (!active() || !tenantId) throw new Error("Sua sessão mudou. Reabra o cadastro antes de salvar.");
     if (!form.name.trim()) throw new Error("Informe o nome.");
     const { person_type, trade_name, mobile, state_registration, municipal_registration, taxpayer_type, responsible, ...fields } = form;
     const savedAddresses = addresses.map(({ _key, ...address }) => address);
     const p_data = { ...fields, address: savedAddresses[0] || null, expected_updated_at: record?.updated_at || null,
-      registration_details: { ...record?.registration_details, person_type, trade_name, mobile, state_registration, municipal_registration, taxpayer_type, responsible, addresses: savedAddresses, contacts } };
+      registration_details: { ...details.current, person_type, trade_name, mobile, state_registration, municipal_registration, taxpayer_type, responsible, addresses: savedAddresses, contacts } };
     const payload = { p_kind: kind, p_id: record?.id || null, p_data };
-    request.current = orderRequest(request.current, JSON.stringify(payload));
+    request.current = orderRequest(request.current, JSON.stringify([scope, payload]));
     const result = await rpc("save_partner", { ...payload, p_request_id: request.current.id });
-    if (result.error) throw new Error(result.error.message); if (!result.data) throw new Error("Salvamento não confirmado."); return result.data;
-  }, onSuccess: async id => {
+    if (result.error) throw new Error(result.error.message); if (!result.data) throw new Error("Salvamento não confirmado."); return { id: result.data, name: form.name };
+  }, onSuccess: async result => {
+    if (!active()) return;
     await Promise.all(partnerQueryKeys.map(key => qc.invalidateQueries({ queryKey: [key] })));
-    toast({ title: `${kind === "customer" ? "Cliente" : "Fornecedor"} salvo` }); onSaved?.(id, form.name); onClose();
-  }, onError: (e: Error) => toast({ title: "Não foi possível salvar", description: e.message, variant: "destructive" }) });
+    if (!active()) return;
+    toast({ title: `${kind === "customer" ? "Cliente" : "Fornecedor"} salvo` }); onSaved?.(result.id, result.name); onClose();
+  }, onError: (e: Error) => { if (active()) toast({ title: "Não foi possível salvar", description: e.message, variant: "destructive" }); } });
+  useEffect(() => { onBusyChange?.(open && save.isPending); return () => onBusyChange?.(false); }, [onBusyChange, open, save.isPending]);
   const busy = (key: string, value: boolean) => setLookupBusy(current => current[key] === value ? current : { ...current, [key]: value });
   const captureCnpj = () => {
     const original = { ...form }; const originalAddress = addresses[0];
@@ -69,7 +89,7 @@ export function PartnerDialog({ kind, open, record, onClose, onSaved }: { kind: 
     } : address));
   };
   const field = (key: keyof ReturnType<typeof blank>, title: string, type = "text") => <div key={key}><Label htmlFor={`partner-${key}`}>{title}</Label><Input id={`partner-${key}`} type={type} value={String(form[key])} onChange={e => change(key, e.target.value)} disabled={save.isPending} /></div>;
-  return <Dialog open={open} onOpenChange={value => { if (!value && !save.isPending) onClose(); }}><DialogContent className="flex h-[94dvh] w-[96vw] max-w-6xl flex-col gap-0 overflow-hidden p-0"><DialogHeader className="border-b p-5 pr-12"><DialogTitle>{record ? "Editar" : "Adicionar"} {label}</DialogTitle><DialogDescription>Dados gerais, documentos, endereços e contatos.</DialogDescription></DialogHeader>
+  return <Dialog open={open} onOpenChange={value => { if (!value && !save.isPending) onClose(); }}><DialogContent closeDisabled={save.isPending} className="flex h-[94dvh] w-[96vw] max-w-6xl flex-col gap-0 overflow-hidden p-0"><DialogHeader className="border-b p-5 pr-12"><DialogTitle>{record ? "Editar" : "Adicionar"} {label}</DialogTitle><DialogDescription>Dados gerais, documentos, endereços e contatos.</DialogDescription></DialogHeader>
     <div className="min-h-0 flex-1 space-y-5 overflow-y-auto bg-muted/20 p-5">
       <section className="rounded-lg border bg-card p-5"><h2 className="mb-4 font-semibold">Dados gerais</h2><div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <div><Label htmlFor="partner-person-type">Tipo de pessoa</Label><select id="partner-person-type" className="h-10 w-full rounded-md border bg-background px-3 text-sm" value={form.person_type} onChange={e => change("person_type", e.target.value)} disabled={save.isPending}><option value="individual">Pessoa física</option><option value="company">Pessoa jurídica</option><option value="foreign">Estrangeiro</option></select></div>

@@ -16,6 +16,7 @@ export type FilamentRegistrationProps = {
   item?: FilamentRegistrationItem | null;
   defaults?: Partial<FilamentRegistrationItem>;
   initialColor?: { name?: string; hex?: string };
+  initialName?: string;
   onBusyChange?: (busy: boolean) => void;
   onClose: () => void;
   onSaved: (itemId: string) => void | Promise<void>;
@@ -23,10 +24,11 @@ export type FilamentRegistrationProps = {
 const selectStyle = "mt-1 h-11 w-full rounded-md border bg-background px-3";
 const rpc = supabase.rpc.bind(supabase) as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
 
-export function FilamentRegistration({ item, defaults, initialColor, onBusyChange, onClose, onSaved }: FilamentRegistrationProps) {
+export function FilamentRegistration({ item, defaults, initialColor, initialName, onBusyChange, onClose, onSaved }: FilamentRegistrationProps) {
   const id = useId();
   const [draft, setDraft] = useState(() => {
     const next = newFilamentDraft(item, defaults);
+    if (!item && initialName?.trim()) next.name = initialName.trim();
     if (!item && initialColor) {
       const hex = initialColor.hex?.trim().toUpperCase().replace(/^(#[0-9A-F]{6})FF$/, "$1") || "";
       const validHex = /^#[0-9A-F]{6}$/.test(hex) ? hex : "";

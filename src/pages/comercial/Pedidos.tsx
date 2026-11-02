@@ -1,6 +1,7 @@
 import { CommercialPdfButton } from "@/components/comercial/CommercialPdfButton";
 import { orderDocument } from "@/lib/commercial-document";
 import { SearchableItemSelect } from "@/components/shared/SearchableItemSelect";
+import { PartnerDialog } from "@/components/comercial/PartnerDialog";
 import { DeleteRecordDialog, type DeleteTarget } from "@/components/shared/DeleteRecordDialog";
 import { prepareOrder, salesOrderTransitions, orderRequest } from "@/lib/sales-order";
 import { operatingDateInput, operatingDateToIso, readSalesWorkflowResult, salesOrderNextAction } from "@/lib/sales-workflow";
@@ -77,6 +78,11 @@ const newLine = (): OrderLineItem => ({
 });
 
 export default function Pedidos() {
+  const { profile, user } = useAuth();
+  return <OrderSession key={`${profile?.tenant_id ?? "none"}:${user?.id ?? profile?.user_id ?? "none"}`} />;
+}
+
+function OrderSession() {
   const { profile } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -91,6 +97,8 @@ export default function Pedidos() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState(() => statusConfig[searchParams.get("status") ?? ""] ? searchParams.get("status")! : "all");
   const [createOpen, setCreateOpen] = useState(false);
+  const [customerOpen, setCustomerOpen] = useState(false);
+  const [customerBusy, setCustomerBusy] = useState(false);
   const [viewOrderId, setViewOrderId] = useState<string | null>(searchParams.get("pedido"));
   useEffect(() => { const id = searchParams.get("pedido"); if (id) setViewOrderId(id); }, [searchParams]);
   useEffect(() => { const status = searchParams.get("status"); setStatusFilter(status && statusConfig[status] ? status : "all"); }, [searchParams]);
@@ -115,6 +123,7 @@ export default function Pedidos() {
     confirmRequest.current = null;
     deadlineRequest.current = null;
     setEditingDeadlines(false);
+    setCustomerOpen(false); setCustomerBusy(false);
     setCustomerId(""); setDueDate(""); setPaymentDueDate(""); setNotes(""); setShipping(""); setDiscountVal("");
     setShipBy(""); setInternalDue(""); setBufferHours("24");
     setDeliveryAddress(""); setLines([newLine()]);
@@ -174,34 +183,34 @@ export default function Pedidos() {
     ? order.status === "draft" ? "Conferir e aprovar" : "Produzir ou atender com estoque"
     : salesOrderNextAction(order);
   const { data: orders = [], isLoading, error: ordersError, refetch } = useQuery({
-    queryKey: ["orders"],
+    queryKey: ["orders", profile?.tenant_id],
     queryFn: async () => {
-      return readProductionRows((from, to) => supabase.from("orders").select("*, customers(name, address, phone, email, document)").order("created_at", { ascending: false }).order("id").range(from, to));
+      return readProductionRows((from, to) => supabase.from("orders").select("*, customers(name, address, phone, email, document)").eq("tenant_id", profile!.tenant_id).order("created_at", { ascending: false }).order("id").range(from, to));
     },
     enabled: !!profile,
   });
 
   const { data: customers = [] } = useQuery({
-    queryKey: ["customers", "order-select"],
+    queryKey: ["customers", "order-select", profile?.tenant_id],
     queryFn: async () => {
-      return readProductionRows((from, to) => supabase.from("customers").select("id, name, address, phone, email").eq("is_active", true).order("name").order("id").range(from, to));
+      return readProductionRows((from, to) => supabase.from("customers").select("id, name, address, phone, email").eq("tenant_id", profile!.tenant_id).eq("is_active", true).order("name").order("id").range(from, to));
     },
     enabled: !!profile,
   });
 
   const { data: products = [] } = useQuery({
-    queryKey: ["products_for_orders"],
+    queryKey: ["products_for_orders", profile?.tenant_id],
     queryFn: async () => {
-      return readProductionRows((from, to) => supabase.from("products").select("id, name, sku, sale_price, cost_estimate, stock_item_id").eq("is_active", true).order("name").order("id").range(from, to));
+      return readProductionRows((from, to) => supabase.from("products").select("id, name, sku, sale_price, cost_estimate, stock_item_id").eq("tenant_id", profile!.tenant_id).eq("is_active", true).order("name").order("id").range(from, to));
     },
     enabled: !!profile,
   });
 
   // Order items for viewing
   const { data: viewItems = [], isLoading: itemsLoading, error: itemsError } = useQuery({
-    queryKey: ["order_items", viewOrderId],
+    queryKey: ["order_items", profile?.tenant_id, viewOrderId],
     queryFn: async () => {
-      const { data, error } = await supabase.from("order_items").select("*, products(name, photo_url)").eq("order_id", viewOrderId!).order("created_at");
+      const { data, error } = await supabase.from("order_items").select("*, products(name, photo_url)").eq("tenant_id", profile!.tenant_id).eq("order_id", viewOrderId!).order("created_at");
       if (error) throw error;
       return data;
     },
@@ -210,9 +219,9 @@ export default function Pedidos() {
 
   // Jobs linked to this order
   const { data: linkedJobs = [], isLoading: linkedLoading, error: linkedError } = useQuery({
-    queryKey: ["order_jobs", viewOrderId],
+    queryKey: ["order_jobs", profile?.tenant_id, viewOrderId],
     queryFn: async () => {
-      const { data, error } = await supabase.from("jobs").select("id, code, name, status, est_total_cost, actual_total_cost").eq("order_id", viewOrderId!).order("code");
+      const { data, error } = await supabase.from("jobs").select("id, code, name, status, est_total_cost, actual_total_cost").eq("tenant_id", profile!.tenant_id).eq("order_id", viewOrderId!).order("code");
       if (error) throw error;
       return data;
     },
@@ -227,6 +236,12 @@ export default function Pedidos() {
     else if (address && typeof address === "object" && !Array.isArray(address)) {
       setDeliveryAddress([address.street, address.number, address.complement, address.neighborhood, address.city, address.state, address.zip].filter(Boolean).join(", "));
     } else setDeliveryAddress("");
+  };
+  const selectCreatedCustomer = (id: string, name: string) => {
+    qc.setQueryData<typeof customers>(["customers", "order-select", profile?.tenant_id], current => current?.some(customer => customer.id === id)
+      ? current : [...(current ?? []), { id, name, address: null, phone: null, email: null }]);
+    // Keep the order's item, dates, shipping and manually entered address draft.
+    setCustomerId(id);
   };
 
   const filtered = useMemo(() => {
@@ -379,7 +394,7 @@ export default function Pedidos() {
   const viewOrder = viewOrderId ? orders.find((o: any) => o.id === viewOrderId) : null;
   const viewPreparationDay = viewOrder ? deliveryPreparationDay(viewOrder) : null;
   const formPreparationDay = createOpen ? deliveryPreparationDay({ due_date: dueDate, ship_by_at: shipBy || null, internal_due_at: internalDue || null, marketplace_order_id: null }) : null;
-  const formPending = createMut.isPending || updateOrderMut.isPending || confirmOrder.isPending || updateDeadlines.isPending;
+  const formPending = createMut.isPending || updateOrderMut.isPending || confirmOrder.isPending || updateDeadlines.isPending || customerOpen || customerBusy;
   const localTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const renderOperatingDates = () => workflowAvailable ? <section className="space-y-3 rounded-lg border bg-muted/20 p-3" aria-label="Prazo de postagem">
     <div className="grid gap-3 sm:grid-cols-2">
@@ -517,6 +532,7 @@ export default function Pedidos() {
               <div>
                 <Label>Cliente · necessário para confirmar</Label>
                 <SearchableItemSelect label="Cliente do pedido" value={customerId} disabled={formPending} onChange={selectCustomer} emptyLabel="Sem cliente" searchPlaceholder="Digite o nome do cliente…" options={customers.map(c => ({ id: c.id, label: c.name }))} />
+                <Button type="button" variant="link" className="h-auto px-0 py-2" disabled={formPending} onClick={() => setCustomerOpen(true)}>Cadastrar cliente</Button>
               </div>
               <div>
                 <Label htmlFor="order-delivery-date">Data de Entrega</Label>
@@ -781,7 +797,8 @@ export default function Pedidos() {
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <Label>Cliente</Label>
-                  <SearchableItemSelect label="Cliente do pedido" value={customerId} onChange={selectCustomer} emptyLabel="Sem cliente" searchPlaceholder="Digite o nome do cliente…" options={customers.map(c => ({ id: c.id, label: c.name }))} />
+                  <SearchableItemSelect label="Cliente do pedido" value={customerId} disabled={formPending} onChange={selectCustomer} emptyLabel="Sem cliente" searchPlaceholder="Digite o nome do cliente…" options={customers.map(c => ({ id: c.id, label: c.name }))} />
+                  <Button type="button" variant="link" className="h-auto px-0 py-2" disabled={formPending} onClick={() => setCustomerOpen(true)}>Cadastrar cliente</Button>
                 </div>
                 <div>
                   <Label htmlFor="order-delivery-date">Data de Entrega</Label>
@@ -851,6 +868,7 @@ export default function Pedidos() {
           )}
         </DialogContent>
       </Dialog>
+      <PartnerDialog kind="customer" open={customerOpen} onClose={() => setCustomerOpen(false)} onBusyChange={setCustomerBusy} onSaved={selectCreatedCustomer} />
     </div>
   );
 }

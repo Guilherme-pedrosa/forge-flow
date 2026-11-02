@@ -19,6 +19,12 @@ beforeEach(() => { mock.rpc.mockReset().mockResolvedValue({ data: item.id, error
 afterEach(() => { cleanup(); clients.splice(0).forEach(client => client.clear()); });
 
 describe("stock-first filament registration", () => {
+  it("keeps the explicit purchase name while requiring the filament color and starting with zero stock", async () => {
+    show({ initialName: "PLA branco para luminárias" });
+    expect(screen.getByText("Nome no cadastro:")).toHaveTextContent("PLA branco para luminárias");
+    fill("Cor *", "Branco");submit();
+    await waitFor(()=>expect(mock.rpc).toHaveBeenCalledWith("save_inventory_catalog",expect.objectContaining({p_item:expect.objectContaining({name:"PLA branco para luminárias",color:"Branco",current_stock:0,avg_cost:0})})));
+  });
   it("uses an exact source palette color but asks for the name of an unknown source hex", async () => {
     show({ defaults: { material_code: "PETG" }, initialColor: { hex: "#FCECD6" } });
     expect(screen.getByLabelText("Material")).toHaveValue("PETG");

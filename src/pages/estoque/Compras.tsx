@@ -1,3 +1,7 @@
+import { NfePurchaseImportDialog } from '@/components/estoque/NfePurchaseImportDialog';
+import { PurchaseFinancialFields } from '@/components/estoque/PurchaseFinancialFields';
+import { loadPurchaseMaterials } from '@/lib/purchase-catalog';
+import { FilamentRegistration } from '@/components/estoque/FilamentRegistration';
 import { PartnerDialog } from "@/components/comercial/PartnerDialog";
 import { InstallmentEditor, generateParts, validateParts, type PaymentPart } from "@/components/shared/InstallmentEditor";
 import { Link, useSearchParams } from "react-router-dom";
@@ -61,88 +65,14 @@ const statusConfig: Record<string, { label: string; variant: "default" | "second
   cancelled: { label: "Cancelada", variant: "destructive" },
 };
 
-interface NfeItem {
-  description: string;
-  quantity: number;
-  unitPrice: number;
-  total: number;
-  cfop: string;
-  ncm: string;
-  inventoryItemId: string;
-  stockQuantity?: string;
-  purchaseUnit: string;
-}
-
-interface NfeData {
-  nfeNumber: string;
-  nfeKey: string;
-  vendorName: string;
-  vendorDoc: string;
-  issueDate: string;
-  items: NfeItem[];
-  subtotal: number;
-  discount: number;
-  shipping: number;
-  additionalCosts: number;
-  total: number;
-}
-
-export function parseNfeXml(xmlText: string): NfeData | null {
-  try {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(xmlText, "text/xml");
-    if (doc.querySelector("parsererror")) return null;
-
-    const ns = "http://www.portalfiscal.inf.br/nfe";
-    const getTag = (parent: Element | Document, tag: string) =>
-      parent.getElementsByTagNameNS(ns, tag)[0]?.textContent || parent.getElementsByTagName(tag)[0]?.textContent || "";
-
-    const ide = doc.getElementsByTagNameNS(ns, "ide")[0] || doc.getElementsByTagName("ide")[0];
-    const emit = doc.getElementsByTagNameNS(ns, "emit")[0] || doc.getElementsByTagName("emit")[0];
-    const infNFe = doc.getElementsByTagNameNS(ns, "infNFe")[0] || doc.getElementsByTagName("infNFe")[0];
-    const ICMSTot = doc.getElementsByTagNameNS(ns, "ICMSTot")[0] || doc.getElementsByTagName("ICMSTot")[0];
-
-    const nfeNumber = ide ? getTag(ide, "nNF") : "";
-    const nfeKey = infNFe?.getAttribute("Id")?.replace("NFe", "") || "";
-    const issueDate = ide ? (getTag(ide, "dhEmi") || getTag(ide, "dEmi")).slice(0, 10) : "";
-
-    const vendorName = emit ? (getTag(emit, "xFant") || getTag(emit, "xNome")) : "";
-    const vendorDoc = emit ? (getTag(emit, "CNPJ") || getTag(emit, "CPF")) : "";
-
-    const detElements = doc.getElementsByTagNameNS(ns, "det").length > 0
-      ? doc.getElementsByTagNameNS(ns, "det")
-      : doc.getElementsByTagName("det");
-
-    const items: NfeItem[] = [];
-    for (let i = 0; i < detElements.length; i++) {
-      const det = detElements[i];
-      const prod = det.getElementsByTagNameNS(ns, "prod")[0] || det.getElementsByTagName("prod")[0];
-      if (!prod) continue;
-      items.push({
-        description: getTag(prod, "xProd"),
-        quantity: parseFloat(getTag(prod, "qCom") || "0"),
-        purchaseUnit: getTag(prod, "uCom").trim(),
-        unitPrice: parseFloat(getTag(prod, "vUnCom") || "0"),
-        total: parseFloat(getTag(prod, "vProd") || "0"),
-        cfop: getTag(prod, "CFOP"),
-        ncm: getTag(prod, "NCM"),
-        inventoryItemId: "",
-      });
-    }
-
-    const subtotal = ICMSTot ? parseFloat(getTag(ICMSTot, "vProd") || "0") : items.reduce((s, i) => s + i.total, 0);
-    const discount = ICMSTot ? parseFloat(getTag(ICMSTot, "vDesc") || "0") : 0;
-    const shipping = ICMSTot ? parseFloat(getTag(ICMSTot, "vFrete") || "0") : 0;
-    const total = ICMSTot ? parseFloat(getTag(ICMSTot, "vNF") || "0") : subtotal - discount + shipping;
-
-    const additionalCosts = money(total - subtotal + discount - shipping);
-    return { nfeNumber, nfeKey, vendorName, vendorDoc, issueDate, items, subtotal, discount, shipping, additionalCosts, total };
-  } catch {
-    return null;
-  }
-}
+export { parseNfeXml } from '@/lib/nfe-purchase';
 
 export default function Compras() {
+  const {profile,user}=useAuth();
+  return <PurchaseWorkspace key={`${profile?.tenant_id}:${user?.id}`}/>;
+}
+
+function PurchaseWorkspace() {
   const [newMethod, setNewMethod] = useState<"manual" | "marketplace" | null>(null);
   const { profile } = useAuth();
   const { toast } = useToast();
@@ -152,12 +82,13 @@ export default function Compras() {
     void qc.invalidateQueries({ queryKey: ["daily-operations"] });
     void qc.invalidateQueries({ queryKey: ["capacity_data"] });
   };
-  const fileInputRef = useRef<HTMLInputElement>(null);
+
 
   const [params] = useSearchParams();
   const openedPurchase = useRef<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [quickItemRow, setQuickItemRow] = useState<number | null>(null);
+  const [quickFilamentRow, setQuickFilamentRow] = useState<number | null>(null);
   const [receiveNow, setReceiveNow] = useState(false);
   const [shipping, setShipping] = useState("");
   const [discount, setDiscount] = useState("");
@@ -182,9 +113,9 @@ export default function Compras() {
   const [marketplaceInstallments, setMarketplaceInstallments] = useState("1");
   const [marketplaceDueDate, setMarketplaceDueDate] = useState("");
   const marketplaceFileRef = useRef<HTMLInputElement>(null);
-  const [nfeData, setNfeData] = useState<NfeData | null>(null);
-  const [xmlRaw, setXmlRaw] = useState("");
-  const [nfeMarkReceived, setNfeMarkReceived] = useState(false);
+
+
+
 
   // Manual create form
   const [vendorId, setVendorId] = useState("");
@@ -193,6 +124,9 @@ export default function Compras() {
   const [expectedDate, setExpectedDate] = useState("");
   const [notes, setNotes] = useState("");
   const [paymentMethodId, setPaymentMethodId] = useState("");
+  const [accountId,setAccountId] = useState("");
+  const [costCenterId,setCostCenterId] = useState("");
+  const [financialBusy,setFinancialBusy] = useState(false);
   const [installments, setInstallments] = useState("1");
   const [dueDate, setDueDate] = useState("");
   const [manualItems, setManualItems] = useState<{ description: string; quantity: string; unitPrice: string; inventoryItemId: string; stockQuantity?: string }[]>([
@@ -202,9 +136,9 @@ export default function Compras() {
   const [replenishmentError, setReplenishmentError] = useState<string | null>(null);
   const openedReplenishment = useRef<string | null>(null);
 
-  // NFe form
-  const [nfeInstallments, setNfeInstallments] = useState("1");
-  const [nfeDueDate, setNfeDueDate] = useState("");
+
+
+
 
   // Receive confirmation dialog
   const [receiveConfirmOpen, setReceiveConfirmOpen] = useState(false);
@@ -234,6 +168,7 @@ export default function Compras() {
       description: `Compra${order.nfe_number ? ` NFe ${order.nfe_number}` : ""}${count > 1 ? ` (${i + 1}/${count})` : ""}`,
       competence_date: order.order_date, vendor_id: order.vendor_id, payment_method_id: method,
       installment_number: i + 1, installment_total: schedule.length, notes: order.notes || null,
+      ...(key === "manual" ? {account_id:accountId||null,cost_center_id:costCenterId||null} : {}),
     }));
     const payload = JSON.stringify([order, items, installments]);
     let request = purchaseRequests.current.get(key);
@@ -265,7 +200,7 @@ export default function Compras() {
   const { data: inventoryItems = [], isLoading: inventoryLoading, error: inventoryError, refetch: refetchInventory } = useQuery({
     queryKey: ["inventory_items", profile?.tenant_id, "purchase-selection"],
     queryFn: async () => {
-      return allRows<{ id: string; name: string; sku: string | null; unit: string; category: string | null; material_code: string | null; color: string | null; color_code: string | null; avg_cost: number; current_stock: number }>((from, to) => supabase.from("inventory_items").select("id, name, sku, unit, category, material_code, color, color_code, avg_cost, current_stock").eq("is_active", true).order("name").order("id").range(from, to));
+      return (await loadPurchaseMaterials(profile!.tenant_id)).items;
     },
     enabled: !!profile,
   });
@@ -395,7 +330,7 @@ export default function Compras() {
     setVendorId(knownVendor?.id ?? ""); setOrderDate(currentDate);
     setExpectedDate(delivery && validDate(delivery) && delivery >= currentDate ? delivery : "");
     setReceiveNow(false); setShipping(""); setDiscount(""); setTaxes(""); setInvoiceNumber("");
-    setPaymentMethodId(""); setInstallments("1"); setDueDate(""); setPaymentParts([]); setPaymentDays("");
+    setPaymentMethodId("");setAccountId("");setCostCenterId(""); setInstallments("1"); setDueDate(""); setPaymentParts([]); setPaymentDays("");
     setNotes(`Sugestão de reposição: ${prepared.map(line => `${line.kg} kg de ${line.item.name}`).join("; ")}. Compra consolidada para conferir um único frete. Confirme preços, prazo e disponibilidade com o fornecedor.`);
     setReplenishmentReview(`Sugestão: ${prepared.map(line => `${line.item.name}: ${line.kg.toLocaleString("pt-BR")} kg → ${line.stock.toLocaleString("pt-BR")} ${line.item.unit} no estoque`).join("; ")}. Informe o preço por kg de todos os materiais e confira o frete único desta compra.${!knownVendor ? " O fornecedor precisa ser definido; a referência sugerida não está disponível no cadastro ativo desta empresa." : ""}${delivery && validDate(delivery) && delivery < currentDate ? " A primeira data necessária já passou; confira uma nova previsão de entrega." : ""}${delivery && !validDate(delivery) ? " A data sugerida é inválida; informe uma previsão de entrega." : ""}`);
     setCreateOpen(true);
@@ -422,52 +357,6 @@ export default function Compras() {
       toast({ title: "Pedido de compra criado", description: receiveNow ? "Estoque atualizado e parcelas lançadas no financeiro." : "Parcelas lançadas. Use Receber quando a mercadoria chegar." });
     },
     onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
-  });
-
-  const importXmlMut = useMutation({
-    mutationFn: async () => {
-      if (!profile || !nfeData) throw new Error("Sem dados para importar.");
-      if (!/^\d{44}$/.test(nfeData.nfeKey)) throw new Error("A chave da NFe deve conter 44 dígitos.");
-      let vid: string | null = null;
-      if (nfeData.vendorDoc) {
-        const { data: vendor, error: lookupError } = await supabase.from("vendors").select("id").eq("document", nfeData.vendorDoc).maybeSingle();
-        if (lookupError) throw lookupError;
-        if (vendor) vid = vendor.id;
-        else {
-          const { data, error } = await supabase.from("vendors").insert({ tenant_id: profile.tenant_id, name: nfeData.vendorName || "Fornecedor NFe", document: nfeData.vendorDoc }).select("id").single();
-          if (error) throw error;
-          vid = data.id;
-        }
-      }
-      const items = nfeData.items.map(i => ({ description: i.description, quantity: i.quantity, unit_price: i.unitPrice, total: i.total, cfop: i.cfop || null, ncm: i.ncm || null, inventory_item_id: i.inventoryItemId || null, stock_quantity: i.inventoryItemId ? purchaseStockQuantity(i.stockQuantity || "") : null }));
-      if (nfeMarkReceived && items.some(i => i.inventory_item_id && !(i.stock_quantity > 0))) throw new Error("Informe a quantidade na unidade do estoque de cada item vinculado antes de receber.");
-      const id = await persistPurchase("xml", { vendor_id: vid, order_date: nfeData.issueDate, subtotal: nfeData.subtotal, discount: nfeData.discount, shipping: nfeData.shipping, additional_costs: nfeData.additionalCosts, total: nfeData.total, nfe_number: nfeData.nfeNumber, nfe_key: nfeData.nfeKey, nfe_xml: xmlRaw }, items, Number(nfeInstallments), nfeDueDate || nfeData.issueDate, null);
-      let receiveError = "";
-      if (nfeMarkReceived) {
-        const { error } = await (supabase.rpc as any)("receive_purchase_order", { p_order_id: id, p_received_date: localDate() });
-        if (error) receiveError = error.message;
-      }
-      return { shouldReceive: nfeMarkReceived && !receiveError, linkedCount: items.filter(i => i.inventory_item_id).length, totalItems: items.length, receiveError };
-    },
-    onSuccess: (result) => {
-      purchaseRequests.current.delete("xml");
-      qc.invalidateQueries({ queryKey: ["purchase_orders"] });
-      refreshPlanning();
-      qc.invalidateQueries({ queryKey: ["vendors"] });
-      qc.invalidateQueries({ queryKey: ["accounts_payable"] });
-      if (result?.shouldReceive) {
-        void invalidateInventoryPricing(qc);
-      }
-      setXmlImportOpen(false);
-      setNfeData(null);
-      setXmlRaw("");
-      setNfeMarkReceived(false);
-      const msg = result?.shouldReceive
-        ? `NFe importada! ${result.linkedCount} de ${result.totalItems} itens deram entrada no estoque.`
-        : "NFe importada como pendente. Vincule os itens ao estoque e clique em 'Receber' quando o pedido chegar.";
-      toast({ title: result?.receiveError ? "NFe criada; recebimento pendente" : "NFe importada", description: result?.receiveError ? `A compra e as parcelas foram criadas. Abra a compra para concluir o recebimento: ${result.receiveError}` : msg, variant: result?.receiveError ? "destructive" : "default" });
-    },
-    onError: (e: any) => toast({ title: "Erro ao importar", description: e.message, variant: "destructive" }),
   });
 
   const receiveOrderMut = useMutation({
@@ -515,28 +404,10 @@ export default function Compras() {
     setOrderDate(localDate());
     setExpectedDate("");
     setNotes("");
-    setPaymentMethodId("");
+    setPaymentMethodId("");setAccountId("");setCostCenterId("");
     setInstallments("1"); setPaymentParts([]); setPaymentDays(""); setTaxes(""); setInvoiceNumber("");
     setDueDate("");
     setManualItems([{ description: "", quantity: "1", unitPrice: "0", inventoryItemId: "" }]);
-  };
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const text = ev.target?.result as string;
-      setXmlRaw(text);
-      const parsed = parseNfeXml(text);
-      if (parsed && parsed.items.length > 0) {
-        setNfeData(parsed);
-      } else {
-        toast({ title: "XML inválido", description: "Não foi possível extrair dados da NFe.", variant: "destructive" });
-      }
-    };
-    reader.readAsText(file);
-    e.target.value = "";
   };
 
   const addManualItem = () => setManualItems([...manualItems, { description: "", quantity: "1", unitPrice: "0", inventoryItemId: "" }]);
@@ -550,13 +421,6 @@ export default function Compras() {
     }
     if (field === "quantity" && inventoryItems.find(inv => inv.id === updated[idx].inventoryItemId)?.unit === "un") updated[idx].stockQuantity = value;
     setManualItems(updated);
-  };
-
-  const updateNfeItem = (idx: number, inventoryItemId: string) => {
-    if (!nfeData) return;
-    const updatedItems = [...nfeData.items];
-    updatedItems[idx] = { ...updatedItems[idx], inventoryItemId, stockQuantity: "" };
-    setNfeData({ ...nfeData, items: updatedItems });
   };
 
   const updateStockMut = useMutation({
@@ -707,7 +571,8 @@ export default function Compras() {
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       <DeleteRecordDialog key={deleteTarget?.id} target={deleteTarget} onClose={() => setDeleteTarget(null)} onDeleted={() => setDetailOrder(null)} />
-      {quickItemRow !== null && <QuickInventoryItem open initialName={manualItems[quickItemRow]?.description || ""} onClose={() => setQuickItemRow(null)} onCreated={item => setManualItems(rows => rows.map((row, idx) => idx === quickItemRow ? { ...row, inventoryItemId: item.id, description: item.name, stockQuantity: item.unit === "un" ? row.quantity : "" } : row))} />}
+      {quickItemRow !== null && <QuickInventoryItem key={`${profile?.tenant_id}:${quickItemRow}`} open purchaseContext initialName={manualItems[quickItemRow]?.description || ""} onClose={() => setQuickItemRow(null)} onCreated={item => setManualItems(rows => rows.map((row, idx) => idx === quickItemRow ? { ...row, inventoryItemId: item.id, description: item.name, stockQuantity: item.unit === "un" ? row.quantity : "" } : row))} />}
+      {quickFilamentRow !== null && <FilamentRegistration key={`${profile?.tenant_id}:${quickFilamentRow}`} initialName={manualItems[quickFilamentRow]?.description} onClose={() => setQuickFilamentRow(null)} onSaved={async id => { const refreshed=await refetchInventory(); const item=refreshed.data?.find(item=>item.id===id); if(item)setManualItems(rows=>rows.map((row,index)=>index===quickFilamentRow?{...row,inventoryItemId:id,description:item.name,stockQuantity:""}:row)); setQuickFilamentRow(null); }}/>}
       <PageHeader
         title="Pedidos de Compra"
         description="Gerencie compras de materiais e importe NFes"
@@ -717,7 +582,7 @@ export default function Compras() {
             <Button variant="outline" size="sm" onClick={() => { setMarketplaceImages([]); setMarketplaceParsed([]); setMarketplaceImportOpen(true); }}>
               <Camera className="h-4 w-4 mr-1" /> Screenshot Compra
             </Button>
-            <Button variant="outline" size="sm" onClick={() => { setNfeData(null); setXmlRaw(""); setNfeMarkReceived(false); setXmlImportOpen(true); }}>
+            <Button variant="outline" size="sm" onClick={() => setXmlImportOpen(true)}>
               <Upload className="h-4 w-4 mr-1" /> Importar XML
             </Button>
             <Button size="sm" onClick={() => { resetForm(); setCreateOpen(true); }}>
@@ -880,7 +745,7 @@ export default function Compras() {
                     <Button aria-label={`Remover item da compra ${idx + 1}`} variant="ghost" size="icon" className="h-11 w-11 justify-self-end" onClick={() => removeManualItem(idx)} disabled={manualItems.length <= 1}>
                       <Trash2 className="h-3.5 w-3.5" />
                     </Button>
-                    <div className="col-span-full"><Button type="button" size="sm" variant="link" className="h-8 px-0" disabled={createMut.isPending} onClick={() => setQuickItemRow(idx)}>+ Cadastrar item</Button></div>
+                    <div className="col-span-full"><Button type="button" size="sm" variant="link" className="h-8 px-0" disabled={createMut.isPending} onClick={() => setQuickItemRow(idx)}>+ Cadastrar insumo</Button><Button type="button" size="sm" variant="link" className="ml-4 h-8 px-0" disabled={createMut.isPending} onClick={() => setQuickFilamentRow(idx)}>+ Cadastrar filamento</Button></div>
                     {item.inventoryItemId && inventoryItems.find(inv => inv.id === item.inventoryItemId)?.unit !== "un" && <div className="col-span-full rounded-md bg-muted/30 p-3"><PurchaseStockQuantity key={item.inventoryItemId} label={item.description || `item ${idx + 1}`} value={item.stockQuantity || ""} purchasedQuantity={Number(item.quantity.replace(",", "."))} stockUnit={inventoryItems.find(inv => inv.id === item.inventoryItemId)?.unit || "un"} onChange={value => updateManualItem(idx, "stockQuantity", value)} disabled={createMut.isPending} /></div>}
                   </div>
                 ))}
@@ -890,10 +755,7 @@ export default function Compras() {
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><div><Label htmlFor="purchase-shipping">Frete (R$)</Label><Input id="purchase-shipping" inputMode="decimal" value={shipping} onChange={e => setShipping(e.target.value)} placeholder="0,00" /></div><div><Label htmlFor="purchase-discount">Desconto (R$)</Label><Input id="purchase-discount" inputMode="decimal" value={discount} onChange={e => setDiscount(e.target.value)} placeholder="0,00" /></div></div>
             <div><Label htmlFor="purchase-taxes">Impostos e outras despesas (R$)</Label><Input id="purchase-taxes" inputMode="decimal" value={taxes} onChange={e => setTaxes(e.target.value)}/></div>
-            <section className="space-y-3"><h3 className="font-semibold">Condição de pagamento</h3>              <div>
-                <Label>Forma de Pagamento</Label>
-                <SearchableItemSelect label="Forma de pagamento da compra" value={paymentMethodId} onChange={setPaymentMethodId} emptyLabel="Selecionar forma de pagamento" options={paymentMethods.map(pm => ({ id: pm.id, label: pm.name }))} /><Button type="button" variant="link" size="sm" className="px-0" onClick={() => setNewMethod("manual")}>Cadastrar forma de pagamento</Button>
-              </div>
+            <section className="space-y-3"><h3 className="font-semibold">Condição de pagamento</h3><PurchaseFinancialFields value={{paymentMethodId,accountId,costCenterId}} onChange={value=>{setPaymentMethodId(value.paymentMethodId);setAccountId(value.accountId);setCostCenterId(value.costCenterId);}} disabled={createMut.isPending} onBusyChange={setFinancialBusy}/>
 <InstallmentEditor total={manualTotal} firstDate={dueDate || expectedDate || orderDate} count={installments} days={paymentDays} parts={paymentParts} onFirstDate={setDueDate} onCount={setInstallments} onDays={setPaymentDays} onParts={setPaymentParts} disabled={createMut.isPending}/></section>
             <div className="flex items-center justify-between gap-3 rounded-lg border p-4"><div><Label htmlFor="purchase-receive-now">Receber os itens agora</Label><p className="text-xs text-muted-foreground">Ative se a mercadoria já chegou. Salva a compra, as parcelas e a entrada no estoque juntas.</p></div><Switch id="purchase-receive-now" checked={receiveNow} onCheckedChange={setReceiveNow} disabled={createMut.isPending} /></div>
             <div>
@@ -903,137 +765,14 @@ export default function Compras() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancelar</Button>
-            <Button onClick={() => createMut.mutate()} disabled={!manualItems.some((i) => i.description.trim()) || createMut.isPending}>
+            <Button onClick={() => createMut.mutate()} disabled={!manualItems.some((i) => i.description.trim()) || createMut.isPending || financialBusy || vendorOpen || quickItemRow !== null || quickFilamentRow !== null}>
               {createMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />} {receiveNow ? "Salvar e receber" : "Salvar compra"}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* XML Import Dialog */}
-      <Dialog open={xmlImportOpen} onOpenChange={v => !importXmlMut.isPending && setXmlImportOpen(v)}>
-        <DialogContent className="max-w-2xl max-h-[90dvh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Importar NFe XML</DialogTitle>
-            <DialogDescription>Faça upload de um arquivo XML de Nota Fiscal Eletrônica</DialogDescription>
-          </DialogHeader>
-
-          {!nfeData ? (
-            <div className="flex flex-col items-center gap-4 py-8">
-              <div className="w-20 h-20 rounded-2xl bg-muted flex items-center justify-center">
-                <FileText className="h-10 w-10 text-muted-foreground" />
-              </div>
-              <p className="text-sm text-muted-foreground">Selecione o arquivo XML da NFe</p>
-              <input ref={fileInputRef} type="file" accept=".xml" className="hidden" onChange={handleFileUpload} />
-              <Button variant="outline" onClick={() => fileInputRef.current?.click()}>
-                <Upload className="h-4 w-4 mr-2" /> Selecionar Arquivo XML
-              </Button>
-            </div>
-          ) : (
-            <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">
-              <div className="rounded-lg border bg-muted/50 p-4 grid grid-cols-2 gap-3 text-sm">
-                <div><span className="text-muted-foreground">NFe:</span> {nfeData.nfeNumber}</div>
-                <div><span className="text-muted-foreground">Data:</span> {nfeData.issueDate}</div>
-                <div><span className="text-muted-foreground">Fornecedor:</span> {nfeData.vendorName}</div>
-                <div><span className="text-muted-foreground">CNPJ:</span> {nfeData.vendorDoc}</div>
-                <div><span className="text-muted-foreground">Subtotal:</span> {fmtCurrency(nfeData.subtotal)}</div>
-                <div><span className="text-muted-foreground">Desconto:</span> {fmtCurrency(nfeData.discount)}</div>
-                <div><span className="text-muted-foreground">Frete:</span> {fmtCurrency(nfeData.shipping)}</div>
-                <div><span className="text-muted-foreground">Outros componentes do total da NF-e:</span> {fmtCurrency(nfeData.additionalCosts)}</div>
-                <div><span className="text-muted-foreground font-semibold">Total:</span> <span className="font-semibold">{fmtCurrency(nfeData.total)}</span></div>
-              </div>
-
-              <div>
-                <Label className="mb-2 block">Itens ({nfeData.items.length}) — Vincule ao estoque para dar entrada automática</Label>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Descrição</TableHead>
-                      <TableHead>Vincular ao Estoque</TableHead>
-                      <TableHead className="text-right">Qtd</TableHead>
-                      <TableHead className="text-right">Valor Unit.</TableHead>
-                      <TableHead className="text-right">Total</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {nfeData.items.map((item, idx) => (
-                      <TableRow key={idx}>
-                        <TableCell className="text-sm max-w-[160px] truncate">{item.description}</TableCell>
-                        <TableCell>
-                          <SearchableItemSelect label={`Material de estoque de ${item.description}`} value={item.inventoryItemId || ""} onChange={val => updateNfeItem(idx, val)} emptyLabel="Não vincular" options={inventoryItems.map(inv => ({ id: inv.id, label: purchaseMaterialLabel(inv) }))} disabled={importXmlMut.isPending} />
-                          {item.inventoryItemId && <div className="mt-2"><PurchaseStockQuantity key={item.inventoryItemId} label={item.description} value={item.stockQuantity || ""} purchasedQuantity={item.quantity} purchaseUnit={item.purchaseUnit} stockUnit={inventoryItems.find(inv => inv.id === item.inventoryItemId)?.unit || "un"} onChange={value => setNfeData({ ...nfeData, items: nfeData.items.map((row, index) => index === idx ? { ...row, stockQuantity: value } : row) })} disabled={importXmlMut.isPending} /></div>}
-                        </TableCell>
-                        <TableCell className="text-right text-sm">{item.quantity} {item.purchaseUnit}</TableCell>
-                        <TableCell className="text-right text-sm">{fmtCurrency(item.unitPrice)}</TableCell>
-                        <TableCell className="text-right text-sm font-mono">{fmtCurrency(item.total)}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-                {nfeData.items.some(i => i.inventoryItemId) && (
-                  <p className="text-xs text-emerald-600 mt-2 flex items-center gap-1">
-                    <Package className="h-3 w-3" />
-                    {nfeData.items.filter(i => i.inventoryItemId).length} de {nfeData.items.length} itens vinculados ao estoque
-                  </p>
-                )}
-              </div>
-
-              {/* Mark as received toggle */}
-              <div className="rounded-lg border bg-muted/30 p-4 flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-foreground">Já recebi este pedido</p>
-                  <p className="text-xs text-muted-foreground">
-                    {nfeMarkReceived 
-                      ? "Os itens vinculados darão entrada no estoque automaticamente."
-                      : "O pedido será salvo como pendente. Você poderá receber depois."}
-                  </p>
-                </div>
-                <Switch checked={nfeMarkReceived} onCheckedChange={setNfeMarkReceived} />
-              </div>
-
-              {nfeMarkReceived && !nfeData.items.some(i => i.inventoryItemId) && (
-                <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 flex items-start gap-2">
-                  <AlertTriangle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
-                  <p className="text-xs text-amber-700">
-                    Nenhum item está vinculado ao estoque. O pedido será marcado como recebido mas <strong>nenhuma movimentação de estoque</strong> será criada. Vincule os itens acima para dar entrada automática.
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {nfeData && (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div>
-                <Label className="mb-2 block">Parcelas</Label>
-                <Select value={nfeInstallments} onValueChange={setNfeInstallments}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {[1,2,3,4,5,6,7,8,9,10,11,12].map(n => <SelectItem key={n} value={String(n)}>{n}x</SelectItem>)}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label className="mb-2 block">Vencimento 1ª parcela</Label>
-                <Input type="date" value={nfeDueDate} onChange={(e) => setNfeDueDate(e.target.value)} />
-              </div>
-              <p className="text-xs text-muted-foreground col-span-full">Parcelas mensais no mesmo dia, ajustado ao último dia do mês</p>
-            </div>
-          )}
-
-          <DialogFooter>
-            {nfeData && (
-              <>
-                <Button variant="outline" onClick={() => { setNfeData(null); setXmlRaw(""); }}>Trocar Arquivo</Button>
-                <Button onClick={() => importXmlMut.mutate()} disabled={importXmlMut.isPending}>
-                  {importXmlMut.isPending && <Loader2 className="h-4 w-4 mr-1 animate-spin" />}
-                  {nfeMarkReceived ? "Importar e Receber" : "Importar NFe"}
-                </Button>
-              </>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <NfePurchaseImportDialog open={xmlImportOpen} onOpenChange={setXmlImportOpen} onImported={() => { refreshPlanning(); toast({title:'NFe importada',description:'Compra e condições conferidas salvas.'}); }}/>
 
       {/* Detail Dialog */}
       <Dialog open={!!detailOrder} onOpenChange={(o) => { if (!o) setDetailOrder(null); }}>

@@ -5,6 +5,7 @@ import { PartnerDialog } from "@/components/comercial/PartnerDialog";
 const mock = vi.hoisted(() => ({ rpc: vi.fn(), toast: vi.fn() }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: mock.rpc } }));
 vi.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: mock.toast }) }));
+vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ profile: { tenant_id: "tenant" }, user: { id: "user" } }) }));
 const company = { cnpj: "19131243000197", razao_social: "OPEN KNOWLEDGE BRASIL", nome_fantasia: "REDE LIVRE", cep: "01311902", descricao_tipo_de_logradouro: "AVENIDA", logradouro: "PAULISTA", numero: "37", complemento: "ANDAR 4", bairro: "BELA VISTA", municipio: "SAO PAULO", uf: "SP", descricao_situacao_cadastral: "ATIVA" };
 const address = { cep: "75093-630", logradouro: "Rua PB 48", bairro: "Parque Brasília", localidade: "Anápolis", uf: "GO" };
 const response = (data: unknown) => new Response(JSON.stringify(data), { headers: { "Content-Type": "application/json" } });

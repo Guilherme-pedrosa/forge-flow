@@ -27,7 +27,7 @@ vi.mock("@/components/ui/select", async () => {
 });
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: mock.rpc, from: (table: string) => {
   const query = { select: () => query, eq: () => query, order: () => query, range: () => query,
-    then: (resolve: (value: unknown) => unknown, reject: (error: unknown) => unknown) => Promise.resolve({ data: table === "inventory_items" ? [{ id: "red", name: "Filamento", category: "filament", is_active: true, current_stock: 0, material_code: "PLA", color: "Vermelho", color_code: "RED", unit: "g" }, { id: "blue", name: "Filamento", category: "filament", is_active: true, current_stock: 0, material_code: "PETG", color: "Azul", color_code: "BLUE", unit: "kg" }] : table === "purchase_orders" ? mock.orders.map(order => ({ ...order })) : table === "purchase_order_items" ? mock.items : [], error: null }).then(resolve, reject) };
+    then: (resolve: (value: unknown) => unknown, reject: (error: unknown) => unknown) => Promise.resolve({ data: table === "inventory_items" ? [{ id: "red", name: "Filamento", category: "filament", is_active: true, current_stock: 0, material_code: "PLA", color: "Vermelho", color_code: "RED", unit: "g" }, { id: "blue", name: "Filamento", category: "filament", is_active: true, current_stock: 0, material_code: "PETG", color: "Azul", color_code: "BLUE", unit: "kg" }] : table === "purchase_orders" ? mock.orders.map(order => ({ ...order })) : table === "purchase_order_items" ? mock.items : table === "payment_methods" ? [{ id: "method-1", name: "Boleto da compra", type: "boleto" }] : table === "chart_of_accounts" ? [{ id: "account-1", code: "3.1", name: "Insumos de produção", account_type: "expense" }] : table === "cost_centers" ? [{ id: "center-1", code: "P", name: "Produção" }] : [], error: null }).then(resolve, reject) };
   return query;
 } } }));
 beforeEach(() => { vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} }); Element.prototype.scrollIntoView = vi.fn(); mock.rpc.mockReset(); mock.toast.mockClear(); mock.orders = []; mock.items = []; mock.rpc.mockResolvedValue({ data: "purchase-1", error: null }); });
@@ -35,6 +35,18 @@ afterEach(cleanup);
 const mount = () => render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}><MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><Compras /></MemoryRouter></QueryClientProvider>);
 
 describe("recebimento com material/cor e massa explícitos", () => {
+  it("leva a forma de pagamento, plano de contas e centro escolhidos às parcelas da compra manual", async () => {
+    mount(); fireEvent.click(screen.getByRole("button", { name: "Nova Compra" }));
+    fireEvent.change(screen.getByLabelText("Descrição do item 1"), { target: { value: "Espátula para produção" } });
+    fireEvent.change(screen.getByLabelText("Quantidade comprada do item 1"), { target: { value: "2" } });
+    fireEvent.change(screen.getByLabelText("Preço unitário do item 1"), { target: { value: "25" } });
+    await screen.findByRole("option", { name: "Boleto da compra" });
+    fireEvent.change(screen.getByLabelText("Forma de pagamento", { exact: true }), { target: { value: "method-1" } });
+    fireEvent.change(screen.getByLabelText("Plano de contas", { exact: true }), { target: { value: "account-1" } });
+    fireEvent.change(screen.getByLabelText("Centro de custo", { exact: true }), { target: { value: "center-1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Salvar compra" }));
+    await waitFor(() => expect(mock.rpc).toHaveBeenCalledExactlyOnceWith("save_quick_purchase", expect.objectContaining({ p_installments: [expect.objectContaining({ amount: 50, payment_method_id: "method-1", account_id: "account-1", cost_center_id: "center-1" })] })));
+  });
   it("mantém quantidade comprada 1 e preço do rolo, salvando entrada de 1000g no material escolhido", async () => {
     mount(); fireEvent.click(screen.getByRole("button", { name: "Nova Compra" }));
 
@@ -65,8 +77,8 @@ describe("recebimento com material/cor e massa explícitos", () => {
     expect(screen.getByText("Total de entrada no estoque (kg)")).toBeInTheDocument();
   });
   it("usa somente a unidade comercial estruturada da NF e exige aplicar a conversão", () => {
-    const xml = `<NFe><infNFe Id="NFe123"><det><prod><xProd>Rolo 1kg</xProd><qCom>2</qCom><uCom>KG</uCom><vUnCom>100</vUnCom><vProd>200</vProd></prod></det></infNFe></NFe>`;
-    const parsed = parseNfeXml(xml)!; expect(parsed.items[0]).toMatchObject({ quantity: 2, purchaseUnit: "KG" }); expect(parsed.items[0].stockQuantity).toBeUndefined();
+    const xml = `<NFe><infNFe Id="NFe${'1'.repeat(44)}"><ide><nNF>123</nNF><dEmi>2026-11-02</dEmi></ide><emit><xNome>Fornecedor</xNome></emit><det><prod><xProd>Rolo 1kg</xProd><qCom>2</qCom><uCom>KG</uCom><vUnCom>100</vUnCom><vProd>200</vProd></prod></det><total><ICMSTot><vProd>200.00</vProd><vNF>200.00</vNF></ICMSTot></total></infNFe></NFe>`;
+    const parsed = parseNfeXml(xml)!; expect(parsed.items[0]).toMatchObject({ quantity: 2, purchaseUnit: "KG", stockQuantity: "" });
     const commit = vi.fn(); render(<PurchaseStockQuantity label="NF" value="" purchasedQuantity={parsed.items[0].quantity} purchaseUnit={parsed.items[0].purchaseUnit} stockUnit="g" onCommit={commit} />);
     expect(screen.getByLabelText("Quantidade de estoque de NF")).toHaveValue(""); expect(commit).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Converter 2 KG da nota → 2.000 g" }));

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+  <NFe><infNFe Id="NFe35261112345678000123550010000001231234567890" versao="4.00">
+    <ide><nNF>123</nNF><serie>1</serie><dhEmi>2026-11-02T09:40:00-03:00</dhEmi></ide>
+    <emit><CNPJ>12345678000123</CNPJ><xNome>Fornecedor Sintético de Testes Ltda</xNome><xFant>Loja QA</xFant>
+      <enderEmit><xLgr>Rua de Testes</xLgr><nro>42</nro><xCpl>Sala 3</xCpl><xBairro>Centro</xBairro><cMun>3550308</cMun><xMun>São Paulo</xMun><UF>SP</UF><CEP>01001000</CEP><cPais>1058</cPais><xPais>BRASIL</xPais><fone>1133334444</fone></enderEmit>
+      <IE>123456789</IE><IM>9876</IM><CNAE>2229303</CNAE><CRT>3</CRT><email>fiscal@qa.invalid</email>
+    </emit>
+    <det nItem="1"><prod><cProd>PLA-BR-01</cProd><cEAN>SEM GTIN</cEAN><xProd>FILAMENTO PLA BRANCO 1,75MM - DESCRIÇÃO ORIGINAL DO FORNECEDOR</xProd><NCM>39169090</NCM><CFOP>5102</CFOP><uCom>UN</uCom><qCom>2.0000</qCom><vUnCom>49.9000000000</vUnCom><vProd>99.80</vProd><cEANTrib>SEM GTIN</cEANTrib><uTrib>UN</uTrib><qTrib>2.0000</qTrib><vUnTrib>49.9000000000</vUnTrib><vFrete>4.50</vFrete><vDesc>2.30</vDesc><vOutro>1.10</vOutro><indTot>1</indTot></prod></det>
+    <det nItem="2"><prod><cProd>ESP-01</cProd><cEAN>SEM GTIN</cEAN><xProd>ESPÁTULA PARA REMOÇÃO DE PEÇAS - DESCRIÇÃO FISCAL</xProd><NCM>82055900</NCM><CFOP>5102</CFOP><uCom>UN</uCom><qCom>1.0000</qCom><vUnCom>10.0000000000</vUnCom><vProd>10.00</vProd><cEANTrib>SEM GTIN</cEANTrib><uTrib>UN</uTrib><qTrib>1.0000</qTrib><vUnTrib>10.0000000000</vUnTrib><indTot>1</indTot></prod></det>
+    <total><ICMSTot><vProd>109.80</vProd><vFrete>4.50</vFrete><vDesc>2.30</vDesc><vOutro>1.10</vOutro><vNF>113.10</vNF></ICMSTot></total>
+    <cobr><fat><nFat>FAT-123</nFat><vOrig>115.40</vOrig><vDesc>2.30</vDesc><vLiq>113.10</vLiq></fat>
+      <dup><nDup>001-A</nDup><dVenc>2026-11-20</dVenc><vDup>40.10</vDup></dup>
+      <dup><nDup>002-B</nDup><dVenc>2027-01-07</dVenc><vDup>73.00</vDup></dup>
+    </cobr>
+    <pag><detPag><indPag>1</indPag><tPag>15</tPag><vPag>70.00</vPag></detPag><detPag><indPag>0</indPag><tPag>17</tPag><vPag>43.10</vPag><dPag>2026-11-02</dPag></detPag><vTroco>0.00</vTroco></pag>
+  </infNFe></NFe>
+</nfeProc>

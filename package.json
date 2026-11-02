@@ -31,7 +31,8 @@
     "test:makerworld": "node scripts/test-makerworld-import.mjs",
     "test:print-import": "node scripts/test-operational-print-import.mjs",
     "test:variants": "node scripts/test-material-variants.mjs",
-    "test:lorace": "node scripts/test-lorace-storefront.mjs && node scripts/test-lorace-payments-edge.mjs && node scripts/test-lorace-payments-http.mjs && node scripts/test-storefront-cms.mjs && node scripts/test-storefront-structure.mjs && node scripts/test-storefront-categories.mjs && node scripts/test-product-shipping-package.mjs && node scripts/test-storefront-shipping.mjs"
+    "test:lorace": "node scripts/test-lorace-storefront.mjs && node scripts/test-lorace-payments-edge.mjs && node scripts/test-lorace-payments-http.mjs && node scripts/test-storefront-cms.mjs && node scripts/test-storefront-structure.mjs && node scripts/test-storefront-categories.mjs && node scripts/test-product-shipping-package.mjs && node scripts/test-storefront-shipping.mjs",
+    "test:purchase-import": "node scripts/test-purchase-import-review.mjs && node scripts/test-purchase-material-links.mjs && vitest run src/lib/nfe-purchase.test.ts src/lib/purchase-catalog.test.ts src/lib/nfe-purchase-draft.test.ts src/components/estoque/NfePurchaseImportDialog.test.tsx src/components/estoque/QuickInventoryItem.test.tsx src/test/purchase-stock-ui.test.tsx src/test/order-inline-customer.test.tsx src/test/partner-prefill.test.tsx src/test/financial-catalog-session.test.tsx --maxWorkers=1"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

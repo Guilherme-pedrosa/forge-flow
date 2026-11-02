@@ -1,6 +1,7 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
 import { orderRequest } from "@/lib/sales-order";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,21 +16,33 @@ export const accountTypes = { revenue: "Receita", expense: "Despesa", asset: "At
 export const paymentTypes = { pix: "Pix", cash: "Dinheiro", credit_card: "Cartão de crédito", debit_card: "Cartão de débito", bank_transfer: "Transferência", boleto: "Boleto", other: "Outro" };
 const rpc = supabase.rpc.bind(supabase) as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ data: string | null; error: { message: string } | null }>;
 
-// Mount with a record key so a new draft never inherits another record's values.
-export function FinancialCatalogDialog({ kind, record, defaultType, onClose, onSaved }: { kind: CatalogKind; record?: CatalogRecord; defaultType?: string; onClose: () => void; onSaved?: (id: string, name: string) => void }) {
+type Props = { kind: CatalogKind; record?: CatalogRecord; defaultType?: string; onClose: () => void; onSaved?: (id: string, name: string) => void; onBusyChange?: (busy: boolean) => void };
+export function FinancialCatalogDialog(props: Props) {
+  const { profile, user } = useAuth();
+  const scope = `${profile?.tenant_id ?? "none"}:${user?.id ?? profile?.user_id ?? "none"}`;
+  return <FinancialCatalogDialogSession key={`${scope}:${props.kind}:${props.record?.id ?? "new"}`} {...props} scope={scope} tenantId={profile?.tenant_id} />;
+}
+
+function FinancialCatalogDialogSession({ kind, record, defaultType, onClose, onSaved, onBusyChange, scope, tenantId }: Props & { scope: string; tenantId?: string }) {
   const qc = useQueryClient();
+  const alive = useRef(true);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const [form, setForm] = useState({ name: record?.name || "", code: record?.code || "", type: record?.account_type || record?.type || defaultType || (kind === "account" ? "expense" : "pix"), is_active: record?.is_active ?? true, description: record?.description || "" });
   const request = useRef<{ signature: string; id: string } | null>(null);
   const save = useMutation({ mutationFn: async () => {
+    if (!alive.current || !tenantId) throw new Error("Sua sessão mudou. Reabra o cadastro antes de salvar.");
     const values = { ...form, ...(record ? { expected: record } : {}) };
     const payload = { p_kind: kind, p_id: record?.id || null, p_values: values };
-    request.current = orderRequest(request.current, JSON.stringify(payload));
+    request.current = orderRequest(request.current, JSON.stringify([scope, payload]));
     const r = await rpc("save_financial_catalog", { ...payload, p_request_id: request.current.id });
-    if (r.error) throw new Error(r.error.message); if (!r.data) throw new Error("O salvamento não foi confirmado."); return r.data;
-  }, onSuccess: async id => {
+    if (r.error) throw new Error(r.error.message); if (!r.data) throw new Error("O salvamento não foi confirmado."); return { id: r.data, name: form.name.trim() };
+  }, onSuccess: async result => {
+    if (!alive.current) return;
     await Promise.all(["financial_catalog", "financial_options", "payment_methods", "purchase_payment_methods", "chart_of_accounts", "cost_centers"].map(key => qc.invalidateQueries({ queryKey: [key] })));
-    onSaved?.(id, form.name.trim()); onClose();
+    if (!alive.current) return;
+    onSaved?.(result.id, result.name); onClose();
   } });
+  useEffect(() => { onBusyChange?.(save.isPending); return () => onBusyChange?.(false); }, [onBusyChange, save.isPending]);
   return <Dialog open onOpenChange={open => { if (!open && !save.isPending) onClose(); }}><DialogContent closeDisabled={save.isPending} className="max-h-[90dvh] overflow-y-auto"><DialogHeader><DialogTitle>{record ? "Editar" : "Cadastrar"} {catalogLabels[kind].toLocaleLowerCase("pt-BR")}</DialogTitle><DialogDescription>{kind === "account" ? "Classifique receitas e despesas para acompanhar o resultado da empresa." : kind === "cost_center" ? "Separe os gastos por área, projeto ou atividade." : "Esta opção ficará disponível nas compras e nos lançamentos financeiros."}</DialogDescription></DialogHeader>
     <form className="space-y-4" onSubmit={e => { e.preventDefault(); save.mutate(); }}>
       <div><Label htmlFor="catalog-name">Nome *</Label><Input id="catalog-name" autoFocus maxLength={160} required minLength={2} disabled={save.isPending} value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder={kind === "account" ? "Ex.: Venda de peças 3D" : kind === "cost_center" ? "Ex.: Produção 3D" : "Ex.: Pix"} /></div>
