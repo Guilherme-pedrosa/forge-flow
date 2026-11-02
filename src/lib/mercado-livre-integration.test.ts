@@ -120,6 +120,16 @@ describe("new-account enrollment with empty approved seller scope", () => {
     mock.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ authorization_url: authUrl().replace("auth.mercadolivre.com.br", "attacker.example"), attempt_id: localAccount, expires_at: "2026-11-03T00:00:00Z" }) });
     await expect(beginIntegradorEnrollment(emptyBinding, null, "https://elevare3d.lovable.app", productId, manualContext)).rejects.toThrow("endereço de autorização");
   });
+  it("accepts the actual PostgreSQL timestamptz offset and microseconds returned for enrollment expiry", async () => {
+    const expiresAt = "2026-11-03T00:04:47.843136+00:00";
+    mock.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ authorization_url: authUrl(), attempt_id: localAccount, expires_at: expiresAt }) });
+    const result = await beginIntegradorEnrollment(emptyBinding, localAccount, "https://elevare3d.lovable.app", productId, manualContext);
+    expect(result.expires_at).toBe(expiresAt); expect(result.authorization_url).toBe(authUrl());
+  });
+  it.each(["not-a-date", "2026-13-03T00:04:47.843136+00:00", "2026-11-03T00:04:47.843136", "2026-11-03T00:04:47.843136+99:00"])("rejects a malformed expiry %s before returning any login URL", async expiresAt => {
+    mock.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ authorization_url: authUrl(), attempt_id: localAccount, expires_at: expiresAt }) });
+    await expect(beginIntegradorEnrollment(emptyBinding, localAccount, "https://elevare3d.lovable.app", productId, manualContext)).rejects.toThrow("dados incompletos");
+  });
   it("finishes through the opaque receipt only, strips secrets, and never invokes the legacy link RPC", async () => {
     const result = { connected: true, account_id: localAccount, seller_id: "new-elevare", nickname: "ELEVARE3D", replayed: true };
     mock.fetch.mockResolvedValueOnce({ ok: true, json: async () => ({ ...result, access_token: "forbidden", refresh_token: "forbidden", code: "forbidden" }) });

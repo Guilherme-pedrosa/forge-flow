@@ -129,7 +129,7 @@ export async function beginIntegradorEnrollment(binding: IntegradorBridgeBinding
   if (!binding.allow_enrollment) throw new Error("A conexão de uma nova conta ainda não foi habilitada para esta empresa.");
   if (accountId !== null && !z.string().uuid().safeParse(accountId).success) throw new Error("Selecione um cadastro pendente válido do Forge.");
   let origin: URL; try { origin = new URL(returnOrigin); if (origin.origin !== returnOrigin || origin.protocol !== "https:") throw new Error(); } catch { throw new Error("Abra o Forge pelo endereço HTTPS autorizado antes de conectar a conta."); }
-  const result = parsed(z.object({ authorization_url: z.string().max(8192), attempt_id: z.string().uuid(), expires_at: z.string().datetime() }),
+  const result = parsed(z.object({ authorization_url: z.string().max(8192), attempt_id: z.string().uuid(), expires_at: z.string().datetime({ offset: true }).refine(value => Number.isFinite(Date.parse(value))) }),
     await sourceRequest(binding, "enrollment_begin", { account_id: accountId, return_origin: origin.origin, request_id: requestId }, context));
   return { authorization_url: integradorAuthorizationUrl(result.authorization_url), attempt_id: result.attempt_id, expires_at: result.expires_at };
 }
