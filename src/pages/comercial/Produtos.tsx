@@ -6,10 +6,13 @@ import { Link as RouterLink, useSearchParams, useLocation, useNavigate } from "r
 import { readPricingTransfer, type PricingTransfer } from "@/lib/print-pricing";
 import { consumePricingSourceTransfer, MISSING_PRICING_SOURCE_TRANSFER, type PreparedPricingSourceTransfer } from "@/lib/pricing-source-transfer";
 import { readProductExtraDrafts, normalizeProductExtraCost, serializeProductExtraDrafts, type ProductExtraDraft, type ProductKitExtraDraft } from "@/lib/product-extra-drafts";
-import { catalogAmountInput, catalogPriceDraft } from "@/lib/catalog-pricing";
+import { catalogAmountInput, catalogCostWithProductExtras, catalogPriceDraft } from "@/lib/catalog-pricing";
+import { readProductPricingPlan } from "@/lib/product-pricing";
 import { modelPricingFromComposition, modelPricingFromMakerWorld, printerMatchesSliceModels, printerModelOptions, type ModelPricingEstimate } from "@/lib/model-pricing";
 import { bambuTaskPricing, bambuProjectPricing } from "@/lib/bambu-import-pricing";
 import { ImportedProductPricing, type ImportedProductPrice } from "@/components/comercial/ImportedProductPricing";
+import { InlinePricingPolicy } from "@/components/comercial/InlinePricingPolicy";
+import { pricingPolicyFields, readPricingSettings, type PricingPolicy } from "@/lib/pricing-policy";
 import { ChannelPricingPanel, type ChannelPricingSelection } from "@/components/comercial/ChannelPricingPanel";
 import { readCatalogChannelPricingDraft, type CatalogChannelPricingDraft } from "@/lib/channel-policy";
 import { SavedProductImportPricing } from "@/components/comercial/SavedProductImportPricing";
@@ -61,6 +64,14 @@ import { ImportedModelImage } from "@/components/comercial/ImportedModelImage";
 import { emptyShippingPackageDraft, prepareShippingPackage, readShippingPackageDraft, shippingPackageDraftComplete, shippingPackageFields, type ShippingPackageDraft } from "@/lib/product-shipping";
 
 const fmtCurrency = (v: number | null) => v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
+function confirmedPolicyShape(value: unknown): value is PricingPolicy {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const row = value as Record<string, unknown>;
+  return typeof row.revision === "string" && !!row.revision.trim()
+    && pricingPolicyFields.every(field => row[field.key] === null || typeof row[field.key] === "number" && Number.isFinite(row[field.key]) && Number(row[field.key]) >= 0)
+    && Array.isArray(row.printer_hour_costs) && row.printer_hour_costs.every(rate => rate && typeof rate === "object" && typeof rate.printer_id === "string"
+      && typeof rate.hour_cost === "number" && Number.isFinite(rate.hour_cost) && rate.hour_cost >= 0);
+}
 const ModelFileInput = lazy(() => import("@/components/comercial/ModelFileInput"));
 const fmtDuration = (s: number | null) => {
   if (!s) return "—";
@@ -193,11 +204,13 @@ export default function Produtos() {
   const [filamentBusy, setFilamentBusy] = useState(false);
   const [filamentDraft, setFilamentDraft] = useState(false);
   const [channelBusy, setChannelBusy] = useState(false);
+  const [companyBusy, setCompanyBusy] = useState(false);
+  const [companyDraft, setCompanyDraft] = useState(false);
   const [channelPricing, setChannelPricing] = useState<ChannelPricingSelection>({ channel: "factory", result: null, error: "", catalogDraft: null });
   const [initialCatalogChannel, setInitialCatalogChannel] = useState<CatalogChannelPricingDraft | null>(null);
   const [channelTransferError, setChannelTransferError] = useState("");
-  const printSourceBusy = sourceBusy || recipeBusy || manualPlateBusy || filamentBusy || savedPricingBusy || channelBusy;
-  const hasProductionDraft = sourceDraft || recipeDraft || manualPlateDraft || filamentDraft || savedPricingDraft;
+  const printSourceBusy = sourceBusy || recipeBusy || manualPlateBusy || filamentBusy || savedPricingBusy || channelBusy || companyBusy;
+  const hasProductionDraft = sourceDraft || recipeDraft || manualPlateDraft || filamentDraft || savedPricingDraft || companyDraft;
   const reportManualPlateBusy = useCallback((_id: string, value: boolean) => setManualPlateBusy(value), []);
   const reportManualPlateDraft = useCallback((_id: string, value: boolean) => setManualPlateDraft(value), []);
   const photoLoadVersion = useRef(0);
@@ -207,6 +220,12 @@ export default function Produtos() {
   const [extras, setExtras] = useState<ExtraItem[]>([]);
   const [printsPerPlate, setPrintsPerPlate] = useState("1");
   const [kitComponents, setKitComponents] = useState<ProductKitExtraDraft[]>([]);
+  const checkingSourcePlan = !!profile?.tenant_id && !!editItem?.id && automaticImportCost && !!importedPricing?.estimate;
+  const sourcePricingPlan = useQuery({ queryKey: ["product_pricing_plan", profile?.tenant_id, editItem?.id], enabled: checkingSourcePlan,
+    queryFn: () => readProductPricingPlan(editItem!.id) });
+  const sourcePricingPlanProblem = !checkingSourcePlan ? "" : sourcePricingPlan.isPending || sourcePricingPlan.isFetching ? "Conferindo os ajustes de custo deste produto antes de usar a nova impressão…"
+    : sourcePricingPlan.error || !sourcePricingPlan.data ? "Não foi possível conferir os ajustes de custo deste produto. Tente novamente ou informe o custo manualmente."
+      : Object.keys(sourcePricingPlan.data.plan).length ? "Este produto tem ajustes próprios de custos, tempos ou insumos. A nova impressão precisa ser conciliada com esses ajustes antes de calcular o custo completo. Confira a composição ou informe o custo manualmente." : "";
   const beginImportedPricing = useCallback((estimate: ModelPricingEstimate | null, error = "", initial?: PreparedPricingSourceTransfer["calculated"]) => {
     setTransferredPricingSource(null); transferredScope.current = null; setMissingPricingSource(false);
     initialImportCalculation.current = initial ?? null;
@@ -218,6 +237,7 @@ export default function Produtos() {
     setCostSource("manual"); setCostEstimate(""); setSalePrice(""); setMarkup(""); setPriceSource("manual");
   }, []);
   const chooseManualImportCost = () => {
+    if (sourcePricingPlanProblem) { setCostEstimate(""); setSalePrice(""); setMarkup(""); setPriceSource("manual"); }
     importedCalculation.current = null;
     setTransferredPricingSource(null); transferredScope.current = null; setMissingPricingSource(false);
     setAutomaticImportCost(false); setImportCostReady(false);
@@ -283,10 +303,24 @@ export default function Produtos() {
   });
   const productById = useMemo(() => new Map(products.map(product => [product.id, product])), [products]);
   const currentProduct = editItem?.id ? productById.get(editItem.id) : undefined;
+  const companyPolicyEnabled = !!profile?.tenant_id && !!editItem?.id && costSource === "composition" && !automaticImportCost;
+  const companyPolicy = useQuery({ queryKey: ["pricing_settings", profile?.tenant_id], enabled: companyPolicyEnabled, queryFn: readPricingSettings });
+  // An old or malformed RPC response cannot be used to overwrite company data.
+  const editableCompanyPolicy = companyPolicyEnabled && confirmedPolicyShape(companyPolicy.data) ? companyPolicy.data : null;
+  const showParentCompanyPolicy = !!editableCompanyPolicy;
+  const missingCompanyKeys = editableCompanyPolicy ? pricingPolicyFields.filter(field => editableCompanyPolicy[field.key] == null
+    && (field.key !== "machine_hour_cost" || currentProduct?.recipe_missing?.some((message: string) => /hora.?máquina|tarifa de uso da impressora/i.test(message)))).map(field => field.key) : [];
   const compositionReady = !!currentProduct?.recipe_complete && currentProduct.recipe_cost != null
     && !!currentProduct.recipe_revision && !productsFetching && !productsError && !hasProductionDraft && !printSourceBusy && !compositionImport;
-  const resolvedCostInput = costSource === "composition" ? (compositionReady ? catalogAmountInput(currentProduct.recipe_cost) : "") : costEstimate;
-  const priceDraft = catalogPriceDraft(resolvedCostInput, accessoryCost, otherCost, priceSource === "markup" ? markup : "");
+  const includeProductExtras = costSource !== "composition" && (automaticImportCost || !!transferredPricingSource);
+  let importedBase = { input: costEstimate, error: "" };
+  if (includeProductExtras) {
+    try { importedBase = catalogCostWithProductExtras(costEstimate, buildExtrasPayload()); }
+    catch (error) { importedBase = { input: "", error: (error as Error).message }; }
+  }
+  const resolvedCostInput = sourcePricingPlanProblem ? "" : costSource === "composition" ? (compositionReady ? catalogAmountInput(currentProduct.recipe_cost) : "") : importedBase.input;
+  const pricedDraft = catalogPriceDraft(resolvedCostInput, accessoryCost, otherCost, priceSource === "markup" ? markup : "");
+  const priceDraft = importedBase.error ? { ...pricedDraft, cost: null, price: null, error: importedBase.error } : pricedDraft;
   const activeSalePrice = priceSource === "markup" ? (priceDraft.price == null ? "" : priceDraft.price.toFixed(2)) : salePrice;
   const partsByProduct = useMemo(() => {
     const index = new Map<string, ProductSubitemLink[]>();
@@ -411,6 +445,7 @@ export default function Produtos() {
     photoLoadVersion.current += 1;
     setPhotosLoading(false);
     setPrintSourceBusy(false); setRecipeBusy(false); setSavedPricingBusy(false); setSavedPricingDraft(false);
+    setCompanyBusy(false); setCompanyDraft(false);
     setChannelBusy(false); setChannelPricing({ channel: "factory", result: null, error: "", catalogDraft: null });
     setInitialCatalogChannel(null); setChannelTransferError("");
     setSourceDraft(false); setRecipeDraft(false);
@@ -483,6 +518,7 @@ export default function Produtos() {
     setCompositionImport(null); setEditorImportUrl("");
     makerImportTarget.current = p.id;
     setPrintSourceBusy(false); setRecipeBusy(false); setSavedPricingBusy(false); setSavedPricingDraft(false);
+    setCompanyBusy(false); setCompanyDraft(false);
     setChannelBusy(false); setChannelPricing({ channel: "factory", result: null, error: "", catalogDraft: null });
     setInitialCatalogChannel(null); setChannelTransferError("");
     setSourceDraft(false); setRecipeDraft(false);
@@ -739,12 +775,12 @@ ${selected?.name ? `Perfil: ${selected.name}
   };
 
   // Build combined extras array (regular extras + kit components stored as special entries)
-  const buildExtrasPayload = () => {
+  function buildExtrasPayload() {
     return serializeProductExtraDrafts(extras, kitComponents.filter(row => row.productId), id => {
       const product = products.find(candidate => candidate.id === id);
       return product ? { name: product.name, unitCost: product.cost_estimate } : undefined;
     });
-  };
+  }
 
   // Kit cost calculation
   const kitTotalCost = useMemo(() => {
@@ -833,6 +869,7 @@ ${selected?.name ? `Perfil: ${selected.name}
     if (transferredPricingSource && transferredScope.current !== `${profile.tenant_id}:${user?.id}`) throw new Error("Sua sessão mudou. Envie novamente a precificação antes de salvar.");
     if (uploadingPhoto || photosLoading || printSourceBusy || makerWorldLoading || translatingDescription || readingImportFile) throw new Error("Aguarde o carregamento das fotos, fontes e descrição antes de salvar.");
     if (costSource === "composition" && !compositionReady) throw new Error("Atualize e complete a composição antes de salvar o custo calculado, ou informe um custo manual.");
+    if (sourcePricingPlanProblem) throw new Error(sourcePricingPlanProblem);
     if (priceDraft.error) throw new Error(priceDraft.error);
     if (automaticImportCost && !importCostReady) throw new Error("Conclua o cálculo dos dados importados ou escolha informar o custo manualmente.");
     if (channelPricing.channel !== "factory" && !channelPricing.catalogDraft) throw new Error(channelPricing.error || "Confira as condições do canal antes de salvar.");
@@ -923,11 +960,14 @@ ${selected?.name ? `Perfil: ${selected.name}
     mutationFn: () => saveProduct(null),
     onSuccess: async result => {
       const transfer = pricingTransfer.current; pricingTransfer.current = null;
+      const quotePrice = channelPricing.catalogDraft?.unit_price
+        ?? (initialCatalogChannel && channelPricing.channel === "factory" ? nonNegative(activeSalePrice, "Preço") : transfer?.quotePrice ?? nonNegative(activeSalePrice, "Preço"));
+      const quoteQuantity = channelPricing.catalogDraft?.quantity ?? transfer?.quantity;
       setCreateOpen(createAnother.current && !result.imported); resetForm();
       if (createAnother.current && !result.imported) requestAnimationFrame(() => document.getElementById("product-name")?.focus());
       await qc.invalidateQueries({ queryKey: ["products"] });
       await qc.invalidateQueries({ queryKey: ["inventory_items"] });
-      if (transfer?.quote) { navigate("/comercial/orcamentos", { state: { pricingQuote: { product_id: result.id, quantity: transfer.quantity, unit_price: transfer.quotePrice ?? nonNegative(activeSalePrice, "Preço") } } }); return; }
+      if (transfer?.quote) { navigate("/comercial/orcamentos", { state: { pricingQuote: { product_id: result.id, quantity: quoteQuantity, unit_price: quotePrice } } }); return; }
       if (result.imported) {
         const refreshed = await refetchProducts(); const product = refreshed.data?.find(product => product.id === result.id);
         if (product) openEdit(product);
@@ -1013,20 +1053,22 @@ ${selected?.name ? `Perfil: ${selected.name}
         {missingPricingSource && <div role="alert" className="space-y-2 rounded-lg border border-destructive/30 p-3 text-sm"><p>{MISSING_PRICING_SOURCE_TRANSFER}</p><Button type="button" variant="outline" onClick={() => setFormTab("producao")}>Importar novamente neste cadastro</Button><Button type="button" variant="link" onClick={chooseManualImportCost}>Continuar apenas com custo manual</Button></div>}
         {transferredPricingSource && <section aria-label="Impressão trazida da precificação" className="space-y-2 rounded-lg border bg-muted/20 p-3 text-sm"><p className="font-medium">Impressão e valores preservados</p><p>{transferredPricingSource.sourceFile?.name || "Perfil MakerWorld"} · {transferredPricingSource.estimate.plateCount} placa(s) · {transferredPricingSource.estimate.weightGrams} g · {transferredPricingSource.calculated.quantity} produto(s) completo(s) por perfil.</p><p>O arquivo, as cores e os filamentos serão salvos com o produto. O custo e o preço aceitos, incluindo os adicionais da simulação, estão nos campos abaixo.</p><Button type="button" variant="outline" onClick={() => beginImportedPricing(transferredPricingSource.estimate, "", transferredPricingSource.calculated)}>Ajustar impressão e recalcular</Button></section>}
         {automaticImportCost && importedPricing && <div className="space-y-2">
-          <ImportedProductPricing key={importPricingVersion.current} estimate={importedPricing.estimate} error={importedPricing.error} onCalculated={receiveImportCalculation} showTotals={false}
+          <ImportedProductPricing key={importPricingVersion.current} estimate={importedPricing.estimate} error={importedPricing.error || sourcePricingPlanProblem} onCalculated={receiveImportCalculation} showTotals={false}
             onAuxiliaryBusy={setFilamentBusy} onAuxiliaryDraft={setFilamentDraft}
             existingPrinterId={initialImportCalculation.current?.printerId} initialSelections={initialImportCalculation.current?.materialSelections}
             initialQuantity={initialImportCalculation.current?.quantity ?? (compositionImport?.plates.length === 1 ? compositionImport.plates[0].units_per_plate ?? undefined : undefined)} />
+          {sourcePricingPlan.error && <Button type="button" variant="outline" onClick={() => void sourcePricingPlan.refetch()}>Tentar conferir ajustes do produto</Button>}
           {!importedPricing.estimate && <Button type="button" variant="outline" onClick={() => setFormTab("producao")}>Importar ou fatiar o 3MF para calcular</Button>}
           <Button type="button" variant="link" className="px-0" onClick={chooseManualImportCost}>Prefiro informar o custo manualmente</Button>
         </div>}
         {editItem?.id && !automaticImportCost && <SavedProductImportPricing key={editItem.id} productId={editItem.id}
           externalImport={externalImport} savedPlan={currentProduct?.catalog_details?.import_pricing ?? editItem.catalog_details?.import_pricing}
+          showCompanyPolicy={!showParentCompanyPolicy}
           existingMaterialId={materialId} initialQuantity={Number(printsPerPlate)} requestedSourceId={requestedPrintSourceId}
           onBusy={setSavedPricingBusy} onDraft={setSavedPricingDraft} />}
         {(currentProduct?.recipe_configured || costSource === "composition") && <div className="space-y-2">
           <Label htmlFor="product-cost-source">Origem do custo</Label>
-          <select id="product-cost-source" className="h-11 w-full rounded-md border bg-background px-3" value={costSource} onChange={e => setCostSource(e.target.value as "manual" | "composition")}>
+          <select id="product-cost-source" className="h-11 w-full rounded-md border bg-background px-3" value={costSource} disabled={companyBusy || companyDraft} onChange={e => setCostSource(e.target.value as "manual" | "composition")}>
             <option value="composition">Calcular pela composição das peças e placas</option>
             <option value="manual">Informar custo manualmente</option>
           </select>
@@ -1035,9 +1077,11 @@ ${selected?.name ? `Perfil: ${selected.name}
           {costSource === "composition" && !compositionReady && <div role="status" className="rounded-lg border p-3 text-sm">
             <p>{productsFetching ? "Atualizando custo da composição…" : "Custo da composição pendente. Confira materiais, rendimento e demais custos na aba Composição / produção."}</p>
             {currentProduct?.recipe_missing?.map((message: string) => <p key={message}>{message}</p>)}
-            <Button type="button" variant="link" className="px-0" onClick={() => { setFormTab("producao"); if (productsError) void refetchProducts(); }}>Conferir composição</Button>
+            <Button type="button" variant="link" className="px-0" disabled={companyBusy || companyDraft} onClick={() => { setFormTab("producao"); if (productsError) void refetchProducts(); }}>Conferir composição</Button>
           </div>}
         </div>}
+        {editableCompanyPolicy && <InlinePricingPolicy key={`company:${profile?.tenant_id}:${user?.id}:${editItem?.id}`} policy={editableCompanyPolicy} printers={printers}
+          missingKeys={missingCompanyKeys} onBusy={setCompanyBusy} onDraft={setCompanyDraft} />}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div><Label htmlFor="product-cost">Preço de custo (R$)</Label><Input id="product-cost" inputMode="decimal" value={resolvedCostInput} readOnly={costSource === "composition" || automaticImportCost} onChange={e => setCostEstimate(e.target.value)} placeholder={costSource === "composition" || automaticImportCost ? "Aguardando cálculo" : "0,00"} /></div>
         <div><Label htmlFor="product-markup">Lucro sobre o custo (%)</Label><Input id="product-markup" inputMode="decimal" value={markup} onChange={e => { setMarkup(e.target.value); setPriceSource("markup"); }} placeholder="Ex.: 50"/><p className="mt-1 text-xs text-muted-foreground">Ex.: custo de R$ 10 + 50% = venda de R$ 15. Esse percentual não é a margem sobre a venda.</p></div>
@@ -1238,9 +1282,9 @@ ${selected?.name ? `Perfil: ${selected.name}
 
 </>);
   const formFields = (
-    <Tabs value={!editItem && ["dados", "valores", "producao"].includes(formTab) ? "cadastro" : formTab} onValueChange={setFormTab} className="flex min-h-0 flex-1 flex-col gap-4 md:flex-row">
+    <Tabs value={!editItem && ["dados", "valores", "producao"].includes(formTab) ? "cadastro" : formTab} onValueChange={value => { if (!companyBusy && !companyDraft) setFormTab(value); }} className="flex min-h-0 flex-1 flex-col gap-4 md:flex-row">
       <TabsList aria-label="Cadastro do produto" className="h-auto w-full min-w-0 max-w-full shrink-0 justify-start gap-1 overflow-x-auto bg-muted/40 p-2 md:h-auto md:max-h-full md:w-44 md:flex-col md:items-stretch md:justify-start md:self-start md:overflow-x-hidden md:overflow-y-auto">
-        {(editItem ? [['dados','Dados'],['valores','Valores'],['estoque','Estoque'],['embalagem','Embalagem para envio'],['fotos','Fotos'],['producao','Composição / produção']] : [['cadastro','Produto e preço'],['estoque','Estoque'],['embalagem','Embalagem para envio'],['fotos','Fotos']]).map(([value,label]) => <TabsTrigger className="justify-start whitespace-nowrap px-4 py-3 md:whitespace-normal" key={value} value={value}>{label}</TabsTrigger>)}
+        {(editItem ? [['dados','Dados'],['valores','Valores'],['estoque','Estoque'],['embalagem','Embalagem para envio'],['fotos','Fotos'],['producao','Composição / produção']] : [['cadastro','Produto e preço'],['estoque','Estoque'],['embalagem','Embalagem para envio'],['fotos','Fotos']]).map(([value,label]) => <TabsTrigger className="justify-start whitespace-nowrap px-4 py-3 md:whitespace-normal" key={value} value={value} disabled={companyBusy || companyDraft}>{label}</TabsTrigger>)}
       </TabsList>
       <div ref={formScrollRef} className="min-h-0 min-w-0 flex-1 overflow-y-auto px-1 pb-4">
       {!editItem && <TabsContent forceMount value="cadastro" className={tabClass}>

@@ -67,7 +67,7 @@ export function SlicingDialog({ open, file, onOpenChange, onSliced, resultLabel 
   const [useCloud, setUseCloud] = useState(false), [detectVersion, setDetectVersion] = useState(0);
   const [localFile, setLocalFile] = useState<File | null>(null), [jobSource, setJobSource] = useState<'local' | 'cloud' | null>(null);
   const localOperation = useRef<AbortController | null>(null);
-  const cloudEnabled = !detecting && (!local || useCloud);
+  const cloudEnabled = !detecting && useCloud;
   const jobId = job?.id, jobStatus = job?.status;
 
   useEffect(() => {
@@ -211,19 +211,20 @@ export function SlicingDialog({ open, file, onOpenChange, onSliced, resultLabel 
   }}>
     <DialogContent closeDisabled={busy && !(jobSource === 'local' && Boolean(active))} className="max-w-xl">
       <DialogHeader><DialogTitle className="flex items-center gap-2"><Scissors className="h-5 w-5" />Simular impressão</DialogTitle>
-        <DialogDescription>O Bambu Studio local fatia o arquivo para calcular tempo e filamento por placa.</DialogDescription></DialogHeader>
+        <DialogDescription>Fatie o arquivo aqui para calcular tempo e filamento por placa. O motor do Bambu Studio trabalha em segundo plano; você não precisa abrir o projeto nele.</DialogDescription></DialogHeader>
       <p className="break-words text-sm font-medium">{file?.name ?? 'Escolha um arquivo STL ou 3MF.'}</p>
       {detecting && <p role="status" className="text-sm text-muted-foreground">Verificando a extensão deste computador…</p>}
-      {local && !useCloud ? <div className="space-y-2"><p className="font-medium">Extensão local conectada</p><p className="text-sm text-muted-foreground">Bambu A1 · bico 0,4 mm · PLA · camada 0,20 mm · Bambu Studio {local.engine_version}</p><p className="text-sm text-muted-foreground">O arquivo é processado neste computador, sem envio para a fila da empresa.</p></div> : <><label className="space-y-2 text-sm font-medium">Perfil de impressão
+      {local && !useCloud && <div className="space-y-2"><p className="font-medium">Extensão local conectada</p><p className="text-sm text-muted-foreground">Bambu A1 · bico 0,4 mm · PLA · camada 0,20 mm · Bambu Studio {local.engine_version}</p><p className="text-sm text-muted-foreground">O arquivo é processado neste computador, sem envio para a fila da empresa.</p></div>}
+      {cloudEnabled && <><label className="space-y-2 text-sm font-medium">Perfil de impressão da empresa
         <select aria-label="Perfil de impressão" className="mt-2 h-11 w-full rounded-md border bg-background px-3" value={profile} onChange={e => setProfile(e.target.value)} disabled={Boolean(active) || busy}>
           {profiles?.profiles.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
       </label>
-      <p className="text-sm text-muted-foreground">Bambu Studio {selected?.engine_version ?? '2.8.2.61'} · {selected?.available ? 'Fatiador conectado' : 'Fatiador local desconectado'}</p></>}
+      <p className="text-sm text-muted-foreground">Bambu Studio {selected?.engine_version ?? '02.08.02.61'} · {selected?.available ? 'Fatiador da empresa conectado' : 'Nenhum fatiador da empresa conectado'}</p></>}
       {file?.name.toLowerCase().endsWith('.3mf') && <p className="text-sm text-muted-foreground">Mantém as placas, cópias e cores do projeto 3MF. Neste perfil, todos os filamentos do arquivo precisam ser PLA; os materiais configurados no projeto são preservados.</p>}
       <p className="text-xs text-muted-foreground">O perfil atual atende à A1. A2L e outros modelos precisam de um perfil compatível; a extensão não separa um projeto AMS em novas placas automaticamente.</p>
-      {cloudEnabled && !selected?.available && <p className="rounded-md bg-muted p-3 text-sm">Deixe o computador com o fatiador conectado ligado para processar a simulação.</p>}
-      {!local && !detecting && <div className="space-y-2 rounded-md border p-3 text-sm"><a className="font-medium text-primary underline" href="/downloads/forge-slicer-extension.zip" download>Baixar extensão para Chrome</a><p className="text-muted-foreground">Instale a extensão e o conector local com o Bambu Studio oficial para fatiar neste computador.</p><Button variant="outline" size="sm" disabled={busy || Boolean(active)} onClick={() => setDetectVersion(value => value + 1)}>Verificar extensão novamente</Button></div>}
+      {cloudEnabled && !selected?.available && <p className="rounded-md bg-muted p-3 text-sm">A fila da empresa precisa de um computador conectado. Para usar a extensão deste Chrome, volte ao fatiamento neste computador.</p>}
+      {!local && !detecting && !useCloud && <div role="status" className="space-y-2 rounded-md border p-3 text-sm"><p className="font-medium">O Forge não conseguiu se conectar à extensão deste Chrome.</p><p className="text-muted-foreground">Se o popup já mostra “Conectado”, recarregue a extensão em chrome://extensions e atualize esta página. A versão atual aceita elevare3d.com.br e elevare3d.lovable.app.</p><Button variant="outline" size="sm" disabled={busy || Boolean(active)} onClick={() => setDetectVersion(value => value + 1)}>Verificar extensão novamente</Button><details><summary className="cursor-pointer text-muted-foreground">Ainda não instalou?</summary><p className="my-2 text-muted-foreground">Instale a extensão e o conector local com o Bambu Studio oficial.</p><a className="font-medium text-primary underline" href="/downloads/forge-slicer-extension.zip" download>Baixar extensão para Chrome</a></details></div>}
       {job && <div className="space-y-2 rounded-lg border p-3" aria-live="polite">
         <p className="font-medium">{statusLabel[job.status]}</p>
         {active && <Progress aria-label="Progresso da simulação" value={job.status === 'uploading' ? progress : job.progress} />}
@@ -240,11 +241,11 @@ export function SlicingDialog({ open, file, onOpenChange, onSliced, resultLabel 
         {job?.status === 'done' && job.result_available ? <>
           <Button variant="outline" disabled={busy} onClick={() => void applyResult(true)}><Download className="mr-2 h-4 w-4" />Baixar 3MF</Button>
           <Button disabled={busy} onClick={() => void applyResult()}>{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{resultLabel}</Button>
-        </> : local && !useCloud ? <Button disabled={!file || busy || Boolean(active)} onClick={() => void simulateLocal()}>{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Fatiar neste computador</Button> : <Button disabled={detecting || !file || !selected?.available || busy || Boolean(job && ['queued', 'running'].includes(job.status))} onClick={() => void simulate()}>{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{job?.status === 'uploading' ? 'Retomar envio' : 'Simular no Bambu Studio'}</Button>}
+        </> : !useCloud ? <Button disabled={detecting || !local || !file || busy || Boolean(active)} onClick={() => void simulateLocal()}>{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}Fatiar neste computador</Button> : <Button disabled={detecting || !file || !selected?.available || busy || Boolean(job && ['queued', 'running'].includes(job.status))} onClick={() => void simulate()}>{busy && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}{job?.status === 'uploading' ? 'Retomar envio' : 'Simular no Bambu Studio'}</Button>}
       </div>
-      {local && <Button type="button" variant="link" disabled={busy || Boolean(active)} className="h-auto p-0 text-xs" onClick={() => setUseCloud(value => !value)}>{useCloud ? 'Usar extensão deste computador' : 'Usar fatiador conectado à empresa'}</Button>}
+      {!detecting && <Button type="button" variant="link" disabled={busy || Boolean(active)} className="h-auto p-0 text-xs" onClick={() => setUseCloud(value => !value)}>{useCloud ? 'Usar extensão deste computador' : 'Usar fatiador conectado à empresa'}</Button>}
       {cloudEnabled && profiles?.can_manage_workers && !selected?.available && <details className="border-t pt-3 text-sm">
-        <summary className="cursor-pointer">Conectar um fatiador local</summary>
+        <summary className="cursor-pointer">Conectar um computador à fila da empresa</summary>
         <p className="my-2 text-muted-foreground">Gere o arquivo de conexão e use o instalador local do Forge no computador com o Bambu Studio oficial. A conexão acessa somente arquivos de simulação desta empresa.</p>
         <Button variant="outline" size="sm" onClick={() => void connectWorker()} disabled={busy || connectionSaved}>Gerar arquivo de conexão</Button>
         {connectionSaved && <p className="mt-2">Arquivo de conexão baixado. Guarde-o em local privado e remova a cópia baixada após instalar.</p>}

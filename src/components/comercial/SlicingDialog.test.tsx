@@ -89,13 +89,29 @@ describe('SlicingDialog private simulation transfer', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('até 64 MB'); expect(read).not.toHaveBeenCalled();
     expect(mocks.slice).not.toHaveBeenCalled(); expect(mocks.rpc).not.toHaveBeenCalled();
   });
-  it('requires a connected real profile and never offers geometric estimates', async () => {
+  it('keeps a failed extension connection separate from the company queue and retries locally', async () => {
+    mocks.detect.mockResolvedValueOnce(null).mockResolvedValueOnce({ profile_id: profile.id, engine_version: profile.engine_version });
+    render(<SlicingDialog open file={sourceFile()} onOpenChange={vi.fn()} onSliced={vi.fn()} />);
+    expect(await screen.findByText('O Forge não conseguiu se conectar à extensão deste Chrome.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Fatiar neste computador' })).toBeDisabled();
+    expect(screen.queryByText('Fatiador local desconectado')).not.toBeInTheDocument();
+    expect(screen.getByText(/você não precisa abrir o projeto nele/)).toBeVisible();
+    expect(screen.getByText(/elevare3d.com.br e elevare3d.lovable.app/)).toBeVisible();
+    expect(mocks.rpc).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Verificar extensão novamente' }));
+    expect(await screen.findByText('Extensão local conectada')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Fatiar neste computador' })).toBeEnabled();
+    expect(mocks.slice).not.toHaveBeenCalled(); expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+  it('requires a connected real company profile after explicitly choosing that queue', async () => {
     mocks.rpc.mockResolvedValue({ data: { can_manage_workers: false, profiles: [{ ...profile, available: false }] }, error: null });
     render(<SlicingDialog open file={sourceFile()} onOpenChange={vi.fn()} onSliced={vi.fn()} />);
-    expect(await screen.findByText('Bambu Studio 02.08.02.61 · Fatiador local desconectado')).toBeInTheDocument();
+    await screen.findByText('O Forge não conseguiu se conectar à extensão deste Chrome.');
+    expect(screen.getByRole('link', { name: 'Baixar extensão para Chrome' })).toHaveAttribute('href', '/downloads/forge-slicer-extension.zip');
+    fireEvent.click(screen.getByRole('button', { name: 'Usar fatiador conectado à empresa' }));
+    expect(await screen.findByText('Bambu Studio 02.08.02.61 · Nenhum fatiador da empresa conectado')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Simular no Bambu Studio' })).toBeDisabled();
     expect(screen.queryByText('Filamento previsto')).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Baixar extensão para Chrome' })).toHaveAttribute('href', '/downloads/forge-slicer-extension.zip');
   });
   it('queues only after source chunks are uploaded, with a SHA for the original file', async () => {
     const queued = { ...baseJob, status: 'queued', result_available: false };
@@ -105,6 +121,7 @@ describe('SlicingDialog private simulation transfer', () => {
       return { data: name === 'finish_slicer_upload' ? queued : null, error: null };
     });
     render(<SlicingDialog open file={sourceFile()} onOpenChange={vi.fn()} onSliced={vi.fn()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Usar fatiador conectado à empresa' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Simular no Bambu Studio' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Simular no Bambu Studio' }));
     expect(await screen.findByText('Aguardando o fatiador local')).toBeInTheDocument();

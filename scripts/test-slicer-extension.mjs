@@ -17,18 +17,29 @@ await test('Manifest has a pinned public identity and the minimum scoped permiss
   const manifest=JSON.parse(await readFile(new URL('../extensions/forge-slicer/manifest.json',import.meta.url),'utf8'));
   const json=JSON.parse(await readFile(new URL('../extensions/forge-slicer/protocol.json',import.meta.url),'utf8'));
   assert.deepEqual(json,PROTOCOL);
+  assert.deepEqual(PROTOCOL.allowed_origins,['https://elevare3d.lovable.app','https://id-preview--f4da8107-e6b0-434d-90a9-de1c21edf12f.lovable.app','https://elevare3d.com.br']);
   const id=[...createHash('sha256').update(Buffer.from(manifest.key,'base64')).digest().subarray(0,16)].flatMap(value=>[value>>4,value&15]).map(value=>String.fromCharCode(97+value)).join('');
   assert.equal(id,PROTOCOL.extension_id);assert.deepEqual(manifest.permissions,['nativeMessaging','activeTab']);
   assert.deepEqual(manifest.externally_connectable.matches,PROTOCOL.allowed_origins.map(origin=>origin+'/*'));
-  assert.equal(manifest.manifest_version,3);assert.equal(manifest.background.type,'module');assert.equal(manifest.content_scripts,undefined);
+  assert.equal(manifest.manifest_version,3);assert.equal(manifest.version,'1.0.1');assert.equal(manifest.background.type,'module');assert.equal(manifest.content_scripts,undefined);assert.equal(manifest.host_permissions,undefined);
   for(const file of ['service-worker.js','protocol.js','popup.js','popup.html','popup.css'])await readFile(new URL('../extensions/forge-slicer/'+file,import.meta.url));
 });
 await test('Only the exact Forge origins and the pinned extension can invoke the native bridge',()=>{
-  assert.equal(allowedSender({url:PROTOCOL.allowed_origins[0]+'/x',origin:PROTOCOL.allowed_origins[0],frameId:0}),true);
+  for(const origin of PROTOCOL.allowed_origins) {
+    assert.equal(allowedSender({url:origin+'/comercial/produtos',origin,frameId:0}),true);
+    for(const denied of [origin.replace('https:','http:'),origin+'.evil.invalid',origin.replace('https://','https://www.'),origin+':444'])
+      assert.equal(allowedSender({url:denied+'/comercial/produtos',origin:denied,frameId:0}),false);
+  }
   for(const sender of [{url:'https://elevare3d.lovable.app.evil.invalid/'},{url:PROTOCOL.allowed_origins[0],origin:'https://evil.invalid'},
     {url:PROTOCOL.allowed_origins[0],frameId:1},{url:PROTOCOL.allowed_origins[0],id:'untrusted-extension'}])assert.equal(allowedSender(sender),false);
   assert.equal(allowedSender({id:PROTOCOL.extension_id},true),true);assert.equal(allowedSender({id:'other'},true),false);
   const f=fixture({url:'https://evil.invalid'});assert.equal(f.client.closed,true);assert.equal(f.connections.length,0);
+});
+await test('The production custom origin reaches the same pinned native host without broader permissions',()=>{
+  const origin='https://elevare3d.com.br',f=fixture({url:origin+'/comercial/produtos',origin,frameId:0});
+  assert.equal(f.client.closed,false);assert.equal(f.connections.length,0);
+  f.client.onMessage.emit({id:'production-hello',op:'hello'});assert.deepEqual(f.connections,[PROTOCOL.host_name]);
+  f.native.onMessage.emit({id:'production-hello',ok:true,profile_id:PROTOCOL.profile_id});assert.equal(f.client.messages[0].ok,true);f.client.disconnect();
 });
 await test('Messages cannot carry commands, file paths, other profiles or oversized chunks',()=>{
   const base={id:'a',op:'begin',name:'peca.3mf',size:100,sha256:'a'.repeat(64),profile_id:PROTOCOL.profile_id};

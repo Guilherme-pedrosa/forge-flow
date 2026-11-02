@@ -94,6 +94,22 @@ beforeEach(() => {
 afterEach(() => { cleanup(); discardPricingSourceTransfer(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("canonical product receives the complete accepted pricing source", () => {
+  it("adds only new product extras to an accepted cost that already includes the standalone extras", async () => {
+    const source = native();
+    const token = await createPricingSourceTransfer(scope, { sourceFile: source.file, externalImport: null, estimate: source.estimate, calculated: source.calculated, pricingInput: input, accepted });
+    mount(token); const editor = await screen.findByRole("dialog", { name: "Novo Produto" });
+    await within(editor).findByText("Impressão e valores preservados");
+    fireEvent.click(within(editor).getByText("Peças, composição e referências de produção", { selector: "summary" }));
+    fireEvent.click(within(editor).getByRole("button", { name: "Adicionar Item" }));
+    const name = within(editor).getByPlaceholderText("Ex: Chocolate, Embalagem, Laço...");
+    fireEvent.change(name, { target: { value: "Laço novo" } });
+    fireEvent.change(within(name.parentElement!).getByPlaceholderText("0,00"), { target: { value: "2,50" } });
+    expect(within(editor).getByLabelText("Preço de custo (R$)")).toHaveValue("19.6234");
+    expect(within(editor).getByLabelText("Preço unitário (R$)")).toHaveValue("34.9");
+    fireEvent.click(within(editor).getByRole("button", { name: /^Criar$/ })); await waitFor(() => expect(saved()).toBeDefined());
+    expect(saved()!.p_product).toMatchObject({ cost_estimate: 19.6234, sale_price: 34.9, extras: [{ name: "Laço novo", cost: 2.5 }],
+      import_pricing: { quantity: 2, plates: [{ index: 1, lines: [{ item_id: "pla", grams: 12 }, { item_id: "pla-green", grams: 28 }] }, { index: 2, lines: [{ item_id: "pla", grams: 58 }, { item_id: "pla-green", grams: 2 }] }] } });
+  });
   it("uploads the actual File hash and saves exact per-plate choices while retaining accepted cost, price and quote quantity", async () => {
     const source = native();
     const token = await createPricingSourceTransfer(scope, { sourceFile: source.file, externalImport: null, estimate: source.estimate,

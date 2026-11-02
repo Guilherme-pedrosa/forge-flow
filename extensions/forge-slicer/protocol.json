@@ -7,6 +7,7 @@
   "max_file_bytes": 67108864,
   "allowed_origins": [
     "https://elevare3d.lovable.app",
-    "https://id-preview--f4da8107-e6b0-434d-90a9-de1c21edf12f.lovable.app"
+    "https://id-preview--f4da8107-e6b0-434d-90a9-de1c21edf12f.lovable.app",
+    "https://elevare3d.com.br"
   ]
 }

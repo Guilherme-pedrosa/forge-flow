@@ -28,6 +28,7 @@ interface Props {
   initialQuantity?: number;
   initialSelections?: Record<string, string>;
   showTotals?: boolean;
+  showCompanyPolicy?: boolean;
   onAuxiliaryBusy?: (busy: boolean) => void;
   onAuxiliaryDraft?: (open: boolean) => void;
 }
@@ -39,7 +40,7 @@ export function ImportedProductPricing(props: Props) {
   return <ProductImportCalculation key={`${profile?.tenant_id ?? "none"}:${user?.id ?? "none"}`} {...props} />;
 }
 
-function ProductImportCalculation({ estimate, error, onCalculated, existingMaterialId, existingPrinterId, initialQuantity, initialSelections, showTotals = true, onAuxiliaryBusy, onAuxiliaryDraft }: Props) {
+function ProductImportCalculation({ estimate, error, onCalculated, existingMaterialId, existingPrinterId, initialQuantity, initialSelections, showTotals = true, showCompanyPolicy = true, onAuxiliaryBusy, onAuxiliaryDraft }: Props) {
   const { profile } = useAuth();
   const qc = useQueryClient();
   const quantityId = useId();
@@ -180,7 +181,7 @@ function ProductImportCalculation({ estimate, error, onCalculated, existingMater
       <div><dt>Custo por peça</dt><dd className="font-semibold">{currency(result.cost)}</dd></div>
       <div><dt>Preço sugerido</dt><dd className="font-semibold">{currency(result.price)}</dd></div>
     </dl> : <p role={loading ? "status" : "alert"} className="text-sm text-muted-foreground">{problem}</p>}
-    {estimate && company.data && <InlinePricingPolicy policy={company.data} printers={printers.data ?? []} onBusy={setPolicyBusy} onDraft={setPolicyDirty}
+    {showCompanyPolicy && estimate && company.data && <InlinePricingPolicy policy={company.data} printers={printers.data ?? []} onBusy={setPolicyBusy} onDraft={setPolicyDirty}
       missingKeys={pricingPolicyFields.filter(field => company.data![field.key] == null && (field.key !== "machine_hour_cost" || !!printer && printerMachineHourCost(printer, company.data!.printer_hour_costs.find(rate => rate.printer_id === printer.id)?.hour_cost, company.data!.machine_hour_cost) == null)).map(field => field.key)} />}
     {registration && <FilamentRegistration key={`${registration.source}:${registration.key}`} item={registration.item} defaults={MATERIAL_CODES.some(([code]) => code !== "RESIN" && code === registration.materialCode) ? { material_code: registration.materialCode } : undefined}
       initialColor={{ hex: registration.colorHex ?? undefined }} onBusyChange={setRegistrationBusy}

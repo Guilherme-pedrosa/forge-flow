@@ -20,6 +20,7 @@ export type SavedProductImportPricingProps = {
   existingMaterialId?: string | null;
   initialQuantity?: number;
   requestedSourceId?: string | null;
+  showCompanyPolicy?: boolean;
   onBusy?: (busy: boolean) => void;
   onDraft?: (open: boolean) => void;
 };
@@ -103,7 +104,7 @@ function SavedSourceSelection(props: SavedProductImportPricingProps & { tenantId
   </section>;
 }
 
-function SavedSourcePreparation({ productId, tenantId, externalImport, existingMaterialId, initialQuantity, onBusy, onDraft, source, plates, composition, saved, allowLegacy }:
+function SavedSourcePreparation({ productId, tenantId, externalImport, existingMaterialId, initialQuantity, onBusy, onDraft, source, plates, composition, saved, allowLegacy, showCompanyPolicy = true }:
   SavedProductImportPricingProps & { tenantId: string; source: Source; plates: Plate[]; composition: ImportedComposition; saved: Record<string, unknown>; allowLegacy: boolean }) {
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -147,7 +148,7 @@ function SavedSourcePreparation({ productId, tenantId, externalImport, existingM
   useEffect(() => { onDraft?.(auxiliaryDraft); return () => onDraft?.(false); }, [onDraft, auxiliaryDraft]);
   if (prepared.error) return <p role="alert" className="text-sm text-destructive">{prepared.error}</p>;
   return <fieldset className="space-y-3" disabled={save.isPending}>
-    <ImportedProductPricing estimate={prepared.estimate} onCalculated={setCalculated} showTotals={false}
+    <ImportedProductPricing estimate={prepared.estimate} onCalculated={setCalculated} showTotals={false} showCompanyPolicy={showCompanyPolicy}
       onAuxiliaryBusy={setAuxiliaryBusy} onAuxiliaryDraft={setAuxiliaryDraft}
       existingMaterialId={allowLegacy ? existingMaterialId : null}
       existingPrinterId={typeof saved.printer_id === "string" ? saved.printer_id : savedPrinters.length === 1 && plates.every(plate => plate.printer_id === savedPrinters[0]) ? savedPrinters[0] : null}

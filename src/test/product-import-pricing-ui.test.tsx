@@ -6,13 +6,15 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import Produtos from "@/pages/comercial/Produtos";
 import type { ImportedComposition } from "@/lib/imported-composition";
 
-const mock = vi.hoisted(() => ({ rpc: vi.fn(), toast: vi.fn(), upload: vi.fn(), parsedOnly: vi.fn(), useCubeMetrics: false, useMultiplePlates: false }));
+const mock = vi.hoisted(() => ({ rpc: vi.fn(), toast: vi.fn(), upload: vi.fn(), parsedOnly: vi.fn(), useCubeMetrics: false, useMultiplePlates: false, existing: false }));
 const abortDescriptor = Object.getOwnPropertyDescriptor(AbortSignal.prototype, "throwIfAborted");
 beforeAll(() => { if (!abortDescriptor) Object.defineProperty(AbortSignal.prototype, "throwIfAborted", { configurable: true, value(this: AbortSignal) { if (this.aborted) throw new DOMException("Consulta cancelada", "AbortError"); } }); });
 afterAll(() => { if (!abortDescriptor) delete (AbortSignal.prototype as unknown as Record<string, unknown>).throwIfAborted; });
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ profile: { tenant_id: "tenant-1" }, user: { id: "user-1" } }) }));
 vi.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: mock.toast }) }));
 vi.mock("@/lib/public-description-translation", () => ({ translatePublicDescription: async (text: string) => text }));
+vi.mock("@/pages/comercial/ProductMaterialRecipe", () => ({ default: () => null }));
+vi.mock("@/pages/comercial/ProductPrintSources", () => ({ default: () => null }));
 vi.mock("@/components/shared/SearchableItemSelect", () => ({ SearchableItemSelect: ({ value, options, onChange, label }: { value: string; options: { id: string; label: string }[]; onChange: (value: string) => void; label: string }) =>
   <select aria-label={label} value={value} onChange={event => onChange(event.target.value)}><option value="">Selecionar</option>{options.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select> }));
 vi.mock("@/components/comercial/ModelFileInput", () => ({ default: ({ onParsed, onFileReady }: { onParsed: (composition: ImportedComposition) => void; onFileReady: (file: File) => void }) => <button type="button" onClick={async () => {
@@ -50,13 +52,14 @@ vi.mock("@/integrations/supabase/client", () => ({ supabase: {
   storage: { from: () => ({ upload: mock.upload, getPublicUrl: () => ({ data: { publicUrl: "https://example.test/model.3mf" } }) }) },
   from: (table: string) => {
     const query = { select: () => query, eq: () => query, is: () => query, in: () => query, order: () => query, range: () => query, single: () => query, limit: () => query,
-      then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) => Promise.resolve({ data: table === "inventory_items" ? (mock.useMultiplePlates ? [filament, greenFilament] : [filament]) : table === "printers" ? [printer] : table === "tenants" ? { settings: {} } : [], error: null }).then(resolve, reject) };
+      then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) => Promise.resolve({ data: table === "products" && mock.existing ? [existingProduct] : table === "inventory_items" ? (mock.useMultiplePlates ? [filament, greenFilament] : [filament]) : table === "printers" ? [printer] : table === "tenants" ? { settings: {} } : [], error: null }).then(resolve, reject) };
     return query;
   },
 } }));
 const filament = { id: "pla", name: "PLA vermelho cadastrado", category: "filament", unit: "kg", avg_cost: 80, freight_cost: 0, loss_coefficient: 0, material_code: "PLA", color_hex: "#FF0000", is_active: true };
 const greenFilament = { ...filament, id: "pla-green", name: "PLA verde cadastrado", color_hex: "#00FF00" };
 const printer = { id: "a1", name: "A1 oficina", brand: "Bambu Lab", model: "A1", power_watts: 100, depreciation_per_hour: 0.4, maintenance_cost_per_hour: 0.1, acquisition_cost: 4000, useful_life_hours: 10000, is_active: true };
+const existingProduct = { id: "existing", name: "Produto existente", category: "printed_part", is_active: true, manual_cost_override: 17, cost_estimate: 17, sale_price: 34, prints_per_plate: 1, num_colors: 1, extras: [] };
 const policy = { machine_hour_cost: 2, energy_cost_kwh: 1, labor_cost_hour: 20, overhead_percent: 0, target_margin: 50,
   handling_minutes_per_plate: 0, finishing_minutes_per_piece: 0, assembly_minutes_per_product: 0, extras_cost_per_product: 0,
   printer_hour_costs: [], machine_rate_scope: "commercial_excludes_energy", revision: "confirmed" };
@@ -76,9 +79,11 @@ beforeEach(() => {
   mock.rpc.mockReset(); mock.toast.mockReset(); mock.upload.mockReset().mockResolvedValue({ data: { path: "saved.3mf" }, error: null }); mock.parsedOnly.mockReset();
   mock.useCubeMetrics = false;
   mock.useMultiplePlates = false;
+  mock.existing = false;
   mock.rpc.mockImplementation(async (name: string) => {
     if (name === "pricing_settings") return { data: policy, error: null };
     if (name === "product_material_recipe_catalog") return { data: [], error: null };
+    if (name === "product_pricing_plan") return { data: { plan: {}, revision: "plan-r1" }, error: null };
     if (name === "request_makerworld_import") return { data: "maker-request", error: null };
     if (name === "get_makerworld_import") return { data: { status: "ready", payload: rawDesign }, error: null };
     if (name === "save_product_with_photos") return { data: "saved-product", error: null };
@@ -134,6 +139,57 @@ describe("automatic costs in the product import editor", () => {
       plates: [{ index: 1, units_per_plate: 1, lines: [{ item_id: "pla", grams: 100 }] }] });
     expect(saved()!.p_product.file_composition.profile_id).toBe(`local:${saved()!.p_product.file_composition.file_sha256}`);
     expect(mock.upload).toHaveBeenCalledTimes(1);
+    expect(mock.rpc.mock.calls.some(([name]) => name === "product_pricing_plan")).toBe(false);
+  });
+
+  it("adds product extras once to the native base and updates the price without changing sliced weights or preparation", async () => {
+    mount(); const editor = await loadNative();
+    fireEvent.click(within(editor).getByText("Peças, composição e referências de produção", { selector: "summary" }));
+    fireEvent.click(within(editor).getByRole("button", { name: "Adicionar Item" }));
+    const name = within(editor).getByPlaceholderText("Ex: Chocolate, Embalagem, Laço..."), row = name.parentElement!;
+    fireEvent.change(name, { target: { value: "Laço novo" } });
+    const extra = within(row).getByPlaceholderText("0,00");
+    fireEvent.change(extra, { target: { value: "2,50" } });
+    expect(within(editor).getByLabelText("Preço de custo (R$)")).toHaveValue("14.7");
+    expect(within(editor).getByLabelText("Preço unitário (R$)")).toHaveValue("29.40");
+    fireEvent.change(extra, { target: { value: "3,50" } });
+    expect(within(editor).getByLabelText("Preço de custo (R$)")).toHaveValue("15.7");
+    expect(within(editor).getByLabelText("Preço unitário (R$)")).toHaveValue("31.40");
+    fireEvent.change(extra, { target: { value: "2.5.6" } });
+    expect(within(editor).getByRole("alert")).toHaveTextContent("custo válido para o adicional");
+    fireEvent.change(extra, { target: { value: "2,50" } });
+    fireEvent.click(within(editor).getByRole("button", { name: /^Criar$/ })); await waitFor(() => expect(saved()).toBeDefined());
+    expect(saved()!.p_product).toMatchObject({ cost_estimate: 14.7, sale_price: 29.4, extras: [{ name: "Laço novo", cost: 2.5 }],
+      import_pricing: { quantity: 1, plates: [{ index: 1, units_per_plate: 1, lines: [{ item_id: "pla", grams: 100 }] }] },
+      file_composition: { plates: [{ weight_grams: 100, time_seconds: 7200 }] } });
+  });
+
+  it.each(["custom", "error", "empty"])("checks an existing product's %s pricing plan before accepting the new source's automatic cost", async kind => {
+    mock.existing = true; const original = mock.rpc.getMockImplementation()!;
+    mock.rpc.mockImplementation(async (name: string, args: unknown) => name === "product_pricing_plan"
+      ? kind === "custom" ? { data: { plan: { consumables: [{ item_id: "box", quantity: 1 }] }, revision: "custom-r1" }, error: null }
+        : kind === "error" ? { data: null, error: { message: "Plano indisponível" } } : { data: { plan: {}, revision: "empty-r1" }, error: null } : original(name, args));
+    mount(); fireEvent.click(await screen.findByRole("button", { name: "Editar Produto existente" }));
+    const editor = screen.getByRole("dialog", { name: "Editar Produto" });
+    fireEvent.change(within(editor).getByLabelText("Importar produto completo pelo link do MakerWorld"), { target: { value: "https://makerworld.com/en/models/456#profileId-101" } });
+    const load = within(editor).getByRole("button", { name: "Carregar modelo" });
+    await waitFor(() => expect(load).toBeEnabled()); fireEvent.click(load);
+    const choice = await screen.findByRole("dialog", { name: "Escolha a opção de impressão" });
+    fireEvent.click(within(choice).getByRole("button", { name: "Importar esta opção" }));
+    fireEvent.mouseDown(within(editor).getByRole("tab", { name: "Composição / produção" }), { button: 0, ctrlKey: false });
+    fireEvent.click(await within(editor).findByRole("button", { name: "Ler 3MF fatiado de teste" }));
+    if (kind === "empty") {
+      await waitFor(() => expect(within(editor).getByLabelText("Preço de custo (R$)")).toHaveValue("12.2"));
+      expect(within(editor).getByLabelText("Preço unitário (R$)")).toHaveValue("24.40");
+      return;
+    }
+    await within(editor).findByText(kind === "custom" ? /Este produto tem ajustes próprios/ : /Não foi possível conferir os ajustes de custo/);
+    expect(within(editor).getByLabelText("Preço de custo (R$)")).toHaveValue("");
+    fireEvent.click(within(editor).getByRole("button", { name: "Prefiro informar o custo manualmente" }));
+    expect(within(editor).getByLabelText("Preço de custo (R$)")).toHaveValue("");
+    expect(within(editor).getByLabelText("Preço unitário (R$)")).toHaveValue("");
+    expect(within(editor).getByLabelText("Preço de custo (R$)")).not.toHaveAttribute("readonly");
+    expect(saved()).toBeUndefined();
   });
 
   it("recalculates cost for the imported quantity while preserving the user's percentage", async () => {

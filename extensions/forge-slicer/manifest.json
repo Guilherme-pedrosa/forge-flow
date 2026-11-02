@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Forge • Fatiador local",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Fatia STL/3MF no Bambu Studio local somente quando você solicitar no Forge.",
   "minimum_chrome_version": "105",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA15yxwo1PIuDWNRQgq91Nhmj0gZGVK4bnRmPnHHwzmLvzgEvu9D1LtPIIvQMNDds9bp709SMSAa4fRMBDuMH9YTLpDIWcv/KE/E7ZdVJ/Ts507pY3AxclzrKkS/UDoTmRdQnvejp3Sz5jSsoa7zgNEv+y3wsdVkvO6gnS/9WVin+Plu399Uf4zy7wJAgb7EQxxCUgY0EYNuZdupfbwBTKxXtfhRDDM7gy6+81YYUvRU1gj84PhM6G5fGCgxqpuRrX3TOpSpuArYqPNVpzN6kXRNHi5YiMJ90yBHkZ4rWHyV23PEK7fBvc0fydABv4pHHqQVlnJbOo+fZLN2d6pnN58QIDAQAB",
@@ -20,7 +20,8 @@
   "externally_connectable": {
     "matches": [
       "https://elevare3d.lovable.app/*",
-      "https://id-preview--f4da8107-e6b0-434d-90a9-de1c21edf12f.lovable.app/*"
+      "https://id-preview--f4da8107-e6b0-434d-90a9-de1c21edf12f.lovable.app/*",
+      "https://elevare3d.com.br/*"
     ]
   }
 }

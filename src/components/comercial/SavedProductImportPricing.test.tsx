@@ -60,6 +60,15 @@ function mount(props: Partial<SavedProductImportPricingProps> = {}) {
 const writes = () => mock.rpc.mock.calls.filter(([name]) => name === "save_product_import_pricing");
 
 describe("repairing the saved import's printing data", () => {
+  it("keeps the calculation and technical editor when the parent already provides company cost confirmations", async () => {
+    mount({ showCompanyPolicy: false });
+    const save = await screen.findByRole("button", { name: "Salvar dados da impressão" });
+    await waitFor(() => expect(save).toBeEnabled());
+    expect(screen.getByLabelText("Produtos completos neste perfil")).toHaveValue(1);
+    expect(screen.queryByLabelText("Parâmetros de custo da empresa")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Conferir todos os parâmetros da empresa" })).not.toBeInTheDocument();
+    expect(mock.rpc).toHaveBeenCalledWith("pricing_settings", {});
+  });
   it("propagates inline filament draft and busy guards and keeps technical saving blocked until the child closes", async () => {
     const busy = vi.fn(), draft = vi.fn(), secondHash = "b".repeat(64);
     mock.rows.product_print_sources.push(source("second", secondHash)); mock.rows.product_print_plates.push(plate("second", secondHash));

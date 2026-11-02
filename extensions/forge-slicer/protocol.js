@@ -6,7 +6,7 @@ export const PROTOCOL = Object.freeze({
   profile_id: "bambu-a1-04-pla-020-v1",
   chunk_bytes: 393216,
   max_file_bytes: 67108864,
-  allowed_origins: ["https://elevare3d.lovable.app", "https://id-preview--f4da8107-e6b0-434d-90a9-de1c21edf12f.lovable.app"],
+  allowed_origins: ["https://elevare3d.lovable.app", "https://id-preview--f4da8107-e6b0-434d-90a9-de1c21edf12f.lovable.app", "https://elevare3d.com.br"],
 });
 
 export function allowedSender(sender, internal = false) {

@@ -2,7 +2,9 @@
 
 O botão da extensão abre **Novo Produto → Produto e preço** no Forge. Ao abrir a extensão numa página de modelo do MakerWorld, o link é preenchido nesse mesmo cadastro. A consulta do link e o fatiamento só começam por ação do operador. A extensão não baixa um projeto privado automaticamente nem acessa a conta Bambu.
 
-Escolha o STL ou 3MF no cadastro e use **Fatiar neste computador**. O conector executa o Bambu Studio oficial instalado, devolve o 3MF fatiado e encerra. **Usar no cadastro** importa esse arquivo resultante, com seu hash, placas e filamentos; a composição segue no mesmo formulário. O salvamento do produto continua explícito.
+Escolha o STL ou 3MF no cadastro e use **Fatiar neste computador**. O conector executa o motor do Bambu Studio oficial instalado em segundo plano, devolve o 3MF fatiado e encerra. Não é necessário abrir o projeto na janela do Bambu Studio. **Usar no cadastro** importa esse arquivo resultante, com seu hash, placas e filamentos; a composição segue no mesmo formulário. O salvamento do produto continua explícito.
+
+O popup verifica a ligação entre extensão e conector. A página precisa também poder falar com a extensão: as origens exatas aceitas são `https://elevare3d.com.br`, `https://elevare3d.lovable.app` e o preview deste projeto. Se o popup está conectado e a página não, atualize o pacote na mesma pasta, clique em **Recarregar** na extensão em `chrome://extensions`, atualize a página do Forge e use **Verificar extensão novamente**. Não é necessário reinstalar um conector saudável para essa atualização. A fila de fatiamento da empresa é uma opção separada e só é consultada quando escolhida; a indisponibilidade dessa fila não informa o estado da extensão local.
 
 ## Instalação
 

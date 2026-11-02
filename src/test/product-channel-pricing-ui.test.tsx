@@ -106,4 +106,17 @@ describe("product catalogue channel pricing", () => {
       import_pricing: { quantity: 2, printer_id: "a1", plates: [{ index: 1, units_per_plate: 2, lines: [{ item_id: "red", grams: 100 }] }] }, external_import: { selected_variant_profile_id: "501" } });
     await waitFor(() => expect(screen.getByLabelText("Destino do orçamento")).toHaveTextContent('"pricingQuote":{"product_id":"saved-product","quantity":3,"unit_price":30}'));
   });
+  it.each(["channel", "factory"])("quotes the operator's current %s price instead of the old transferred channel price", async mode => {
+    const externalImport = maker(), estimate = modelPricingFromMakerWorld(externalImport);
+    const token = await createPricingSourceTransfer({ tenantId: "tenant-1", userId: "user-1" }, { sourceFile: null, externalImport, estimate, accepted,
+      pricingInput: input, calculated: { printerId: "a1", quantity: 2, materialSelections: { [estimate.materials[0].key]: "red" } }, channelPricing: channelDraft });
+    mount({ ...accepted, sourceToken: token, sourceRequired: true });
+    const editor = await screen.findByRole("dialog", { name: "Novo Produto" }); await within(editor).findByTestId("channel-pricing-result");
+    if (mode === "channel") { change("Preço escolhido neste canal (R$)", "40"); change("Unidades por pedido / pacote", "2"); }
+    else { change("Canal de venda", "factory"); change("Preço unitário (R$)", "25"); }
+    fireEvent.click(within(editor).getByRole("button", { name: "Criar" })); await waitFor(() => expect(saved()).toBeDefined());
+    const quotePrice = mode === "channel" ? 40 : 25, quantity = mode === "channel" ? 2 : 3;
+    await waitFor(() => expect(screen.getByLabelText("Destino do orçamento")).toHaveTextContent(`"pricingQuote":{"product_id":"saved-product","quantity":${quantity},"unit_price":${quotePrice}}`));
+    expect(saved()!.p_product.sale_price).toBe(mode === "channel" ? 20 : 25);
+  });
 });
