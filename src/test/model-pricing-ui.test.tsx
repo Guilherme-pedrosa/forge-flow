@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Precificacao from "@/pages/comercial/Precificacao";
 import type { ModelPricingEstimate } from "@/lib/model-pricing";
 
-const mock = vi.hoisted(() => ({ from: vi.fn(), rpc: vi.fn(), columns: [] as { table: string; columns: string }[], partCount: 2 as number | null }));
+const mock = vi.hoisted(() => ({ from: vi.fn(), rpc: vi.fn(), columns: [] as { table: string; columns: string }[], partCount: 2 as number | null, zeroCost: false, freeReceipt: false }));
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ profile: { tenant_id: "model-pricing-tenant" }, user: { id: "model-pricing-user" } }) }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { from: mock.from, rpc: mock.rpc } }));
 vi.mock("@/components/shared/SearchableItemSelect", () => ({ SearchableItemSelect: ({ value, options, onChange, label }: { value: string; options: { id: string; label: string }[]; onChange: (value: string) => void; label: string }) =>
@@ -49,11 +49,13 @@ async function loadAndChoose() {
 beforeEach(() => {
   mock.from.mockReset(); mock.rpc.mockReset(); mock.columns.length = 0;
   mock.partCount = 2;
+  mock.zeroCost = false; mock.freeReceipt = false;
   mock.from.mockImplementation((table: string) => {
     const query = {
       select: (columns: string) => { mock.columns.push({ table, columns }); return query; },
-      eq: () => query, in: () => query, order: () => query,
-      range: async () => ({ data: table === "printers" ? printers : table === "inventory_items" ? filaments : [], error: null }),
+      eq: () => query, gt: () => query, in: () => query, order: () => query,
+      range: async () => ({ data: table === "printers" ? printers : table === "inventory_items" ? filaments.map(item => mock.zeroCost && item.id === "pla" ? { ...item, avg_cost: 0 } : item)
+        : table === "inventory_movements" && mock.freeReceipt ? [{ item_id: "pla" }] : [], error: null }),
     };
     return query;
   });
@@ -64,6 +66,22 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("automatic file and filament pricing", () => {
+  it("keeps identity-only filament rates pending before offering a complete price", async () => {
+    mock.zeroCost = true;
+    mount(); await loadAndChoose();
+    expect(await screen.findByText("Informe o custo deste filamento ou registre uma compra recebida.")).toBeVisible();
+    expect(screen.queryByText("Custo / unidade")).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Preço sugerido:/)).not.toBeInTheDocument();
+    expect(mock.rpc.mock.calls.every(([name]) => name === "pricing_settings")).toBe(true);
+  });
+
+  it("prices an explicitly confirmed free filament using the remaining machine and energy costs", async () => {
+    mock.zeroCost = true; mock.freeReceipt = true;
+    mount(); await loadAndChoose();
+    await waitFor(() => expectCost(/R\$\s*4,20/));
+    expect(screen.getByText(/^Preço sugerido:/)).toHaveTextContent(/R\$\s*8,40/);
+    expect(mock.rpc.mock.calls.every(([name]) => name === "pricing_settings")).toBe(true);
+  });
   it("opens the file workflow directly and reads only nonsecret printer fields", async () => {
     mount();
     expect(screen.getByRole("button", { name: "Arquivo e filamento" })).toHaveAttribute("aria-pressed", "true");

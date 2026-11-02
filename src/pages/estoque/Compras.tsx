@@ -42,6 +42,7 @@ import { Switch } from "@/components/ui/switch";
 import { PurchaseStockQuantity } from "@/components/estoque/PurchaseStockQuantity";
 import { purchaseMaterialLabel, purchaseStockQuantity, purchaseMassToStock } from "@/lib/purchase-stock";
 import { parseFilamentPurchaseSuggestion } from "@/lib/filament-planning";
+import { invalidateInventoryPricing } from "@/lib/inventory-cache";
 
 const fmtCurrency = (v: number | null) =>
   v != null ? v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—";
@@ -412,8 +413,7 @@ export default function Compras() {
     },
     onSuccess: () => {
       purchaseRequests.current.delete("manual");
-      qc.invalidateQueries({ queryKey: ["inventory_items"] }); qc.invalidateQueries({ queryKey: ["products"] });
-      qc.invalidateQueries({ queryKey: ["inventory_movements"] });
+      if (receiveNow) void invalidateInventoryPricing(qc);
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
       refreshPlanning();
       qc.invalidateQueries({ queryKey: ["accounts_payable"] });
@@ -456,8 +456,7 @@ export default function Compras() {
       qc.invalidateQueries({ queryKey: ["vendors"] });
       qc.invalidateQueries({ queryKey: ["accounts_payable"] });
       if (result?.shouldReceive) {
-        qc.invalidateQueries({ queryKey: ["inventory_items"] }); qc.invalidateQueries({ queryKey: ["products"] });
-        qc.invalidateQueries({ queryKey: ["inventory_movements"] });
+        void invalidateInventoryPricing(qc);
       }
       setXmlImportOpen(false);
       setNfeData(null);
@@ -481,8 +480,7 @@ export default function Compras() {
     onSuccess: (result) => {
       qc.invalidateQueries({ queryKey: ["purchase_orders"] });
       refreshPlanning();
-      qc.invalidateQueries({ queryKey: ["inventory_items"] }); qc.invalidateQueries({ queryKey: ["products"] });
-      qc.invalidateQueries({ queryKey: ["inventory_movements"] });
+      void invalidateInventoryPricing(qc);
       setReceiveConfirmOpen(false);
       setReceiveOrderId(null);
       setReceiveItems([]);

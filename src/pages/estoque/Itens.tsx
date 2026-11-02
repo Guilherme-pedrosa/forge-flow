@@ -1,5 +1,8 @@
 import { SearchableItemSelect } from "@/components/shared/SearchableItemSelect";
 import { MaterialColorPicker } from "@/components/estoque/MaterialColorPicker";
+import { FilamentRegistration } from "@/components/estoque/FilamentRegistration";
+import type { FilamentRegistrationItem } from "@/lib/filament-registration";
+import { invalidateInventoryPricing } from "@/lib/inventory-cache";
 import { orderRequest } from "@/lib/sales-order";
 import { DeleteRecordDialog, type DeleteTarget } from "@/components/shared/DeleteRecordDialog";
 import { Fragment, useState, useMemo, useRef } from "react";
@@ -61,6 +64,7 @@ export default function Itens() {
   const [editItem, setEditItem] = useState<any>(null);
   const [detailItem, setDetailItem] = useState<any>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [filamentEditor, setFilamentEditor] = useState<{ item: FilamentRegistrationItem | null; defaults?: Partial<FilamentRegistrationItem> } | null>(null);
 
   // Form state
   const [formMode, setFormMode] = useState<"group" | "color">("group");
@@ -122,8 +126,9 @@ export default function Itens() {
     if (value !== "filament" && value !== "resin") { setFormMode("group"); setParentId(""); }
   };
   const openCreate = (value: "filament" | "consumable") => {
-    resetForm(); setCategory(value); setUnit(value === "filament" ? "g" : "un");
-    setDiameter(value === "filament" ? "1.75" : ""); setLossCoefficient(value === "filament" ? "5" : "0"); setCreateOpen(true);
+    if (value === "filament") { setFilamentEditor({ item: null }); return; }
+    resetForm(); setCategory(value); setUnit("un");
+    setDiameter(""); setLossCoefficient("0"); setCreateOpen(true);
   };
 
   // Group items: parents (no parent_id) and children (with parent_id)
@@ -195,6 +200,7 @@ export default function Itens() {
   const openEdit = (item: any) => {
     const owner = owners.get(item.id);
     if (owner) { navigate(`/comercial/produtos/${owner.id}`); return; }
+    if (item.category === "filament") { setFilamentEditor({ item }); return; }
     setEditItem(item);
     const isChild = !!item.parent_id;
     setFormMode(isChild ? "color" : "group");
@@ -218,6 +224,8 @@ export default function Itens() {
   };
 
   const openAddColor = (parent: any) => {
+    if (parent.category === "filament") { setFilamentEditor({ item: null, defaults: { material_code: parent.material_code,
+      material_description: parent.material_description, brand: parent.brand, diameter: parent.diameter } }); return; }
     resetForm();
     setFormMode("color");
     setParentId(parent.id);
@@ -245,7 +253,7 @@ export default function Itens() {
   };
 
   const refreshMaterialQueries = () => {
-    for (const key of ["inventory_items", "recipe_inventory_items", "product_material_recipe", "product_material_requirements", "products", "quote_products"]) qc.invalidateQueries({ queryKey: [key] });
+    void invalidateInventoryPricing(qc);
   };
 
   const createMut = useMutation({
@@ -472,6 +480,8 @@ export default function Itens() {
   return (
     <div className="space-y-6 animate-in fade-in duration-300">
       <DeleteRecordDialog key={deleteTarget?.id} target={deleteTarget} onClose={() => setDeleteTarget(null)} />
+      {filamentEditor && <FilamentRegistration key={filamentEditor.item?.id ?? "new"} item={filamentEditor.item} defaults={filamentEditor.defaults}
+        onClose={() => setFilamentEditor(null)} onSaved={async () => { setFilamentEditor(null); setDetailItem(null); await invalidateInventoryPricing(qc); toast({ title: "Filamento salvo" }); }} />}
       <PageHeader
         title="Materiais e insumos"
         description="Cadastre e controle filamentos, resinas, embalagens e componentes comprados usados na produção."
@@ -481,15 +491,15 @@ export default function Itens() {
             <Button size="sm" variant="outline" onClick={() => openCreate("consumable")}>
               <Plus className="h-4 w-4 mr-1" /> Novo insumo
             </Button>
-            <Button size="sm" asChild>
-              <Link to="/estoque/bobinas?novo=1"><Plus className="h-4 w-4 mr-1" /> Novo filamento e bobina</Link>
+            <Button size="sm" onClick={() => openCreate("filament")}>
+              <Plus className="h-4 w-4 mr-1" /> Novo filamento
             </Button>
           </div>
         }
       />
 
       <nav aria-label="Estoque e produção" className="flex flex-wrap gap-2 text-sm">
-        <Button size="sm" variant="outline" asChild><Link to="/estoque/bobinas">Bobinas e localização</Link></Button>
+        <Button size="sm" variant="outline" asChild><Link to="/estoque/bobinas">Filamentos</Link></Button>
         <Button size="sm" variant="outline" asChild><Link to="/comercial/produtos">Produtos e composição</Link></Button>
         <Button size="sm" variant="outline" asChild><Link to="/planejamento/fila">Fila de impressão</Link></Button>
       </nav>

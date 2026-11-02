@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ImportedProductPricing } from "./ImportedProductPricing";
 import type { ModelPricingEstimate } from "@/lib/model-pricing";
 
-const mock = vi.hoisted(() => ({ from: vi.fn(), rpc: vi.fn(), printers: [] as Record<string, unknown>[], filaments: [] as Record<string, unknown>[], policy: {} as Record<string, unknown>, columns: [] as string[] }));
+const mock = vi.hoisted(() => ({ from: vi.fn(), rpc: vi.fn(), printers: [] as Record<string, unknown>[], filaments: [] as Record<string, unknown>[], movements: [] as Record<string, unknown>[], policy: {} as Record<string, unknown>, columns: [] as string[] }));
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ profile: { tenant_id: "import-company" }, user: { id: "import-user" } }) }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { from: mock.from, rpc: mock.rpc } }));
 vi.mock("@/components/shared/SearchableItemSelect", () => ({ SearchableItemSelect: ({ value, options, onChange, label }: { value: string; options: { id: string; label: string }[]; onChange: (value: string) => void; label: string }) =>
@@ -24,10 +24,10 @@ const policy = { machine_hour_cost: 2, energy_cost_kwh: 1, labor_cost_hour: 20, 
 const a1 = { id: "a1", name: "A1 oficina", brand: "Bambu Lab", model: "A1", power_watts: 100, depreciation_per_hour: 0.4, maintenance_cost_per_hour: 0.1, acquisition_cost: 4000, useful_life_hours: 10000 };
 const pla = { id: "pla", name: "PLA vermelho cadastrado", unit: "kg", avg_cost: 80, material_code: "PLA", color_hex: "#FF0000" };
 beforeEach(() => {
-  mock.printers = [a1]; mock.filaments = [pla]; mock.policy = { ...policy }; mock.columns.length = 0;
+  mock.printers = [a1]; mock.filaments = [pla]; mock.movements = []; mock.policy = { ...policy }; mock.columns.length = 0;
   mock.from.mockReset().mockImplementation((table: string) => {
-    const query = { select: (columns: string) => { mock.columns.push(columns); return query; }, eq: () => query, in: () => query, order: () => query,
-      range: async () => ({ data: table === "printers" ? mock.printers : mock.filaments, error: null }) };
+    const query = { select: (columns: string) => { mock.columns.push(columns); return query; }, eq: () => query, gt: () => query, in: () => query, order: () => query,
+      range: async () => ({ data: table === "printers" ? mock.printers : table === "inventory_movements" ? mock.movements : mock.filaments, error: null }) };
     return query;
   });
   mock.rpc.mockReset().mockImplementation(async (name: string) => name === "pricing_settings" ? { data: mock.policy, error: null } : { data: null, error: { message: "Unexpected write" } });
@@ -41,6 +41,23 @@ function mount(value: ModelPricingEstimate | null = estimate, loaded = vi.fn(), 
 const cost = () => screen.getByText("Custo por peça").parentElement?.querySelector("dd");
 
 describe("ImportedProductPricing", () => {
+  it.each([0, null])("keeps a new color's %s acquisition rate pending instead of presenting a complete cost", async avg_cost => {
+    mock.filaments = [{ ...pla, avg_cost }];
+    const { loaded } = mount();
+    await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Informe o custo deste filamento ou registre uma compra recebida."));
+    expect(screen.queryByText("Custo por peça")).not.toBeInTheDocument();
+    expect(screen.queryByText("Preço sugerido")).not.toBeInTheDocument();
+    expect(loaded).toHaveBeenLastCalledWith(null);
+    expect(mock.rpc.mock.calls.every(([name]) => name === "pricing_settings")).toBe(true);
+  });
+
+  it("accepts zero material cost when the stock ledger confirms an explicit free acquisition", async () => {
+    mock.filaments = [{ ...pla, avg_cost: 0 }]; mock.movements = [{ item_id: "pla" }];
+    const { loaded } = mount();
+    await waitFor(() => expect(loaded.mock.calls.at(-1)?.[0]).toMatchObject({ cost: 4.2, price: 8.4 }));
+    expect(cost()).toHaveTextContent(/4,20/);
+    expect(mock.rpc.mock.calls.every(([name]) => name === "pricing_settings")).toBe(true);
+  });
   it("chooses the compatible registered model across five A1 machines without asking for individual nicknames", async () => {
     mock.printers = [a1, ...["Babi", "Bambina", "Bentolino", "Oficina"].map((name, index) => ({ ...a1, id: `a1-${index}`, name })), { ...a1, id: "a2l", name: "Outra impressora", model: "A2L" }];
     const { loaded } = mount();

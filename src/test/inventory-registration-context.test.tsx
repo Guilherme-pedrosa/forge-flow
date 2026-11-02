@@ -56,13 +56,13 @@ function mount() {
 }
 
 describe("contexto do cadastro de materiais e insumos", () => {
-  it("leva o cadastro de filamento direto ao formulário único de filamento e bobina", async () => {
+  it("abre o cadastro simples de filamento na própria tela sem exigir bobina", async () => {
     mount();
-    const entry = await screen.findByRole("link", { name: "Novo filamento e bobina" });
-    expect(entry).toHaveAttribute("href", "/estoque/bobinas?novo=1");
+    const entry = await screen.findByRole("button", { name: "Novo filamento" });
     fireEvent.click(entry);
-    expect(screen.getByLabelText("Página atual")).toHaveTextContent("/estoque/bobinas?novo=1");
-    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Cadastrar filamento" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Cor *")).toBeInTheDocument();
+    expect(screen.queryByText(/capacidade inicial|tara do carretel/i)).not.toBeInTheDocument();
     expect(mock.rpc).not.toHaveBeenCalled();
   });
   it("cadastra embalagem por unidade sem herdar campos de impressão", async () => {

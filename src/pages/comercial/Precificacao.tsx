@@ -12,6 +12,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { allRows } from "@/lib/finance";
 import { useAuth } from "@/contexts/AuthContext";
 import { readPricingSettings } from "@/lib/pricing-policy";
+import { loadPricingFilaments, MISSING_FILAMENT_COST } from "@/lib/pricing-filaments";
 import ProductPricingWorkspace from "./ProductPricingWorkspace";
 import { nonNegative, positiveInteger } from "@/lib/production";
 import { PricingModelFile } from "@/components/comercial/PricingModelFile";
@@ -111,10 +112,7 @@ function FreePricingSimulator({ draft, setDraft, automatic }: { draft: FreePrici
   });
   const materials = useQuery({
     queryKey: ["pricing-materials", profile?.tenant_id], enabled: !!profile?.tenant_id,
-    queryFn: () => allRows((a, b) => supabase.from("inventory_items")
-      .select("id,name,unit,avg_cost,material_code,color_hex")
-      .eq("is_active", true).eq("category", "filament").in("unit", ["g", "kg"])
-      .order("name").order("id").range(a, b)),
+    queryFn: loadPricingFilaments,
   });
   const printer = printers.data?.find(p => p.id === printerId) ?? null;
   const slots = useMemo(() => draft.estimate?.materials ?? [], [draft.estimate]);
@@ -138,6 +136,7 @@ function FreePricingSimulator({ draft, setDraft, automatic }: { draft: FreePrici
     modelMatch == null && draft.confirmedPrinterId !== printer.id ? "Confirme para qual impressora este arquivo foi fatiado." :
     selectedMaterials.some(m => !m) ? "Escolha o filamento do estoque para cada material do arquivo." :
     selectedMaterials.some((m, i) => !m?.material_code || !slots[i].materialCode || m.material_code.trim().toUpperCase() !== slots[i].materialCode.trim().toUpperCase()) ? "O material escolhido difere do arquivo ou não tem identificação. Confira o cadastro ou fatie com o material correto." :
+    selectedMaterials.some(material => material?.cost_confirmed === false) ? MISSING_FILAMENT_COST :
     company.data?.finishing_minutes_per_piece > 0 && draft.estimate.partCount == null ? "O arquivo não informa a quantidade de peças para calcular o acabamento. Confira a composição no cadastro do produto." : "";
   const automaticLabor = (company.data?.handling_minutes_per_plate ?? 0) * (draft.estimate?.plateCount ?? 0)
     + (company.data?.finishing_minutes_per_piece ?? 0) * (draft.estimate?.partCount ?? 0)

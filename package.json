@@ -8,6 +8,7 @@
     "build": "vite build",
     "build:worker": "node scripts/build-slicer-worker.mjs",
     "test:slicer": "node scripts/test-slicer-queue.mjs && node scripts/test-slicer-worker.mjs && node scripts/test-slicer-startup.mjs",
+    "test:filaments": "node scripts/test-simple-filament-registration.mjs && vitest run src/components/estoque/FilamentRegistration.test.tsx src/lib/filament-registration.test.ts src/test/bobinas-registration-entry.test.tsx src/test/inventory-registration-context.test.tsx src/test/inventory-cost-workflow-ui.test.tsx src/lib/pricing-filaments.test.ts --maxWorkers=2",
     "build:dev": "vite build --mode development",
     "lint": "eslint .",
     "preview": "vite preview",

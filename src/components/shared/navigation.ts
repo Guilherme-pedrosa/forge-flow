@@ -5,7 +5,7 @@ export const navigationGroups = [
     { title: "Hoje", icon: ClipboardList, href: "/" },
     { title: "Pedidos", icon: ShoppingCart, href: "/comercial/pedidos" },
     { title: "Fila de impressão", icon: CalendarRange, href: "/planejamento/fila" },
-    { title: "Bobinas e localização", icon: Package, href: "/estoque/bobinas" },
+    { title: "Filamentos", icon: Package, href: "/estoque/bobinas" },
     { title: "Sugestões de compra", icon: ShoppingCart, href: "/estoque/reposicao" },
     { title: "Mercado Livre e Shopee", icon: Store, href: "/comercial/marketplaces" },
     { title: "Loja Elevare3D", icon: Store, href: "/integracoes/loja" },

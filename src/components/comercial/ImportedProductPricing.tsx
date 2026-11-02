@@ -6,6 +6,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { allRows, currency } from "@/lib/finance";
 import { pricePrint } from "@/lib/print-pricing";
 import { readPricingSettings } from "@/lib/pricing-policy";
+import { loadPricingFilaments, MISSING_FILAMENT_COST } from "@/lib/pricing-filaments";
 import { printerMachineHourCost, printerMatchesSliceModels, printerModelOptions, recommendFilamentsForEstimate, type ModelPricingEstimate } from "@/lib/model-pricing";
 import { SearchableItemSelect } from "@/components/shared/SearchableItemSelect";
 import { Input } from "@/components/ui/input";
@@ -47,9 +48,7 @@ function ProductImportCalculation({ estimate, error, onCalculated, existingMater
       .select("id,name,brand,model,power_watts,depreciation_per_hour,acquisition_cost,useful_life_hours,maintenance_cost_per_hour")
       .eq("is_active", true).order("name").order("id").range(a, b)) });
   const filaments = useQuery({ queryKey: ["import-pricing-filaments", profile?.tenant_id], enabled,
-    queryFn: () => allRows((a, b) => supabase.from("inventory_items")
-      .select("id,name,unit,avg_cost,material_code,color_hex").eq("is_active", true).eq("category", "filament")
-      .in("unit", ["g", "kg"]).order("name").order("id").range(a, b)) });
+    queryFn: loadPricingFilaments });
   const slots = estimate?.materials ?? [];
   const colorIdentity = (color: string | null) => color?.trim().toUpperCase().replace(/^(#[0-9A-F]{6})FF$/, "$1") || null;
   const multipleColors = new Set(slots.map(slot => colorIdentity(slot.colorHex)).filter(Boolean)).size > 1;
@@ -96,6 +95,7 @@ function ProductImportCalculation({ estimate, error, onCalculated, existingMater
         || (slots[index].materialCode ? item.material_code.trim().toUpperCase() !== slots[index].materialCode!.trim().toUpperCase()
           : !unknownSingle || !(edits.materialIds[slots[index].key] || existingMaterialId))))
         throw new Error("O filamento escolhido não corresponde ao material do perfil. Confira o cadastro ou escolha outro perfil.");
+      if (selectedFilaments.some(item => item?.cost_confirmed === false)) throw new Error(MISSING_FILAMENT_COST);
       const policy = company.data;
       if ((policy.finishing_minutes_per_piece ?? 0) > 0 && estimate.partCount == null)
         throw new Error("O modelo não informa a quantidade de peças para calcular o acabamento. Importe a composição completa.");

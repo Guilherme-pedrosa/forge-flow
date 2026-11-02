@@ -1,13 +1,13 @@
-# Cadastro único de filamento e bobina
+# Cadastro de filamentos por material e cor
 
-Em Bobinas e filamentos, Cadastrar bobina abre um formulário único. O botão Novo filamento e bobina de Materiais e insumos abre o mesmo fluxo. Não é necessário criar um grupo de material antes.
+**Operação → Filamentos → Novo filamento** abre o cadastro por material, cor e marca. **Materiais e insumos → Novo filamento** abre o mesmo formulário na própria tela. O nome e o código interno da cor são gerados; nome personalizado, SKU, diâmetro e observações ficam nos detalhes opcionais.
 
-Para um filamento novo, informe material, cor, marca opcional, filamento restante e custo por kg. Material/cor, bobina física e entrada de estoque são salvos juntos. A identificação da bobina e o código da cor podem ser gerados. Localização, AMS, capacidade original e observação ficam em detalhes opcionais.
+O filamento pode ser cadastrado com saldo zero, antes de qualquer compra. Para lançar o saldo inicial, informe a quantidade total em kg ou g e seu custo por kg. Novos cadastros são armazenados em g; a conversão do custo é feita uma vez. Uma unidade já cadastrada é preservada. O cadastro não cria bobina física, capacidade ou tara.
 
-O peso pode ser informado diretamente, sem carretel, ou calculado pelo peso bruto menos a tara. A capacidade original não é uma entrada: uma bobina de capacidade 1.000 g, pesando 1.100 g com carretel de 200 g, recebe 900 g de filamento no estoque.
+**Editar** permite corrigir o saldo disponível, inclusive para zero, e o custo médio. Alterações apenas de identificação não reenviam saldo nem custo. Ajustes de quantidade conferem o saldo anterior mostrado na tela: se uma compra entrou durante a edição, o banco pede nova conferência. A tela de Movimentações aplica a mesma proteção na conferência de uma ou várias cores, com gravação atômica.
 
-Para filamento existente, o padrão identifica uma bobina já contabilizada. Somar esta bobina ao estoque deve ser marcado somente quando o saldo ainda não foi lançado, como em uma nova entrada. Itens em kg recebem a conversão dos gramas. Pesagens e trocas de posição não duplicam saldo.
+Uma compra recebida soma a quantidade ao estoque e atualiza o custo médio ponderado: `(saldo anterior × custo anterior + custo da entrada) ÷ novo saldo`. O custo da entrada considera a distribuição das despesas e descontos do pedido. Repetir o recebimento não duplica saldo. Os leitores de filamentos, composição e precificação são atualizados após compras e ajustes manuais. Custo ainda não informado permanece pendente na precificação; zero só representa aquisição gratuita quando há confirmação desse recebimento.
 
-O RPC register_filament_spool executa tudo na mesma transação, preserva a empresa e a ordem de bloqueios e retorna um comprovante idempotente. Falhas de rótulo ou AMS revertem também o material e a entrada. Repetir a mesma operação após falha de conexão não duplica cadastro nem movimento. O custo de uma entrada deve ser explícito; zero é aceito e campo vazio não representa material gratuito.
+O cadastro principal usa `save_inventory_catalog`, com o mesmo identificador na repetição após falha de conexão. **Controle de bobinas e localização (opcional)** mantém a pesagem e a localização existentes; ele só é carregado quando aberto. Esse controle é independente do cadastro diário por cor.
 
-A suíte test-unified-filament-registration.mjs roda em PostgreSQL isolado e integra test:operations. Ela cobre saldo em g/kg, entrada líquida, associação sem entrada, custos, repetição, permissões, rollback e geração de rótulos. A conferência visual publicada não registra bobinas de teste no estoque real.
+`scripts/test-simple-filament-registration.mjs` usa PostgreSQL isolado e cobre cadastro sem bobina, g/kg, ajustes, compras, custo médio, concorrência e repetição. Os testes de interface conferem os dois pontos de cadastro e a atualização do custo na calculadora após um recebimento.

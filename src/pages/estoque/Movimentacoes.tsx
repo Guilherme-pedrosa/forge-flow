@@ -2,6 +2,7 @@ import { useSearchParams } from "react-router-dom";
 import { QuickInventoryItem } from "@/components/estoque/QuickInventoryItem";
 import { SearchableItemSelect } from "@/components/shared/SearchableItemSelect";
 import { orderRequest } from "@/lib/sales-order";
+import { invalidateInventoryPricing } from "@/lib/inventory-cache";
 import { nonNegative, validateMovement, movementDirection } from "@/lib/production";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -86,7 +87,7 @@ export default function Movimentacoes() {
   });
 
   const { data: items = [] } = useQuery({
-    queryKey: ["inventory_items", "movement-select"],
+    queryKey: ["inventory_items", "movement-select", profile?.tenant_id],
     queryFn: async () => {
       const { data, error } = await supabase.from("inventory_items").select("id, name, unit, avg_cost, current_stock").eq("is_active", true).order("name");
       if (error) throw error;
@@ -117,19 +118,31 @@ export default function Movimentacoes() {
       if (!profile) throw new Error("Sem perfil");
       const rows = [{itemId,quantity,unitCost}, ...extraRows];
       if (new Set(rows.map(row => row.itemId)).size !== rows.length) throw new Error("Inclua cada item uma vez e some suas quantidades.");
+      const rpc = supabase.rpc.bind(supabase) as unknown as (name:string,args:Record<string,unknown>) => PromiseLike<{error:{message:string}|null}>;
+      if (direction === "count") {
+        const counts = rows.map(row => {
+          const item = items.find(value => value.id === row.itemId);
+          if (!item) throw new Error("Selecione um item ativo em cada linha.");
+          if (!row.quantity.trim()) throw new Error("Informe a quantidade contada em cada linha, inclusive zero quando estiver vazio.");
+          return { item_id: item.id, current_stock: nonNegative(row.quantity, "Quantidade contada"), expected_stock: Number(item.current_stock) };
+        });
+        request.current = orderRequest(request.current, JSON.stringify({ counts }));
+        const { error } = await rpc("post_inventory_count", { p_items: counts, p_request_id: request.current.id });
+        if (error) throw new Error(error.message);
+        return;
+      }
       const movements = rows.map(row => {
         const item = items.find(value => value.id === row.itemId);
         if (!item) throw new Error("Selecione um item ativo em cada linha.");
         const qty = nonNegative(row.quantity, "Quantidade");
-        const amount = direction === "out" ? -qty : direction === "count" ? qty - item.current_stock : qty;
+        const amount = direction === "out" ? -qty : qty;
         const type = direction === "in" ? "purchase_in" : "adjustment";
-        const reason = notes.trim() || (direction === "out" ? "Saída avulsa de estoque" : direction === "count" ? "Conferência de estoque" : "Entrada avulsa de estoque");
+        const reason = notes.trim() || (direction === "out" ? "Saída avulsa de estoque" : "Entrada avulsa de estoque");
         validateMovement(type, amount, item.current_stock, reason);
         const cost = direction === "in" ? nonNegative(row.unitCost, "Custo unitário") : null;
         return {item_id:row.itemId,movement_type:type,quantity:amount,unit_cost:cost,lot_number:lotNumber.trim() || null,notes:reason};
       });
       request.current = orderRequest(request.current, JSON.stringify(movements));
-      const rpc = supabase.rpc.bind(supabase) as unknown as (name:string,args:Record<string,unknown>) => PromiseLike<{error:{message:string}|null}>;
       const {error} = movements.length === 1
         ? await rpc("post_inventory_movement", {p_movement:movements[0],p_request_id:request.current.id})
         : await rpc("post_inventory_batch", {p_movements:movements,p_request_id:request.current.id});
@@ -137,14 +150,12 @@ export default function Movimentacoes() {
     },
     onSuccess: () => {
       request.current = null;
-      qc.invalidateQueries({ queryKey: ["inventory_movements"] });
-      qc.invalidateQueries({ queryKey: ["inventory_items"] });
-      qc.invalidateQueries({ queryKey: ["products"] });
+      void invalidateInventoryPricing(qc);
       setCreateOpen(false);
       setExtraRows([]); setItemId(""); setQuantity(""); setUnitCost(""); setLotNumber(""); setNotes("");
-      toast({ title: "Movimentação registrada" });
+      toast({ title: direction === "count" ? "Saldo conferido" : "Movimentação registrada" });
     },
-    onError: (e: any) => toast({ title: "Erro", description: e.message, variant: "destructive" }),
+    onError: (e: any) => { if (direction === "count") void qc.invalidateQueries({ queryKey: ["inventory_items"] }); toast({ title: "Erro", description: e.message, variant: "destructive" }); },
   });
 
   if (loadError) return <div className="space-y-4 rounded-xl border bg-card p-6"><p role="alert" className="font-medium">Não foi possível carregar os dados.</p><p className="text-sm text-muted-foreground">{loadError.message}</p><Button variant="outline" onClick={() => refetch()}>Tentar novamente</Button></div>;
@@ -267,14 +278,14 @@ export default function Movimentacoes() {
             {extraRows.map((row,idx) => <div key={idx} className="grid gap-3 rounded-lg border p-3 sm:grid-cols-[1fr_120px_120px_auto]"><SearchableItemSelect label={`Item adicional ${idx+1}`} value={row.itemId} emptyLabel="Selecione outro produto" options={items.map(i => ({id:i.id,label:`${i.name} (${i.unit}) · saldo ${i.current_stock}`}))} onChange={id => setExtraRows(rows => rows.map((r,i) => i===idx ? {...r,itemId:id,unitCost:String(items.find(x=>x.id===id)?.avg_cost ?? 0)} : r))}/><Input aria-label={`Quantidade adicional ${idx+1}`} inputMode="decimal" placeholder="Quantidade" value={row.quantity} onChange={e => setExtraRows(rows => rows.map((r,i) => i===idx ? {...r,quantity:e.target.value} : r))}/><Input aria-label={`Custo adicional ${idx+1}`} inputMode="decimal" disabled={direction!=="in"} value={row.unitCost} onChange={e => setExtraRows(rows => rows.map((r,i) => i===idx ? {...r,unitCost:e.target.value} : r))}/><Button variant="ghost" onClick={() => setExtraRows(rows => rows.filter((_,i)=>i!==idx))}>Remover</Button></div>)}
             <Button type="button" variant="outline" onClick={() => setExtraRows(rows => [...rows,{itemId:"",quantity:"1",unitCost:"0"}])}>Adicionar outro produto</Button>
 
-            <div>
+            {direction !== "count" && <><div>
               <Label>Lote</Label>
               <Input value={lotNumber} onChange={(e) => setLotNumber(e.target.value)} placeholder="LOT-2026-03" />
             </div>
             <div>
               <Label>Observações</Label>
               <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} />
-            </div>
+            </div></>}
           </div>
           <DialogFooter>
             <Button variant="outline" disabled={createMut.isPending} onClick={() => setCreateOpen(false)}>Cancelar</Button>
