@@ -69,7 +69,7 @@ async function main(){
  const args=process.argv.slice(2);if(args.length===1&&args[0]==='--review'){console.log(JSON.stringify(nativeInstallReview(),null,2));return;}
  if(args.length&&!(args.length===2&&args[0]==='--engine'))fail('Use node install-slicer-extension.mjs [--review | --engine caminho-do-Bambu-Studio].');
  const result=await installSlicerExtension({...(args.length?{enginePath:args[1]}:{})});
- console.log('Conector local instalado para Chrome e Edge. Carregue a pasta chrome em chrome://extensions e abra o Forge. O fatiador inicia e encerra a cada solicitação.');
+ console.log('Conector local instalado para Chrome e Edge. Carregue em chrome://extensions a pasta extraída que contém manifest.json e abra o Forge. O fatiador inicia e encerra a cada solicitação.');
  console.log('Pasta privada: '+result.install_directory);
 }
 if(typeof FORGE_INSTALLER_LIBRARY==='undefined'&&process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url))main().catch(error=>{console.error(error.code?'Não foi possível acessar os arquivos locais. Confira o Bambu Studio e o pacote completo.':error.message);process.exitCode=1;});

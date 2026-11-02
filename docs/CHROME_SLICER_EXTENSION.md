@@ -9,7 +9,7 @@ Escolha o STL ou 3MF no cadastro e use **Fatiar neste computador**. O conector e
 1. Baixe `/downloads/forge-slicer-extension.zip` no Forge e extraia o pacote para uma pasta permanente.
 2. Requisitos atuais: Windows, Node.js 22+ e Bambu Studio oficial **2.8.2.61**. Confira o instalador com `node install-slicer-extension.mjs --review`; esse comando apenas descreve os caminhos e as duas chaves de registro do usuário.
 3. Execute `node install-slicer-extension.mjs`. O instalador verifica o motor offline, protege a pasta local e registra o conector do usuário no Chrome e Edge. Não cria serviço, tarefa de inicialização ou servidor de rede.
-4. Abra `chrome://extensions`, ative o modo do desenvolvedor, escolha **Carregar sem compactação** e selecione a pasta `chrome` do pacote. No Edge, use `edge://extensions`.
+4. Abra `chrome://extensions`, ative o modo do desenvolvedor, escolha **Carregar sem compactação** e selecione a pasta extraída do pacote, a mesma que contém `manifest.json`. No Edge, use `edge://extensions`.
 5. Use **Verificar conexão** na extensão e abra o cadastro no Forge.
 
 A identificação fixa é `lkalcgppeejlaioplgipmmgdcpncofck`. A chave pública do manifesto mantém essa identidade nas instalações locais; o conector só aceita essa extensão. O LEIA-ME do pacote também contém os passos de remoção, limitados ao conector e às chaves HKCU criadas por ele.
