@@ -121,7 +121,12 @@ await test('A mixed plate plans distinct physical outputs, not one stock balance
  mixed=await apple();await plate(mixed.p,mixed.parts);
  const ids=await scalar('SELECT plan_subitem_batch($1,7,$2,NULL)',[mixed.parts[0].id,next()]);assert.equal(ids.length,1);job=ids[0];
  const j=await row('SELECT * FROM jobs WHERE id=$1',[job]);outputs=j.production_snapshot.physical_outputs;
- assert.equal(Number(j.est_grams),100);assert.equal(Number(j.est_total_cost),2);assert.equal(j.production_snapshot.plates[0].recipe.units_per_print,20);
+ assert.equal(Number(j.est_grams),100);
+ // This fixture only configures energy. A new current-cost estimate must not
+ // label its known material subtotal as the complete manufacturing cost.
+ assert.equal(j.est_total_cost,null);assert.equal(j.production_snapshot.job_pricing.basis,'canonical_current');
+ assert.equal(j.production_snapshot.job_pricing.complete,false);assert.ok(j.production_snapshot.job_pricing.missing.length);
+ assert.equal(j.production_snapshot.plates[0].recipe.units_per_print,20);
  assert.equal(j.planned_quantity,20);assert.deepEqual(outputs.map(x=>x.quantity),[10,5,5]);
  assert.deepEqual((await status(mixed.p)).components.map(c=>c.pending),[10,5,5]);
 });
