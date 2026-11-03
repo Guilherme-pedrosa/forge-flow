@@ -8,6 +8,7 @@ import { beginIntegradorEnrollment, finishIntegradorEnrollment, integrationError
 
 type Props = { binding: IntegradorBridgeBinding; tenantId: string; userId: string; accounts: MarketplaceAccount[]; allowed: boolean | null; configured: boolean | null;
   expectedClientId?: string | null;
+  connectedAccount?: { seller_id: string; nickname: string | null } | null;
   callbackReceipt?: string | null; callbackError?: string | null; disabled?: boolean; onConnected: (result: IntegradorEnrollmentResult) => void | Promise<void>;
   onReceiptConsumed?: () => void; onBusyChange?: (busy: boolean) => void };
 function connectionError(failure: unknown): string {
@@ -17,7 +18,7 @@ function connectionError(failure: unknown): string {
   if (/receipt.*(?:actor|user|tenant)|enrollment.*(?:actor|user|tenant)|original.*(?:user|operator)|sessão mudou/i.test(raw)) return "Entre no Forge com o mesmo usuário e empresa que iniciaram esta conexão. A conta não foi ativada nesta sessão.";
   return raw;
 }
-export function IntegradorAccountConnection({ binding, tenantId, userId, accounts, allowed, configured, expectedClientId, callbackReceipt, callbackError, disabled = false, onConnected, onReceiptConsumed, onBusyChange }: Props) {
+export function IntegradorAccountConnection({ binding, tenantId, userId, accounts, allowed, configured, expectedClientId, connectedAccount, callbackReceipt, callbackError, disabled = false, onConnected, onReceiptConsumed, onBusyChange }: Props) {
   const prefix = useId(), scope = `${tenantId}:${userId}:${binding.bridge_id}`;
   const alive = useRef(true), currentScope = useRef(scope); currentScope.current = scope;
   const active = useCallback(() => alive.current && currentScope.current === scope, [scope]);
@@ -29,6 +30,7 @@ export function IntegradorAccountConnection({ binding, tenantId, userId, account
   const request = useRef<{ signature: string; id: string } | null>(null), finishRequest = useRef<{ signature: string; id: string } | null>(null);
   const [target, setTarget] = useState(""), [busy, setBusy] = useState(false), [error, setError] = useState("");
   const [retry, setRetry] = useState(false), [completed, setCompleted] = useState<IntegradorEnrollmentResult | null>(null);
+  const confirmed = connectedAccount === undefined ? completed : connectedAccount;
   useEffect(() => { alive.current = true; return () => { alive.current = false; controller.current?.abort(); }; }, []);
   useEffect(() => { onBusyChange?.(busy); return () => onBusyChange?.(false); }, [busy, onBusyChange]);
   useEffect(() => {
@@ -81,9 +83,9 @@ export function IntegradorAccountConnection({ binding, tenantId, userId, account
     finally { if (generation.current === version) pending.current = false; if (current()) setBusy(false); }
   }
   return <section aria-label="Conectar minha conta Mercado Livre" className="space-y-3 rounded-lg border p-4">
-    <div><h3 className="font-semibold">2. Conecte sua conta Elevare3D</h3><p className="text-sm text-muted-foreground">Depois de salvar sua API, conecte a conta Mercado Livre que vende pela Elevare3D. A autorização abre no site oficial e retorna a este cadastro no Forge.</p></div>
-    {!completed && <p className="text-sm">Entre na conta administradora Elevare3D no Mercado Livre antes de autorizar; confira a conta exibida pelo Mercado Livre.</p>}
-    {completed ? <p role="status" className="text-sm">Conta conectada: {completed.nickname || "Elevare3D"} · vendedor {completed.seller_id}. Os anúncios e pedidos desta conta já podem ser conferidos abaixo.</p>
+    <div><h3 className="font-semibold">{confirmed ? "2. Conta Elevare3D conectada" : "2. Conecte sua conta Elevare3D"}</h3><p className="text-sm text-muted-foreground">{confirmed ? "Confira os anúncios e pedidos desta conta no Forge." : "Depois de salvar sua API, conecte a conta Mercado Livre que vende pela Elevare3D. A autorização abre no site oficial e retorna a este cadastro no Forge."}</p></div>
+    {!confirmed && <p className="text-sm">Entre na conta administradora Elevare3D no Mercado Livre antes de autorizar; confira a conta exibida pelo Mercado Livre.</p>}
+    {confirmed ? <p role="status" className="text-sm">Conta conectada: {confirmed.nickname || "Elevare3D"} · vendedor {confirmed.seller_id}. Os anúncios e pedidos desta conta já podem ser conferidos abaixo.</p>
       : <><div><Label htmlFor={`${prefix}-target`}>Cadastro no Forge para esta conexão</Label><select id={`${prefix}-target`} className="h-11 w-full rounded-md border bg-background px-3 text-sm" value={target} disabled={disabled || busy || callbackPending} onChange={event => { targetTouched.current = true; setTarget(event.target.value); request.current = null; setError(""); }}><option value="">Escolha o cadastro da Elevare3D</option><option value="new">Criar novo cadastro da Elevare3D</option>{eligible.map(account => <option key={account.id} value={account.id}>{account.name} · cadastro pendente</option>)}</select></div>
       <Button type="button" disabled={disabled || busy || allowed === false || configured === false || !target || callbackPending} onClick={() => void begin()}>Conectar Mercado Livre</Button>
       {(allowed === null || configured === null) && <p className="text-sm text-muted-foreground">A conexão ainda não foi conferida. Ao continuar, vamos validar o acesso antes de abrir o Mercado Livre.</p>}
@@ -94,7 +96,7 @@ export function IntegradorAccountConnection({ binding, tenantId, userId, account
     </>}
     {busy && <p role="status" className="text-sm">{callbackReceipt && !completed ? "Conferindo a autorização e o cadastro da conta…" : "Abrindo a autorização oficial do Mercado Livre…"}</p>}
     {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-    {callbackError && !completed && <p role="alert" className="text-sm text-destructive">O retorno da autorização expirou ou já foi usado. Conecte a conta novamente para continuar.</p>}
+    {callbackError && !confirmed && <p role="alert" className="text-sm text-destructive">O retorno da autorização expirou ou já foi usado. Conecte a conta novamente para continuar.</p>}
     <p className="text-xs text-muted-foreground">As credenciais ficam no servidor. Conectar a conta não publica estoque nem altera preços no Mercado Livre.</p>
   </section>;
 }

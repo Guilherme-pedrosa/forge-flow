@@ -1,0 +1,19 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mercadoLivreReportPeriod, overviewSchema, readMercadoLivreOverview, readMercadoLivreReconciliation, reconciliationSchema } from "./mercado-livre-reports";
+import type { IntegradorBridgeBinding } from "./mercado-livre-integration";
+const mock = vi.hoisted(() => ({ request: vi.fn() }));
+vi.mock("./mercado-livre-integration", () => ({ requestIntegradorWorkspace: mock.request }));
+const seller = "3694120570", context = { userId: "user" }, binding = { bridge_id: "bridge" } as IntegradorBridgeBinding;
+const period = { from: "2026-11-01T03:00:00Z", to: "2026-11-02T03:00:00Z" };
+const overview = () => ({ seller_id: seller, checked_at: "2026-11-02T23:00:00Z", period, complete: false, issues: ["Parte do período exige conferência."], metrics: {
+  active_listings: 15, paused_listings: 0, under_review_listings: null, closed_listings: null, unanswered_questions: 0, pending_conversations: null, paid_orders: 2, cancelled_orders: 1, paid_product_gross_amount: null,
+} });
+const reconciliation = () => ({ seller_id: seller, checked_at: "2026-11-02T23:00:00Z", total: 1, next_offset: null, complete: false, issues: [], items: [{ order_id: "123", status: "paid", currency: "BRL", products_gross_amount: 50, reported_total: 60, payments: [{ id: "456", status: "approved", release_status: null, release_at: null, gross_amount: 60, net_amount: null, refunded_amount: null, fee_amount: null, fee_details: [], release_state: "review", checked: false, issue: "A autorização não permitiu confirmar o recebimento." }] }] });
+beforeEach(() => { mock.request.mockReset(); });
+describe("Relatórios reais do Mercado Livre", () => {
+  it("preserva zeros confirmados, desconhecidos nulos e totais parciais", () => { const result = overviewSchema.parse(overview()); expect(result.metrics.paused_listings).toBe(0); expect(result.metrics.pending_conversations).toBeNull(); expect(result.metrics.paid_product_gross_amount).toBeNull(); expect(result.complete).toBe(false); });
+  it("pagamento aprovado sem liberação confirmada continua a conferir", () => { const payment = reconciliationSchema.parse(reconciliation()).items[0].payments[0]; expect(payment.status).toBe("approved"); expect(payment.release_state).toBe("review"); expect(payment.net_amount).toBeNull(); expect(payment.fee_amount).toBeNull(); });
+  it("consulta sem operações de escrita e recusa relatório de outro vendedor", async () => { mock.request.mockResolvedValue(overview()); await expect(readMercadoLivreOverview(binding, seller, period, context)).resolves.toMatchObject({ seller_id: seller }); expect(mock.request).toHaveBeenCalledWith(binding, "workspace_overview", seller, period, context); mock.request.mockResolvedValue({ ...overview(), seller_id: "999" }); await expect(readMercadoLivreOverview(binding, seller, period, context)).rejects.toThrow("conta"); });
+  it("repasse mantém escopo, página e rejeita dados incompletos em vez de inventar zero", async () => { mock.request.mockResolvedValue(reconciliation()); await expect(readMercadoLivreReconciliation(binding, seller, period, 20, context)).resolves.toMatchObject({ total: 1 }); expect(mock.request).toHaveBeenCalledWith(binding, "fetch_reconciliation", seller, { ...period, offset: 20 }, context); mock.request.mockResolvedValue({ ...reconciliation(), items: [{ ...reconciliation().items[0], payments: [{ id: "456" }] }] }); await expect(readMercadoLivreReconciliation(binding, seller, period, 0, context)).rejects.toThrow("não foram confirmados"); });
+  it("aceita mês curto e recusa datas inexistentes, período invertido ou acima do limite", () => { expect(mercadoLivreReportPeriod("2026-02-01", "2026-02-28").from).toContain("2026-02-01"); for (const [from, to] of [["2026-02-30", "2026-03-02"], ["2026-11-03", "2026-11-02"], ["2026-01-01", "2026-02-02"], ["", "2026-11-02"]]) expect(() => mercadoLivreReportPeriod(from, to)).toThrow("período válido"); });
+});

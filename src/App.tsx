@@ -115,6 +115,8 @@ function AuthenticatedRoutes() {
         <Route path="/comercial/clientes" element={<Clientes />} />
         <Route path="/comercial/consignado" element={<Consignado />} />
         <Route path="/comercial/marketplaces" element={<Marketplaces />} />
+        <Route path="/comercial/mercado-livre" element={<Navigate to="/comercial/mercado-livre/dashboard" replace />} />
+        <Route path="/comercial/mercado-livre/:area" element={<Marketplaces />} />
         {/* Integrações */}
         <Route path="/integracoes/bambu" element={<BambuLab />} />
         <Route path="/integracoes/ml" element={<Marketplaces />} />

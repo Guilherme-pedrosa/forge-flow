@@ -1,0 +1,240 @@
+{
+  "listing_details": {
+    "item": {
+      "id": "MLB1234567",
+      "seller_id": "1000000001",
+      "title": "Presépio Sagrada Família",
+      "family_name": null,
+      "title_field": "title",
+      "description": "Peça decorativa em PLA.",
+      "status": "active",
+      "sub_status": [],
+      "tags": [],
+      "price": 49.9,
+      "currency_id": "BRL",
+      "available_quantity": 3,
+      "sold_quantity": 0,
+      "category_id": "MLB123",
+      "listing_type_id": "gold_special",
+      "catalog_product_id": null,
+      "user_product_id": null,
+      "permalink": null,
+      "pictures": [
+        {
+          "id": "PHOTO1",
+          "url": "https://images.example.test/photo.jpg"
+        }
+      ]
+    },
+    "editable": {
+      "title": true,
+      "description": true,
+      "pause": true,
+      "activate": false,
+      "reasons": []
+    },
+    "revision": "cbfde05928692cb1a3607d350f53cfae3ba44a9576cfb51825ce1c0c315de704"
+  },
+  "publication_prepare": {
+    "revision": "e0281955dfeb138a6cc2dc802036c09d763c0ed3afefb38c4580d1bff8b06b3d",
+    "forge_revision": "1111111111111111111111111111111111111111111111111111111111111111",
+    "publication_sku": "PRES-1",
+    "complete": true,
+    "product_id": "98000000-0000-4000-8000-000000000005",
+    "account_id": "98000000-0000-4000-8000-000000000004",
+    "seller_id": "1000000001",
+    "product": {
+      "id": "98000000-0000-4000-8000-000000000005",
+      "name": "Presépio Sagrada Família",
+      "sku": "PRES-1",
+      "description": "Presépio decorativo da Sagrada Família, produzido em PLA.",
+      "photos": [
+        {
+          "url": "https://images.example.test/forge.jpg",
+          "width": 800,
+          "height": 800
+        }
+      ],
+      "material_name": "PLA",
+      "dimensions": {
+        "length_mm": 80,
+        "width_mm": 50,
+        "height_mm": 100
+      },
+      "shipping_package": {
+        "length_cm": 12,
+        "width_cm": 8,
+        "height_cm": 15,
+        "weight_grams": 180
+      }
+    },
+    "price": {
+      "unit_price": 49.9,
+      "currency": "BRL",
+      "acceptance_id": "98000000-0000-4000-8000-000000000008"
+    },
+    "stock": {
+      "available": 3
+    },
+    "category": {
+      "id": "MLB123",
+      "name": "Enfeites decorativos"
+    },
+    "category_suggestions": [],
+    "attributes": [
+      {
+        "id": "BRAND",
+        "name": "Marca",
+        "required": true,
+        "value_type": null,
+        "values": [
+          {
+            "id": "111",
+            "name": "Elevare3D"
+          }
+        ]
+      },
+      {
+        "id": "MATERIAL",
+        "name": "Material",
+        "required": false,
+        "value_type": null,
+        "values": []
+      },
+      {
+        "id": "SELLER_SKU",
+        "name": "SKU",
+        "required": false,
+        "value_type": null,
+        "values": []
+      }
+    ],
+    "resolved_attributes": [
+      {
+        "id": "BRAND",
+        "value_id": "111"
+      },
+      {
+        "id": "SELLER_SKU",
+        "value_name": "PRES-1"
+      },
+      {
+        "id": "MATERIAL",
+        "value_name": "PLA"
+      }
+    ],
+    "draft": {
+      "category_id": "MLB123",
+      "category_confirmed": true,
+      "listing_type_id": "gold_special",
+      "attributes": [
+        {
+          "id": "BRAND",
+          "value_id": "111"
+        }
+      ],
+      "shipping": {
+        "mode": "me2",
+        "free_shipping": false,
+        "local_pick_up": false
+      }
+    },
+    "missing": [],
+    "issues": [],
+    "manual_confirmation_required": true
+  },
+  "categories": {
+    "items": [
+      {
+        "id": "MLB123",
+        "name": "Enfeites decorativos",
+        "domain_name": null
+      }
+    ]
+  },
+  "publication_commit": {
+    "confirmed": true,
+    "action": "publication_commit",
+    "request_id": "98000000-0000-4000-8000-000000000120",
+    "item_id": "MLB1234567",
+    "item": {
+      "item": {
+        "id": "MLB1234567",
+        "seller_id": "1000000001",
+        "title": "Presépio Sagrada Família",
+        "family_name": null,
+        "title_field": "title",
+        "description": "Presépio decorativo da Sagrada Família, produzido em PLA.",
+        "status": "active",
+        "sub_status": [],
+        "tags": [],
+        "price": 49.9,
+        "currency_id": "BRL",
+        "available_quantity": 3,
+        "sold_quantity": 0,
+        "category_id": "MLB123",
+        "listing_type_id": "gold_special",
+        "catalog_product_id": null,
+        "user_product_id": null,
+        "permalink": null,
+        "pictures": []
+      },
+      "editable": {
+        "title": true,
+        "description": true,
+        "pause": true,
+        "activate": false,
+        "reasons": []
+      },
+      "revision": "4f6a70c69335ebbfdc9fca945389dca7fdd916112c24de0b9c80f63dcbbbfbd9"
+    },
+    "linked": true,
+    "accepted_revision": "e0281955dfeb138a6cc2dc802036c09d763c0ed3afefb38c4580d1bff8b06b3d",
+    "replayed": false
+  },
+  "questions": {
+    "items": [
+      {
+        "id": "10001",
+        "seller_id": "3694120570",
+        "item_id": "MLB1234",
+        "text": "Qual o tamanho?",
+        "status": "UNANSWERED",
+        "asked_at": "2026-11-02T20:00:00Z",
+        "answer": null,
+        "revision": "3e8d73ee0431a473527c2b2efa7b79587b36f5f3ae5419cc1b14484b62a93a21"
+      }
+    ],
+    "total": 1,
+    "offset": 0,
+    "limit": 20,
+    "next_offset": null
+  },
+  "conversation": {
+    "pack_id": "20000000000001",
+    "seller_id": "3694120570",
+    "messages": [
+      {
+        "id": "message1",
+        "from": "buyer",
+        "text": "Olá, meu pedido foi enviado?",
+        "status": "available",
+        "date": "2026-11-02T20:00:00Z"
+      }
+    ],
+    "status": "active",
+    "substatus": null,
+    "can_reply": true,
+    "pending": true,
+    "last_message_at": "2026-11-02T20:00:00Z",
+    "revision": "a011bb41e5b2aaebafb90f07505f6e780eac18505c5c55306a06bc74d2a9f8fa"
+  },
+  "reply": {
+    "confirmed": true,
+    "action": "message_reply",
+    "request_id": "99000000-0000-4000-8000-000000000120",
+    "target_id": "20000000000001",
+    "status": "pending_review",
+    "replayed": false
+  }
+}

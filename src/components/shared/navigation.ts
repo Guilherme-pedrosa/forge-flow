@@ -7,7 +7,8 @@ export const navigationGroups = [
     { title: "Fila de impressão", icon: CalendarRange, href: "/planejamento/fila" },
     { title: "Filamentos", icon: Package, href: "/estoque/bobinas" },
     { title: "Sugestões de compra", icon: ShoppingCart, href: "/estoque/reposicao" },
-    { title: "Mercado Livre e Shopee", icon: Store, href: "/comercial/marketplaces" },
+    { title: "Mercado Livre", icon: Store, href: "/comercial/mercado-livre" },
+    { title: "Outros marketplaces", icon: Store, href: "/comercial/marketplaces" },
     { title: "Loja Elevare3D", icon: Store, href: "/integracoes/loja" },
   ] },
   { label: "Cadastros", items: [

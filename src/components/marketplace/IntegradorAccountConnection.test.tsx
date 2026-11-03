@@ -11,16 +11,19 @@ const pending = { id, name: "ELEVARE3D", channel: "mercado_livre" as const, exte
 const result = { connected: true, account_id: id, seller_id: "new-elevare", nickname: "ELEVARE3D", replayed: false };
 beforeEach(() => { mock.begin.mockReset().mockResolvedValue({ authorization_url: "official-provider-url", attempt_id: "attempt-a", expires_at: "2026-11-03T00:00:00Z" }); mock.finish.mockReset().mockResolvedValue(result); mock.open.mockReset(); });
 afterEach(cleanup);
-function mount(options: { receipt?: string; allowed?: boolean | null; configured?: boolean | null; strict?: boolean; accounts?: typeof pending[]; expectedClientId?: string } = {}) {
+function mount(options: { receipt?: string; allowed?: boolean | null; configured?: boolean | null; strict?: boolean; accounts?: typeof pending[]; expectedClientId?: string; connectedAccount?: { seller_id: string; nickname: string } } = {}) {
   const connected = vi.fn(), consumed = vi.fn(), busy = vi.fn();
   let currentReceipt = options.receipt;
   let expectedClientId = options.expectedClientId;
   let currentAccounts = options.accounts ?? [pending, { ...pending, id: "legacy-account", name: "Outra loja", external_seller_id: "old-seller" }];
-  const ui = (tenant = "tenant-a", user = "operator-a") => <IntegradorAccountConnection key={`${tenant}:${user}`} binding={binding} tenantId={tenant} userId={user} accounts={currentAccounts} allowed={options.allowed === undefined ? true : options.allowed} configured={options.configured === undefined ? true : options.configured} expectedClientId={expectedClientId} callbackReceipt={currentReceipt} onConnected={connected} onReceiptConsumed={consumed} onBusyChange={busy} />;
+  const ui = (tenant = "tenant-a", user = "operator-a") => <IntegradorAccountConnection key={`${tenant}:${user}`} binding={binding} tenantId={tenant} userId={user} accounts={currentAccounts} allowed={options.allowed === undefined ? true : options.allowed} configured={options.configured === undefined ? true : options.configured} expectedClientId={expectedClientId} connectedAccount={options.connectedAccount} callbackReceipt={currentReceipt} onConnected={connected} onReceiptConsumed={consumed} onBusyChange={busy} />;
   const view = render(options.strict ? <StrictMode>{ui()}</StrictMode> : ui()); return { ...view, connected, consumed, busy, changeScope: () => view.rerender(ui("tenant-b", "operator-b")), changeReceipt: (next: string) => { currentReceipt = next; view.rerender(ui()); }, changeAccounts: (next: typeof pending[]) => { currentAccounts = next; view.rerender(ui()); }, changeApp: (next: string) => { expectedClientId = next; view.rerender(ui()); } };
 }
 const choose = (target = id) => fireEvent.change(screen.getByLabelText("Cadastro no Forge para esta conexão"), { target: { value: target } });
 describe("new Elevare Mercado Livre enrollment", () => {
+  it("renders the authoritative linked account after remount instead of asking for another registration", () => {
+    mount({ connectedAccount: { seller_id: "confirmed-seller", nickname: "ELEVARE_3D" }, accounts: [] }); expect(screen.getByText(/Conta conectada: ELEVARE_3D · vendedor confirmed-seller/)).toBeInTheDocument(); expect(screen.queryByLabelText("Cadastro no Forge para esta conexão")).not.toBeInTheDocument(); expect(screen.queryByRole("button", { name: "Conectar Mercado Livre" })).not.toBeInTheDocument(); expect(mock.begin).not.toHaveBeenCalled(); expect(mock.finish).not.toHaveBeenCalled();
+  });
   it("lets the server confirm unknown prerequisites only after an explicit connection attempt", async () => {
     mount({ allowed: null, configured: null }); choose(); expect(screen.getByRole("button", { name: "Conectar Mercado Livre" })).toBeEnabled(); expect(screen.getByText(/Ao continuar, vamos validar o acesso/)).toBeInTheDocument(); expect(screen.queryByText(/aplicativo.*precisa estar configurado no servidor/)).not.toBeInTheDocument(); expect(mock.begin).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Conectar Mercado Livre" })); await waitFor(() => expect(mock.begin).toHaveBeenCalledOnce()); expect(mock.begin.mock.calls[0][1]).toBe(id);

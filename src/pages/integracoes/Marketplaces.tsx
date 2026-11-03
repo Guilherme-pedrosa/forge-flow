@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, Loader2, RefreshCw, Store } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
@@ -12,6 +12,11 @@ import { WorkflowPolicy } from "@/components/marketplace/WorkflowPolicy";
 import { MarketplaceBindings } from "@/components/marketplace/MarketplaceBindings";
 import { MercadoLivreSettings } from "@/components/marketplace/MercadoLivreSettings";
 import { IntegradorStockOperations } from "@/components/marketplace/IntegradorStockOperations";
+import { MercadoLivreCommunication } from "@/components/marketplace/MercadoLivreCommunication";
+import { MercadoLivrePublication } from "@/components/marketplace/MercadoLivrePublication";
+import { MarketplaceAutomationSettings } from "@/components/marketplace/MarketplaceAutomationSettings";
+import { MercadoLivreDashboard } from "@/components/marketplace/MercadoLivreDashboard";
+import { MercadoLivreReconciliation } from "@/components/marketplace/MercadoLivreReconciliation";
 import { fetchIntegradorMarketplaceOrders, integrationErrorMessage, readIntegradorBridgeBinding, readIntegradorReadiness, type MarketplaceListingIdentity } from "@/lib/mercado-livre-integration";
 import { useToast } from "@/hooks/use-toast";
 import { orderRequest } from "@/lib/sales-order";
@@ -21,7 +26,10 @@ import { marketplaceBindingKey, marketplaceDb, marketplaceImportExample, marketp
 const selectClass = "h-10 w-full rounded-md border border-input bg-background px-3 text-sm";
 const dateTime = (value: string | null) => value ? new Date(value).toLocaleString("pt-BR") : "Prazo não informado";
 const currency = (value: number | string | null) => value == null ? "Não informado" : Number(value).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+const localDay = (date: Date) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 const connectionLabels: Record<string, string> = { connected: "Autorização API armazenada · acesso remoto por conferir", pending_credentials: "Cadastro local · autorização API pendente", pending_access: "Cadastro local · acesso API por validar", import_only: "Importação disponível", reauthorization_required: "API precisa de nova autorização" };
+const workspaceAreas = [{ id: "dashboard", label: "Dashboard" }, { id: "publicar", label: "Publicar" }, { id: "anuncios", label: "Anúncios" }, { id: "pedidos", label: "Pedidos ML" }, { id: "conciliacao", label: "Conciliação" }, { id: "perguntas", label: "Perguntas" }, { id: "mensagens", label: "Mensagens" }, { id: "contas", label: "Contas ML", admin: true }, { id: "configuracoes", label: "Configurações", admin: true }] as const;
+type WorkspaceArea = typeof workspaceAreas[number]["id"];
 const workflowSummary = (result: Record<string, unknown>) => {
   const workflow = result.workflow as { organized?: number; results?: { outcome?: string }[] } | undefined;
   const pending = workflow?.results?.filter(row => row.outcome === "needs_preparation" || row.outcome === "needs_review").length ?? 0;
@@ -34,7 +42,7 @@ export default function Marketplaces() {
 }
 function MarketplacesSession() {
   const { profile, user } = useAuth(); const { toast } = useToast(); const qc = useQueryClient();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams(); const navigate = useNavigate(); const { area: routeArea } = useParams<{ area?: string }>();
   const alive = useRef(true); useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const [integradorBusy, setIntegradorBusy] = useState(false);
   const [stockBusy, setStockBusy] = useState(false);
@@ -47,8 +55,9 @@ function MarketplacesSession() {
   const [newName, setNewName] = useState(""); const [sellerId, setSellerId] = useState("");
   const [input, setInput] = useState(""); const [format, setFormat] = useState<"json" | "csv">("json");
   const [preview, setPreview] = useState<CanonicalMarketplaceOrder[] | null>(null); const [orderIds, setOrderIds] = useState("");
-  const [recentFrom, setRecentFrom] = useState(() => new Date(Date.now() - 7 * 86400000).toISOString().slice(0,10));
-  const [recentTo, setRecentTo] = useState(() => new Date().toISOString().slice(0,10));
+  const [queriedOrders, setQueriedOrders] = useState<{ accountId: string; signature: string; orders: CanonicalMarketplaceOrder[]; total: number; truncated: boolean; queriedAt: string } | null>(null);
+  const [recentFrom, setRecentFrom] = useState(() => localDay(new Date(Date.now() - 7 * 86400000)));
+  const [recentTo, setRecentTo] = useState(() => localDay(new Date()));
   const [recentNext, setRecentNext] = useState<number | null>(null);
   const [recentCursor, setRecentCursor] = useState<string | null>(null);
   const [recentWindow, setRecentWindow] = useState<{ from: string; to: string } | null>(null);
@@ -71,7 +80,19 @@ function MarketplacesSession() {
   const sourceReadiness = useQuery({ queryKey: ["integrador_readiness", profile?.tenant_id ?? "", user?.id ?? profile?.user_id ?? "", sourceBinding.data?.bridge_id, sourceBinding.data?.revision],
     enabled: !!sourceLink, retry: false, queryFn: ({ signal }) => readIntegradorReadiness(sourceBinding.data!, { userId: user?.id ?? profile?.user_id ?? "", signal }) });
   const sourceAppReady = sourceBinding.data?.allow_enrollment ? sourceReadiness.data?.enrollment_app?.configured === true && sourceReadiness.data.enrollment?.configured === true : !!sourceReadiness.data?.settings.configured;
-  const sourceOrdersReady = !!sourceLink && sourceAppReady && !!sourceReadiness.data.source_accounts.find(row => row.seller_id === sourceLink.source_seller_id)?.credentials_configured && !sourceReadiness.isFetching;
+  const sourceConnected = !!sourceLink && sourceAppReady && !!sourceReadiness.data.source_accounts.find(row => row.seller_id === sourceLink.source_seller_id)?.credentials_configured;
+  const sourceOrdersReady = sourceConnected && !sourceReadiness.isFetching;
+  const availableAreas = account && account.channel !== "mercado_livre" ? workspaceAreas.filter(tab => ["anuncios", "pedidos", "contas", "configuracoes"].includes(tab.id)) : workspaceAreas;
+  const defaultArea: WorkspaceArea = searchParams.has("integrador_oauth") || searchParams.has("integrador_oauth_error") || searchParams.has("code") ? "contas" : sourceLink ? "dashboard" : account?.connection_state === "connected" ? "pedidos" : "contas";
+  const requestedArea = routeArea || searchParams.get("area");
+  const area: WorkspaceArea = availableAreas.some(tab => tab.id === requestedArea) ? requestedArea as WorkspaceArea : defaultArea;
+  const [visited, setVisited] = useState<{ accountId: string; areas: WorkspaceArea[] }>({ accountId: "", areas: [] });
+  useEffect(() => { setVisited(previous => previous.accountId !== effectiveAccountId ? { accountId: effectiveAccountId, areas: [area] } : previous.areas.includes(area) ? previous : { ...previous, areas: [...previous.areas, area] }); }, [area, effectiveAccountId]);
+  const hasVisited = (value: WorkspaceArea) => area === value || visited.accountId === effectiveAccountId && visited.areas.includes(value);
+  function areaHref(value: string) { const next = new URLSearchParams(searchParams); next.delete("area"); next.delete("painel"); if (account?.channel === "mercado_livre" || routeArea || !account) return `/comercial/mercado-livre/${value}${next.size ? `?${next}` : ""}`; next.set("area", value); return `/comercial/marketplaces?${next}`; }
+  function changeArea(value: string) { if (workspaceAreas.some(tab => tab.id === value)) navigate(areaHref(value)); }
+  const listingPane = searchParams.get("painel") === "estoque" ? "stock" : "listings";
+  function changeListingPane(value: "listings" | "stock") { const next = new URLSearchParams(searchParams); next.delete("area"); if (value === "stock") next.set("painel", "estoque"); else next.delete("painel"); navigate(`/comercial/mercado-livre/anuncios${next.size ? `?${next}` : ""}`); }
   const inbox = useQuery({ queryKey: ["marketplace_orders", effectiveAccountId, profile?.tenant_id, user?.id], enabled: !!profile && !!effectiveAccountId, queryFn: async () => {
     const { data, error } = await marketplaceDb.from("marketplace_orders").select("*,items:marketplace_order_items(*)").eq("tenant_id", profile!.tenant_id).eq("account_id", effectiveAccountId).order("imported_at", { ascending: false }).limit(100); if (error) throw error; return data as MarketplaceInboxOrder[];
   } });
@@ -114,8 +135,13 @@ function MarketplacesSession() {
         : { from: String(body.from ?? ""), to: String(body.to ?? ""), offset: Number(body.offset ?? 0) };
       const response = await fetchIntegradorMarketplaceOrders(sourceBinding.data!, sourceLink.source_seller_id, selection, { userId: user?.id ?? profile?.user_id ?? "", signal: sourceOrderController.current.signal });
       if (!alive.current) throw new Error("A sessão mudou. Consulte os pedidos novamente nesta empresa.");
-      const imported = response.orders.length ? await marketplaceRpc<Record<string, unknown>>("import_marketplace_orders", { p_account_id: account.id, p_orders: response.orders }) : { imported: 0, unchanged: 0 };
-      return { ...imported, fetched: response.fetched, total: response.total, truncated: response.truncated, next_offset: response.next_offset,
+      const signature = JSON.stringify(body.action === "fetch_recent_orders" ? [body.from, body.to] : selection);
+      setQueriedOrders(previous => {
+        const old = body.action === "fetch_recent_orders" && Number(body.offset) > 0 && previous?.accountId === account.id && previous.signature === signature ? previous.orders : [];
+        const orders = [...new Map([...old, ...response.orders].map(order => [order.external_order_id, order])).values()];
+        return { accountId: account.id, signature, orders, total: response.total, truncated: response.truncated, queriedAt: new Date().toISOString() };
+      });
+      return { fetched: response.fetched, total: response.total, truncated: response.truncated, next_offset: response.next_offset,
         missing_deadline: response.orders.filter(order => !order.shipping_deadline_at).length };
     }
     const { data, error } = await supabase.functions.invoke(channel === "shopee" ? "shopee-sync" : "marketplace-sync", { body });
@@ -129,35 +155,30 @@ function MarketplacesSession() {
   const oauthMainAccount = oauth.get("main_account_id");
   const oauthLabel = oauthShopId ? "Shopee" : "Mercado Livre";
   function fetchRecent(offset: number, cursor: string | null = null) { mutate.mutate(async () => {
-    const window = cursor && recentWindow ? recentWindow : { from: new Date(`${recentFrom}T00:00:00`).toISOString(), to: new Date(`${recentTo}T23:59:59.999`).toISOString() };
+    const from = new Date(`${recentFrom}T00:00:00`).getTime(), to = Math.min(new Date(`${recentTo}T23:59:59.999`).getTime(), Date.now());
+    if (!Number.isFinite(from) || !Number.isFinite(to) || from >= to) throw new Error("Escolha um período válido que já tenha começado.");
+    const window = (cursor || offset > 0) && recentWindow ? recentWindow : { from: new Date(from).toISOString(), to: new Date(to).toISOString() };
     const result = await edge({ action: "fetch_recent_orders", account_id: account!.id, ...window, ...(account!.channel === "shopee" ? { cursor } : { offset }) });
     setRecentNext(typeof result.next_offset === "number" ? result.next_offset : null);
     setRecentCursor(typeof result.next_cursor === "string" ? result.next_cursor : null);
-    setRecentWindow(typeof result.effective_from === "string" && typeof result.effective_to === "string" ? { from: result.effective_from, to: result.effective_to } : null);
+    setRecentWindow(sourceOwnsAccount ? window : typeof result.effective_from === "string" && typeof result.effective_to === "string" ? { from: result.effective_from, to: result.effective_to } : null);
+    if (sourceOwnsAccount) return `${Number(result.fetched ?? 0)} pedidos consultados. Confira a prévia antes de importar.`;
     return `${Number(result.fetched ?? 0)} consultados · ${Number(result.imported ?? 0)} atualizados · ${Number(result.unchanged ?? 0)} já importados${Number(result.missing_deadline ?? 0) ? ` · ${Number(result.missing_deadline)} prazos para conferir no canal` : ""}${Number(result.values_to_review ?? 0) ? ` · ${Number(result.values_to_review)} valores para conferir` : ""}${workflowSummary(result)}`;
   }); }
   if (accounts.error && isMissingDatabaseStructure(accounts.error)) return <div role="status" className="rounded-xl border bg-card p-6 space-y-3"><p>Importação dos canais ainda precisa ser ativada nesta empresa.</p><p className="text-sm text-muted-foreground">A estrutura de pedidos dos marketplaces precisa ser publicada no banco. As vendas já cadastradas continuam disponíveis em Pedidos.</p><Button asChild variant="outline"><Link to="/comercial/pedidos">Abrir pedidos</Link></Button><Button className="ml-2" variant="ghost" onClick={() => void accounts.refetch()}>Verificar ativação</Button></div>;
   if (accounts.error) return <div role="alert" className="rounded-xl border bg-card p-6">Não foi possível carregar as contas. {accounts.error.message}<Button className="mt-3" variant="outline" onClick={() => void accounts.refetch()}>Tentar novamente</Button></div>;
 
-  return <div className="space-y-5">
-    <PageHeader title="Vendas dos marketplaces" description="Traga os pedidos, vincule os produtos uma vez e confira o prazo para organizar a produção." breadcrumbs={[{ label: "Integrações" }, { label: "Marketplaces" }]} />
-    <MercadoLivreSettings accounts={accounts.data ?? []} activeAccount={account} disabled={mutate.isPending || stockBusy || bindingBusy} onBusyChange={setIntegradorBusy}
-      enrollmentReceipt={searchParams.get("integrador_oauth")} enrollmentError={searchParams.get("integrador_oauth_error")} onEnrollmentReceiptConsumed={() => setSearchParams(previous => { const next = new URLSearchParams(previous); next.delete("integrador_oauth"); next.delete("integrador_oauth_error"); return next; }, { replace: true })}
-      onAccountLinked={async id => { await accounts.refetch(); if (alive.current) { setAccountId(id); setListingSelection(null); } }}
-      onSelectListing={(identity, sellerId) => { if (!account || account.channel !== "mercado_livre" || account.external_seller_id !== sellerId || sourceLink?.source_seller_id !== sellerId) return;
-        setListingSelection(identity); if (bindingsDetails.current) bindingsDetails.current.open = true;
-        requestAnimationFrame(() => bindingsDetails.current?.scrollIntoView?.({ block: "start", behavior: "smooth" }));
-      }} />
-    {mutate.isPending && <p role="status" className="flex gap-2 text-sm"><Loader2 className="h-4 w-4 animate-spin" />Concluindo operação…</p>}
+  const openBindings = () => { changeListingPane("listings"); if (bindingsDetails.current) bindingsDetails.current.open = true; requestAnimationFrame(() => bindingsDetails.current?.scrollIntoView?.({ block: "start", behavior: "smooth" })); };
+  const bindingsPanel = account ? <>
+      <details ref={bindingsDetails} className="rounded-xl border bg-card p-4"><summary className="cursor-pointer text-sm font-semibold">Vínculos de anúncios</summary><p className="my-3 text-sm text-muted-foreground">Cadastre antes da primeira venda ou corrija o produto associado a um anúncio desta conta.</p><MarketplaceBindings accountId={account.id} tenantId={profile?.tenant_id ?? ""} productOptions={catalog.data ?? []} initialIdentity={listingSelection} catalogLoading={catalog.isLoading} catalogError={catalog.error?.message} onCatalogRetry={() => void catalog.refetch()} disabled={mutate.isPending || integradorBusy || stockBusy} onBusyChange={setBindingBusy} /></details>
+  </> : null;
+  const accountsConfiguration = <div className="space-y-4">
     {oauthCode && oauthMainAccount && !oauthShopId && <p role="alert" className="rounded-xl border bg-card p-4">A Shopee retornou uma autorização de conta principal. Nesta etapa, autorize uma loja individual para conectá-la ao ERP.</p>}
     {oauthCode && oauthState && (!oauthMainAccount || oauthShopId) && (oauthShopId || !sourceOwnsAccount && !sourceEnrollmentAccount && sourceBinding.isSuccess) && <div className="rounded-xl border bg-card p-4"><p>{oauthLabel} retornou a autorização. Conclua para validar a conta.</p><Button disabled={operationsBusy} className="mt-2" onClick={() => mutate.mutate(async () => { const result = await edge({ action: "oauth_exchange", code: oauthCode, state: oauthState, ...(oauthShopId ? { shop_id: oauthShopId } : {}) }, oauthShopId ? "shopee" : "mercado_livre"); if (typeof result.account_id === "string") setAccountId(result.account_id); window.history.replaceState({}, "", window.location.pathname); return `Conta autorizada: ${oauthLabel}`; })}>Concluir autorização</Button></div>}
     {oauthCode && !oauthState && <p role="alert" className="rounded-xl border bg-card p-4">O retorno não trouxe o estado de segurança da autorização. Comece a autorização novamente; a conta ainda não foi conectada.</p>}
-    <section className="rounded-xl border bg-card p-4 space-y-3" aria-label="Contas dos canais">
-      <h2 className="font-semibold flex gap-2"><Store className="h-5 w-5" />Contas de venda</h2>
-      {accounts.isLoading ? <p>Carregando contas…</p> : accounts.data?.length ? <div className="grid gap-3 sm:grid-cols-2">
-        <div><Label htmlFor="marketplace-account">Conta</Label><select id="marketplace-account" className={selectClass} value={effectiveAccountId} disabled={operationsBusy} onChange={e => { setAccountId(e.target.value); setListingSelection(null); setPreview(null); setInput(""); setProductSelections({}); setRecentNext(null); setRecentCursor(null); setRecentWindow(null); }}>{accounts.data.map(row => <option key={row.id} value={row.id}>{marketplaceLabels[row.channel]} · {row.name}</option>)}</select></div>
-        <div className="text-sm pt-5"><p>{sourceOwnsAccount ? "Conta associada ao Integrador · credenciais gerenciadas na fonte" : account && connectionLabels[account.connection_state]}</p><p className="text-muted-foreground">Última importação: {account?.last_sync_at ? dateTime(account.last_sync_at) : "Ainda sem importação"}</p></div>
-      </div> : <p className="text-sm text-muted-foreground">Cadastre uma conta para começar a importar seus pedidos.</p>}
+
+    {account && !sourceOwnsAccount && !sourceEnrollmentAccount && (account.channel === "shopee" || account.channel === "mercado_livre" && sourceBinding.isSuccess) && <section className="space-y-3 rounded-xl border bg-card p-4"><h2 className="font-semibold">Autorização da conta</h2><Button variant="outline" disabled={operationsBusy} onClick={() => mutate.mutate(async () => { const result = await edge({ action: "oauth_begin", account_id: account.id }); if (typeof result.authorization_url !== "string") throw new Error("Endereço de autorização não retornado."); window.location.assign(result.authorization_url); return `Abrindo autorização: ${marketplaceLabels[account.channel]}`; })}>{account.connection_state === "connected" ? "Autorizar novamente" : `Autorizar ${marketplaceLabels[account.channel]}`}</Button></section>}
+    <section className="space-y-3 rounded-xl border bg-card p-4"><h2 className="font-semibold">Cadastros de contas</h2>
       <details><summary className="cursor-pointer text-sm font-medium">Cadastrar conta</summary><div className="grid gap-3 mt-3 sm:grid-cols-4">
         <select aria-label="Canal da nova conta" className={selectClass} value={newChannel} onChange={e => setNewChannel(e.target.value as MarketplaceChannel)}>{Object.entries(marketplaceLabels).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select>
         <Input aria-label="Nome da conta" placeholder="Nome da loja" value={newName} onChange={e => setNewName(e.target.value)} />
@@ -165,28 +186,63 @@ function MarketplacesSession() {
         <Button disabled={operationsBusy || !newName.trim()} onClick={() => mutate.mutate(async () => { const id = await marketplaceRpc<string>("save_marketplace_account", { p_channel: newChannel, p_name: newName, p_external_seller_id: sellerId || null }); setAccountId(id); setNewName(""); setSellerId(""); return "Conta cadastrada para importação"; })}>Cadastrar conta</Button>
       </div><p className="text-xs text-muted-foreground mt-2">O cadastro não autoriza a API. Os arquivos continuam disponíveis enquanto o acesso do aplicativo é validado; TikTok usa a importação por arquivo nesta etapa.</p></details>
     </section>
-    {!!account && <>
-      <details ref={bindingsDetails} className="rounded-xl border bg-card p-4"><summary className="cursor-pointer text-sm font-semibold">Vínculos de anúncios</summary><p className="my-3 text-sm text-muted-foreground">Cadastre antes da primeira venda ou corrija o produto associado a um anúncio desta conta.</p><MarketplaceBindings accountId={account.id} tenantId={profile?.tenant_id ?? ""} productOptions={catalog.data ?? []} initialIdentity={listingSelection} catalogLoading={catalog.isLoading} catalogError={catalog.error?.message} onCatalogRetry={() => void catalog.refetch()} disabled={mutate.isPending || integradorBusy || stockBusy} onBusyChange={setBindingBusy} /></details>
-      {sourceLink && sourceBinding.data && sourceReadiness.data?.manual_operations?.available && <IntegradorStockOperations binding={sourceBinding.data} tenantId={profile?.tenant_id ?? ""} userId={user?.id ?? profile?.user_id ?? ""} accountId={account.id} sellerId={sourceLink.source_seller_id}
-        productOptions={catalog.data ?? []} accountNames={accounts.data ?? []} catalogLoading={catalog.isLoading} catalogError={catalog.error?.message} onCatalogRetry={() => void catalog.refetch()} disabled={mutate.isPending || integradorBusy || bindingBusy} onBusyChange={setStockBusy}
-        onOpenBindings={() => { if (bindingsDetails.current) { bindingsDetails.current.open = true; bindingsDetails.current.scrollIntoView?.({ block: "start", behavior: "smooth" }); } }} />}
-      {account.channel === "mercado_livre" && sourceBinding.error && <p role="alert">Não foi possível conferir a origem da autorização desta conta. <Button variant="outline" onClick={() => void sourceBinding.refetch()}>Conferir origem novamente</Button></p>}
+  </div>;
+  const configuration = account ? <div className="space-y-4"><MarketplaceAutomationSettings accountId={account.id} disabled={operationsBusy} /><WorkflowPolicy accountId={account.id} customerOptions={customers.data ?? []} />
+      <section className="rounded-xl border bg-card p-4 space-y-3" aria-label="Dados para vendas"><h2 className="font-semibold">Para criar a venda</h2><div className="grid sm:grid-cols-2 gap-3">
+        <div><Label htmlFor="marketplace-customer">Cliente no ERP</Label><select id="marketplace-customer" className={selectClass} value={customerId} onChange={e => setCustomerId(e.target.value)}><option value="">Selecione o cliente</option>{customers.data?.map(customer => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></div>
+        <div><Label htmlFor="marketplace-receivable">Recebível previsto para</Label><Input id="marketplace-receivable" type="date" value={paymentDate} onChange={e => setPaymentDate(e.target.value)} /><p className="text-xs text-muted-foreground mt-1">Informe a previsão de repasse; pagamento do comprador é diferente de recebimento no banco.</p></div>
+      </div>{(customers.error || catalog.error) && <p role="alert">Não foi possível carregar clientes ou produtos. Atualize a página antes de criar a venda.</p>}</section>
+
+    </div> : <section className="space-y-3 rounded-xl border p-4"><p>Cadastre uma conta para definir o funcionamento no Forge.</p><Button variant="outline" onClick={() => changeArea("contas")}>Abrir Contas ML</Button></section>;
+  const needsConnection = (title: string) => <section className="space-y-3 rounded-xl border bg-card p-5"><h2 className="font-semibold">{title}</h2><p className="text-sm text-muted-foreground">Conecte a conta Mercado Livre e confirme o acesso para usar esta área.</p><Button variant="outline" onClick={() => changeArea("contas")}>Abrir Contas ML</Button></section>;
+  const stockPanel = account && sourceLink && sourceBinding.data && sourceReadiness.data?.manual_operations?.available ? <IntegradorStockOperations binding={sourceBinding.data} tenantId={profile?.tenant_id ?? ""} userId={user?.id ?? profile?.user_id ?? ""} accountId={account.id} sellerId={sourceLink.source_seller_id} productOptions={catalog.data ?? []} accountNames={accounts.data ?? []} catalogLoading={catalog.isLoading} catalogError={catalog.error?.message} onCatalogRetry={() => void catalog.refetch()} disabled={mutate.isPending || integradorBusy || bindingBusy} onBusyChange={setStockBusy} onOpenBindings={openBindings} /> : needsConnection("Estoque e preços no Mercado Livre");
+  return <div className="space-y-5">
+    <PageHeader title={account?.channel === "mercado_livre" ? "Mercado Livre" : "Marketplaces"} description="Gerencie seus anúncios, vendas e atendimento no Forge." breadcrumbs={[{ label: "Comercial" }, { label: "Marketplaces" }]} />
+    <section className="rounded-xl border bg-card p-4" aria-label="Conta de trabalho">
+      {accounts.isLoading ? <p role="status">Carregando contas…</p> : accounts.data?.length ? <div className="flex flex-wrap items-end justify-between gap-3"><div className="min-w-60 flex-1"><Label htmlFor="marketplace-account">Conta</Label><select id="marketplace-account" className={selectClass} value={effectiveAccountId} disabled={operationsBusy} onChange={event => { setAccountId(event.target.value); setListingSelection(null); setPreview(null); setQueriedOrders(null); setInput(""); setProductSelections({}); setRecentNext(null); setRecentCursor(null); setRecentWindow(null); }}>{accounts.data.map(row => <option key={row.id} value={row.id}>{marketplaceLabels[row.channel]} · {row.name}</option>)}</select></div><div className="text-sm"><p>{sourceOwnsAccount ? sourceConnected ? "Conta conectada" : "Conexão a conferir" : account && connectionLabels[account.connection_state]}</p><p className="text-xs text-muted-foreground">Última importação: {account?.last_sync_at ? dateTime(account.last_sync_at) : "Ainda sem importação"}</p></div><Button variant="outline" onClick={() => changeArea("contas")}>Gerenciar conta</Button></div> : <div className="space-y-2"><p className="text-sm">Cadastre uma conta para começar.</p><Button variant="outline" onClick={() => changeArea("contas")}>Configurar conta</Button></div>}
+    </section>
+    {mutate.isPending && <p role="status" className="flex gap-2 text-sm"><Loader2 className="h-4 w-4 animate-spin" />Concluindo operação…</p>}
+    <div className="grid items-start gap-5 lg:grid-cols-[200px_minmax(0,1fr)]">
+      <nav aria-label="Áreas do Mercado Livre" className="space-y-4 rounded-xl border bg-card p-2 lg:sticky lg:top-4">{[false, true].map(admin => <div key={String(admin)}>{admin && <p className="px-3 pb-2 text-xs font-semibold uppercase text-muted-foreground">Admin</p>}<ul className="space-y-1">{availableAreas.filter(tab => ("admin" in tab && tab.admin === true) === admin).map(tab => <li key={tab.id}><Link to={areaHref(tab.id)} aria-current={area === tab.id ? "page" : undefined} className={`block rounded-lg px-3 py-2.5 text-sm font-medium ${area === tab.id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted hover:text-foreground"}`}>{tab.label}</Link></li>)}</ul></div>)}</nav>
+      <div className="min-w-0 space-y-4">
+      {(!account || account.channel === "mercado_livre") ? <MercadoLivreSettings accounts={accounts.data ?? []} activeAccount={account} disabled={mutate.isPending || stockBusy || bindingBusy} onBusyChange={setIntegradorBusy}
+        workspaceView={area === "anuncios" || area === "contas" ? area : "hidden"} listingsFooter={bindingsPanel} configurationFooter={accountsConfiguration} onOpenConfiguration={() => changeArea("contas")} onPublish={() => changeArea("publicar")} listingPane={listingPane} onListingPaneChange={changeListingPane} stockContent={stockPanel}
+        enrollmentReceipt={searchParams.get("integrador_oauth")} enrollmentError={searchParams.get("integrador_oauth_error")} onEnrollmentReceiptConsumed={() => setSearchParams(previous => { const next = new URLSearchParams(previous); next.delete("integrador_oauth"); next.delete("integrador_oauth_error"); return next; }, { replace: true })}
+        onAccountLinked={async id => { await accounts.refetch(); if (alive.current) { setAccountId(id); setListingSelection(null); } }}
+        onSelectListing={(identity, seller) => { if (!account || account.channel !== "mercado_livre" || account.external_seller_id !== seller || sourceLink?.source_seller_id !== seller) return; setListingSelection(identity); openBindings(); }} />
+        : <><section hidden={area !== "anuncios"} className="space-y-4"><section className="space-y-2 rounded-xl border bg-card p-4"><h2 className="font-semibold">Vínculos de anúncios de {marketplaceLabels[account.channel]}</h2><p className="text-sm text-muted-foreground">Confira o produto associado a cada anúncio antes de importar as vendas desta conta.</p></section>{bindingsPanel}</section><section hidden={area !== "contas"}>{accountsConfiguration}</section></>}
+      <section hidden={area !== "dashboard"} aria-label="Dashboard Mercado Livre">{sourceConnected && sourceBinding.data && sourceLink ? hasVisited("dashboard") && <MercadoLivreDashboard key={`${effectiveAccountId}:${sourceLink.source_seller_id}`} binding={sourceBinding.data} sellerId={sourceLink.source_seller_id} userId={user?.id ?? profile?.user_id ?? ""} /> : needsConnection("Dashboard do Mercado Livre")}</section>
+      <section hidden={area !== "publicar"} aria-label="Publicar anúncio">
+        {sourceConnected && sourceBinding.data && account && sourceLink ? hasVisited("publicar") && <MercadoLivrePublication key={`${account.id}:${sourceLink.source_seller_id}`} binding={sourceBinding.data} accountId={account.id} sellerId={sourceLink.source_seller_id} userId={user?.id ?? profile?.user_id ?? ""} tenantId={profile?.tenant_id ?? ""} /> : needsConnection("Publicar anúncio no Mercado Livre")}
+      </section>
+      <section hidden={area !== "pedidos"} aria-label="Pedidos ML" className="space-y-4">
+      {account ? <>
+        {account.channel === "mercado_livre" && sourceBinding.error && <p role="alert">Não foi possível conferir a origem da autorização desta conta. <Button variant="outline" onClick={() => void sourceBinding.refetch()}>Conferir origem novamente</Button></p>}
       {(account.channel === "shopee" || account.channel === "mercado_livre" && sourceBinding.isSuccess) && <section className="rounded-xl border bg-card p-4 space-y-3" aria-label={`Consulta ${marketplaceLabels[account.channel]}`}>
-        <h2 className="font-semibold">Consultar: {marketplaceLabels[account.channel]}</h2><p className="text-sm text-muted-foreground">{sourceOwnsAccount ? "A consulta usa a conta autorizada no Integrador e traz os pedidos e o prazo oficial de despacho para conferência no Forge." : `A autorização acontece em ${marketplaceLabels[account.channel]}. A consulta busca os pedidos e o prazo oficial de despacho; os pedidos entram para conferência.`}</p>
+        <h2 className="font-semibold">Consultar: {marketplaceLabels[account.channel]}</h2><p className="text-sm text-muted-foreground">{sourceOwnsAccount ? "A consulta apenas lê os pedidos e o prazo oficial de despacho. Confira a prévia antes de importar os dados no Forge." : `A autorização acontece em ${marketplaceLabels[account.channel]}. Esta busca também importa os pedidos no Forge e executa a organização salva da conta, que pode criar vendas e alterar estoque, financeiro ou produção.`}</p>
         {sourceOwnsAccount && !sourceLink && <p role="alert" className="text-sm">A associação deste vendedor está desativada ou precisa ser conferida. <Button variant="outline" onClick={() => void sourceBinding.refetch()}>Recarregar associação do vendedor</Button></p>}
         {sourceLink && !sourceOrdersReady && <p role={sourceReadiness.error ? "alert" : "status"} className="text-sm">{sourceReadiness.error ? integrationErrorMessage(sourceReadiness.error) : "Confira a conexão e a conta do Integrador para consultar os pedidos."} <Button variant="outline" disabled={sourceReadiness.isFetching} onClick={() => void sourceReadiness.refetch()}>Conferir acesso para pedidos</Button></p>}
         <div className="flex flex-wrap items-end gap-2"><div><Label htmlFor="marketplace-from">{account.channel === "shopee" ? "Atualizados de" : "Vendas de"}</Label><Input id="marketplace-from" type="date" value={recentFrom} onChange={e => { setRecentFrom(e.target.value); setRecentNext(null); setRecentCursor(null); setRecentWindow(null); }} /></div><div><Label htmlFor="marketplace-to">Até</Label><Input id="marketplace-to" type="date" value={recentTo} onChange={e => { setRecentTo(e.target.value); setRecentNext(null); setRecentCursor(null); setRecentWindow(null); }} /></div>
-          <Button disabled={operationsBusy || !recentFrom || !recentTo || (sourceOwnsAccount ? !sourceOrdersReady : account.connection_state !== "connected")} onClick={() => fetchRecent(0)}>Buscar pedidos recentes</Button>
+          <Button disabled={operationsBusy || !recentFrom || !recentTo || (sourceOwnsAccount ? !sourceOrdersReady : account.connection_state !== "connected")} onClick={() => fetchRecent(0)}>{sourceOwnsAccount ? "Consultar pedidos recentes" : "Buscar e importar pedidos"}</Button>
           {account.channel === "shopee" ? recentCursor !== null && <Button variant="outline" disabled={operationsBusy} onClick={() => fetchRecent(0, recentCursor)}>Buscar próxima página</Button> : recentNext !== null && <Button variant="outline" disabled={operationsBusy} onClick={() => fetchRecent(recentNext)}>Buscar próxima página</Button>}</div>
         <p className="text-xs text-muted-foreground">{account.channel === "shopee" ? "Busca atualizações em páginas de 20, em intervalos de até 15 dias, incluindo cancelamentos e mudanças de pagamento. Pedidos sem horário oficial ou com valores divergentes ficam para conferência." : "Busca pedidos pagos em páginas de 20, até 100 por intervalo de até 31 dias. Consulte outros estados por ID para revisar cancelamentos ou alterações."}</p>
-        {sourceEnrollmentAccount && <p className="text-sm text-muted-foreground">Conecte este cadastro pelo formulário Minha conta Elevare3D acima.</p>}
-        <div className="flex flex-wrap gap-2">{!sourceOwnsAccount && !sourceEnrollmentAccount && <Button variant="outline" disabled={operationsBusy} onClick={() => mutate.mutate(async () => { const result = await edge({ action: "oauth_begin", account_id: account.id }); if (typeof result.authorization_url !== "string") throw new Error("Endereço de autorização não retornado."); window.location.assign(result.authorization_url); return `Abrindo autorização: ${marketplaceLabels[account.channel]}`; })}>{account.connection_state === "connected" ? "Autorizar novamente" : `Autorizar ${marketplaceLabels[account.channel]}`}</Button>}
+        {sourceEnrollmentAccount && <p className="text-sm text-muted-foreground">Conecte este cadastro na área Contas ML.</p>}
+        <div className="flex flex-wrap gap-2">
           <Input className="sm:max-w-md" aria-label={`IDs de pedidos ${marketplaceLabels[account.channel]}`} placeholder="Números de pedidos, separados por vírgula" value={orderIds} onChange={e => setOrderIds(e.target.value)} />
-          <Button disabled={operationsBusy || !orderIds.trim() || (sourceOwnsAccount ? !sourceOrdersReady : account.connection_state !== "connected")} onClick={() => mutate.mutate(async () => { const result = await edge({ action: "fetch_orders", account_id: account.id, order_ids: orderIds.split(/[\s,;]+/).filter(Boolean) }); return `Consulta concluída: ${Number(result.imported ?? 0)} pedidos atualizados${workflowSummary(result)}`; })}><RefreshCw className="mr-2 h-4 w-4" />Consultar pedidos</Button>
-        </div><p className="text-xs text-muted-foreground">{sourceOwnsAccount ? "As credenciais permanecem no Integrador. Os pedidos consultados seguem os vínculos de produto e a organização da venda no Forge." : "Sem credenciais do aplicativo no servidor, a autorização informa o acesso pendente. Sincronização automática e etiquetas ainda não estão ativadas."}</p>
+          <Button disabled={operationsBusy || !orderIds.trim() || (sourceOwnsAccount ? !sourceOrdersReady : account.connection_state !== "connected")} onClick={() => mutate.mutate(async () => { const result = await edge({ action: "fetch_orders", account_id: account.id, order_ids: orderIds.split(/[\s,;]+/).filter(Boolean) }); return sourceOwnsAccount ? `${Number(result.fetched ?? 0)} pedidos consultados. Confira a prévia antes de importar.` : `Importação concluída: ${Number(result.imported ?? 0)} pedidos atualizados${workflowSummary(result)}`; })}><RefreshCw className="mr-2 h-4 w-4" />{sourceOwnsAccount ? "Consultar pedidos por ID" : "Buscar e importar por ID"}</Button>
+        </div><p className="text-xs text-muted-foreground">{sourceOwnsAccount ? "A consulta não grava pedidos nem organiza vendas. Confirme abaixo para importar esta prévia; as rotinas automáticas seguem as condições da conta." : "A busca com importação segue a organização salva desta conta. Confira as condições em Configurações."}</p>
         {!sourceOwnsAccount && account.channel === "mercado_livre" && !!events.data?.length && <div className="rounded-md border p-3 text-sm"><p>{events.data.length} eventos pendentes ou com falha. A consulta revalida o pedido no Mercado Livre antes de atualizar a entrada.</p><Button variant="outline" className="mt-2" disabled={operationsBusy || account.connection_state !== "connected"} onClick={() => mutate.mutate(async () => { const result = await edge({ action: "process_events", account_id: account.id }); return `${Number(result.processed ?? 0)} eventos conferidos · ${Number(result.failed ?? 0)} falhas para revisão`; })}>Conferir próximos eventos</Button>{events.data.some(event => event.attempts >= 5) && <p className="mt-2 text-destructive">Há eventos que atingiram cinco tentativas. Consulte o pedido por ID e revise a mensagem antes de reprocessar.</p>}</div>}
         {!sourceOwnsAccount && events.error && <p role="alert" className="text-sm text-destructive">Não foi possível carregar os eventos: {events.error.message}</p>}
       </section>}
+
+        {sourceOwnsAccount && queriedOrders?.accountId === account.id && <section aria-label="Prévia dos pedidos consultados" className="space-y-3 rounded-xl border bg-card p-4"><div><h2 className="font-semibold">Pedidos consultados · ainda não importados</h2><p className="text-sm text-muted-foreground">{queriedOrders.orders.length} nesta prévia · {queriedOrders.total} encontrados · consulta em {dateTime(queriedOrders.queriedAt)}.</p></div>
+          {queriedOrders.truncated && <p className="text-sm text-amber-700">A consulta tem mais resultados. Confira as próximas páginas ou reduza o intervalo.</p>}
+          <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr className="border-b"><th className="p-2">Pedido</th><th className="p-2">Situação</th><th className="p-2">Itens</th><th className="p-2">Valor informado no canal</th><th className="p-2">Despachar até</th></tr></thead><tbody>{queriedOrders.orders.map(order => <tr key={order.external_order_id} className="border-b align-top"><td className="p-2">{order.external_order_id}</td><td className="p-2">{marketplaceStateLabels[order.normalized_state] || order.normalized_state}</td><td className="p-2">{order.items.map(line => <p key={line.external_line_id}>{line.quantity} × {line.description}</p>)}</td><td className="p-2">{currency(order.reported_total ?? null)}</td><td className="p-2">{dateTime(order.shipping_deadline_at ?? null)}</td></tr>)}</tbody></table></div>
+          {!queriedOrders.orders.length && <p className="text-sm">Nenhum pedido encontrado nesta consulta.</p>}
+          <p className="text-sm">Importar grava os pedidos no Forge. A organização segue a configuração salva desta conta e pode criar vendas, reservar ou baixar estoque, gerar financeiro e organizar a produção.</p>
+          <div className="flex flex-wrap gap-2"><Button disabled={operationsBusy || !queriedOrders.orders.length} onClick={() => mutate.mutate(async () => { const result = await marketplaceRpc<{ imported: number; unchanged: number; ignored_older: number; workflow?: { organized: number }; workflow_issue?: string }>("import_marketplace_orders", { p_account_id: account.id, p_orders: queriedOrders.orders }); if (alive.current) setQueriedOrders(null); return `${result.imported} pedidos importados · ${result.unchanged} já importados${workflowSummary(result)}`; })}>Importar pedidos consultados</Button><Button variant="outline" onClick={() => changeArea("configuracoes")}>Conferir organização da conta</Button></div>
+        </section>}
+        <details className="rounded-xl border bg-card p-4"><summary className="cursor-pointer text-sm font-semibold">Importar arquivo de pedidos</summary><div className="mt-3">
       <section className="rounded-xl border bg-card p-4 space-y-3" aria-label="Importar pedidos">
         <div className="flex flex-wrap justify-between gap-2"><h2 className="font-semibold">Importar pedidos de {marketplaceLabels[account.channel]}</h2><Button variant="outline" size="sm" onClick={downloadExample}><Download className="mr-2 h-4 w-4" />Baixar modelo JSON</Button></div>
         <p className="text-sm text-muted-foreground">Use o modelo com os dados reais do canal. Datas precisam conter o fuso. Cada linha identifica anúncio, variação ou SKU, e a situação do pagamento deve ser conferida.</p>
@@ -196,13 +252,11 @@ function MarketplacesSession() {
         <details className="text-xs"><summary className="cursor-pointer">Colunas do CSV</summary><p className="mt-2 break-words">Uma linha por item. Obrigatórias: external_order_id, external_status, normalized_state, external_updated_at, external_line_id, description, quantity, unit_price e external_sku ou external_item_id. Opcionais: external_variant_id, external_pack_id, external_shipment_id, shipping_deadline_at, deadline_source, currency (BRL), shipping_amount, discount_amount, reported_total, seller_fees. Use ponto nos valores decimais. Campos do pedido precisam ser iguais nas linhas do mesmo pedido.</p></details>
         <div className="flex flex-wrap gap-2"><Button variant="outline" disabled={operationsBusy} onClick={() => { try { setPreview(parseMarketplaceImport(input, format)); } catch (error) { toast({ title: "Confira o arquivo", description: (error as Error).message, variant: "destructive" }); } }}>Conferir arquivo</Button>
           <Button disabled={!preview || operationsBusy} onClick={() => mutate.mutate(async () => { const result = await marketplaceRpc<{ imported: number; unchanged: number; ignored_older: number; workflow?: { organized: number }; workflow_issue?: string }>("import_marketplace_orders", { p_account_id: account.id, p_orders: preview }); setPreview(null); setInput(""); return `${result.imported} atualizados · ${result.unchanged} já importados · ${result.ignored_older} revisões antigas ignoradas${workflowSummary(result)}`; })}>Importar {preview?.length ?? ""} pedidos</Button></div>
-        {preview && <p role="status" className="text-sm">{preview.length} pedidos · {preview.reduce((sum, order) => sum + order.items.reduce((qty, item) => qty + item.quantity, 0), 0)} unidades · {preview.filter(order => !order.shipping_deadline_at).length} sem prazo. A importação registra os pedidos para conferência.</p>}
+        {preview && <p role="status" className="text-sm">{preview.length} pedidos · {preview.reduce((sum, order) => sum + order.items.reduce((qty, item) => qty + item.quantity, 0), 0)} unidades · {preview.filter(order => !order.shipping_deadline_at).length} sem prazo. A importação grava os pedidos e aplica a organização salva da conta; pode criar vendas e alterar estoque, financeiro e produção.</p>}
       </section>
-      <section className="rounded-xl border bg-card p-4 space-y-3" aria-label="Dados para vendas"><h2 className="font-semibold">Para criar a venda</h2><div className="grid sm:grid-cols-2 gap-3">
-        <div><Label htmlFor="marketplace-customer">Cliente no ERP</Label><select id="marketplace-customer" className={selectClass} value={customerId} onChange={e => setCustomerId(e.target.value)}><option value="">Selecione o cliente</option>{customers.data?.map(customer => <option key={customer.id} value={customer.id}>{customer.name}</option>)}</select></div>
-        <div><Label htmlFor="marketplace-receivable">Recebível previsto para</Label><Input id="marketplace-receivable" type="date" value={paymentDate} onChange={e => setPaymentDate(e.target.value)} /><p className="text-xs text-muted-foreground mt-1">Informe a previsão de repasse; pagamento do comprador é diferente de recebimento no banco.</p></div>
-      </div>{(customers.error || catalog.error) && <p role="alert">Não foi possível carregar clientes ou produtos. Atualize a página antes de criar a venda.</p>}</section>
-      <WorkflowPolicy accountId={account.id} customerOptions={customers.data ?? []} />
+
+        </div></details>
+        <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="font-semibold">Entrada de pedidos do Forge</h2><Button variant="outline" onClick={() => changeArea("configuracoes")}>Definir cliente e organização das vendas</Button></div>
       {manualReviewBindings.error && <p role="alert" className="text-sm text-destructive">Não foi possível conferir quais vínculos exigem revisão. {manualReviewBindings.error.message} <Button variant="outline" onClick={() => void manualReviewBindings.refetch()}>Tentar conferir novamente</Button></p>}
       {manualReviewBindings.data && !manualReviewBindings.data.available && <p role="status" className="text-sm text-muted-foreground">A exigência de conferência para anúncios personalizados ainda precisa ser ativada no banco.</p>}
       <section aria-label="Pedidos recebidos" className="space-y-3"><div className="flex justify-between"><h2 className="font-semibold">Pedidos recebidos</h2><Button variant="ghost" size="sm" onClick={() => void inbox.refetch()}>Atualizar</Button></div>
@@ -222,6 +276,14 @@ function MarketplacesSession() {
         </article>; })}
         {!!inbox.data?.length && inbox.data.length === 100 && <p className="text-xs text-muted-foreground">Mostrando as últimas 100 importações desta conta.</p>}
       </section>
-    </>}
+
+      </> : <p className="rounded-xl border p-4 text-sm">Escolha ou cadastre uma conta em Configurações para consultar os pedidos.</p>}
+      </section>
+      <section hidden={area !== "conciliacao"} aria-label="Conciliação Mercado Livre">{sourceConnected && sourceBinding.data && sourceLink ? hasVisited("conciliacao") && <MercadoLivreReconciliation key={`${effectiveAccountId}:${sourceLink.source_seller_id}`} binding={sourceBinding.data} sellerId={sourceLink.source_seller_id} userId={user?.id ?? profile?.user_id ?? ""} /> : needsConnection("Conciliação do Mercado Livre")}</section>
+      <section hidden={area !== "perguntas"} aria-label="Perguntas Mercado Livre">{sourceConnected && sourceBinding.data && sourceLink ? hasVisited("perguntas") && <MercadoLivreCommunication key={`questions:${effectiveAccountId}:${sourceLink.source_seller_id}`} kind="questions" binding={sourceBinding.data} sellerId={sourceLink.source_seller_id} userId={user?.id ?? profile?.user_id ?? ""} /> : needsConnection("Perguntas do Mercado Livre")}</section>
+      <section hidden={area !== "mensagens"} aria-label="Mensagens Mercado Livre">{sourceConnected && sourceBinding.data && sourceLink ? hasVisited("mensagens") && <MercadoLivreCommunication key={`messages:${effectiveAccountId}:${sourceLink.source_seller_id}`} kind="messages" binding={sourceBinding.data} sellerId={sourceLink.source_seller_id} userId={user?.id ?? profile?.user_id ?? ""} /> : needsConnection("Mensagens do Mercado Livre")}</section>
+      <section hidden={area !== "configuracoes"} aria-label="Configurações Mercado Livre">{configuration}</section>
+      </div>
+    </div>
   </div>;
 }

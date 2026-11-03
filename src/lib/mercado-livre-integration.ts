@@ -78,15 +78,16 @@ function assertSource(binding: IntegradorBridgeBinding) {
   if (!binding.configured || !binding.enabled || !binding.bridge_id) throw new Error("A conexão desta empresa com o Integrador precisa ser associada antes da consulta.");
   if (![INTEGRADOR_ORIGIN, `${INTEGRADOR_ORIGIN}/`, INTEGRADOR_BRIDGE_ENDPOINT].includes(binding.source_url ?? "")) throw new Error("O endereço do Integrador não corresponde à conexão aprovada desta empresa.");
 }
-type BridgeAction = "settings_readiness" | "revalidate_account" | "fetch_listings" | "fetch_orders" | "fetch_recent_orders" | "settings_save" | "stock_preview" | "takeover_stock" | "sync_stock" | "sync_price" | "enrollment_begin" | "enrollment_finish" | "enrollment_app_save";
+export type IntegradorWorkspaceAction = "listing_details" | "listing_edit" | "listing_status" | "publication_prepare" | "publication_commit" | "publication_categories" | "questions_list" | "question_reply" | "messages_list" | "message_read" | "message_mark_read" | "message_reply" | "workspace_overview" | "fetch_reconciliation" | "automation_review";
+type BridgeAction = IntegradorWorkspaceAction | "settings_readiness" | "revalidate_account" | "fetch_listings" | "fetch_orders" | "fetch_recent_orders" | "settings_save" | "stock_preview" | "takeover_stock" | "sync_stock" | "sync_price" | "enrollment_begin" | "enrollment_finish" | "enrollment_app_save";
 async function sourceRequest(binding: IntegradorBridgeBinding, action: BridgeAction, args: { source_seller_id?: string; offset?: number; limit?: number; order_ids?: string[]; from?: string; to?: string;
-  settings?: IntegradorSettingsChanges; expected_revision?: string; request_id?: string; acknowledge_scheduled_effects?: true; account_id?: string | null; product_ids?: string[]; acknowledge_takeover?: true; acknowledge_marketplace_write?: true; return_origin?: string; receipt?: string; app?: IntegradorEnrollmentAppChanges }, context: { userId: string; signal?: AbortSignal }): Promise<unknown> {
+  settings?: IntegradorSettingsChanges; expected_revision?: string; request_id?: string; acknowledge_scheduled_effects?: true; account_id?: string | null; product_ids?: string[]; acknowledge_takeover?: true; acknowledge_marketplace_write?: true; return_origin?: string; receipt?: string; app?: IntegradorEnrollmentAppChanges } & Record<string, unknown>, context: { userId: string; signal?: AbortSignal }): Promise<unknown> {
   assertSource(binding); context.signal?.throwIfAborted();
   if (args.source_seller_id && !binding.approved_seller_ids.includes(args.source_seller_id)) throw new Error("Selecione um vendedor aprovado para esta empresa.");
   const controller = new AbortController();
   const abort = () => controller.abort(context.signal?.reason);
   context.signal?.addEventListener("abort", abort, { once: true });
-  const timer = setTimeout(() => controller.abort(new Error("A operação no Integrador demorou mais que o esperado. Confira o resultado antes de confirmar outra operação.")), ["stock_preview", "takeover_stock", "sync_stock", "sync_price"].includes(action) ? 90000 : 20000);
+  const timer = setTimeout(() => controller.abort(new Error("A operação no Integrador demorou mais que o esperado. Confira o resultado antes de confirmar outra operação.")), ["stock_preview", "takeover_stock", "sync_stock", "sync_price", "publication_prepare", "publication_commit", "messages_list", "questions_list", "workspace_overview", "fetch_reconciliation"].includes(action) ? 90000 : 20000);
   const bounded = <T,>(operation: PromiseLike<T>): Promise<T> => new Promise((resolve, reject) => {
     if (controller.signal.aborted) { reject(controller.signal.reason); return; }
     const cancelled = () => reject(controller.signal.reason);
@@ -106,10 +107,15 @@ async function sourceRequest(binding: IntegradorBridgeBinding, action: BridgeAct
   context.signal?.throwIfAborted();
   if (!response.ok || value && typeof value === "object" && "error" in value) {
     const message = value && typeof value === "object" && typeof (value as { error?: unknown }).error === "string" ? (value as { error: string }).error : `A consulta ao Integrador falhou (HTTP ${response.status}).`;
-    throw new Error(integrationErrorMessage(new Error(message)));
+    const code = value && typeof value === "object" && typeof (value as { code?: unknown }).code === "string" && /^bridge_[a-z_]{1,100}$/.test(String((value as { code: string }).code)) ? (value as { code: string }).code : undefined;
+    throw Object.assign(new Error(integrationErrorMessage(new Error(message))), { status: response.status, ...(code ? { code } : {}) });
   }
   return value;
   } finally { clearTimeout(timer); context.signal?.removeEventListener("abort", abort); }
+}
+export function requestIntegradorWorkspace(binding: IntegradorBridgeBinding, action: IntegradorWorkspaceAction, sellerId: string, payload: Record<string, unknown>, context: { userId: string; signal?: AbortSignal }): Promise<unknown> {
+  if (["bridge_id", "action", "source_seller_id"].some(key => key in payload)) throw new Error("Confira a conta da operação antes de continuar.");
+  return sourceRequest(binding, action, { ...payload, source_seller_id: sellerId }, context);
 }
 function approvedReadiness(binding: IntegradorBridgeBinding, value: unknown): MercadoLivreReadiness {
   const result = readMercadoLivreReadiness(value);
@@ -145,9 +151,10 @@ export async function revalidateIntegradorAccount(binding: IntegradorBridgeBindi
   if (result.account.seller_id !== sellerId) throw new Error("A conta conferida não corresponde ao vendedor selecionado.");
   return result.account;
 }
-export async function fetchIntegradorListings(binding: IntegradorBridgeBinding, sellerId: string, offset: number, context: { userId: string; signal?: AbortSignal }): Promise<MercadoLivreListings> {
+export async function fetchIntegradorListings(binding: IntegradorBridgeBinding, sellerId: string, offset: number, context: { userId: string; signal?: AbortSignal }, filters: { q?: string; status?: string } = {}): Promise<MercadoLivreListings> {
   if (!Number.isInteger(offset) || offset < 0) throw new Error("A página de anúncios não é válida.");
-  return readMercadoLivreListings(await sourceRequest(binding, "fetch_listings", { source_seller_id: sellerId, offset, limit: 20 }, context));
+  if (filters.q && filters.q.trim().length > 120 || filters.status && !["active", "paused", "under_review", "closed"].includes(filters.status)) throw new Error("Confira os filtros dos anúncios.");
+  return readMercadoLivreListings(await sourceRequest(binding, "fetch_listings", { source_seller_id: sellerId, offset, limit: 20, ...(filters.q?.trim() ? { q: filters.q.trim() } : {}), ...(filters.status ? { status: filters.status } : {}) }, context));
 }
 export type IntegradorOrders = { orders: CanonicalMarketplaceOrder[]; next_offset: number | null; fetched: number; total: number; truncated: boolean };
 export async function fetchIntegradorMarketplaceOrders(binding: IntegradorBridgeBinding, sellerId: string, selection: { order_ids: string[] } | { from: string; to: string; offset: number }, context: { userId: string; signal?: AbortSignal }): Promise<IntegradorOrders> {
