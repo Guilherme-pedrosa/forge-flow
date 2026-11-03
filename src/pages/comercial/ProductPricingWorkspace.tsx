@@ -11,6 +11,7 @@ import { allRows } from "@/lib/finance";
 import { priceChannel } from "@/lib/channel-pricing";
 import { ChannelPricingPanel, type ChannelPricingSelection, type ChannelPricingPanelState } from "@/components/comercial/ChannelPricingPanel";
 import { readProductChannelPricing, applyProductChannelPricing, type ProductChannelPricingAcceptance } from "@/lib/channel-policy";
+import { readSavedCatalogCost, applySavedCatalogPrice } from "@/lib/saved-catalog-cost";
 import { readPricingSettings } from "@/lib/pricing-policy";
 import { orderRequest } from "@/lib/sales-order";
 import {
@@ -28,7 +29,7 @@ export default function ProductPricingWorkspace({ productId, onProductChange }: 
   const { profile } = useAuth();
   const products = useQuery({
     queryKey: ["pricing-products", profile?.tenant_id], enabled: !!profile?.tenant_id,
-    queryFn: () => allRows((a, b) => supabase.from("products").select("id,name,sku,sale_price").eq("is_active", true).order("name").order("id").range(a, b)),
+    queryFn: () => allRows((a, b) => supabase.from("products").select("id,name,sku,sale_price,manual_cost_override,cost_estimate,catalog_details").eq("is_active", true).order("name").order("id").range(a, b)),
   });
   return <div className="space-y-5">
     <section className="space-y-3 rounded-xl border bg-card p-4">
@@ -39,7 +40,7 @@ export default function ProductPricingWorkspace({ productId, onProductChange }: 
       <p className="text-sm text-muted-foreground">A composição, os filamentos, as placas e os tempos vêm do cadastro do produto. Os parâmetros de custos vêm das configurações.</p>
       {products.error && <p role="alert" className="text-destructive">Não foi possível carregar os produtos. Tente novamente.</p>}
     </section>
-    {productId ? <ProductPricingSession key={`${profile?.tenant_id}:${productId}`} productId={productId} currentPrice={products.isSuccess && !products.isFetching ? products.data?.find(product => product.id === productId)?.sale_price : undefined} /> :
+    {productId ? <ProductPricingSession key={`${profile?.tenant_id}:${productId}`} productId={productId} catalogLoading={products.isFetching || !products.isSuccess} catalogProduct={products.data?.find(product => product.id === productId)} currentPrice={products.isSuccess && !products.isFetching ? products.data?.find(product => product.id === productId)?.sale_price : undefined} /> :
       <p className="rounded-xl border border-dashed p-6 text-muted-foreground">Selecione o produto acima para conferir cada peça, calcular o custo e definir o preço de venda.</p>}
   </div>;
 }
@@ -53,11 +54,16 @@ function Breakdown({ value, pending = false }: { value: CostBreakdown; pending?:
   </dl>;
 }
 
-function ProductPricingSession({ productId, currentPrice }: { productId: string; currentPrice?: number | null }) {
+function ProductPricingSession({ productId, currentPrice, catalogProduct, catalogLoading }: { productId: string; currentPrice?: number | null; catalogLoading: boolean; catalogProduct?: { manual_cost_override?: number | null; cost_estimate?: number | null; catalog_details?: unknown } }) {
   const { profile } = useAuth();
   const tenant = profile?.tenant_id;
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const [costMode, setCostMode] = useState<"auto" | "catalog" | "production">("auto");
+  const details = catalogProduct?.catalog_details as Record<string, unknown> | null;
+  const hasSavedCost = details?.cost_source !== "composition" && (catalogProduct?.manual_cost_override != null || (catalogProduct?.cost_estimate ?? 0) > 0 || details?.base_cost != null);
+  const useCatalog = hasSavedCost && costMode !== "production";
+  const catalogCost = useQuery({ queryKey: ["product_catalog_cost", tenant, productId], queryFn: () => readSavedCatalogCost(productId), enabled: !!tenant && useCatalog });
   const [quantityInput, setQuantityInput] = useState("1");
   const [changes, setChanges] = useState<PricingPlan>({});
   const [fieldError, setFieldError] = useState("");
@@ -96,21 +102,27 @@ function ProductPricingSession({ productId, currentPrice }: { productId: string;
     queryFn: () => allRows((a, b) => supabase.from("inventory_items").select("id,name,unit,avg_cost").eq("is_active", true).order("name").order("id").range(a, b)),
   });
   const result = validQuantity && !fieldError ? preview.data : undefined;
+  const activeUnitCost = useCatalog ? catalogCost.data?.source === "manual" && catalogCost.data.complete ? catalogCost.data.unit_cost : null : result?.complete ? result.breakdown.unit_cost : null;
+  const activeComplete = activeUnitCost != null && validQuantity;
+  const margin = Object.prototype.hasOwnProperty.call(changes, "target_margin") ? changes.target_margin : plan.data?.plan.target_margin ?? policy.data?.target_margin;
+  const savedSuggestion = activeUnitCost != null && margin != null && margin >= 0 && margin < 100 ? Math.ceil(activeUnitCost / (1 - margin / 100) * 100 - 1e-9) / 100 : null;
+  const suggestion = useCatalog ? savedSuggestion : result?.suggested_unit_price ?? null;
   const rows = result ? pricingProductionRows(result) : { components: [], plates: [], runs: [] };
   const commercial = { value: channelSelection.result, error: channelSelection.error };
   let targetPrice: number | null = null;
   let targetError = "";
   try {
-    targetPrice = target.trim() ? pricingNumber(target, "Preço alvo", 1e9) : result?.suggested_unit_price ?? null;
+    targetPrice = target.trim() ? pricingNumber(target, "Preço alvo", 1e9) : suggestion;
     if (target.trim() && targetPrice != null && (targetPrice < .01 || Math.abs(Math.round(targetPrice * 100) - targetPrice * 100) > 1e-7)) throw new Error("Informe um preço de pelo menos R$ 0,01, com até duas casas decimais.");
   }
   catch (error) { targetError = (error as Error).message; }
   const selectedPrice = channel === "factory" ? targetPrice : commercial.value?.target;
-  const canApply = !!result?.complete && validPlan && !channelPolicyBusy && !preview.isError && !plan.isError && !preview.isFetching && !preview.isPlaceholderData && (channel !== "factory" || !targetError) && !commercial.error && selectedPrice != null && selectedPrice >= .01;
+  const canApply = activeComplete && !catalogLoading && !fieldError && (useCatalog ? !catalogCost.isError && !catalogCost.isFetching : validPlan && !preview.isError && !plan.isError && !preview.isFetching && !preview.isPlaceholderData) && !channelPolicyBusy && (channel !== "factory" || !targetError) && !commercial.error && selectedPrice != null && selectedPrice >= .01 && selectedPrice <= 1e9;
 
   async function invalidatePricing() {
     await Promise.all([
       qc.invalidateQueries({ queryKey: ["product_pricing_preview", tenant, productId] }),
+      qc.invalidateQueries({ queryKey: ["product_catalog_cost", tenant, productId] }), qc.invalidateQueries({ queryKey: ["pricing-products", tenant] }),
       qc.invalidateQueries({ queryKey: ["products"] }), qc.invalidateQueries({ queryKey: ["product", productId] }),
       qc.invalidateQueries({ queryKey: ["product-workspace"] }), qc.invalidateQueries({ queryKey: ["product_channel_prices", tenant, productId] }),
     ]);
@@ -131,22 +143,23 @@ function ProductPricingSession({ productId, currentPrice }: { productId: string;
   });
   const apply = useMutation({
     mutationFn: async () => {
-      if (!canApply || !result || selectedPrice == null) throw new Error("Atualize a prévia e resolva as pendências antes de aplicar.");
-      const payload = { tenant, productId, quantity, overrides, revision: result.revision, price: selectedPrice };
+      if (!canApply || (!useCatalog && !result) || selectedPrice == null) throw new Error("Atualize a prévia e resolva as pendências antes de aplicar.");
+      const payload = { tenant, productId, quantity, overrides, revision: useCatalog ? catalogCost.data!.revision : result!.revision, price: selectedPrice, costSource: useCatalog ? "catalog" : "production" };
       if (channel === "factory") {
         applyRequest.current = orderRequest(applyRequest.current, JSON.stringify(payload));
-        await applyProductPricing(productId, quantity, overrides, result.revision, selectedPrice, applyRequest.current.id);
+        if (useCatalog) await applySavedCatalogPrice(productId, quantity, catalogCost.data!.revision, selectedPrice, applyRequest.current.id);
+        else await applyProductPricing(productId, quantity, overrides, result!.revision, selectedPrice, applyRequest.current.id);
       }
       else {
         const selected = channelSelection.catalogDraft;
         if (!selected) throw new Error("Confira as condições deste canal.");
         const selection = { productId, channel: selected.channel, quantity: selected.quantity, overrides: selected.assumptions, unitPrice: selectedPrice,
-          costContext: { quantity, overrides, expectedRevision: result.revision } };
+          ...(useCatalog ? {} : { costContext: { quantity, overrides, expectedRevision: result!.revision } }) };
         const intent = JSON.stringify({ ...selection, expectedPolicyRevision: selected.expected_policy_revision });
         if (channelApplyRequest.current?.intent !== intent) {
           const current = await readProductChannelPricing(selection);
           if (!current.complete || !current.result || current.policy_revision !== selected.expected_policy_revision
-            || Math.abs(Number(current.unit_cost) - Number(result.breakdown.unit_cost)) > 1e-7 || current.result.target !== selectedPrice)
+            || Math.abs(Number(current.unit_cost) - Number(activeUnitCost)) > 1e-7 || current.result.target !== selectedPrice)
             throw new Error("Os custos ou as condições do canal mudaram. Atualize a simulação antes de salvar.");
           const signature = JSON.stringify({ ...selection, costRevision: current.cost_revision, policyRevision: current.policy_revision, revision: current.revision });
           applyRequest.current = orderRequest(applyRequest.current, signature);
@@ -157,7 +170,7 @@ function ProductPricingSession({ productId, currentPrice }: { productId: string;
       }
       await Promise.all([qc.invalidateQueries({ queryKey: ["product_pricing_plan", tenant, productId] }), invalidatePricing()]);
     },
-    onSuccess: () => setMessage(channel === "factory" ? "Custo e preço aplicados ao cadastro do produto." : "Preço do canal salvo. O preço base do produto foi preservado."),
+    onSuccess: () => setMessage(channel === "factory" ? useCatalog ? "Preço salvo. O custo já aceito foi preservado." : "Custo e preço aplicados ao cadastro do produto." : "Preço do canal salvo. O preço base do produto foi preservado."),
     onError: () => setMessage(""),
   });
   const pending = savePlan.isPending || apply.isPending || channelPolicyBusy;
@@ -166,6 +179,7 @@ function ProductPricingSession({ productId, currentPrice }: { productId: string;
     setMessage("");
     try {
       const number = pricingNumber(raw, "Parâmetro", key === "target_margin" ? 99.999999 : key === "overhead_percent" ? 1000 : 1000000);
+      if (key !== "target_margin") setCostMode("production");
       setChanges(current => ({ ...current, [key]: number }));
       setFieldError("");
     } catch (error) { setFieldError((error as Error).message); }
@@ -177,9 +191,10 @@ function ProductPricingSession({ productId, currentPrice }: { productId: string;
       value={effectiveValue(key) as number ?? ""} placeholder="Não informado" onChange={e => update(key, e.target.value)} />
     {hint && <p className="mt-1 text-xs text-muted-foreground">{hint}</p>}
   </div>;
-  const setConsumables = (next: NonNullable<PricingPlan["consumables"]>) => { setChanges(current => ({ ...current, consumables: next })); setMessage(""); };
+  const setConsumables = (next: NonNullable<PricingPlan["consumables"]>) => { setCostMode("production"); setChanges(current => ({ ...current, consumables: next })); setMessage(""); };
   function updatePlate(plateId: string, key: "printer_id" | "machine_hour_cost" | "handling_minutes", value: string) {
     try {
+      setCostMode("production");
       const adjusted = { ...(effectivePlan.plates ?? []).find(p => p.plate_id === plateId), plate_id: plateId, [key]: key === "printer_id" ? value || null : pricingNumber(value, "Ajuste da placa") };
       setChanges(current => ({ ...current, plates: [...(effectivePlan.plates ?? []).filter(p => p.plate_id !== plateId), adjusted] }));
       setFieldError(""); setMessage("");
@@ -192,33 +207,45 @@ function ProductPricingSession({ productId, currentPrice }: { productId: string;
       <div><Label htmlFor="product-pricing-quantity">Quantidade de produtos prontos</Label><Input id="product-pricing-quantity" type="number" min="1" max="10000" step="1" value={quantityInput} disabled={pending} onChange={e => { setQuantityInput(e.target.value); setMessage(""); }} /></div>
       <div className="space-y-2 rounded-lg bg-muted p-3 text-sm">
         <p>{channel === "factory" ? "Preço atual no cadastro" : "Preço base cadastrado"}: <strong>{money(currentPrice)}</strong></p>
+        {useCatalog && <dl className="space-y-2 border-t pt-2" data-testid="product-pricing-breakdown"><div className="flex justify-between gap-3 text-lg font-semibold"><dt>Custo por unidade</dt><dd>{activeUnitCost == null ? "Pendente" : money(activeUnitCost)}</dd></div><div className="flex justify-between gap-3"><dt>Custo para a quantidade</dt><dd>{activeUnitCost == null || !validQuantity ? "Pendente" : money(activeUnitCost * quantity)}</dd></div></dl>}
         <Button className="h-auto min-h-11 w-full whitespace-normal py-2" variant="outline" disabled={!canQuoteSavedPrice || pending} onClick={() => {
           if (!canQuoteSavedPrice || pending) return;
           navigate("/comercial/orcamentos", { state: { pricingQuote: { product_id: productId, quantity: savedPriceQuantity, unit_price: currentPrice! } } });
         }}>{channel === "factory" ? "Usar preço cadastrado no orçamento" : "Usar preço base cadastrado no orçamento"}</Button>
-        <p className="text-xs text-muted-foreground">Reaproveita o preço base já aceito para o orçamento. Para calcular as condições do canal, complete os custos abaixo.</p>
+        <p className="text-xs text-muted-foreground">{useCatalog ? "Custo e preço vêm do cadastro deste produto. Confira as condições do canal para calcular seu preço de venda." : "Reaproveita o preço base já aceito para o orçamento. Para calcular as condições do canal, complete os custos abaixo."}</p>
       </div>
       {!validQuantity && <p role="alert" className="text-destructive">Informe uma quantidade inteira entre 1 e 10.000.</p>}
+      {hasSavedCost && <div className="space-y-2"><Label htmlFor="pricing-cost-source">Custo usado para precificar</Label><select id="pricing-cost-source" className={inputStyle} value={useCatalog ? "catalog" : "production"} disabled={pending} onChange={event => { setCostMode(event.target.value as "catalog" | "production"); setMessage(""); }}><option value="catalog">Custo já salvo no produto</option><option value="production">Recalcular pelas peças e placas</option></select></div>}
       {numberField("target_margin", "Margem desejada sobre a venda (%)", "Margem sobre o valor vendido, sem alterar o custo de produção.")}
-      {channel === "factory" && <div><Label htmlFor="product-pricing-target">Preço alvo por unidade (R$)</Label><Input id="product-pricing-target" type="number" min="0" step=".01" value={target} disabled={pending} placeholder={money(result?.suggested_unit_price)} onChange={e => { setTarget(e.target.value); setMessage(""); }} /></div>}
-      {[fieldError, targetError, commercial.error, plan.error?.message, preview.error?.message, savePlan.error?.message, apply.error?.message].filter(Boolean).map((error, i) => <p key={i} role="alert" className="text-sm text-destructive">{error}</p>)}
-      {!validPlan && <p className="text-sm text-amber-700" role="status">Selecione cada insumo e informe uma quantidade maior que zero para atualizar o custo.</p>}
-      {(plan.isLoading || preview.isFetching) && <p role="status" className="text-sm text-muted-foreground">Conferindo ficha, placas e custos...</p>}
+      {channel === "factory" && <div><Label htmlFor="product-pricing-target">Preço alvo por unidade (R$)</Label><Input id="product-pricing-target" type="number" min="0" step=".01" value={target} disabled={pending} placeholder={money(suggestion)} onChange={e => { setTarget(e.target.value); setMessage(""); }} /></div>}
+      {[fieldError, targetError, commercial.error, useCatalog ? catalogCost.error?.message : plan.error?.message, preview.error?.message, savePlan.error?.message, apply.error?.message].filter(Boolean).map((error, i) => <p key={i} role="alert" className="text-sm text-destructive">{error}</p>)}
+      {!useCatalog && !validPlan && <p className="text-sm text-amber-700" role="status">Selecione cada insumo e informe uma quantidade maior que zero para atualizar o custo.</p>}
+      {(useCatalog ? catalogCost.isFetching : plan.isLoading || preview.isFetching) && <p role="status" className="text-sm text-muted-foreground">Conferindo ficha, placas e custos...</p>}
       <Button size="sm" variant="ghost" disabled={pending || !validQuantity || !validPlan || !!fieldError} onClick={() => {
         setMessage(""); savePlan.reset(); apply.reset();
-        void Promise.all([qc.invalidateQueries({ queryKey: ["pricing_settings", tenant] }), qc.invalidateQueries({ queryKey: ["product_pricing_plan", tenant, productId] }), qc.invalidateQueries({ queryKey: ["product_pricing_preview", tenant, productId] })]);
+        void Promise.all([qc.invalidateQueries({ queryKey: ["product_catalog_cost", tenant, productId] }), qc.invalidateQueries({ queryKey: ["pricing-products", tenant] }), qc.invalidateQueries({ queryKey: ["pricing_settings", tenant] }), qc.invalidateQueries({ queryKey: ["product_pricing_plan", tenant, productId] }), qc.invalidateQueries({ queryKey: ["product_pricing_preview", tenant, productId] })]);
       }}>Atualizar prévia</Button>
-      {result && <>
+      {useCatalog ? <>
+        <p className="text-sm">Usa o custo já confirmado no produto. Abra o cálculo da produção para revisar consumo, tempo ou tarifas.</p>
+        {catalogCost.data && catalogCost.data.source !== "manual" && !catalogCost.isFetching && <p role="alert">A origem do custo mudou. Atualize o produto antes de salvar.</p>}
+        {catalogCost.data?.missing.map((item,i)=><p key={i} role="status">{item}</p>)}
+
+        {result && <details className="rounded-lg border p-3 text-sm"><summary className="cursor-pointer">Conferir cálculo da produção{!result.complete ? " (a completar)" : ""}</summary><div className="space-y-3 pt-3">        {!result.complete && <div className="space-y-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-950" role="status"><p className="font-medium">Falta confirmar para fechar o custo:</p><ul className="list-disc space-y-1 pl-4">{result.missing.map((item, i) => <li key={i}>{item}</li>)}</ul><p>Os valores abaixo mostram apenas parcelas já conhecidas.</p></div>}
+        <div data-testid={useCatalog ? "production-cost-breakdown" : "product-pricing-breakdown"}><Breakdown value={result.breakdown} pending={!result.complete} /></div>
+        <p className="text-sm">Custo manual atual: <strong>{money(result.manual_cost_reference)}</strong></p>
+</div></details>}
+      </> : result && <>
         <p className="text-sm font-medium">{result.cost_basis === "unit" ? "Padrão por unidade" : "Lote exclusivo"} · {result.quantity} {result.quantity === 1 ? "produto" : "produtos"}</p>
         {!result.complete && <div className="space-y-2 rounded-lg bg-amber-50 p-3 text-sm text-amber-950" role="status"><p className="font-medium">Falta confirmar para fechar o custo:</p><ul className="list-disc space-y-1 pl-4">{result.missing.map((item, i) => <li key={i}>{item}</li>)}</ul><p>Os valores abaixo mostram apenas parcelas já conhecidas.</p></div>}
         <div data-testid="product-pricing-breakdown"><Breakdown value={result.breakdown} pending={!result.complete} /></div>
         <p className="text-sm">Custo manual atual: <strong>{money(result.manual_cost_reference)}</strong></p>
-        {result.complete && channel === "factory" && <div className="space-y-1 rounded-lg bg-muted p-3 text-sm"><p>Preço sugerido: <strong>{money(result.suggested_unit_price)} / un.</strong></p><p>Preço escolhido: {money(selectedPrice)} / un.</p>{selectedPrice != null && <p>Resultado para a quantidade: {money(selectedPrice * result.quantity - result.breakdown.total_lot!)}</p>}</div>}
-        {commercial.value && <ChannelResult value={commercial.value} />}
-        {selectedPrice != null && result.breakdown.unit_cost != null && selectedPrice < result.breakdown.unit_cost && <p role="status" className="text-sm text-destructive">O preço alvo não cobre o custo do produto.</p>}
+
       </>}
-      <Button className="h-auto min-h-11 w-full whitespace-normal py-3" disabled={!canApply || pending} onClick={() => { setMessage(""); apply.mutate(); }}>{apply.isPending ? "Aplicando..." : channel === "factory" ? "Aplicar custo e preço ao cadastro" : "Salvar preço deste canal"}</Button>
-      <p className="text-xs text-muted-foreground">{channel === "factory" ? "Aplicar atualiza o custo e o preço base após conferir os dados." : "O preço deste canal usa os custos da simulação e é salvo com suas condições, separado do preço base."} Para guardar ajustes de preparação, abra Custos e tempos.</p>
+      {activeComplete && channel === "factory" && <div className="space-y-1 rounded-lg bg-muted p-3 text-sm"><p>Preço sugerido: <strong>{money(suggestion)} / un.</strong></p><p>Preço escolhido: {money(selectedPrice)} / un.</p>{selectedPrice != null && <p>Resultado para a quantidade: {money((selectedPrice - activeUnitCost!) * quantity)}</p>}</div>}
+      {commercial.value && <ChannelResult value={commercial.value} />}
+      {selectedPrice != null && activeUnitCost != null && selectedPrice < activeUnitCost && <p role="status" className="text-sm text-destructive">O preço alvo não cobre o custo do produto.</p>}
+      <Button className="h-auto min-h-11 w-full whitespace-normal py-3" disabled={!canApply || pending} onClick={() => { setMessage(""); apply.mutate(); }}>{apply.isPending ? "Aplicando..." : channel === "factory" ? useCatalog ? "Salvar preço usando o custo cadastrado" : "Aplicar custo e preço ao cadastro" : "Salvar preço deste canal"}</Button>
+      <p className="text-xs text-muted-foreground">{channel === "factory" ? useCatalog ? "Salvar altera somente o preço base, preservando o custo já aceito." : "Aplicar atualiza o custo e o preço base após conferir os dados." : "O preço deste canal usa os custos da simulação e é salvo com suas condições, separado do preço base."} Para guardar ajustes de preparação, abra Custos e tempos.</p>
       <Button className="h-auto min-h-11 w-full whitespace-normal py-3" variant="outline" disabled={!canApply || pending} onClick={() => navigate("/comercial/orcamentos", { state: { pricingQuote: { product_id: productId, quantity: channel === "factory" ? quantity : commercial.value!.quantity, unit_price: selectedPrice! } } })}>Usar preço no novo orçamento</Button>
       {message && <p role="status" className="text-sm text-emerald-700">{message}</p>}
       {policy.error && <p className="text-sm text-destructive">Não foi possível carregar as configurações de custos. A prévia informa o que ainda falta confirmar.</p>}
@@ -227,7 +254,7 @@ function ProductPricingSession({ productId, currentPrice }: { productId: string;
       <details className="rounded-xl border bg-card p-4"><summary className="cursor-pointer font-semibold">Custos e tempos</summary>
         <div className="space-y-4 pt-4">
         <div className="grid gap-3 sm:grid-cols-2">
-          <div><Label htmlFor="product-pricing-basis">Base do custo e do preço</Label><select id="product-pricing-basis" className={inputStyle} value={basis} disabled={pending} onChange={e => { setChanges(current => ({ ...current, cost_basis: e.target.value as PricingPlan["cost_basis"] })); setMessage(""); }}>
+          <div><Label htmlFor="product-pricing-basis">Base do custo e do preço</Label><select id="product-pricing-basis" className={inputStyle} value={basis} disabled={pending} onChange={e => { setCostMode("production"); setChanges(current => ({ ...current, cost_basis: e.target.value as PricingPlan["cost_basis"] })); setMessage(""); }}>
             <option value="unit">Padrão por unidade · rateia pelo rendimento</option><option value="exclusive_lot">Lote exclusivo · cobra impressões completas</option>
           </select></div>
         </div>
@@ -240,7 +267,7 @@ function ProductPricingSession({ productId, currentPrice }: { productId: string;
         </div>
         <div className="rounded-lg border p-3"><h3 className="font-medium">Tarifas e impressora deste produto</h3>
           <p className="my-3 text-sm text-muted-foreground">Os padrões vêm de <a className="underline" href="/configuracoes/precificacao">Custos e precificação</a>. Ajustes aqui valem para este produto. A tarifa de máquina exclui energia.</p>
-          <SearchableItemSelect value={effectivePlan.printer_id ?? ""} disabled={pending} label="Impressora padrão do produto" emptyLabel="Usar impressora de cada placa" options={(printers.data ?? []).map(p => ({ id: p.id, label: p.name }))} onChange={id => setChanges(current => ({ ...current, printer_id: id || null }))} />
+          <SearchableItemSelect value={effectivePlan.printer_id ?? ""} disabled={pending} label="Impressora padrão do produto" emptyLabel="Usar impressora de cada placa" options={(printers.data ?? []).map(p => ({ id: p.id, label: p.name }))} onChange={id => { setCostMode("production"); setChanges(current => ({ ...current, printer_id: id || null })); }} />
           <div className="mt-3 grid gap-3 sm:grid-cols-2">
             {numberField("machine_hour_cost", "Hora-máquina padrão (R$ / h)", "Tarifas específicas por impressora ou placa têm prioridade sobre este padrão.")}
             {numberField("energy_cost_kwh", "Energia (R$ / kWh)")}
@@ -308,7 +335,7 @@ function ProductPricingSession({ productId, currentPrice }: { productId: string;
         </section>
         </div>
       </details>}
-      <ChannelPricingPanel productId={productId} unitCost={result?.complete ? result.breakdown.unit_cost : null} disabled={pending} showResult={false} onSelection={setChannelSelection} onStateChange={setChannelState} onBusy={setChannelPolicyBusy} />
+      <ChannelPricingPanel productId={productId} unitCost={activeUnitCost} disabled={pending} showResult={false} onSelection={setChannelSelection} onStateChange={setChannelState} onBusy={setChannelPolicyBusy} />
     </div>
 
   </div>;

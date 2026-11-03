@@ -95,3 +95,10 @@ Uma nova impressão do catálogo congela o custo canônico atual, com o custo m�
 Na criação, a quantidade confirmada corresponde a produtos completos por conjunto de placas. Duas cópias físicas podem ser um kit de duas peças ou dois produtos individuais; os gramas e segundos do arquivo permanecem iguais, e a divisão é determinada pela quantidade confirmada. O sistema recusa frações de peça e não altera uma composição já confirmada.
 
 Um projeto fatiado localmente pode manter o link e as fotos MakerWorld como origem sem importar uma segunda série de placas do perfil publicado. O arquivo retornado define consumo, tempo e cores; os metadados do perfil não substituem o fatiamento.
+
+
+## Produtos com custo já aceito
+
+A precificação de um produto com custo salvo usa a mesma fonte comercial do cadastro e dos marketplaces. Uma receita antiga incompleta continua pendente para produção, sem esconder o custo já aceito. A tela mostra custo e preço juntos; o operador pode escolher recalcular pelas peças e placas no próprio formulário. Ajustar tempos, tarifas ou insumos passa ao cálculo de produção, evitando ignorar esses ajustes atrás do valor salvo.
+
+Salvar um preço usando o custo cadastrado altera o preço base e sua origem comercial, com revisão do custo, aceite imutável e repetição segura. Preserva custo, adicionais, fotos, receita e estoque; não confirma prontidão para produzir. Condições de canal usam esse mesmo custo e mantêm o preço por canal separado do preço base. Nenhuma pendência técnica é preenchida com números fictícios.

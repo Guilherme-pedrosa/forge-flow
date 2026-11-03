@@ -9,7 +9,7 @@ import type { ChannelAssumptions } from "@/lib/channel-policy";
 const productId = "00000000-0000-4000-8000-000000000001";
 const plateId = "00000000-0000-4000-8000-000000000002";
 const itemId = "00000000-0000-4000-8000-000000000003";
-const mock = vi.hoisted(() => ({ from: vi.fn(), rpc: vi.fn(), navigate: vi.fn(), pending: false, saved: {} as Record<string, unknown>, delay: null as null | (() => void), held: false, salePrice: 42 as number | null, catalogError: false }));
+const mock = vi.hoisted(() => ({ from: vi.fn(), rpc: vi.fn(), navigate: vi.fn(), pending: false, saved: {} as Record<string, unknown>, delay: null as null | (() => void), held: false, salePrice: 42 as number | null, catalogError: false, savedCost: null as number | null, useSavedCost: false, catalogSource: "manual" }));
 vi.mock("react-router-dom", async original => ({ ...await original<typeof import("react-router-dom")>(), useNavigate: () => mock.navigate }));
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ profile: { tenant_id: "tenant" } }) }));
 vi.mock("@/components/shared/PageHeader", () => ({ PageHeader: ({ title }: { title: string }) => <h1>{title}</h1> }));
@@ -44,14 +44,16 @@ async function chooseChannel() {
   await waitFor(() => expect(screen.getByLabelText("Comissão sobre produtos (%)")).toHaveValue("0"));
 }
 beforeEach(() => {
-  mock.pending = false; mock.saved = { handling_minutes_per_plate: 2, assembly_minutes_per_product: 3, consumables: [{ item_id: itemId, quantity: 1 }] }; mock.delay = null; mock.held = false; mock.salePrice = 42; mock.catalogError = false;
+  mock.pending = false; mock.saved = { handling_minutes_per_plate: 2, assembly_minutes_per_product: 3, consumables: [{ item_id: itemId, quantity: 1 }] }; mock.delay = null; mock.held = false; mock.salePrice = 42; mock.catalogError = false; mock.savedCost = null; mock.useSavedCost = false; mock.catalogSource = "manual";
   mock.navigate.mockReset(); mock.from.mockReset(); mock.rpc.mockReset();
   mock.from.mockImplementation((table: string) => {
-    const data = table === "products" ? [{ id: productId, name: "Maçã", sku: "APPLE", sale_price: mock.salePrice }] : table === "printers" ? [{ id: "printer", name: "A1", power_watts: 100 }] : [{ id: itemId, name: "Caixa", unit: "un", avg_cost: 1 }];
+    const data = table === "products" ? [{ id: productId, name: "Maçã", sku: "APPLE", sale_price: mock.salePrice, ...(mock.useSavedCost ? {manual_cost_override:mock.savedCost,cost_estimate:mock.savedCost,catalog_details:{cost_source:"manual",base_cost:mock.savedCost}} : {}) }] : table === "printers" ? [{ id: "printer", name: "A1", power_watts: 100 }] : [{ id: itemId, name: "Caixa", unit: "un", avg_cost: 1 }];
     const builder = { select: () => builder, eq: () => builder, in: () => builder, order: () => builder, range: () => Promise.resolve({ data, error: table === "products" && mock.catalogError ? { message: "Catálogo indisponível" } : null }) };
     return builder;
   });
   mock.rpc.mockImplementation(async (name: string, args: Record<string, unknown>) => {
+    if (name === "product_catalog_cost") return { data: { product_id: productId, source: mock.catalogSource, complete: mock.savedCost != null, unit_cost: mock.savedCost, revision: "saved-cost-r1", missing: mock.savedCost == null ? ["Confirme o custo no cadastro."] : [] }, error: null };
+    if (name === "apply_saved_catalog_price") { mock.salePrice = args.p_unit_price as number; return {data:"catalog-acceptance-id",error:null}; }
     if (name === "product_channel_price_catalog") return { data: [], error: null };
     if (name === "channel_pricing_policy") return { data: { channel: args.p_channel, configured: true, revision: "channel-r1", assumptions: channelDefaults }, error: null };
     if (name === "pricing_settings") return { data: { machine_hour_cost: 5, energy_cost_kwh: 1, labor_cost_hour: 20, overhead_percent: 0, target_margin: 50, handling_minutes_per_plate: 2, assembly_minutes_per_product: 3, finishing_minutes_per_piece: 0, extras_cost_per_product: 0, printer_hour_costs: [], revision: "settings-1" }, error: null };
@@ -61,10 +63,10 @@ beforeEach(() => {
       return { data: preview(args.p_quantity as number, args.p_overrides as Record<string, unknown>), error: null };
     }
     if (name === "product_channel_pricing_preview") {
-      const context = args.p_cost_context as { quantity: number; overrides: Record<string, unknown> };
-      const unit = preview(context.quantity, context.overrides).breakdown.unit_cost;
+      const context = args.p_cost_context as { quantity: number; overrides: Record<string, unknown> } | null;
+      const unit = context ? preview(context.quantity, context.overrides).breakdown.unit_cost : mock.savedCost;
       const values = args.p_overrides as ChannelAssumptions;
-      return { data: { product_id: productId, channel: args.p_channel, quantity: args.p_quantity, complete: !mock.pending, missing: [], unit_cost: unit,
+      return { data: { product_id: productId, channel: args.p_channel, quantity: args.p_quantity, complete: context ? !mock.pending : mock.savedCost != null, missing: [], unit_cost: unit,
         cost_source: "simulation", cost_revision: "cost-r1", policy_revision: "channel-r1", revision: "channel-preview-r1", assumptions: values,
         policy: { channel: args.p_channel, configured: true, revision: "channel-r1", assumptions: channelDefaults }, cost_snapshot: { cost_context: context },
         result: unit == null ? null : priceChannel({ unitCost: unit, orderQuantity: args.p_quantity as number, commissionPercent: values.commission_percent!, taxPercent: values.tax_percent!,
@@ -78,6 +80,57 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("pricing from the saved product structure", () => {
+  it("shows the accepted catalog cost immediately while the old technical recipe remains explicitly incomplete",async()=>{
+    mock.pending=true;mock.useSavedCost=true;mock.savedCost=20.51;mount();
+    await waitFor(()=>expect(result().getByText("Custo por unidade").nextSibling).toHaveTextContent(brl(20.51)));
+    expect(screen.getByLabelText("Custo usado para precificar")).toHaveValue("catalog");
+    expect(screen.getByText(/Preço sugerido:/)).toHaveTextContent(brl(41.02));
+    expect(screen.getByText("Conferir cálculo da produção (a completar)").parentElement).not.toHaveAttribute("open");
+    expect(screen.getByRole("button",{name:"Salvar preço usando o custo cadastrado"})).toBeEnabled();
+    expect(mock.rpc.mock.calls.some(([name])=>/apply|save/.test(name))).toBe(false);
+    set("Custo usado para precificar","production");await waitFor(()=>expect(result().getByText("Custo por unidade").nextSibling).toHaveTextContent("Pendente"));
+    expect(screen.getByRole("button",{name:"Aplicar custo e preço ao cadastro"})).toBeDisabled();
+    set("Custo usado para precificar","catalog");expect(result().getByText("Custo por unidade").nextSibling).toHaveTextContent(brl(20.51));
+  });
+  it("saves only a reviewed sale price against the exact saved cost revision and refreshes the product price",async()=>{
+    mock.pending=true;mock.useSavedCost=true;mock.savedCost=20.51;mount();
+    const button=await screen.findByRole("button",{name:"Salvar preço usando o custo cadastrado"});await waitFor(()=>expect(button).toBeEnabled());
+    set("Quantidade de produtos prontos","3");set("Preço alvo por unidade (R$)","49.9");fireEvent.click(button);
+    await screen.findByText("Preço salvo. O custo já aceito foi preservado.");
+    expect(mock.rpc).toHaveBeenCalledWith("apply_saved_catalog_price",expect.objectContaining({p_product_id:productId,p_quantity:3,p_unit_price:49.9,p_expected_cost_revision:"saved-cost-r1"}));
+    expect(mock.rpc.mock.calls.some(([name])=>name==="apply_product_pricing")).toBe(false);
+    expect(result().getByText("Custo por unidade").nextSibling).toHaveTextContent(brl(20.51));
+    expect(screen.getByText(/Preço atual no cadastro:/)).toHaveTextContent(brl(49.9));
+  });
+  it("uses the accepted catalog cost for marketplace conditions without attaching an incomplete technical simulation",async()=>{
+    mock.pending=true;mock.useSavedCost=true;mock.savedCost=20.51;mount();
+    await waitFor(()=>expect(result().getByText("Custo por unidade").nextSibling).toHaveTextContent(brl(20.51)));
+    await chooseChannel();const button=screen.getByRole("button",{name:"Salvar preço deste canal"});await waitFor(()=>expect(button).toBeEnabled());
+    fireEvent.click(button);await screen.findByText("Preço do canal salvo. O preço base do produto foi preservado.");
+    const reads=mock.rpc.mock.calls.filter(([name])=>name==="product_channel_pricing_preview");expect(reads.length).toBeGreaterThan(0);
+    expect(reads.every(([,args])=>args.p_cost_context===null)).toBe(true);
+    const write=mock.rpc.mock.calls.find(([name])=>name==="apply_product_channel_pricing");expect(write?.[1].p_cost_context).toBeNull();
+  });
+  it("keeps an unknown saved cost pending and refuses a source that changed to composition",async()=>{
+    mock.pending=true;mock.useSavedCost=true;mock.savedCost=20.51;mock.catalogSource="composition";mount();
+    await screen.findByText(/A origem do custo mudou/);
+    expect(result().getByText("Custo por unidade").nextSibling).toHaveTextContent("Pendente");expect(screen.getByRole("button",{name:"Salvar preço usando o custo cadastrado"})).toBeDisabled();
+  });
+  it("moves to the production calculation when physical preparation costs are edited",async()=>{
+    mock.pending=true;mock.useSavedCost=true;mock.savedCost=20.51;mount();
+    await waitFor(()=>expect(result().getByText("Custo por unidade").nextSibling).toHaveTextContent(brl(20.51)));
+    openAdvanced("Custos e tempos");set("Montagem por produto completo (min)","4");
+    expect(screen.getByLabelText("Custo usado para precificar")).toHaveValue("production");
+    await waitFor(()=>expect(result().getByText("Custo por unidade").nextSibling).toHaveTextContent("Pendente"));
+    expect(screen.getByRole("button",{name:"Aplicar custo e preço ao cadastro"})).toBeDisabled();
+  });
+  it("does not replace a cleared saved cost with a different technical estimate or invent a zero",async()=>{
+    mock.useSavedCost=true;mock.savedCost=20.51;const original=mock.rpc.getMockImplementation()!;
+    mock.rpc.mockImplementation((name:string,args:Record<string,unknown>)=>name==="product_catalog_cost"?Promise.resolve({data:{product_id:productId,source:"manual",complete:false,unit_cost:null,revision:"cleared-cost",missing:["Confirme o custo no cadastro."]},error:null}):original(name,args));
+    mount();await screen.findByText("Confirme o custo no cadastro.");
+    expect(result().getByText("Custo por unidade").nextSibling).toHaveTextContent("Pendente");
+    expect(screen.getByRole("button",{name:"Salvar preço usando o custo cadastrado"})).toBeDisabled();
+  });
   it("starts with quantity and result before closed advanced controls", async () => {
     mount();
     const breakdown = await screen.findByTestId("product-pricing-breakdown");
