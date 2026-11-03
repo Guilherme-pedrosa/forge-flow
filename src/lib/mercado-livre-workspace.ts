@@ -21,14 +21,25 @@ export const conversationsSchema = z.object({ ...page, items: z.array(z.object({
 export type MercadoLivreConversations = z.infer<typeof conversationsSchema>;
 const attributeValue = z.object({ id, name: txt });
 export const publicationDraftSchema = z.object({ category_id: id.optional(), category_confirmed: z.boolean().optional(), listing_type_id: z.enum(["gold_special", "gold_pro"]).optional(),
-  attributes: z.array(z.object({ id, value_id: id.optional(), value_name: txt.optional() })).optional(), shipping: z.object({ mode: z.literal("me2"), free_shipping: z.boolean(), local_pick_up: z.boolean() }).optional() });
+  mode: z.enum(["own", "catalog", "link"]).optional(), catalog_product_id: id.optional(), reference_item_id: id.optional(),
+  title: z.string().max(1000).optional(), description: txt.optional(), picture_urls: z.array(z.string().url().max(2048)).max(12).optional(), gtin: z.string().max(32).optional(), without_gtin: z.boolean().optional(),
+  attributes: z.array(z.object({ id, value_id: id.optional(), value_name: txt.optional() })).max(100).optional(), shipping: z.object({ mode: z.literal("me2"), free_shipping: z.boolean(), local_pick_up: z.boolean() }).optional() });
 export type MercadoLivrePublicationDraft = z.infer<typeof publicationDraftSchema>;
+const signedAmount = z.number().finite().nullable();
+export const publicationQuoteSchema = z.object({ revision, forge_revision: revision, quoted_at: id, account_id: id, product_id: id, seller_id: id,
+  unit_cost: amount, cost_revision: id, policy_revision: id, unit_price: amount, category_id: nullable,
+  quotes: z.array(z.object({ listing_type_id: z.enum(["gold_special", "gold_pro"]), official_revision: revision, commission_amount: amount, commission_percent: amount, fixed_fee: amount,
+    shipping_cost: amount, shipping_coverage: nullable, receives: signedAmount, profit: signedAmount, margin_percent: signedAmount, tax_provision: amount,
+    complete: z.boolean(), issues: z.array(txt).max(100) })).max(2),
+  assumptions: z.object({ tax_provision_percent: amount, minimum_margin_percent: amount }) });
+export type MercadoLivrePublicationQuote = z.infer<typeof publicationQuoteSchema>;
 export const publicationSchema = z.object({ revision, forge_revision: revision, publication_sku: id, complete: z.boolean(), product_id: id, account_id: id, seller_id: id,
   product: z.object({ id, name: txt, sku: nullable, description: txt, photos: z.array(z.object({ url: txt, width: z.number(), height: z.number() })), material_name: nullable,
     dimensions: z.unknown().nullable(), shipping_package: z.unknown().nullable() }), price: z.object({ unit_price: amount, currency: nullable, acceptance_id: nullable }), stock: z.object({ available: amount }),
   category: z.object({ id, name: txt }).nullable(), category_suggestions: z.array(z.object({ category_id: id, category_name: txt, domain_name: nullable.optional() })),
   attributes: z.array(z.object({ id, name: txt, required: z.boolean(), value_type: nullable, values: z.array(attributeValue) })),
   resolved_attributes: z.array(z.object({ id, value_id: txt.optional(), value_name: txt.optional() })), draft: publicationDraftSchema,
+  mode: z.enum(["own", "catalog", "link"]).optional(), description_required: z.boolean().optional(), title_field: z.enum(["title", "family_name"]).optional(), pricing_quote: publicationQuoteSchema.nullable().optional(),
   missing: z.array(z.object({ field: txt, message: txt })), issues: z.array(txt), manual_confirmation_required: z.literal(true) });
 export type MercadoLivrePublication = z.infer<typeof publicationSchema>;
 const receipt = z.object({ confirmed: z.literal(true), action: txt, request_id: id, item_id: id, item: listingDetailSchema, accepted_revision: revision, replayed: z.boolean(), linked: z.boolean().optional() });
@@ -48,6 +59,11 @@ async function call<T>(schema: z.ZodType<T, z.ZodTypeDef, unknown>, binding: Int
       || result.item_id !== item.id || action !== "publication_commit" && result.item_id !== payload.item_id || action === "publication_commit" && result.linked !== true) mismatch();
   }
   if (action === "publication_prepare" && (result.seller_id !== seller || result.account_id !== payload.account_id || result.product_id !== payload.product_id)) mismatch();
+  if (action === "publication_quote" && (result.seller_id !== seller || result.account_id !== payload.account_id || result.product_id !== payload.product_id
+    || payload.unit_price !== undefined && result.unit_price !== payload.unit_price)) mismatch();
+  if (action === "publication_quote_accept" && (result.seller_id !== seller || result.account_id !== payload.account_id || result.product_id !== payload.product_id
+    || result.request_id !== payload.request_id || result.quote_revision !== payload.expected_quote_revision || result.unit_price !== payload.unit_price
+    || result.listing_type_id !== payload.listing_type_id)) mismatch();
   if (action === "message_read" && (result.seller_id !== seller || result.pack_id !== payload.pack_id)) mismatch();
   if (action === "message_mark_read" && result.pack_id !== payload.pack_id) mismatch();
   if (action === "questions_list" && (result.items as { seller_id: string }[]).some(item => item.seller_id !== seller)) mismatch();
@@ -70,8 +86,26 @@ export const prepareMercadoLivrePublication = (binding: IntegradorBridgeBinding,
   call(publicationSchema, binding, "publication_prepare", seller, { account_id: accountId, product_id: productId, draft }, context);
 export const publishMercadoLivreProduct = (binding: IntegradorBridgeBinding, seller: string, accountId: string, productId: string, draft: MercadoLivrePublicationDraft, expected: string, requestId: string, context: Context) =>
   call(receipt, binding, "publication_commit", seller, { account_id: accountId, product_id: productId, draft, expected_revision: expected, request_id: requestId, acknowledge_marketplace_write: true }, context);
+const categoryPath = z.array(z.object({ id, name: txt })).max(30);
+const categoriesSchema = z.object({ items: z.array(z.object({ id, name: txt, domain_name: nullable.optional(), path: z.union([categoryPath, txt]).optional(), leaf: z.boolean().nullable().optional() })).max(1000), path: categoryPath.optional() });
 export const searchMercadoLivreCategories = (binding: IntegradorBridgeBinding, seller: string, q: string, context: Context) =>
-  call(z.object({ items: z.array(z.object({ id, name: txt, domain_name: nullable.optional() })).max(20) }), binding, "publication_categories", seller, { q }, context);
+  call(categoriesSchema, binding, "publication_categories", seller, { q }, context);
+export const browseMercadoLivreCategories = (binding: IntegradorBridgeBinding, seller: string, categoryId: string | undefined, context: Context) =>
+  call(categoriesSchema, binding, "publication_categories", seller, categoryId ? { category_id: categoryId } : {}, context);
+export const searchMercadoLivreCatalog = (binding: IntegradorBridgeBinding, seller: string, q: string, context: Context) =>
+  call(z.object({ items: z.array(z.object({ id, name: txt, domain_id: nullable, category_id: nullable, permalink: nullable,
+    attributes: z.array(z.object({ id, name: txt, value_name: nullable })).max(100) })).max(50) }), binding, "publication_catalog_search", seller, { q }, context);
+export const readMercadoLivrePublicationReference = (binding: IntegradorBridgeBinding, seller: string, reference: string, context: Context) =>
+  call(z.object({ mode: z.enum(["own", "catalog"]), catalog_product_id: nullable, reference_item_id: nullable, title: txt, description: nullable, category_id: nullable,
+    pictures: z.array(z.object({ url: txt })).max(20), attributes: z.array(z.object({ id, value_id: txt.optional(), value_name: txt.optional() })).max(100), issues: z.array(txt).max(100) }),
+  binding, "publication_reference", seller, { reference }, context);
+export const quoteMercadoLivrePublication = (binding: IntegradorBridgeBinding, seller: string, accountId: string, productId: string, draft: MercadoLivrePublicationDraft, context: Context, unitPrice?: number) =>
+  call(publicationQuoteSchema, binding, "publication_quote", seller, { account_id: accountId, product_id: productId, draft, ...(unitPrice !== undefined ? { unit_price: unitPrice } : {}) }, context);
+export const acceptMercadoLivrePublicationQuote = (binding: IntegradorBridgeBinding, seller: string, accountId: string, productId: string, draft: MercadoLivrePublicationDraft,
+  unitPrice: number, listingTypeId: "gold_special" | "gold_pro", expectedQuoteRevision: string, requestId: string, context: Context) =>
+  call(z.object({ confirmed: z.literal(true), account_id: id, product_id: id, seller_id: id, acceptance_id: id, unit_price: z.number().finite().positive(),
+    listing_type_id: z.enum(["gold_special", "gold_pro"]), request_id: id, quote_revision: revision, replayed: z.boolean() }), binding, "publication_quote_accept", seller,
+  { account_id: accountId, product_id: productId, draft, unit_price: unitPrice, listing_type_id: listingTypeId, expected_quote_revision: expectedQuoteRevision, request_id: requestId, acknowledge_marketplace_write: true }, context);
 export type MercadoLivreProductDetails = { name: string; description: string; dimensions: { length_mm: number | null; width_mm: number | null; height_mm: number | null };
   shipping_package: { length_cm: number | null; width_cm: number | null; height_cm: number | null; weight_grams: number | null }; photos: string[] };
 export async function saveMercadoLivreProductDetails(accountId: string, productId: string, changes: MercadoLivreProductDetails, expected: string, requestId: string) {
