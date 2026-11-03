@@ -30,6 +30,7 @@ export const publicationQuoteSchema = z.object({ revision, forge_revision: revis
   unit_cost: amount, cost_revision: id, policy_revision: id, unit_price: amount, category_id: nullable,
   quotes: z.array(z.object({ listing_type_id: z.enum(["gold_special", "gold_pro"]), official_revision: revision, commission_amount: amount, commission_percent: amount, fixed_fee: amount,
     shipping_cost: amount, shipping_coverage: nullable, receives: signedAmount, profit: signedAmount, margin_percent: signedAmount, tax_provision: amount,
+    advertising_cost: amount.optional(), other_cost: amount.optional(),
     complete: z.boolean(), issues: z.array(txt).max(100) })).max(2),
   assumptions: z.object({ tax_provision_percent: amount, minimum_margin_percent: amount }) });
 export type MercadoLivrePublicationQuote = z.infer<typeof publicationQuoteSchema>;
@@ -40,6 +41,8 @@ export const publicationSchema = z.object({ revision, forge_revision: revision, 
   attributes: z.array(z.object({ id, name: txt, required: z.boolean(), value_type: nullable, values: z.array(attributeValue) })),
   resolved_attributes: z.array(z.object({ id, value_id: txt.optional(), value_name: txt.optional() })), draft: publicationDraftSchema,
   mode: z.enum(["own", "catalog", "link"]).optional(), description_required: z.boolean().optional(), title_field: z.enum(["title", "family_name"]).optional(), pricing_quote: publicationQuoteSchema.nullable().optional(),
+  selected_pictures: z.array(z.object({ url: txt, width: z.number(), height: z.number() })).max(12).optional(),
+  available_pictures: z.array(z.object({ url: txt })).max(100).optional(),
   missing: z.array(z.object({ field: txt, message: txt })), issues: z.array(txt), manual_confirmation_required: z.literal(true) });
 export type MercadoLivrePublication = z.infer<typeof publicationSchema>;
 const receipt = z.object({ confirmed: z.literal(true), action: txt, request_id: id, item_id: id, item: listingDetailSchema, accepted_revision: revision, replayed: z.boolean(), linked: z.boolean().optional() });

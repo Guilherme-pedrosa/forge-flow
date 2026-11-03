@@ -36,13 +36,23 @@
     "revision": "cbfde05928692cb1a3607d350f53cfae3ba44a9576cfb51825ce1c0c315de704"
   },
   "publication_prepare": {
-    "revision": "e0281955dfeb138a6cc2dc802036c09d763c0ed3afefb38c4580d1bff8b06b3d",
+    "revision": "25e5121c0a5934e9dd0c193f1fa99a5781d7c60e303a9337a72b646cd4ca06f7",
     "forge_revision": "1111111111111111111111111111111111111111111111111111111111111111",
     "publication_sku": "PRES-1",
+    "mode": "own",
+    "title_field": "family_name",
     "complete": true,
     "product_id": "98000000-0000-4000-8000-000000000005",
     "account_id": "98000000-0000-4000-8000-000000000004",
     "seller_id": "1000000001",
+    "title": "Presépio Sagrada Família",
+    "selected_pictures": [
+      {
+        "url": "https://images.example.test/forge.jpg",
+        "width": 800,
+        "height": 800
+      }
+    ],
     "product": {
       "id": "98000000-0000-4000-8000-000000000005",
       "name": "Presépio Sagrada Família",
@@ -68,6 +78,76 @@
         "weight_grams": 180
       }
     },
+    "available_pictures": [
+      {
+        "url": "https://images.example.test/forge.jpg"
+      }
+    ],
+    "pricing_quote": {
+      "account_id": "98000000-0000-4000-8000-000000000004",
+      "product_id": "98000000-0000-4000-8000-000000000005",
+      "seller_id": "1000000001",
+      "forge_revision": "1111111111111111111111111111111111111111111111111111111111111111",
+      "unit_cost": 10,
+      "cost_revision": "cccccccccccccccccccccccccccccccc",
+      "policy_revision": "dddddddddddddddddddddddddddddddd",
+      "unit_price": 49.9,
+      "category_id": "MLB123",
+      "quotes": [
+        {
+          "listing_type_id": "gold_special",
+          "commission_amount": 0,
+          "commission_percent": 0,
+          "fixed_fee": 0,
+          "shipping_cost": 0,
+          "shipping_coverage": "Todo o país",
+          "receives": 49.9,
+          "profit": 39.9,
+          "margin_percent": 79.96,
+          "tax_provision": 0,
+          "advertising_cost": 0,
+          "other_cost": 0,
+          "official_revision": "a66a7acf64ac53e05c2005c70cfa8a126eb0fae7382c90e2fd8ce4f55acfc721",
+          "shipping_context": {
+            "sellerId": "1000000001",
+            "mode": "me2",
+            "logisticType": "drop_off"
+          },
+          "billable_weight_grams": 180,
+          "complete": true,
+          "issues": []
+        },
+        {
+          "listing_type_id": "gold_pro",
+          "commission_amount": 0,
+          "commission_percent": 0,
+          "fixed_fee": 0,
+          "shipping_cost": 0,
+          "shipping_coverage": "Todo o país",
+          "receives": 49.9,
+          "profit": 39.9,
+          "margin_percent": 79.96,
+          "tax_provision": 0,
+          "advertising_cost": 0,
+          "other_cost": 0,
+          "official_revision": "ee0e23116f161d2a80376b03ab1f0d675f004af1705dbab2b17379014bd10025",
+          "shipping_context": {
+            "sellerId": "1000000001",
+            "mode": "me2",
+            "logisticType": "drop_off"
+          },
+          "billable_weight_grams": 180,
+          "complete": true,
+          "issues": []
+        }
+      ],
+      "assumptions": {
+        "tax_provision_percent": 0,
+        "minimum_margin_percent": 0
+      },
+      "revision": "15b408e698121052e683d6b79e44f2bcf748465e8946e2907ba4b9acee19494d",
+      "quoted_at": "2026-11-03T01:33:27.550Z"
+    },
     "price": {
       "unit_price": 49.9,
       "currency": "BRL",
@@ -80,6 +160,7 @@
       "id": "MLB123",
       "name": "Enfeites decorativos"
     },
+    "catalog_product": null,
     "category_suggestions": [],
     "attributes": [
       {
@@ -144,10 +225,13 @@
     "manual_confirmation_required": true
   },
   "categories": {
+    "path": [],
     "items": [
       {
         "id": "MLB123",
         "name": "Enfeites decorativos",
+        "path": "Enfeites decorativos",
+        "leaf": true,
         "domain_name": null
       }
     ]
@@ -162,8 +246,8 @@
         "id": "MLB1234567",
         "seller_id": "1000000001",
         "title": "Presépio Sagrada Família",
-        "family_name": null,
-        "title_field": "title",
+        "family_name": "Presépio Sagrada Família",
+        "title_field": "family_name",
         "description": "Presépio decorativo da Sagrada Família, produzido em PLA.",
         "status": "active",
         "sub_status": [],
@@ -180,16 +264,18 @@
         "pictures": []
       },
       "editable": {
-        "title": true,
+        "title": false,
         "description": true,
         "pause": true,
         "activate": false,
-        "reasons": []
+        "reasons": [
+          "user_product_family_requires_review"
+        ]
       },
-      "revision": "4f6a70c69335ebbfdc9fca945389dca7fdd916112c24de0b9c80f63dcbbbfbd9"
+      "revision": "794c672904ef147bb6146fc7118c5da8f68b5e72ecec5e1ecad2eede22113e22"
     },
     "linked": true,
-    "accepted_revision": "e0281955dfeb138a6cc2dc802036c09d763c0ed3afefb38c4580d1bff8b06b3d",
+    "accepted_revision": "25e5121c0a5934e9dd0c193f1fa99a5781d7c60e303a9337a72b646cd4ca06f7",
     "replayed": false
   },
   "questions": {
@@ -236,5 +322,542 @@
     "target_id": "20000000000001",
     "status": "pending_review",
     "replayed": false
+  },
+  "publication_own_prepare": {
+    "revision": "d37e05d9285194358df1e5a9bb437dd6c96a5274d9f086cf4c678002c63b7079",
+    "forge_revision": "2222222222222222222222222222222222222222222222222222222222222222",
+    "publication_sku": "FORGE-94000000-0000-4000-8000-000000000005",
+    "mode": "own",
+    "title_field": "family_name",
+    "complete": true,
+    "product_id": "94000000-0000-4000-8000-000000000005",
+    "account_id": "94000000-0000-4000-8000-000000000004",
+    "seller_id": "1000000001",
+    "title": "Presépio Elevare",
+    "selected_pictures": [
+      {
+        "url": "https://gaomleftwxpzjivrnzjk.supabase.co/storage/v1/object/public/product-photos/fixture.jpg",
+        "width": 800,
+        "height": 800
+      }
+    ],
+    "product": {
+      "id": "94000000-0000-4000-8000-000000000005",
+      "name": "Presépio Elevare",
+      "sku": null,
+      "description": "Descrição original do cadastro.",
+      "photos": [
+        {
+          "url": "https://gaomleftwxpzjivrnzjk.supabase.co/storage/v1/object/public/product-photos/fixture.jpg",
+          "width": 800,
+          "height": 800
+        }
+      ],
+      "material_name": "PLA",
+      "dimensions": {},
+      "shipping_package": {
+        "length_cm": 12,
+        "width_cm": 8,
+        "height_cm": 15,
+        "weight_grams": 180
+      }
+    },
+    "available_pictures": [
+      {
+        "url": "https://gaomleftwxpzjivrnzjk.supabase.co/storage/v1/object/public/product-photos/fixture.jpg"
+      }
+    ],
+    "pricing_quote": {
+      "account_id": "94000000-0000-4000-8000-000000000004",
+      "product_id": "94000000-0000-4000-8000-000000000005",
+      "seller_id": "1000000001",
+      "forge_revision": "2222222222222222222222222222222222222222222222222222222222222222",
+      "unit_cost": 10,
+      "cost_revision": "cccccccccccccccccccccccccccccccc",
+      "policy_revision": "dddddddddddddddddddddddddddddddd",
+      "unit_price": 100,
+      "category_id": "MLB123",
+      "quotes": [
+        {
+          "listing_type_id": "gold_special",
+          "commission_amount": 15,
+          "commission_percent": 10,
+          "fixed_fee": 5,
+          "shipping_cost": 10,
+          "shipping_coverage": "Todo o país",
+          "receives": 75,
+          "profit": 52,
+          "margin_percent": 52,
+          "tax_provision": 10,
+          "advertising_cost": 2,
+          "other_cost": 1,
+          "official_revision": "59a967585f2caaa9c0c4aefb566fc58a66d1c89bed22d69c1582d892beb1eee3",
+          "shipping_context": {
+            "sellerId": "1000000001",
+            "mode": "me2",
+            "logisticType": "drop_off"
+          },
+          "billable_weight_grams": 180,
+          "complete": true,
+          "issues": []
+        },
+        {
+          "listing_type_id": "gold_pro",
+          "commission_amount": 20,
+          "commission_percent": 15,
+          "fixed_fee": 5,
+          "shipping_cost": 10,
+          "shipping_coverage": "Todo o país",
+          "receives": 70,
+          "profit": 47,
+          "margin_percent": 47,
+          "tax_provision": 10,
+          "advertising_cost": 2,
+          "other_cost": 1,
+          "official_revision": "48995e8abe2cc27773bf68cee8fb4fad24c6ae20cfb012b62e7aece6dc6a6378",
+          "shipping_context": {
+            "sellerId": "1000000001",
+            "mode": "me2",
+            "logisticType": "drop_off"
+          },
+          "billable_weight_grams": 180,
+          "complete": true,
+          "issues": []
+        }
+      ],
+      "assumptions": {
+        "tax_provision_percent": 10,
+        "minimum_margin_percent": 20
+      },
+      "revision": "1390606d906e2620e53de20b37167716766abd1170dcd551ea97c17951ea87a9",
+      "quoted_at": "2026-11-03T01:33:41.307Z"
+    },
+    "price": {
+      "unit_price": 100,
+      "currency": "BRL",
+      "acceptance_id": "94000000-0000-4000-8000-000000000090"
+    },
+    "stock": {
+      "available": 3
+    },
+    "category": {
+      "id": "MLB123",
+      "name": "Presépios"
+    },
+    "catalog_product": null,
+    "category_suggestions": [],
+    "attributes": [
+      {
+        "id": "BRAND",
+        "name": "Marca",
+        "required": true,
+        "value_type": null,
+        "values": [
+          {
+            "id": "GENERIC",
+            "name": "Sem marca"
+          }
+        ]
+      },
+      {
+        "id": "SELLER_SKU",
+        "name": "Referência",
+        "required": false,
+        "value_type": null,
+        "values": []
+      },
+      {
+        "id": "MATERIAL",
+        "name": "Material",
+        "required": false,
+        "value_type": null,
+        "values": [
+          {
+            "id": "PLASTIC",
+            "name": "Plástico"
+          }
+        ]
+      },
+      {
+        "id": "SELLER_PACKAGE_HEIGHT",
+        "name": "SELLER_PACKAGE_HEIGHT",
+        "required": false,
+        "value_type": null,
+        "values": []
+      }
+    ],
+    "resolved_attributes": [
+      {
+        "id": "BRAND",
+        "value_id": "GENERIC"
+      },
+      {
+        "id": "SELLER_SKU",
+        "value_name": "FORGE-94000000-0000-4000-8000-000000000005"
+      },
+      {
+        "id": "SELLER_PACKAGE_HEIGHT",
+        "value_name": "15 cm"
+      }
+    ],
+    "draft": {
+      "mode": "own",
+      "category_id": "MLB123",
+      "category_confirmed": true,
+      "listing_type_id": "gold_special",
+      "attributes": [
+        {
+          "id": "BRAND",
+          "value_id": "GENERIC"
+        }
+      ],
+      "shipping": {
+        "mode": "me2",
+        "free_shipping": false,
+        "local_pick_up": false
+      }
+    },
+    "missing": [],
+    "issues": [],
+    "manual_confirmation_required": true
+  },
+  "publication_catalog_prepare": {
+    "revision": "94d5c486cb31f94efe029e6c079f9e84741642ccb83291d4441afa90d8f3761a",
+    "forge_revision": "2222222222222222222222222222222222222222222222222222222222222222",
+    "publication_sku": "FORGE-94000000-0000-4000-8000-000000000005",
+    "mode": "catalog",
+    "title_field": "title",
+    "complete": true,
+    "product_id": "94000000-0000-4000-8000-000000000005",
+    "account_id": "94000000-0000-4000-8000-000000000004",
+    "seller_id": "1000000001",
+    "title": "Presépio Elevare",
+    "selected_pictures": [
+      {
+        "url": "https://http2.mlstatic.com/catalog.jpg",
+        "width": 0,
+        "height": 0
+      }
+    ],
+    "product": {
+      "id": "94000000-0000-4000-8000-000000000005",
+      "name": "Presépio Elevare",
+      "sku": null,
+      "description": "Descrição original do cadastro.",
+      "photos": [
+        {
+          "url": "https://gaomleftwxpzjivrnzjk.supabase.co/storage/v1/object/public/product-photos/fixture.jpg",
+          "width": 0,
+          "height": 0
+        }
+      ],
+      "material_name": "PLA",
+      "dimensions": {},
+      "shipping_package": {
+        "length_cm": 12,
+        "width_cm": 8,
+        "height_cm": 15,
+        "weight_grams": 180
+      }
+    },
+    "available_pictures": [
+      {
+        "url": "https://gaomleftwxpzjivrnzjk.supabase.co/storage/v1/object/public/product-photos/fixture.jpg"
+      }
+    ],
+    "pricing_quote": {
+      "account_id": "94000000-0000-4000-8000-000000000004",
+      "product_id": "94000000-0000-4000-8000-000000000005",
+      "seller_id": "1000000001",
+      "forge_revision": "2222222222222222222222222222222222222222222222222222222222222222",
+      "unit_cost": 10,
+      "cost_revision": "cccccccccccccccccccccccccccccccc",
+      "policy_revision": "dddddddddddddddddddddddddddddddd",
+      "unit_price": 100,
+      "category_id": "MLB123",
+      "quotes": [
+        {
+          "listing_type_id": "gold_special",
+          "commission_amount": 15,
+          "commission_percent": 10,
+          "fixed_fee": 5,
+          "shipping_cost": 10,
+          "shipping_coverage": "Todo o país",
+          "receives": 75,
+          "profit": 52,
+          "margin_percent": 52,
+          "tax_provision": 10,
+          "advertising_cost": 2,
+          "other_cost": 1,
+          "official_revision": "59a967585f2caaa9c0c4aefb566fc58a66d1c89bed22d69c1582d892beb1eee3",
+          "shipping_context": {
+            "sellerId": "1000000001",
+            "mode": "me2",
+            "logisticType": "drop_off"
+          },
+          "billable_weight_grams": 180,
+          "complete": true,
+          "issues": []
+        },
+        {
+          "listing_type_id": "gold_pro",
+          "commission_amount": 20,
+          "commission_percent": 15,
+          "fixed_fee": 5,
+          "shipping_cost": 10,
+          "shipping_coverage": "Todo o país",
+          "receives": 70,
+          "profit": 47,
+          "margin_percent": 47,
+          "tax_provision": 10,
+          "advertising_cost": 2,
+          "other_cost": 1,
+          "official_revision": "48995e8abe2cc27773bf68cee8fb4fad24c6ae20cfb012b62e7aece6dc6a6378",
+          "shipping_context": {
+            "sellerId": "1000000001",
+            "mode": "me2",
+            "logisticType": "drop_off"
+          },
+          "billable_weight_grams": 180,
+          "complete": true,
+          "issues": []
+        }
+      ],
+      "assumptions": {
+        "tax_provision_percent": 10,
+        "minimum_margin_percent": 20
+      },
+      "revision": "1390606d906e2620e53de20b37167716766abd1170dcd551ea97c17951ea87a9",
+      "quoted_at": "2026-11-03T01:33:41.308Z"
+    },
+    "price": {
+      "unit_price": 100,
+      "currency": "BRL",
+      "acceptance_id": "94000000-0000-4000-8000-000000000090"
+    },
+    "stock": {
+      "available": 3
+    },
+    "category": {
+      "id": "MLB123",
+      "name": "Presépios"
+    },
+    "catalog_product": {
+      "id": "MLB999",
+      "name": "Presépio oficial",
+      "status": "active",
+      "domain_id": null,
+      "category_id": "MLB123",
+      "attributes": [
+        {
+          "id": "BRAND",
+          "name": "Marca",
+          "value_id": "GENERIC",
+          "value_name": "Sem marca"
+        }
+      ],
+      "pictures": [
+        {
+          "url": "https://http2.mlstatic.com/catalog.jpg"
+        }
+      ],
+      "permalink": "https://www.mercadolivre.com.br/p/MLB999"
+    },
+    "category_suggestions": [],
+    "attributes": [
+      {
+        "id": "BRAND",
+        "name": "Marca",
+        "required": false,
+        "value_type": null,
+        "values": [
+          {
+            "id": "GENERIC",
+            "name": "Sem marca"
+          }
+        ]
+      },
+      {
+        "id": "SELLER_SKU",
+        "name": "Referência",
+        "required": false,
+        "value_type": null,
+        "values": []
+      },
+      {
+        "id": "MATERIAL",
+        "name": "Material",
+        "required": false,
+        "value_type": null,
+        "values": [
+          {
+            "id": "PLASTIC",
+            "name": "Plástico"
+          }
+        ]
+      },
+      {
+        "id": "SELLER_PACKAGE_HEIGHT",
+        "name": "SELLER_PACKAGE_HEIGHT",
+        "required": false,
+        "value_type": null,
+        "values": []
+      }
+    ],
+    "resolved_attributes": [
+      {
+        "id": "SELLER_SKU",
+        "value_name": "FORGE-94000000-0000-4000-8000-000000000005"
+      }
+    ],
+    "draft": {
+      "mode": "catalog",
+      "category_id": "MLB123",
+      "category_confirmed": true,
+      "listing_type_id": "gold_special",
+      "attributes": [],
+      "shipping": {
+        "mode": "me2",
+        "free_shipping": false,
+        "local_pick_up": false
+      },
+      "catalog_product_id": "MLB999"
+    },
+    "missing": [],
+    "issues": [],
+    "manual_confirmation_required": true
+  },
+  "publication_quote": {
+    "account_id": "94000000-0000-4000-8000-000000000004",
+    "product_id": "94000000-0000-4000-8000-000000000005",
+    "seller_id": "1000000001",
+    "forge_revision": "1111111111111111111111111111111111111111111111111111111111111111",
+    "unit_cost": 10,
+    "cost_revision": "cccccccccccccccccccccccccccccccc",
+    "policy_revision": "dddddddddddddddddddddddddddddddd",
+    "unit_price": 100,
+    "category_id": "MLB123",
+    "quotes": [
+      {
+        "listing_type_id": "gold_special",
+        "commission_amount": 15,
+        "commission_percent": 10,
+        "fixed_fee": 5,
+        "shipping_cost": 10,
+        "shipping_coverage": "Todo o país",
+        "receives": 75,
+        "profit": 52,
+        "margin_percent": 52,
+        "tax_provision": 10,
+        "advertising_cost": 2,
+        "other_cost": 1,
+        "official_revision": "59a967585f2caaa9c0c4aefb566fc58a66d1c89bed22d69c1582d892beb1eee3",
+        "shipping_context": {
+          "sellerId": "1000000001",
+          "mode": "me2",
+          "logisticType": "drop_off"
+        },
+        "billable_weight_grams": 180,
+        "complete": true,
+        "issues": []
+      },
+      {
+        "listing_type_id": "gold_pro",
+        "commission_amount": 20,
+        "commission_percent": 15,
+        "fixed_fee": 5,
+        "shipping_cost": 10,
+        "shipping_coverage": "Todo o país",
+        "receives": 70,
+        "profit": 47,
+        "margin_percent": 47,
+        "tax_provision": 10,
+        "advertising_cost": 2,
+        "other_cost": 1,
+        "official_revision": "48995e8abe2cc27773bf68cee8fb4fad24c6ae20cfb012b62e7aece6dc6a6378",
+        "shipping_context": {
+          "sellerId": "1000000001",
+          "mode": "me2",
+          "logisticType": "drop_off"
+        },
+        "billable_weight_grams": 180,
+        "complete": true,
+        "issues": []
+      }
+    ],
+    "assumptions": {
+      "tax_provision_percent": 10,
+      "minimum_margin_percent": 20
+    },
+    "revision": "3b84ac51fbeca58246a151cfb225e104fcb796071767c828ddc5d77cd7e07a8a",
+    "quoted_at": "2026-11-03T01:33:41.306Z"
+  },
+  "accepted_receipt": {
+    "accepted": true,
+    "acceptance_id": "94000000-0000-4000-8000-000000000090",
+    "quote_revision": "3b84ac51fbeca58246a151cfb225e104fcb796071767c828ddc5d77cd7e07a8a",
+    "replayed": false,
+    "confirmed": true,
+    "bridge_id": "94000000-0000-4000-8000-000000000002",
+    "account_id": "94000000-0000-4000-8000-000000000004",
+    "product_id": "94000000-0000-4000-8000-000000000005",
+    "seller_id": "1000000001",
+    "listing_type_id": "gold_special",
+    "unit_price": 100,
+    "expected_quote_revision": "3b84ac51fbeca58246a151cfb225e104fcb796071767c828ddc5d77cd7e07a8a",
+    "request_id": "94000000-0000-4000-8000-000000000080"
+  },
+  "categories_root": {
+    "path": [],
+    "items": [
+      {
+        "id": "MLB1",
+        "name": "Casa",
+        "path": "Casa",
+        "leaf": false
+      }
+    ]
+  },
+  "categories_leaf": {
+    "path": [
+      {
+        "id": "MLB1",
+        "name": "Casa"
+      },
+      {
+        "id": "MLB123",
+        "name": "Presépios"
+      }
+    ],
+    "items": [
+      {
+        "id": "MLB123",
+        "name": "Presépios",
+        "path": "Casa > Presépios",
+        "leaf": true
+      }
+    ]
+  },
+  "reference": {
+    "mode": "catalog",
+    "catalog_product_id": "MLB999",
+    "reference_item_id": null,
+    "title": "Presépio oficial",
+    "description": null,
+    "category_id": "MLB123",
+    "pictures": [
+      {
+        "url": "https://http2.mlstatic.com/catalog.jpg"
+      }
+    ],
+    "attributes": [
+      {
+        "id": "BRAND",
+        "name": "Marca",
+        "value_id": "GENERIC",
+        "value_name": "Sem marca"
+      }
+    ],
+    "issues": []
   }
 }
