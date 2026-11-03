@@ -42,3 +42,12 @@ Fontes primárias da versão usada: [volume total, torre e flush](https://github
 
 
 Em 02/11/2026, o conector instalado foi exercitado pelo protocolo binário real, com download dos blocos e conferência de SHA-256: cubo A1, 3,63 g / 1.351 s; cubo A2L, 3,57 g / 1.355 s; projeto sintético de duas cores na A2L, 60,92 g / 12.734 s. Cada processo encerrou com código zero e sem arquivos de trabalho restantes. Esses exemplos validam o percurso técnico; não substituem o fatiamento do produto real do operador.
+
+
+## Link MakerWorld até o motor local
+
+As telas de precificação e de produto oferecem **Baixar projeto e fatiar** quando a referência contém uma URL pública 3MF compatível do CDN oficial. Havendo vários arquivos, o operador escolhe um. O download é sob demanda, limitado a 64 MB e 30 segundos, sem cookies, credenciais, redirecionamentos ou proxy. O projeto segue para o motor instalado; não é necessário abrir a interface do Bambu Studio.
+
+A API pública pode informar o nome do 3MF sem liberar sua URL. Nesse caso, a tela orienta baixar o projeto no original e enviá-lo ao Forge. Para o modelo 744793 consultado em 03/11/2026, a referência pública informou natal.3mf sem URL de download: as estimativas publicadas não são apresentadas como execução do motor. Um STL não preserva a pintura multicolorida do projeto.
+
+O arquivo retornado passa pelo mesmo leitor estrito de placas/filamentos e SHA-256 do envio manual. O cadastro guarda sua preparação junto com o custo aceito e mantém a origem MakerWorld. A visualização 3D só inicializa quando solicitada.

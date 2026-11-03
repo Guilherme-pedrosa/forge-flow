@@ -75,6 +75,14 @@ describe("ephemeral pricing source transfers", () => {
     expect(storage).not.toHaveBeenCalled();
     expect(consumePricingSourceTransfer(token, scope)).toBeNull();
   });
+  it("retains MakerWorld origin while the actual sliced file exclusively defines costs and plate identities", async () => {
+    const {input,file}=native();input.externalImport=maker().externalImport;
+    const token=await createPricingSourceTransfer(scope,input),prepared=consumePricingSourceTransfer(token,scope)!;
+    expect(prepared.sourceFile).toBe(file); expect(prepared.externalImport?.design_id).toBe("123");
+    expect(prepared.plan.source_profile_id).toMatch(/^local:/);expect(prepared.estimate.weightGrams).toBe(61.13);
+    expect(prepared.plan.plates[0].lines.map(line=>line.grams)).toEqual(expect.arrayContaining([25.99,35.14]));
+    await expect(createPricingSourceTransfer(scope,{...input,estimate:maker().estimate})).rejects.toThrow(/sem misturar/);
+  });
   it("scopes consumption to both tenant and user and never exposes another session's File", async () => {
     const token = await createPricingSourceTransfer(scope, native().input);
     expect(consumePricingSourceTransfer(token, { ...scope, tenantId: "tenant-b" })).toBeNull();

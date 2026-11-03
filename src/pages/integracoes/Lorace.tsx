@@ -17,9 +17,11 @@ import { LoracePayments } from "@/components/marketplace/LoracePayments";
 import { LoraceShipping } from "@/components/marketplace/LoraceShipping";
 import { findStorefrontCategory, storefrontCategoryOptions, storefrontPackageError, storefrontPublicationError, type StorefrontCategoryOption } from "@/lib/storefront-listing";
 import { prepareShippingPackage, readShippingPackageDraft, shippingPackageFields, type ShippingPackage } from "@/lib/product-shipping";
+import { saveStorefrontPublication } from "@/lib/storefront-publication";
+import { orderRequest } from "@/lib/sales-order";
 
-type Listing = { product_id: string; published: boolean; category: string; price_override: number | null; made_to_order: boolean; lead_days: number };
-type Product = { id: string; name: string; sku: string | null; photo_url: string | null; sale_price: number | null; is_active: boolean; shipping_package?: ShippingPackage | null; description?: string|null; category?: string|null; commercial_presentation?: unknown };
+type Listing = { product_id: string; published: boolean; category: string; price_override: number | null; made_to_order: boolean; lead_days: number; updated_at: string };
+type Product = { id: string; name: string; sku: string | null; photo_url: string | null; sale_price: number | null; is_active: boolean; shipping_package?: ShippingPackage | null; description?: string|null; category?: string|null; commercial_presentation?: unknown; updated_at: string };
 const money = (value: number | null) => value == null ? "Sem preço" : Number(value).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 const statuses: Record<string,string> = { draft: "Aguardando confirmação", approved: "Confirmado", in_production: "Em produção", ready: "Pronto", shipped: "Enviado", delivered: "Entregue", cancelled: "Cancelado" };
 const payments: Record<string,string> = {approved:"Pagamento aprovado",pending:"Aguardando pagamento",not_started:"Checkout não iniciado",review:"Conferência necessária",rejected:"Recusado",cancelled:"Cancelado",in_process:"Em análise",authorized:"Autorizado",refunded:"Reembolsado",charged_back:"Contestado"};
@@ -31,6 +33,9 @@ function PaymentReview({requestId,saved}:{requestId:string;saved:()=>void}) {
 }
 
 function ListingCard({ product, listing, channelId, categories, categoriesLoading, categoriesError, saved }: { product: Product; listing?: Listing; channelId: string; categories: StorefrontCategoryOption[]; categoriesLoading: boolean; categoriesError: boolean; saved: () => void }) {
+ const qc=useQueryClient();
+ const [loaded,setLoaded]=useState(()=>({product:product.updated_at,listing:listing?.updated_at??null}));
+ const request=useRef<ReturnType<typeof orderRequest>|null>(null);
  const [published,setPublished] = useState(listing?.published ?? false);
  const [category,setCategory] = useState(listing?.category ?? "");
  const [price,setPrice] = useState(listing?.price_override?.toString() ?? "");
@@ -53,7 +58,9 @@ function ListingCard({ product, listing, channelId, categories, categoriesLoadin
  let presentationError:string|null=null;
  try {prepareProductPresentation(dimensions,generation);}catch(error){presentationError=error instanceof Error?error.message:'Confira as medidas da peça.';}
  const publicationError = published ? storefrontPublicationError(product, price) || packageError || presentationError : presentationError;
+ const stale=loaded.product!==product.updated_at||loaded.listing!==(listing?.updated_at??null);
  const mutation = useMutation({ mutationFn: async () => {
+  if(!alive.current||!profile?.tenant_id||!loaded.product)throw new Error('Sua sessão ou a versão do produto mudou. Recarregue a publicação.');
   if (publicationError) throw new Error(publicationError);
   if (!selectedCategory && (published || !listing)) throw new Error("Selecione uma categoria da loja antes de salvar.");
   const packaging = prepareShippingPackage(shippingPackage);
@@ -64,29 +71,42 @@ function ListingCard({ product, listing, channelId, categories, categoriesLoadin
   if(packageSignature!==savedPackage.current)changes.shipping_package=packaging;
   if(presentationSignature!==savedPresentation.current)changes.commercial_presentation=presentation;
   if(description!==savedDescription.current)changes.description=description.trim()||null;
-  if (Object.keys(changes).length) {
-   if (!profile?.tenant_id) throw new Error("Sua sessão expirou. Entre novamente para salvar a embalagem.");
-   const { data, error } = await db.from("products").update(changes)
-    .eq("id", product.id).eq("tenant_id", profile.tenant_id).select("id").maybeSingle();
-   if (error) throw error;
-   if (data?.id !== product.id) throw new Error("Não foi possível confirmar a embalagem salva. Atualize a página e tente novamente.");
-   if(!alive.current)throw new Error('A sessão mudou. Reabra a publicação.');
-   savedPackage.current = packageSignature;
-   savedPresentation.current=presentationSignature;savedDescription.current=description;
-  }
-  if(!alive.current)throw new Error('A sessão mudou. Reabra a publicação.');
-  return rpc("save_storefront_listing", { p_channel_id: channelId, p_product_id: product.id, p_settings: { published, category: selectedCategory?.slug ?? listing!.category, price_override: price.trim() === "" ? null : Number(price.replace(",",".")), made_to_order: made, lead_days: Number(days) } });
- }, onSuccess: () => { if(!alive.current)return;saved(); toast({ title: "Publicação salva", description: "O catálogo da loja será atualizado automaticamente." }); } });
+  const settings={published,category:selectedCategory?.slug??listing!.category,price_override:price.trim()===''?null:Number(price.replace(',','.')),made_to_order:made,lead_days:Number(days)};
+  const payload={p_channel_id:channelId,p_product_id:product.id,p_product_changes:changes,p_settings:settings,p_expected_product_updated_at:loaded.product,p_expected_listing_updated_at:loaded.listing};
+  const signature=JSON.stringify(payload);
+  if(stale&&request.current?.signature!==signature)throw new Error('O produto ou a publicação mudou. Seu rascunho foi preservado; carregue a versão atual antes de salvar.');
+  request.current=orderRequest(request.current,signature);
+  const receipt=await saveStorefrontPublication({...payload,p_request_id:request.current.id});
+  return{receipt,changes,settings,packageSignature,presentationSignature,description};
+ }, onSuccess: result => {
+  if(!alive.current)return;
+  savedPackage.current=result.packageSignature;savedPresentation.current=result.presentationSignature;savedDescription.current=result.description;
+  setLoaded({product:result.receipt.product_updated_at,listing:result.receipt.listing_updated_at});request.current=null;
+  if(!result.receipt.replayed)qc.setQueryData<{products:Product[];listings:Listing[]}>(['lorace',profile?.tenant_id],current=>current?{...current,
+   products:current.products.map(row=>row.id===product.id?{...row,...result.changes,updated_at:result.receipt.product_updated_at}:row),
+   listings:current.listings.some(row=>row.product_id===product.id)?current.listings.map(row=>row.product_id===product.id?{...row,...result.settings,updated_at:result.receipt.listing_updated_at}:row):[...current.listings,{product_id:product.id,...result.settings,updated_at:result.receipt.listing_updated_at}]}:current);
+  saved();toast({title:'Publicação salva',description:result.receipt.replayed?'Salvamento anterior confirmado. A versão atual será conferida sem regravar os dados.':'Descrição, medidas e publicação salvas juntas.'});
+ } });
+ async function reload(){
+  await qc.invalidateQueries({queryKey:['lorace',profile?.tenant_id]});if(!alive.current)return;
+  const current=qc.getQueryData<{products:Product[];listings:Listing[]}>(['lorace',profile?.tenant_id]),next=current?.products.find(row=>row.id===product.id),nextListing=current?.listings.find(row=>row.product_id===product.id);
+  if(!next)return;
+  const pack=readShippingPackageDraft(next.shipping_package),presentation=readProductDimensionsDraft(next.commercial_presentation),marker=readProductDescriptionGeneration(next.commercial_presentation);
+  setShippingPackage(pack);setDimensions(presentation);setGeneration(marker);setDescription(next.description||'');
+  setPublished(nextListing?.published??false);setCategory(nextListing?.category??'');setPrice(nextListing?.price_override?.toString()??'');setMade(nextListing?.made_to_order??false);setDays(String(nextListing?.lead_days??7));
+  savedPackage.current=JSON.stringify(prepareShippingPackage(pack));savedPresentation.current=JSON.stringify(prepareProductPresentation(presentation,marker));savedDescription.current=next.description||'';
+  setLoaded({product:next.updated_at,listing:nextListing?.updated_at??null});request.current=null;mutation.reset();
+ }
  const descriptionFacts = () => {
   const presentation=prepareProductPresentation(dimensions,generation);
   return {title:product.name,category:product.category,manufacturedBy3dPrinting:product.category==='printed_part'||product.category==='kit',dimensions:presentation?{confirmed:true,lengthMm:presentation.dimensions.length_mm,widthMm:presentation.dimensions.width_mm,heightMm:presentation.dimensions.height_mm}:null};
  };
  return <form aria-label={`Publicação de ${product.name}`} onSubmit={e => { e.preventDefault(); mutation.mutate(); }} className="rounded-xl border bg-card p-4 space-y-4">
   <div className="flex gap-3"><img src={product.photo_url || "/placeholder.svg"} alt="" className="h-20 w-20 rounded-lg object-contain bg-muted" /><div className="min-w-0"><h3 className="font-semibold">{product.name}</h3><p className="text-xs text-muted-foreground">{product.sku || "Sem SKU"} · Preço no Forge: {money(product.sale_price)}</p><Link className="text-sm underline" to={`/comercial/produtos?produto=${encodeURIComponent(product.id)}&editar=1`}>Editar produto e fotos</Link></div></div>
-  <div className="grid gap-3 sm:grid-cols-2"><label className="text-sm">Categoria na loja<select className="flex h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50" value={selectedCategory?.slug ?? ""} onChange={e=>{setCategory(e.target.value);mutation.reset();}} disabled={categoriesLoading || categoriesError || !categories.length} required={published || !listing}>
+  <div className="grid gap-3 sm:grid-cols-2"><label className="text-sm">Categoria na loja<select className="flex h-10 w-full min-w-0 rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50" value={selectedCategory?.slug ?? ""} onChange={e=>{setCategory(e.target.value);mutation.reset();}} disabled={mutation.isPending || categoriesLoading || categoriesError || !categories.length} required={published || !listing}>
    <option value="" disabled>{categoriesLoading ? "Carregando categorias…" : categoriesError ? "Não foi possível carregar" : !categories.length ? "Nenhuma categoria publicada" : "Selecione a categoria"}</option>
    {categories.map(option=><option key={option.slug} value={option.slug}>{option.name}</option>)}
-  </select></label><label className="text-sm">Preço específico na loja (opcional)<Input inputMode="decimal" value={price} onChange={e=>{setPrice(e.target.value);mutation.reset();}} placeholder="Usar preço do Forge" /></label></div>
+  </select></label><label className="text-sm">Preço específico na loja (opcional)<Input disabled={mutation.isPending} inputMode="decimal" value={price} onChange={e=>{setPrice(e.target.value);mutation.reset();}} placeholder="Usar preço do Forge" /></label></div>
   {!categoriesLoading && !categoriesError && !categories.length && <p className="text-sm text-amber-700">Publique uma categoria no administrador da loja para selecioná-la aqui.</p>}
   {!categoriesLoading && !categoriesError && categories.length > 0 && category && !selectedCategory && <p className="text-sm text-amber-700">A categoria anterior “{category}” não está entre as categorias publicadas. Selecione outra para publicar.</p>}
   <details className="space-y-3 rounded-lg border p-3"><summary className="cursor-pointer text-sm font-medium">Descrição e medidas da peça</summary>
@@ -110,13 +130,14 @@ function ListingCard({ product, listing, channelId, categories, categoriesLoadin
    <p className="text-xs text-muted-foreground">As medidas são salvas no cadastro do produto ao salvar a publicação. O peso de filamento e as dimensões do modelo 3D não substituem a embalagem.</p>
    <Link className="inline-block text-sm underline" to={`/comercial/produtos?produto=${encodeURIComponent(product.id)}&editar=1&aba=embalagem`}>Editar embalagem no cadastro</Link>
   </details>
-  <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={made} onChange={e=>setMade(e.target.checked)} />Aceitar pedidos sob encomenda</label>
+  <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={made} disabled={mutation.isPending} onChange={e=>setMade(e.target.checked)} />Aceitar pedidos sob encomenda</label>
   {made && <label className="block text-sm">Prazo de produção (dias úteis)<Input type="number" min={1} max={180} value={days} onChange={e=>setDays(e.target.value)} required /></label>}
   <p className="text-xs text-muted-foreground">O saldo usa somente o estoque disponível do produto final. Peças, folhas, caules e demais componentes continuam controlados na produção.</p>
-  <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={published} onChange={e=>{setPublished(e.target.checked);mutation.reset();}} />Exibir este produto na Elevare3D</label>
+  <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={published} disabled={mutation.isPending} onChange={e=>{setPublished(e.target.checked);mutation.reset();}} />Exibir este produto na Elevare3D</label>
   {(publicationError || (!product.sale_price && !price)) && <p className="text-sm text-amber-700">{publicationError || "Informe o preço no Forge ou o preço específico acima para publicar."}</p>}
+  {stale&&<div role="alert" className="space-y-2 text-sm text-amber-700"><p>O produto ou a publicação mudou em outra operação. Seu rascunho foi preservado.</p><Button type="button" variant="outline" disabled={mutation.isPending} onClick={()=>void reload()}>Descartar rascunho e carregar versão atual</Button></div>}
   {mutation.error && <p role="alert" className="text-sm text-destructive">{mutation.error.message}</p>}
-  <Button disabled={mutation.isPending || !product.is_active || (published && (categoriesLoading || categoriesError || !selectedCategory || !!publicationError))} type="submit">{mutation.isPending ? "Salvando…" : "Salvar publicação"}</Button>
+  <Button disabled={mutation.isPending || !product.is_active || stale&&!mutation.isError || (published && (categoriesLoading || categoriesError || !selectedCategory || !!publicationError))} type="submit">{mutation.isPending ? "Salvando…" : mutation.isError?'Confirmar salvamento da publicação':'Salvar publicação'}</Button>
  </form>;
 }
 
@@ -138,7 +159,7 @@ function LoraceWorkspace() {
   ]);
   for (const result of [channels,listings,requests]) if(result.error) throw result.error;
   const products: Product[] = [];
-  for(let start=0;;start+=1000){ const result=await db.from("products").select("id,name,sku,photo_url,sale_price,is_active,shipping_package,description,category,commercial_presentation").eq("tenant_id",tenant).eq("is_component",false).order("name").order("id").range(start,start+999); if(result.error) throw result.error; products.push(...result.data); if(result.data.length<1000) break; }
+  for(let start=0;;start+=1000){ const result=await db.from("products").select("id,name,sku,photo_url,sale_price,is_active,shipping_package,description,category,commercial_presentation,updated_at").eq("tenant_id",tenant).eq("is_component",false).order("name").order("id").range(start,start+999); if(result.error) throw result.error; products.push(...result.data); if(result.data.length<1000) break; }
   return { channel: channels.data as {id:string;name:string;slug:string;enabled:boolean}|null, listings: listings.data as Listing[], requests: requests.data as unknown as {id:string;channel_id:string;order_id:string;created_at:string;payment_status:string;payment_review:string|null;payload:{customer:{name:string;email:string;phone:string;address:Record<string,string>};notes?:string};order:{code:string;total:number;status:string}}[], products };
  }});
  const configure = useMutation({ mutationFn: (enabled:boolean)=>rpc("configure_storefront",{p_slug:"lorace",p_enabled:enabled}),onSuccess:invalidate });

@@ -4,6 +4,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { readFile, readdir } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 process.on('uncaughtException',error=>{console.error(error.message,error.where??'');process.exit(1);});
+const readNewYieldMigration=await readFile(new URL('../supabase/migrations/20261102246600_confirmed_new_import_yield.sql',import.meta.url),'utf8');
 const db=new PGlite();
 await db.exec(`CREATE ROLE authenticated; CREATE ROLE anon; CREATE ROLE service_role;
  CREATE SCHEMA auth; CREATE TABLE auth.users(id uuid PRIMARY KEY,email text);
@@ -14,7 +15,7 @@ await db.exec(`CREATE ROLE authenticated; CREATE ROLE anon; CREATE ROLE service_
  ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY; CREATE PUBLICATION supabase_realtime;
  GRANT USAGE ON SCHEMA public,auth,storage TO authenticated,anon;
  ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT,INSERT,UPDATE,DELETE ON TABLES TO authenticated;`);
-for(const name of (await readdir(new URL('../supabase/migrations/',import.meta.url))).filter(x=>x.endsWith('.sql')).sort()) {
+for(const name of (await readdir(new URL('../supabase/migrations/',import.meta.url))).filter(x=>x.endsWith('.sql') && !x.startsWith('20261102246600')).sort()) {
  try { await db.exec((await readFile(new URL('../supabase/migrations/'+name,import.meta.url),'utf8')).replace(/CREATE EXTENSION IF NOT EXISTS (pg_cron|pg_net);/g,'')); }
  catch(error){throw new Error(`Migration ${name}: ${error.message} ${error.where??''}`);}
 }
@@ -221,5 +222,55 @@ try {
  await test('Ordinary older product payloads keep working without an import preparation plan',async()=>{
   const data=local();delete data.import_pricing;const p=await save(data),[plate]=await plates(p);assert.equal(plate.printer_id,null);assert.equal(plate.units_per_plate,null);assert.equal(await recipe(plate.id),null);near((await stored(p)).manual_cost_override,42.1234);
  });
+ await admin(()=>db.exec(readNewYieldMigration));
+ await test('A standalone 3MF with two identical physical copies can form one complete kit or two products',async()=>{
+  for(const units of [1,2]){
+   const plate=slicedPlate();plate.parts[0].quantity_per_plate=2;
+   const data=local([plate]);data.file_composition.enabled=false;data.import_pricing=planFor([plate],units);
+   const p=await save(data),[storedPlate]=await plates(p);
+   assert.equal(storedPlate.units_per_plate,units);
+   const part=(await rows('SELECT * FROM product_print_plate_parts WHERE plate_id=$1',[storedPlate.id]))[0];
+   assert.equal(part.quantity_per_product,2/units);
+   assert.equal((await recipe(storedPlate.id)).units_per_print,units);
+   near((await prep(storedPlate.id)).recipe_lines[0].grams,100);
+  }
+ });
+ await test('New import rejects fractional complete products rather than inventing partial physical pieces',async()=>{
+  const plate=slicedPlate();plate.parts[0].quantity_per_plate=3;
+  const data=local([plate]);data.file_composition.enabled=false;data.import_pricing=planFor([plate],2);
+  await assert.rejects(save(data),/não forma esse número de produtos completos/);
+ });
+ await test('Distinct groups and multiple plates deduce the exact number of pieces in each complete product',async()=>{
+  const a=slicedPlate(1),b=slicedPlate(2,50,1800);a.parts[0].quantity_per_plate=4;b.parts[0].quantity_per_plate=2;
+  a.parts.push({...a.parts[0],source_key:'second-piece',name:'Segunda peça',quantity_per_plate:2});
+  const data=local([a,b]);data.import_pricing=planFor([a,b],2);
+  const p=await save(data),parts=await rows('SELECT pp.quantity_per_product FROM product_print_plate_parts pp JOIN product_print_plates p ON p.id=pp.plate_id WHERE p.product_id=$1 ORDER BY pp.quantity_per_product',[p]);
+  assert.deepEqual(parts.map(p=>p.quantity_per_product),[1,1,2]);
+ });
+
+ await test('A freshly sliced file retains its full MakerWorld origin without duplicate source plates or mixed estimates',async()=>{
+  const data=local();data.external_import=external();data.file_composition.enabled=false;
+  data.file_composition.file_path=tenant+"/"+next()+"/native.3mf";data.file_composition.file_name="native.3mf";
+  await admin(()=>db.query("INSERT INTO storage.objects(bucket_id,name,owner) VALUES('attachments',$1,$2)",[data.file_composition.file_path,owner]));
+  const key=next(),p=await save(data,null,key),all=await plates(p),product=await stored(p);
+  assert.equal(all.length,1);near(all[0].est_grams,100);near(all[0].est_time_seconds,3600);
+  assert.deepEqual(product.external_import,data.external_import);
+  assert.equal(await scalar("SELECT file_path FROM product_print_sources WHERE id=$1",[all[0].source_id]),data.file_composition.file_path);
+  const canonical=await scalar('SELECT product_pricing_preview($1,1,$2::jsonb)',[p,'{}']);
+  assert.equal(canonical.complete,true,JSON.stringify(canonical.missing));near(canonical.breakdown.unit_cost,34.11);
+  assert.equal(await save(data,null,key),p);assert.equal((await plates(p)).length,1);
+ });
+ await test('New yield migration retries unchanged and rejects drift without rewriting confirmed recipes',async()=>{
+  await admin(async()=>{
+   await db.exec(readNewYieldMigration);
+   const signature='erp_private.save_product_before_import_pricing(uuid,jsonb,jsonb,uuid)',before=await scalar('SELECT pg_get_functiondef($1::regprocedure)',[signature]);
+   try{await db.exec(before.replace('DECLARE t uuid:=erp_private.actor();','-- drift\nDECLARE t uuid:=erp_private.actor();'));await assert.rejects(db.exec(readNewYieldMigration),/Review the sliced source/);}finally{await db.exec(before);}
+  });
+  const a=slicedPlate();a.parts[0].quantity_per_plate=4;a.parts[0].quantity_per_product=2;
+  const data=local([a]);data.import_pricing=planFor([a],2);const p=await save(data),[plate]=await plates(p),old=await recipe(plate.id);
+  const changed=planFor([a],4);await assert.rejects(repair(p,changed),/composição|peças|rendimento/i);
+  assert.deepEqual(await recipe(plate.id),old);
+ });
+ console.log(JSON.stringify(await admin(()=>rows("SELECT oid::regprocedure::text signature,md5(replace(prosrc,chr(13),'')) md5 FROM pg_proc WHERE oid IN('erp_private.save_product_before_import_pricing(uuid,jsonb,jsonb,uuid)'::regprocedure,'erp_private.save_product_before_live_pricing(uuid,jsonb,jsonb,uuid)'::regprocedure)"))));
  console.log(`Validated ${passed} import pricing persistence scenarios.`);
 }finally{await db.close();}

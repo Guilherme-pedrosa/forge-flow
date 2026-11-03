@@ -106,6 +106,7 @@ function NfePurchaseImportSession({open,onOpenChange,onImported}:Props) {
     changeLink(index,{itemId:id,...(material?{name:material.name}:{}),skipStock:false,stockQuantity:material?.unit==='un'&&['un','und','unid'].includes(unit??'')?String(invoice!.items[index].quantity):''});
   };
   async function selectCreatedItem(id:string,index:number) {
+    if(!alive.current) return;
     const refreshed=await materialsQuery.refetch();
     if(!alive.current) return;
     const item=refreshed.data?.items.find(item=>item.id===id);

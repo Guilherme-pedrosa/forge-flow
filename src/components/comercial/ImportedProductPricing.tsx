@@ -50,6 +50,7 @@ function ProductImportCalculation({ estimate, error, onCalculated, existingMater
   const update = (patch: Partial<Selection>) => setSelection({ ...edits, ...patch });
   const deliver = useRef(onCalculated); deliver.current = onCalculated;
   const currentSource = useRef(source); currentSource.current = source;
+  const alive = useRef(true); useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const [registration, setRegistration] = useState<{ source: string; key: string; materialCode: string | null; colorHex: string | null; item?: FilamentRegistrationItem } | null>(null);
   const [registrationBusy, setRegistrationBusy] = useState(false);
   const [policyBusy, setPolicyBusy] = useState(false);
@@ -135,8 +136,9 @@ function ProductImportCalculation({ estimate, error, onCalculated, existingMater
 
   async function selectCreatedFilament(itemId: string) {
     const target = registration;
-    if (!target) return;
+    if (!alive.current || !target || currentSource.current !== target.source) return;
     await invalidateInventoryPricing(qc);
+    if (!alive.current) return;
     if (currentSource.current !== target.source) { setRegistration(null); return; }
     const refreshed = qc.getQueryData<Awaited<ReturnType<typeof loadPricingFilaments>>>(["import-pricing-filaments", profile?.tenant_id]);
     if (!refreshed?.some(item => item.id === itemId))

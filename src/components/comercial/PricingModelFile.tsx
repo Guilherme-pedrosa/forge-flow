@@ -16,7 +16,7 @@ interface Props {
   materialCodes: string[];
 }
 
-async function readEstimate(file: File) {
+export async function readPricingModelEstimate(file: File) {
   if (!/\.(stl|3mf)$/i.test(file.name) || !file.size || file.size > 80 * 1024 * 1024)
     throw new Error("Escolha um arquivo STL ou 3MF de até 80 MB.");
   const bytes = new Uint8Array(await file.arrayBuffer());
@@ -63,9 +63,8 @@ export function PricingModelFile({ sourceFile, estimate, onLoaded, printer, mate
   }, [sourceFile]);
   useEffect(() => { setSlicing(false); }, [selection]);
 
-  const a1 = !!printer && /bambu/i.test(`${printer.brand} ${printer.model}`)
-    && /\ba1\b/i.test(printer.model) && !/mini/i.test(printer.model);
-  const a2l = !!printer && /bambu/i.test(`${printer.brand} ${printer.model}`) && /^(?:Bambu\s+(?:Lab\s+)?)?A2L$/i.test(printer.model.trim());
+  const a1 = !!printer && printerMatchesSliceModels(printer, ["Bambu Lab A1"]) === true;
+  const a2l = !!printer && printerMatchesSliceModels(printer, ["Bambu Lab A2L"]) === true;
   const slicingProfileId = a2l ? "bambu-a2l-04-pla-020-v1" : "bambu-a1-04-pla-020-v1";
   const pla = materialCodes.length > 0 && materialCodes.every(code => code.trim().toUpperCase() === "PLA");
   const canSlice = (a1 || a2l) && pla && !!sourceFile && sourceFile.size <= 64 * 1024 * 1024;
@@ -78,7 +77,7 @@ export function PricingModelFile({ sourceFile, estimate, onLoaded, printer, mate
     expectedSource.current = file;
     deliver.current(file, null);
     try {
-      const result = await readEstimate(file);
+      const result = await readPricingModelEstimate(file);
       if (!alive.current || operation.current !== current) return;
       deliver.current(file, result.estimate);
       setNotice(result.notice);
@@ -93,7 +92,7 @@ export function PricingModelFile({ sourceFile, estimate, onLoaded, printer, mate
   async function useSliced(file: File, job: SlicingJob) {
     const original = sourceFile, context = selection, current = ++operation.current;
     if (job.profile_id !== slicingProfileId) throw new Error("O perfil do resultado não corresponde ao modelo selecionado. Simule novamente.");
-    const result = await readEstimate(file);
+    const result = await readPricingModelEstimate(file);
     if (!alive.current || operation.current !== current || source.current !== original || selected.current !== context)
       throw new Error("A peça ou a seleção mudou. Confira a seleção e simule novamente.");
     if (!original || !result.estimate) throw new Error(result.notice || "O resultado não contém tempo e filamento completos.");
@@ -127,7 +126,7 @@ export function PricingModelFile({ sourceFile, estimate, onLoaded, printer, mate
     </div>}
     {sourceFile && !estimate && !reading && <p className="text-sm text-muted-foreground">{notice || "Este arquivo ainda precisa de tempo e consumo do fatiador."}</p>}
     {sourceFile && <div className="space-y-2">
-      {canSlice ? <Button type="button" variant="outline" disabled={reading} onClick={() => setSlicing(true)}><Scissors className="mr-2 h-4 w-4" />{estimate ? "Simular novamente no Bambu Studio" : "Calcular tempo e filamento"}</Button>
+      {canSlice ? <Button type="button" variant="outline" disabled={reading} onClick={() => setSlicing(true)}><Scissors className="mr-2 h-4 w-4" />{estimate ? "Fatiar novamente neste computador" : "Calcular tempo e filamento"}</Button>
         : <p className="text-xs text-muted-foreground">A simulação local atende à A1 e à A2L, bico de 0,4 mm, PLA e camada de 0,20 mm, com arquivo de até 64 MB. Selecione um desses modelos e os filamentos PLA para habilitar a simulação.</p>}
       <p className="text-xs text-muted-foreground">Trocar a impressora ou o tipo de material exige um fatiamento compatível. O custo usa os filamentos escolhidos abaixo.</p>
     </div>}

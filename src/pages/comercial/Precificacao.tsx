@@ -16,7 +16,8 @@ import { loadPricingFilaments, MISSING_FILAMENT_COST } from "@/lib/pricing-filam
 import { createPricingSourceTransfer, discardPricingSourceTransfer } from "@/lib/pricing-source-transfer";
 import ProductPricingWorkspace from "./ProductPricingWorkspace";
 import { nonNegative, positiveInteger } from "@/lib/production";
-import { PricingModelFile } from "@/components/comercial/PricingModelFile";
+import { PricingModelFile, readPricingModelEstimate } from "@/components/comercial/PricingModelFile";
+import { MakerWorldProjectSlicer } from "@/components/comercial/MakerWorldProjectSlicer";
 import { PricingMakerWorldInput } from "@/components/comercial/PricingMakerWorldInput";
 import type { ProductExternalImport } from "@/lib/makerworld-import";
 import { modelPricingFromMakerWorld, recommendPrinterForEstimate, recommendFilamentsForEstimate, printerMachineHourCost, printerMatchesSliceModels, printerModelOptions, type ModelPricingEstimate } from "@/lib/model-pricing";
@@ -72,6 +73,7 @@ function FreePricingSimulator({ draft, setDraft, automatic, initialMakerUrl }: {
   const { profile, user } = useAuth();
   const [transferring, setTransferring] = useState(false);
   const [channelPolicyBusy, setChannelPolicyBusy] = useState(false);
+  const [makerSlicingBusy, setMakerSlicingBusy] = useState(false);
   const [transferError, setTransferError] = useState("");
   const transferBusy = useRef(false), transferAlive = useRef(true);
   const latestTransfer = useRef({ draft, automatic, tenantId: profile?.tenant_id, userId: user?.id });
@@ -174,7 +176,7 @@ function FreePricingSimulator({ draft, setDraft, automatic, initialMakerUrl }: {
   const sale = commercial.value;
   const selectedPrice = channelEnabled ? sale?.target : result?.target;
   const selectedQuantity = channelEnabled ? sale?.quantity : result?.quantity;
-  const canTransfer = !!result && !channelPolicyBusy && selectedPrice != null && selectedQuantity != null;
+  const canTransfer = !!result && !makerSlicingBusy && !channelPolicyBusy && selectedPrice != null && selectedQuantity != null;
   const products = useQuery({
     queryKey: ["pricing-products", profile?.tenant_id],
     enabled: !!profile?.tenant_id,
@@ -257,13 +259,24 @@ function FreePricingSimulator({ draft, setDraft, automatic, initialMakerUrl }: {
               setDraft(current => ({ ...current, makerReference: reference, sourceFile: null, estimate, sourceError,
                 filamentIds: {}, confirmedPrinterId: current.printerId, name: reference?.title ?? current.name }));
             }} />
+            {draft.makerReference && <MakerWorldProjectSlicer reference={draft.makerReference} ownedPrinterModels={(printers.data ?? []).map(printer => printer.model ?? "")} onBusyChange={setMakerSlicingBusy} onSliced={async (file, job) => {
+              const context = latestTransfer.current;
+              const parsed = await readPricingModelEstimate(file);
+              if (!transferAlive.current || !latestTransfer.current.automatic || latestTransfer.current.draft.makerReference !== context.draft.makerReference || latestTransfer.current.tenantId !== context.tenantId || latestTransfer.current.userId !== context.userId)
+                throw new Error("O modelo ou a sessão mudou. Fatie o projeto selecionado novamente.");
+              if (!parsed.estimate) throw new Error(parsed.notice || "O resultado não contém tempo e consumo completos.");
+              const model = job.profile_id === "bambu-a1-04-pla-020-v1" ? "Bambu Lab A1" : job.profile_id === "bambu-a2l-04-pla-020-v1" ? "Bambu Lab A2L" : null;
+              if (!model || printerMatchesSliceModels({model,brand:"Bambu Lab"}, parsed.estimate.printerModelIds) === false) throw new Error("O resultado não corresponde ao perfil solicitado. Fatie novamente.");
+              const estimate = parsed.estimate.printerModelIds.length ? parsed.estimate : {...parsed.estimate,printerModelIds:[model]};
+              setDraft(current => ({...current,sourceFile:file,estimate,sourceError:"",filamentIds:{},confirmedPrinterId:""}));
+            }} />}
             <p className="text-center text-sm text-muted-foreground">ou envie o arquivo</p>
-            <PricingModelFile sourceFile={draft.sourceFile} estimate={draft.makerReference ? null : draft.estimate} printer={printer}
+            <PricingModelFile sourceFile={draft.sourceFile} estimate={draft.sourceFile ? draft.estimate : null} printer={printer}
               materialCodes={(slots.length ? selectedMaterials : [materials.data?.find(m => m.id === draft.filamentIds.default)]).map(m => m?.material_code ?? "")}
               onLoaded={(file, estimate) => setDraft(current => ({ ...current, makerReference: null, sourceError: "", sourceFile: file, estimate, confirmedPrinterId: current.printerId,
                 filamentIds: { default: current.filamentIds.default ?? "" }, name: file.name.replace(/\.(?:stl|3mf)$/i, "").slice(0, 200) }))} />
             {draft.sourceError && <p role="alert" className="text-sm text-amber-800">{draft.sourceError}</p>}
-            {draft.makerReference && draft.estimate && <p className="rounded-lg bg-muted p-3 text-sm">{draft.estimate.hours.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} h · {draft.estimate.weightGrams.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} g · {draft.estimate.plateCount} placa(s), conforme o perfil do MakerWorld.</p>}
+            {draft.makerReference && !draft.sourceFile && draft.estimate && <p className="rounded-lg bg-muted p-3 text-sm">{draft.estimate.hours.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} h · {draft.estimate.weightGrams.toLocaleString("pt-BR", { maximumFractionDigits: 2 })} g · {draft.estimate.plateCount} placa(s), conforme o perfil do MakerWorld.</p>}
             {(draft.sourceFile || draft.estimate) && <SearchableItemSelect value={printerId} options={printerModelOptions(printers.data ?? [], printerId)}
               label="Modelo de impressão" emptyLabel="Qual modelo foi usado no fatiamento?" searchPlaceholder="Buscar modelo..."
               onChange={id => setDraft(current => ({ ...current, printerId: id, confirmedPrinterId: id }))} />}

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { printerMatchesSliceModels } from '@/lib/model-pricing';
 import { Download, Loader2, Scissors } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/contexts/AuthContext';
@@ -67,7 +68,7 @@ export function SlicingDialog({ open, file, onOpenChange, onSliced, resultLabel 
   const [local, setLocal] = useState<LocalSlicerInfo | null>(null), [detecting, setDetecting] = useState(true);
   const [useCloud, setUseCloud] = useState(false), [detectVersion, setDetectVersion] = useState(0);
   const [localProfile, setLocalProfile] = useState('');
-  const ownedProfileIds = ownedPrinterModels === undefined ? null : LOCAL_SLICER_PROFILES.filter(option => ownedPrinterModels.some(model => model.replace(/^Bambu\s+(?:Lab\s+)?/i, '').trim().toUpperCase() === option.label)).map(option => option.id);
+  const ownedProfileIds = ownedPrinterModels === undefined ? null : LOCAL_SLICER_PROFILES.filter(option => ownedPrinterModels.some(model => printerMatchesSliceModels({model,brand:'Bambu Lab'}, [option.label]) === true)).map(option => option.id);
   const ownedProfilesKey = JSON.stringify(ownedProfileIds);
   const eligibleProfiles = LOCAL_SLICER_PROFILES.filter(option => (!profileId || option.id === profileId) && (!ownedProfileIds || ownedProfileIds.includes(option.id)));
   const localProfiles = eligibleProfiles.filter(option => Boolean(local && (local.profiles ?? [local.profile_id]).includes(option.id)));

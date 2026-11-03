@@ -1,6 +1,6 @@
 import { importedComposition, type ImportedComposition } from "./imported-composition";
 import { buildImportedPricingPlan, type ImportedPricingPlan } from "./imported-pricing-plan";
-import type { ProductExternalImport } from "./makerworld-import";
+import { readProductExternalImport, type ProductExternalImport } from "./makerworld-import";
 import { readCatalogChannelPricingDraft, type CatalogChannelPricingDraft } from "./channel-policy";
 import { modelPricingFromComposition, modelPricingFromMakerWorld, type ModelPricingEstimate } from "./model-pricing";
 import { readPricingTransfer, type PricingInput, type PricingTransfer } from "./print-pricing";
@@ -61,10 +61,14 @@ export async function createPricingSourceTransfer(scope: PricingTransferScope, i
     || channelPricing.unit_price !== (accepted.quotePrice ?? accepted.price)
     || Math.round(channelPricing.quoted_unit_cost * 10000) !== Math.round(accepted.cost * 10000)))
     throw new Error("As condições do canal não correspondem aos valores aceitos. Confira novamente a simulação.");
-  if (!!input.sourceFile === !!input.externalImport) throw new Error("Escolha um arquivo fatiado ou um perfil MakerWorld antes de cadastrar o produto.");
+  const externalImport = input.externalImport ? readProductExternalImport(input.externalImport) : null;
+  if (input.externalImport && !externalImport) throw new Error("A origem MakerWorld não é válida. Consulte o link novamente.");
+  if (!input.sourceFile && !externalImport) throw new Error("Escolha um arquivo fatiado ou um perfil MakerWorld antes de cadastrar o produto.");
+  if (input.sourceFile && externalImport && input.estimate.source === "makerworld")
+    throw new Error("O custo deve usar o 3MF realmente fatiado, sem misturar as estimativas do perfil MakerWorld.");
   // Snapshot the selections before reading the file asynchronously; later edits
   // must not mix another material/printer selection with this accepted price.
-  const snapshot = structuredClone({ externalImport: input.externalImport, estimate: input.estimate,
+  const snapshot = structuredClone({ externalImport, estimate: input.estimate,
     calculated: input.calculated, pricingInput: input.pricingInput, accepted, ...(channelPricing ? { channelPricing } : {}) });
   const sourceFile = input.sourceFile;
   let composition: ImportedComposition;
@@ -92,7 +96,7 @@ export async function createPricingSourceTransfer(scope: PricingTransferScope, i
     || actualEstimate.printerModelIds.length > 0 && values(actualEstimate.printerModelIds) !== values(snapshot.estimate.printerModelIds)
     || actualEstimate.nozzleDiameters.length > 0 && values(actualEstimate.nozzleDiameters) !== values(snapshot.estimate.nozzleDiameters))
     throw new Error("O arquivo ou perfil mudou desde o cálculo. Confira novamente a precificação antes de cadastrar.");
-  const plan = buildImportedPricingPlan(snapshot.estimate, composition, snapshot.calculated, snapshot.externalImport);
+  const plan = buildImportedPricingPlan(snapshot.estimate, composition, snapshot.calculated, sourceFile ? null : snapshot.externalImport);
   if (operation !== generation) throw new Error("A origem da impressão mudou. Confira a seleção antes de cadastrar.");
   const token = crypto.randomUUID();
   pending = { token, scope: sourceScope, expires: Date.now() + PRICING_SOURCE_TRANSFER_TTL_MS,

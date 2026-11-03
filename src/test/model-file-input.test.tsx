@@ -14,6 +14,22 @@ vi.mock("three", async () => ({
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); worker.webgl.mockClear(); });
 
 describe("direct 3MF upload", () => {
+  it("uses a returned native project as a fresh source and leaves a multi-copy kit ratio for confirmation", async () => {
+    vi.stubGlobal("crypto", webcrypto);
+    const bytes = zipSync({
+      "Metadata/slice_info.config": strToU8(ImportedSlice),
+      "Metadata/model_settings.config": strToU8('<config><object id="1"><metadata key="name" value="Cube.stl"/></object><plate><metadata key="plater_id" value="1"/><model_instance><metadata key="object_id" value="1"/><metadata key="instance_id" value="0"/></model_instance><model_instance><metadata key="object_id" value="1"/><metadata key="instance_id" value="1"/></model_instance></plate></config>'),
+      "3D/3dmodel.model": strToU8('<model><resources><object id="1"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources><build><item objectid="1"/><item objectid="1" transform="1 0 0 0 1 0 0 0 1 10 0 0"/></build></model>'),
+    });
+    const file = new File([bytes], "native-project.3mf");
+    Object.defineProperty(file, "arrayBuffer", { value: async () => bytes.buffer });
+    const changed = vi.fn(), ready = vi.fn();
+    render(<ModelFileInput current={{ profile_id: "published-profile", enabled: false, plates: [] }} slicedFile={file} onChange={changed} onFileReady={ready} />);
+    await waitFor(() => expect(changed).toHaveBeenCalledOnce());
+    expect(ready).toHaveBeenCalledWith(file);
+    expect(changed.mock.calls[0][0]).toMatchObject({ profile_id: expect.stringMatching(/^local:[a-f0-9]{64}$/), plates: [{ weight_grams: 3.63, time_seconds: 1351, parts: [{ quantity_per_plate: 2, quantity_per_product: null }] }] });
+    expect(worker.webgl).not.toHaveBeenCalled();
+  });
   it("opens the slicer for an STL and returns the verified result to the existing-product review", async () => {
     vi.stubGlobal("crypto", webcrypto);
     const bytes = zipSync({

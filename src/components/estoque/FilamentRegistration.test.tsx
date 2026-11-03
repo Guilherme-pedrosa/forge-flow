@@ -6,6 +6,7 @@ import type { FilamentRegistrationItem } from "@/lib/filament-registration";
 
 const mock = vi.hoisted(() => ({ rpc: vi.fn(), saved: vi.fn(), close: vi.fn() }));
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { rpc: mock.rpc } }));
+vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ profile: { tenant_id: "filament-company" }, user: { id: "filament-operator" } }) }));
 const item: FilamentRegistrationItem = { id: "83000000-0000-4000-8000-000000000001", name: "PLA Branco F3D", unit: "g", current_stock: 2500, avg_cost: .08,
   material_code: "PLA", material_type: "PLA", color: "Branco", color_code: "WHITE", brand: "F3D", diameter: 1.75 };
 const clients: QueryClient[] = [];

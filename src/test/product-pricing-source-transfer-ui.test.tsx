@@ -141,6 +141,14 @@ describe("canonical product receives the complete accepted pricing source", () =
     await waitFor(() => expect(screen.getByLabelText("Destino do orçamento")).toHaveTextContent('"quantity":7'));
     expect(screen.getByLabelText("Destino do orçamento")).toHaveTextContent('"unit_price":34.9');
   });
+  it("saves native file plates and the full MakerWorld origin together without using its published estimates",async()=>{
+    const source=native(),externalImport=makerReference();
+    const token=await createPricingSourceTransfer(scope,{sourceFile:source.file,externalImport,estimate:source.estimate,calculated:source.calculated,pricingInput:input,accepted});
+    mount(token);const editor=await screen.findByRole("dialog",{name:"Novo Produto"});await within(editor).findByText("Impressão e valores preservados");
+    fireEvent.click(within(editor).getByRole("button",{name:/^Criar$/}));await waitFor(()=>expect(saved()).toBeDefined());
+    expect(saved()!.p_product).toMatchObject({cost_estimate:17.1234,sale_price:34.9,file_composition:{profile_id:'local:'+source.hash},external_import:{design_id:'456',selected_variant_profile_id:'501'},import_pricing:{source_file_sha256:source.hash}});
+    expect(saved()!.p_product).not.toHaveProperty('import_composition');expect(mock.upload).toHaveBeenCalledTimes(1);
+  });
   it("keeps MakerWorld metadata and finished-product photos without recalculating accepted financial values", async () => {
     const externalImport = makerReference(), estimate = modelPricingFromMakerWorld(externalImport);
     const token = await createPricingSourceTransfer(scope, { sourceFile: null, externalImport, estimate, pricingInput: input, accepted,

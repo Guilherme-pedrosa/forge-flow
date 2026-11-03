@@ -20,12 +20,13 @@ vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ profile: { tenant_i
 vi.mock("@/integrations/supabase/client", () => ({ supabase: { from: mock.from, rpc: mock.rpc } }));
 vi.mock("@/components/shared/SearchableItemSelect", () => ({ SearchableItemSelect: ({ value, options, onChange, label }: { value: string; options: { id: string; label: string }[]; onChange: (value: string) => void; label: string }) =>
   <select aria-label={label} value={value} onChange={event => onChange(event.target.value)}><option value="">Selecionar</option>{options.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</select> }));
-vi.mock("@/components/comercial/PricingModelFile", () => ({ PricingModelFile: ({ onLoaded }: { onLoaded: (file: File, estimate: ModelPricingEstimate | null) => void }) => <>
+vi.mock("@/components/comercial/PricingModelFile", () => ({ readPricingModelEstimate: async () => ({estimate:mock.estimate,notice:""}), PricingModelFile: ({ onLoaded }: { onLoaded: (file: File, estimate: ModelPricingEstimate | null) => void }) => <>
   <button onClick={() => onLoaded(mock.file!, mock.estimate)}>Escolher 3MF fatiado</button>
   <button onClick={() => onLoaded(new File(["STL ainda não fatiado"], "outra.stl"), null)}>Escolher outra peça</button>
 </> }));
 vi.mock("@/components/comercial/PricingMakerWorldInput", () => ({ PricingMakerWorldInput: ({ onLoaded }: { onLoaded: (reference: ProductExternalImport | null) => void }) =>
   <button onClick={() => onLoaded(mock.reference)}>Escolher MakerWorld</button> }));
+vi.mock("@/components/comercial/MakerWorldProjectSlicer",()=>({MakerWorldProjectSlicer:({onSliced}:{onSliced:(file:File,job:unknown)=>Promise<void>})=><button onClick={()=>void onSliced(mock.file!,{profile_id:"bambu-a1-04-pla-020-v1"})}>Fatiar projeto público</button>}));
 const policy = { machine_hour_cost: 2, energy_cost_kwh: 1, labor_cost_hour: 20,
   overhead_percent: 0, target_margin: 50, handling_minutes_per_plate: 0, finishing_minutes_per_piece: 0,
   assembly_minutes_per_product: 0, extras_cost_per_product: 2, printer_hour_costs: [],
@@ -108,6 +109,15 @@ describe("standalone pricing transfers to the canonical product form", () => {
     expect(mock.prepared?.composition.profile_id).toBe("501");
     expect(mock.prepared?.plan.materials[0].item_id).toBe("pla-red");
     expect(mock.prepared?.estimate).toEqual(modelPricingFromMakerWorld(mock.reference!));
+  });
+  it("replaces published MakerWorld metrics with native result bytes and carries the origin to product registration",async()=>{
+    mount();await load("Escolher MakerWorld");
+    fireEvent.click(screen.getByRole("button",{name:"Fatiar projeto público"}));
+    await waitFor(()=>expect(screen.queryByText(/conforme o perfil do MakerWorld/)).not.toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button",{name:"Cadastrar produto com estes valores"}));
+    await screen.findByText("Cadastro do produto aberto");
+    expect(mock.prepared?.sourceFile).toBe(mock.file);expect(mock.prepared?.externalImport?.design_id).toBe("456");
+    expect(mock.prepared?.plan.source_profile_id).toMatch(/^local:/);
   });
   it("blocks navigation if the File no longer agrees with the displayed calculation", async () => {
     mock.estimate = { ...mock.estimate!, timeSeconds: 7201, hours: 7201 / 3600 };

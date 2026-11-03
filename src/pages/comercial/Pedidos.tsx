@@ -234,7 +234,7 @@ function OrderSession() {
     const address = customer?.address;
     if (typeof address === "string") setDeliveryAddress(address);
     else if (address && typeof address === "object" && !Array.isArray(address)) {
-      setDeliveryAddress([address.street, address.number, address.complement, address.neighborhood, address.city, address.state, address.zip].filter(Boolean).join(", "));
+      setDeliveryAddress([address.street, address.number, address.complement, address.neighborhood, address.city, address.state, address.cep || address.zip || address.postal_code].filter(Boolean).join(", "));
     } else setDeliveryAddress("");
   };
   const selectCreatedCustomer = (id: string, name: string) => {

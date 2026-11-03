@@ -8,7 +8,7 @@ import { buildCommercialProductDescription } from "@/lib/commercial-product-desc
 const mock = vi.hoisted(() => ({ rpc: vi.fn(), update: vi.fn(), toast: vi.fn(), filters: [] as [string, unknown][],
   events: [] as string[], packaging: null as unknown, published: false,
   description: "", category: "printed_part", presentation: null as unknown,
-  pendingUpdate: null as Promise<{data:{id:string};error:null}>|null,
+  pendingUpdate: null as Promise<unknown>|null,
   updateError: null as { message: string } | null, savedId: "product-1" as string | null }));
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => ({ profile: { tenant_id: "tenant-1" } }) }));
 vi.mock("@/hooks/use-toast", () => ({ useToast: () => ({ toast: mock.toast }) }));
@@ -22,9 +22,9 @@ vi.mock("@/lib/marketplace-orders", () => ({ marketplaceRpc: mock.rpc, marketpla
     update: (value: unknown) => { updating = true; mock.update(value); mock.events.push("package"); return query; },
     then: (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) => {
       const data = updating ? mock.savedId ? { id: mock.savedId } : null
-        : table === "products" ? [{ id: "product-1", name: "Caneca", sku: "CAN-1", photo_url: "https://example.test/caneca.jpg", sale_price: 25, is_active: true, shipping_package: mock.packaging, description: mock.description, category: mock.category, commercial_presentation: mock.presentation }]
+        : table === "products" ? [{ id: "product-1", name: "Caneca", sku: "CAN-1", photo_url: "https://example.test/caneca.jpg", sale_price: 25, is_active: true, shipping_package: mock.packaging, description: mock.description, category: mock.category, commercial_presentation: mock.presentation, updated_at: "2026-11-02T12:00:00Z" }]
         : table === "storefront_channels" ? { id: "channel-1", slug: "lorace", name: "Elevare3D", enabled: true }
-        : table === "storefront_listings" ? mock.published ? [{ product_id: "product-1", published: true, category: "canecas", price_override: null, made_to_order: false, lead_days: 7 }] : [] : [];
+        : table === "storefront_listings" ? mock.published ? [{ product_id: "product-1", published: true, category: "canecas", price_override: null, made_to_order: false, lead_days: 7, updated_at: "2026-11-02T12:01:00Z" }] : [] : [];
       return (updating && mock.pendingUpdate ? mock.pendingUpdate : Promise.resolve({ data, error: updating ? mock.updateError : null })).then(resolve, reject);
     },
   };
@@ -38,7 +38,7 @@ beforeEach(() => {
   mock.description = ""; mock.category = "printed_part"; mock.presentation = null; mock.pendingUpdate = null;
   mock.rpc.mockImplementation(async (name: string) => {
     if (name === "storefront_site") return { content: { categories: [{ slug: "canecas", name: "Canecas", enabled: true }] } };
-    if (name === "save_storefront_listing") { mock.events.push("listing"); return "listing-1"; }
+    if (name === "save_storefront_product_details") { mock.events.push("atomic"); if(mock.updateError) throw new Error(mock.updateError.message); if(mock.pendingUpdate)return mock.pendingUpdate; return mock.savedId ? { saved: true, listing_id: "listing-1", product_updated_at: "2026-11-02T12:02:00Z", listing_updated_at: "2026-11-02T12:02:00Z", replayed: false } : null; }
     return null;
   });
 });
@@ -57,10 +57,10 @@ async function preparePublication() {
 function fillPackage(card: HTMLElement) {
   fields.forEach((label, index) => fireEvent.change(within(card).getByLabelText(label), { target: { value: ["20,5", "15", "8", "350"][index] } }));
 }
-const publicationCalls = () => mock.rpc.mock.calls.filter(([name]) => name === "save_storefront_listing");
+const publicationCalls = () => mock.rpc.mock.calls.filter(([name]) => name === "save_storefront_product_details");
 
 describe("packaging at storefront publication", () => {
-  it("asks for missing packaging before publishing and saves the package before the listing", async () => {
+  it("asks for missing packaging and saves product changes and listing atomically", async () => {
     const card = await preparePublication();
     const save = within(card).getByRole("button", { name: "Salvar publicação" });
     expect(save).toBeDisabled();
@@ -70,10 +70,9 @@ describe("packaging at storefront publication", () => {
     expect(save).toBeEnabled();
     fireEvent.click(save);
     await waitFor(() => expect(publicationCalls()).toHaveLength(1));
-    expect(mock.update).toHaveBeenCalledExactlyOnceWith({ shipping_package: complete });
-    expect(mock.filters).toContainEqual(["id", "product-1"]);
-    expect(mock.filters).toContainEqual(["tenant_id", "tenant-1"]);
-    expect(mock.events).toEqual(["package", "listing"]);
+    expect(publicationCalls()[0][1]).toMatchObject({ p_product_changes: { shipping_package: complete }, p_expected_product_updated_at: "2026-11-02T12:00:00Z", p_expected_listing_updated_at: null });
+    expect(mock.update).not.toHaveBeenCalled();
+    expect(mock.events).toEqual(["atomic"]);
     expect(publicationCalls()[0][1]).toMatchObject({ p_product_id: "product-1", p_settings: { published: true, category: "canecas" } });
   });
 
@@ -94,9 +93,9 @@ describe("packaging at storefront publication", () => {
     mock.savedId = mode === "unconfirmed" ? null : "product-1";
     const card = await preparePublication(); fillPackage(card);
     fireEvent.click(within(card).getByRole("button", { name: "Salvar publicação" }));
-    await waitFor(() => expect(within(card).getByRole("alert")).toHaveTextContent(mode === "denied" ? "Sem permissão" : "Não foi possível confirmar"));
-    expect(mock.update).toHaveBeenCalledTimes(1);
-    expect(publicationCalls()).toHaveLength(0);
+    await waitFor(() => expect(within(card).getByRole("alert")).toHaveTextContent(mode === "denied" ? "Sem permissão" : "não foi confirmado"));
+    expect(mock.update).not.toHaveBeenCalled();
+    expect(publicationCalls()).toHaveLength(1);
     expect(within(card).getByLabelText("Peso total embalado (g)")).toHaveValue("350");
   });
 
@@ -125,11 +124,11 @@ describe("packaging at storefront publication", () => {
     fillPackage(card);
     fireEvent.click(within(card).getByRole("button", { name: "Salvar publicação" }));
     await waitFor(() => expect(publicationCalls()).toHaveLength(1));
-    expect(mock.update).toHaveBeenCalledExactlyOnceWith({ shipping_package: complete, commercial_presentation: {
+    expect(publicationCalls()[0][1].p_product_changes).toEqual({ shipping_package: complete, commercial_presentation: {
       dimensions: { length_mm: 105, width_mm: 72.5, height_mm: 120 }, description_generation: null,
     } });
-    expect(mock.update.mock.calls[0][0]).not.toHaveProperty("description");
-    expect(mock.events).toEqual(["package", "listing"]);
+    expect(publicationCalls()[0][1].p_product_changes).not.toHaveProperty("description");
+    expect(mock.events).toEqual(["atomic"]);
   });
 
   it("refreshes only generated measurement text while preserving confirmed material, colors and provenance", async () => {
@@ -144,7 +143,7 @@ describe("packaging at storefront publication", () => {
     expect(within(card).getByLabelText("Descrição comercial de Caneca")).toHaveValue(expected);
     await waitFor(() => expect(within(card).getByRole("button", { name: "Salvar publicação" })).toBeEnabled());
     fireEvent.click(within(card).getByRole("button", { name: "Salvar publicação" })); await waitFor(() => expect(publicationCalls()).toHaveLength(1));
-    const saved = mock.update.mock.calls[0][0];
+    const saved = publicationCalls()[0][1].p_product_changes;
     expect(saved).toMatchObject({ description: expected, commercial_presentation: { dimensions: { length_mm: 100, width_mm: 80, height_mm: 180 }, description_generation: { generated_text: expected } } });
     expect(JSON.parse(saved.commercial_presentation.description_generation.input_signature)).toMatchObject({ production: "Peça produzida por impressão 3D em PLA.", colors: "Produção em 3 cores (Branco, Verde, Vermelho).", source_provider: "makerworld", source_id: "744793" });
     expect(saved).not.toHaveProperty("shipping_package");
@@ -162,19 +161,19 @@ describe("packaging at storefront publication", () => {
     expect(mock.update).not.toHaveBeenCalled(); expect(publicationCalls()).toHaveLength(0);
     await waitFor(() => expect(within(card).getByRole("button", { name: "Salvar publicação" })).toBeEnabled());
     fireEvent.click(within(card).getByRole("button", { name: "Salvar publicação" })); await waitFor(() => expect(publicationCalls()).toHaveLength(1));
-    expect(mock.update).toHaveBeenCalledExactlyOnceWith({ description: expected, commercial_presentation: {
+    expect(publicationCalls()[0][1].p_product_changes).toEqual({ description: expected, commercial_presentation: {
       dimensions: { length_mm: null, width_mm: null, height_mm: 120 }, description_generation: expect.objectContaining({ generated_text: expected, generator: "facts-pt-BR-v1" }),
     } });
-    expect(mock.events).toEqual(["package", "listing"]);
+    expect(mock.events).toEqual(["atomic"]);
   });
 
-  it("does not continue publication when an old product save finishes after its card unmounts", async () => {
-    let finish!: (value:{data:{id:string};error:null}) => void;
+  it("does not emit success after an atomic save finishes after its card unmounts", async () => {
+    let finish!: (value:unknown) => void;
     mock.pendingUpdate = new Promise(resolve => { finish = resolve; });
     const card = await preparePublication(); fillPackage(card);
-    fireEvent.click(within(card).getByRole("button", { name: "Salvar publicação" })); await waitFor(() => expect(mock.update).toHaveBeenCalledOnce());
+    fireEvent.click(within(card).getByRole("button", { name: "Salvar publicação" })); await waitFor(() => expect(publicationCalls()).toHaveLength(1));
     cleanup();
-    await act(async () => { finish({ data: { id: "product-1" }, error: null }); await mock.pendingUpdate; });
-    expect(publicationCalls()).toHaveLength(0); expect(mock.toast).not.toHaveBeenCalled();
+    await act(async () => { finish({ saved: true, listing_id: "listing-1", product_updated_at: "2026-11-02T12:02:00Z", listing_updated_at: "2026-11-02T12:02:00Z", replayed: false }); await mock.pendingUpdate; });
+    expect(publicationCalls()).toHaveLength(1); expect(mock.toast).not.toHaveBeenCalled();
   });
 });

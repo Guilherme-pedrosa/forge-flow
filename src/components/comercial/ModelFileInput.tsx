@@ -140,6 +140,7 @@ export default function ModelFileInput({
   revision = false,
   disabled = false,
   ownedPrinterModels,
+  slicedFile,
 }: {
   current?: ImportedComposition;
   onChange: (value: ImportedComposition) => void;
@@ -149,6 +150,8 @@ export default function ModelFileInput({
   revision?: boolean;
   disabled?: boolean;
   ownedPrinterModels?: string[];
+  /** Verified fatiador result from a public MakerWorld project, not metadata. */
+  slicedFile?: File | null;
 }) {
   const [model, setModel] = useState<ModelFile | null>(null);
   const [error, setError] = useState("");
@@ -172,7 +175,7 @@ export default function ModelFileInput({
     return () => onBusyChange?.(false);
   }, [busy, onBusyChange]);
   // Selected files and verified worker results use the same strict parser.
-  const loadFile = async (file: File, fromSlicer = false) => {
+  const loadFile = async (file: File, fromSlicer = false, freshSource = false) => {
     const version = ++sequence.current;
     setBusy(true);
     setError("");
@@ -186,16 +189,18 @@ export default function ModelFileInput({
       if (file.size > 80 * 1024 * 1024) throw new Error("Use um arquivo de até 80 MB.");
       const bytes = new Uint8Array(await file.arrayBuffer());
       if (version !== sequence.current) return;
-      loaded = parseModelFile(bytes, file.name, current);
+      loaded = parseModelFile(bytes, file.name, freshSource ? undefined : current);
       const hash = await crypto.subtle.digest("SHA-256", bytes);
       loaded.composition.file_sha256 = Array.from(new Uint8Array(hash))
         .map(byte => byte.toString(16).padStart(2, "0")).join("");
-      if (!current) loaded.composition.profile_id = `local:${loaded.composition.file_sha256}`;
+      if (!current || freshSource) loaded.composition.profile_id = `local:${loaded.composition.file_sha256}`;
       const singlePlate = loaded.composition.plates.length === 1 ? loaded.composition.plates[0] : null;
       const singlePart = singlePlate?.parts.length === 1 ? singlePlate.parts[0] : null;
-      if (!current && !loaded.composition.enabled && singlePlate?.slicer_estimates && singlePart?.quantity_per_plate) {
+      if ((!current || freshSource) && !loaded.composition.enabled && singlePlate?.slicer_estimates && singlePart?.quantity_per_plate) {
         singlePlate.units_per_plate = singlePart.quantity_per_plate;
-        singlePart.quantity_per_product = 1;
+        // Several identical copies may be one saleable kit. The confirmed
+        // complete-product yield will determine this ratio when saving.
+        singlePart.quantity_per_product = singlePart.quantity_per_plate === 1 ? 1 : null;
       }
       if (version !== sequence.current) {
         disposeModel(loaded.group);
@@ -221,6 +226,9 @@ export default function ModelFileInput({
       if (version === sequence.current) setBusy(false);
     }
   };
+  const openSlicedFile = useRef(loadFile);
+  openSlicedFile.current = loadFile;
+  useEffect(() => { if (slicedFile) void openSlicedFile.current(slicedFile, true, true); }, [slicedFile]);
   return (
     <section
       className="space-y-3 rounded-lg border p-3"

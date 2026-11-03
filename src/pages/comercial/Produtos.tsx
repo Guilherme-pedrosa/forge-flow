@@ -59,6 +59,7 @@ import { applyCommercialDescriptionSuggestion, buildCommercialProductDescription
 import { emptyProductDimensionsDraft, prepareProductPresentation, readProductDescriptionGeneration, readProductDimensionsDraft } from "@/lib/product-presentation";
 import { ProductDimensionsFields } from "@/components/comercial/ProductDimensionsFields";
 import { MakerWorldImageImport } from "@/components/comercial/MakerWorldImageImport";
+import { MakerWorldProjectSlicer } from "@/components/comercial/MakerWorldProjectSlicer";
 import { normalizePrintSourceUrl, safePrintFileName } from "@/lib/product-print-source";
 import { importedComposition, importProductPhotos, selectedImportVariant, validateImportedComposition, type ImportedComposition } from "@/lib/imported-composition";
 import { ImportedCompositionPreview } from "@/components/comercial/ImportedCompositionPreview";
@@ -154,6 +155,7 @@ export default function Produtos() {
   const [readingMetadataFile, setReadingImportFile] = useState(false);
   const [readingModelFile, setReadingModelFile] = useState(false);
   const [modelReaderRevision, setModelReaderRevision] = useState(0);
+  const [makerSlicedFile, setMakerSlicedFile] = useState<File | null>(null);
   const importedModelFile = useRef<File | null>(null);
   const uploadedModelFile = useRef<{ file: File; path: string } | null>(null);
   const receiveModelFile = useCallback((file: File) => { importedModelFile.current = file; uploadedModelFile.current = null;
@@ -248,6 +250,7 @@ export default function Produtos() {
     setCostSource("manual"); setCostEstimate(""); setSalePrice(""); setMarkup(""); setPriceSource("manual");
   }, []);
   const chooseManualImportCost = () => {
+    setMakerSlicedFile(null);
     if (sourcePricingPlanProblem) { setCostEstimate(""); setSalePrice(""); setMarkup(""); setPriceSource("manual"); }
     importedCalculation.current = null;
     setTransferredPricingSource(null); transferredScope.current = null; setMissingPricingSource(false);
@@ -467,6 +470,7 @@ export default function Produtos() {
   }, [products, search, showArchived, catalogView, parentsByPart, partsByProduct, productById]);
 
   const resetForm = () => {
+    setMakerSlicedFile(null);
     importedCalculation.current = null;
     initialImportCalculation.current = null;
     setTransferredPricingSource(null); transferredScope.current = null; setMissingPricingSource(false);
@@ -549,7 +553,7 @@ export default function Produtos() {
     importedCalculation.current = null;
     initialImportCalculation.current = null;
     setTransferredPricingSource(null); transferredScope.current = null; setMissingPricingSource(false);
-    importedModelFile.current = null; uploadedModelFile.current = null; setModelReaderRevision(value => value + 1);
+    importedModelFile.current = null; uploadedModelFile.current = null; setMakerSlicedFile(null); setModelReaderRevision(value => value + 1);
     setImportedPricing(null); setAutomaticImportCost(false); setImportCostReady(false);
     setPhotoLink("");
     makerRequest.current?.abort(); setMakerWorldLoading(false);
@@ -735,6 +739,7 @@ export default function Produtos() {
     const imported = externalImportReference(model, model.source_url, index);
     imported.selected_variant_profile_id = variant?.profile_id || null;
     setExternalImport(imported);
+    setMakerSlicedFile(null);
     if (updating) { importedModelFile.current = null; uploadedModelFile.current = null; setModelReaderRevision(value => value + 1); }
     if (!updating) {
       try { beginImportedPricing(modelPricingFromMakerWorld(imported)); }
@@ -962,7 +967,7 @@ ${selected?.name ? `Perfil: ${selected.name}
       savedComposition = { ...savedComposition, file_path: uploadedModelFile.current.path, file_name: modelFile.name };
     }
     const importPricingPlan = transferredPricingSource && savedComposition
-      ? buildImportedPricingPlan(transferredPricingSource.estimate, savedComposition, transferredPricingSource.calculated, transferredPricingSource.externalImport)
+      ? buildImportedPricingPlan(transferredPricingSource.estimate, savedComposition, transferredPricingSource.calculated, transferredPricingSource.sourceFile ? null : transferredPricingSource.externalImport)
       : automaticImportCost && importedCalculation.current && importedPricing?.estimate && savedComposition
       ? buildImportedPricingPlan(importedPricing.estimate, savedComposition, importedCalculation.current,
         importedPricing.estimate.source === "makerworld" ? externalImport : null)
@@ -1086,7 +1091,7 @@ ${selected?.name ? `Perfil: ${selected.name}
         <div className="space-y-2 rounded-lg border bg-muted/20 p-3"><Label htmlFor="editor-makerworld-link">Importar produto completo pelo link do MakerWorld</Label><div className="flex flex-col gap-2 sm:flex-row"><Input id="editor-makerworld-link" placeholder="https://makerworld.com/pt/models/..." value={editorImportUrl} onChange={e => setEditorImportUrl(e.target.value)} /><Button type="button" variant="outline" disabled={!editorImportUrl.trim() || makerWorldLoading || printSourceBusy || photosLoading} onClick={() => { makerImportTarget.current = editItem?.id || null; void loadMakerWorld(editorImportUrl.trim(), true); }}>{makerWorldLoading ? "Carregando…" : "Carregar modelo"}</Button></div><p className="text-xs text-muted-foreground">O link da página traz descrição, fotos e placas. Um endereço terminado em .png contém apenas uma imagem.</p></div>
         {externalImport && <div className="grid grid-cols-[6rem_minmax(0,1fr)] gap-3 rounded-lg border p-3"><ImportedModelImage src={photoUrl || null} alt="Foto principal do produto importado" className="h-24 w-24 rounded-md bg-muted object-contain" /><div className="min-w-0"><p className="font-medium break-words">{name}</p><p className="mt-1 text-sm text-muted-foreground">{allPhotos.length} foto(s) · {compositionImport?.plates.length ?? selectedImportVariant(externalImport)?.plate_details.length ?? 0} placa(s)</p><p className="text-sm">{description.trim() ? "Descrição carregada abaixo." : "O autor não disponibilizou a descrição deste modelo."}</p><Button type="button" variant="link" className="h-auto px-0 py-1 whitespace-normal text-left" onClick={() => setFormTab("producao")}>Conferir peças e composição</Button></div></div>}
 </>);
-  const productModelFileField = ((!editItem || compositionImport) && <Suspense fallback={<p>Carregando leitor de arquivos…</p>}><ModelFileInput ownedPrinterModels={printers.map(printer => printer.model)} key={modelReaderRevision} current={compositionImport?.profile_id.startsWith("local:") ? undefined : compositionImport || undefined} onChange={setCompositionImport} onParsed={receiveImportedComposition} onFileReady={receiveModelFile} onBusyChange={reportModelReading} disabled={readingMetadataFile || filamentBusy || filamentDraft} /></Suspense>);
+  const productModelFileField = ((!editItem || compositionImport) && <><Suspense fallback={<p>Carregando leitor de arquivos…</p>}><ModelFileInput ownedPrinterModels={printers.map(printer => printer.model)} key={modelReaderRevision} slicedFile={makerSlicedFile} current={compositionImport?.profile_id.startsWith("local:") ? undefined : compositionImport || undefined} onChange={setCompositionImport} onParsed={receiveImportedComposition} onFileReady={receiveModelFile} onBusyChange={reportModelReading} disabled={readingMetadataFile || filamentBusy || filamentDraft} /></Suspense>{externalImport && <MakerWorldProjectSlicer key={`${profile?.tenant_id}:${user?.id}:${externalImport.design_id}:${externalImport.selected_profile_id}:${externalImport.selected_variant_profile_id}`} reference={externalImport} ownedPrinterModels={printers.map(printer => printer.model)} disabled={readingMetadataFile || filamentBusy || filamentDraft} onBusyChange={reportModelReading} onSliced={file => { setMakerSlicedFile(file); }} />}</>);
   const productNameField = (<div className="sm:col-span-2"><Label htmlFor="product-name">Nome *</Label><Input autoFocus id="product-name" value={name} onChange={(e) => { setName(e.target.value); if (descriptionGeneration && !descriptionEdited.current) setAutomaticDescription(true); }} placeholder="Vaso Geométrico P" /></div>);
   const productMetadataFields = (<>      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div><Label>Categoria</Label>

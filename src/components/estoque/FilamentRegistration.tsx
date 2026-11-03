@@ -9,6 +9,7 @@ import { MATERIAL_COLOR_PRESETS, MaterialColorPicker } from "./MaterialColorPick
 import { MATERIAL_CODES } from "@/lib/material-identity";
 import { orderRequest } from "@/lib/sales-order";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/contexts/AuthContext";
 import { filamentName, filamentRegistrationPayload, newFilamentDraft, readFilamentRegistrationId,
   type FilamentRegistrationDraft, type FilamentRegistrationItem } from "@/lib/filament-registration";
 
@@ -24,8 +25,14 @@ export type FilamentRegistrationProps = {
 const selectStyle = "mt-1 h-11 w-full rounded-md border bg-background px-3";
 const rpc = supabase.rpc.bind(supabase) as unknown as (name: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
 
-export function FilamentRegistration({ item, defaults, initialColor, initialName, onBusyChange, onClose, onSaved }: FilamentRegistrationProps) {
+export function FilamentRegistration(props: FilamentRegistrationProps) {
+  const { profile, user } = useAuth();
+  const scope = `${profile?.tenant_id ?? "none"}:${user?.id ?? profile?.user_id ?? "none"}`;
+  return <FilamentRegistrationSession key={`${scope}:${props.item?.id ?? "new"}`} {...props} tenantId={profile?.tenant_id} />;
+}
+function FilamentRegistrationSession({ item, defaults, initialColor, initialName, onBusyChange, onClose, onSaved, tenantId }: FilamentRegistrationProps & { tenantId?: string }) {
   const id = useId();
+  const alive = useRef(true); useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const [draft, setDraft] = useState(() => {
     const next = newFilamentDraft(item, defaults);
     if (!item && initialName?.trim()) next.name = initialName.trim();
@@ -42,12 +49,13 @@ export function FilamentRegistration({ item, defaults, initialColor, initialName
   const request = useRef<ReturnType<typeof orderRequest> | null>(null);
   const inFlight = useRef(false);
   const save = useMutation({ mutationFn: async () => {
+    if (!alive.current || !tenantId) throw new Error("Sua sessão mudou. Reabra o cadastro antes de salvar.");
     const payload = filamentRegistrationPayload(draft, item);
     request.current = orderRequest(request.current, JSON.stringify(payload));
     const result = await rpc("save_inventory_catalog", { ...payload, p_request_id: request.current.id });
     if (result.error) throw new Error(result.error.message);
     return readFilamentRegistrationId(result.data);
-  }, onSuccess: itemId => onSaved(itemId) });
+  }, onSuccess: itemId => { if (alive.current) return onSaved(itemId); } });
   useEffect(() => { onBusyChange?.(save.isPending); return () => onBusyChange?.(false); }, [onBusyChange, save.isPending]);
   const change = <K extends keyof FilamentRegistrationDraft>(key: K, value: FilamentRegistrationDraft[K]) => {
     if (inFlight.current) return;

@@ -87,11 +87,11 @@ describe("publication follows the Integrador catalog and review workflow", () =>
     const selected = plan(); selected.category = { id: "MLB123", name: "Presépios de Natal" }; mock.prepare.mockResolvedValue(selected);
     mock.browse.mockResolvedValue({ items: [{ id: "MLB123", name: "Presépios de Natal", leaf: true }], path: [] });
     mount(); await open(); go("Categoria"); fireEvent.click(screen.getByRole("button", { name: "Explorar categorias" }));
-    await screen.findByRole("option", { name: "Presépios de Natal", exact: true });
+    await screen.findByRole("option", { name: "Presépios de Natal" });
     fireEvent.change(screen.getByLabelText("Categoria da peça"), { target: { value: "MLB123" } });
     await waitFor(() => expect(mock.prepare).toHaveBeenCalledTimes(2));
-    expect(screen.getByRole("option", { name: "Presépios de Natal", exact: true })).toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: "Presépios de Natal ›", exact: true })).not.toBeInTheDocument();
+    expect(screen.getByRole("option", { name: "Presépios de Natal" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "Presépios de Natal ›" })).not.toBeInTheDocument();
   });
   it("preserves zero versus unknown stock and never offers an invented waiting queue", async () => {
     mock.catalog.mockResolvedValue({ items: [product({ available: 0 }), product({ id: "unknown", name: "Peça sem saldo confirmado", available: null, stock_complete: false })], total: 2, next_offset: null }); const empty = plan(); empty.complete = false; empty.stock.available = 0; empty.missing = [{ field: "stock", message: "Sem estoque disponível." }]; mock.prepare.mockResolvedValue(empty); mount();
