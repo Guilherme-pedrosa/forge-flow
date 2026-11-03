@@ -96,16 +96,25 @@ describe("printer pricing defaults", () => {
 });
 
 describe("sliced printer compatibility", () => {
-  it("recognizes an exact registered custom model without inventing model aliases", () => {
+  it("recognizes the installed A2L model and rejects a different known machine", () => {
     expect(printerMatchesSliceModels({ model: "A2L" }, [" a2l "])).toBe(true);
-    expect(printerMatchesSliceModels({ model: "A1" }, ["A2L"])).toBeNull();
+    expect(printerMatchesSliceModels({ model: "A1" }, ["A2L"])).toBe(false);
     expect(printerMatchesSliceModels({ model: "A2L" }, ["Bambu Lab A1"])).toBe(false);
+    expect(printerMatchesSliceModels({ model: "A1 mini" }, ["Bambu Lab A2L"])).toBe(false);
+    expect(printerMatchesSliceModels({ model: "A2L" }, ["Bambu Lab A1 mini"])).toBe(false);
+    for (const model of ["A2L", "Bambu A2L", "Bambu Lab A2L", "Bambu Lab A2L 0.4 nozzle"]) {
+      expect(printerMatchesSliceModels({ brand: "Bambu Lab", model }, ["Bambu Lab A2L"])).toBe(true);
+      expect(printerMatchesSliceModels({ model: "A2L" }, [model])).toBe(true);
+      expect(printerMatchesSliceModels({ model: "A1" }, [model])).toBe(false);
+    }
     expect(printerMatchesSliceModels({ name: "A2L" }, ["A2L"])).toBeNull();
+    expect(printerMatchesSliceModels({ name: "A1" }, ["Bambu Lab A1"])).toBeNull();
     expect(printerMatchesSliceModels({ model: "A2L" }, ["unknown"])).toBeNull();
   });
   it("groups registered models and retains a saved physical printer only as a model representative", () => {
     const printers = [{ id: "a1-b", model: "A1", name: "Babi" }, { id: "a1-a", model: "Bambu Lab A1", name: "Bambina" },
-      { id: "a2l", model: "A2L", name: "Bentolino" }, { id: "inactive", model: "A1 mini", is_active: false }, { id: "unknown", name: "Sem modelo" }];
+      { id: "a2l", model: "A2L", name: "Bentolino" }, { id: "a2l-b", model: "Bambu Lab A2L 0.4 nozzle", name: "Oficina" },
+      { id: "inactive", model: "A1 mini", is_active: false }, { id: "unknown", name: "Sem modelo" }];
     expect(printerModelOptions(printers)).toEqual([{ id: "a1-a", label: "A1" }, { id: "a2l", label: "A2L" }]);
     expect(printerModelOptions(printers, "a1-b")[0]).toEqual({ id: "a1-b", label: "A1" });
   });

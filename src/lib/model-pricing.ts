@@ -57,7 +57,7 @@ function bambuModel(value: string): string | null {
   // Codes and labels captured together in the MakerWorld reference fixtures.
   const codes: Record<string, string> = { N1: "A1 MINI", N2S: "A1", C11: "P1P", C12: "P1S", C13: "X1E", "BL P001": "X1 CARBON", "BL P002": "X1", O1D: "H2D", O1E: "H2D PRO", O1C2: "H2C" };
   if (codes[normalized]) return codes[normalized];
-  const match = normalized.match(/\b(A1\s+MINI|A1|P1P|P1S|X1\s+CARBON|X1C|X1E|X1|H2D\s+PRO|H2D|H2C)\b/);
+  const match = normalized.match(/\b(A1\s+MINI|A1|A2L|P1P|P1S|X1\s+CARBON|X1C|X1E|X1|H2D\s+PRO|H2D|H2C)\b/);
   return match ? match[1] === "X1C" ? "X1 CARBON" : match[1] : null;
 }
 
@@ -65,7 +65,7 @@ function bambuModel(value: string): string | null {
  * model is supplied. Unknown metadata requires confirmation by the caller. */
 export function printerMatchesSliceModels(printer: PrinterIdentity, models: string[]): boolean | null {
   if (!models.length) return null;
-  const selected = bambuModel(printer.model?.trim() || printer.name || "");
+  const selected = bambuModel(printer.model?.trim() || "");
   const matches = models.map(model => {
     const sliced = bambuModel(model);
     if (sliced) {
