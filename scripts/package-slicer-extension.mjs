@@ -22,14 +22,21 @@ async function visit(folder,prefix=''){
 }
 await visit(source);
 for(const file of ['manifest.json','service-worker.js','protocol.js','protocol.json','popup.html','popup.js','popup.css','native/forge-slicer-native-host.mjs','install-slicer-extension.mjs','README.txt'])if(!files[file])throw new Error('Pacote incompleto: '+file);
-if(Object.keys(files).some(name=>name.startsWith('chrome/')))throw new Error('Selecione uma única pasta principal da extensão; não distribua outra pasta chrome.');
 const text=name=>Buffer.from(files[name][0]).toString('utf8');
+const extensionFiles=Object.keys(files).filter(name=>!name.startsWith('chrome/')&&!name.startsWith('native/')&&!['install-slicer-extension.mjs','README.txt'].includes(name)).sort();
+const compatibilityFiles=Object.keys(files).filter(name=>name.startsWith('chrome/')).map(name=>name.slice('chrome/'.length)).sort();
+if(JSON.stringify(extensionFiles)!==JSON.stringify(compatibilityFiles))throw new Error('A cópia chrome precisa conter exatamente todos os arquivos da extensão principal.');
+for(const name of extensionFiles)if(!Buffer.from(files[name][0]).equals(Buffer.from(files['chrome/'+name][0])))throw new Error('A cópia chrome está diferente da extensão principal: '+name);
 const manifest=JSON.parse(text('manifest.json')),protocol=JSON.parse(text('protocol.json'));
 const extensionId=[...createHash('sha256').update(Buffer.from(manifest.key,'base64')).digest().subarray(0,16)].flatMap(value=>[value>>4,value&15]).map(value=>String.fromCharCode(97+value)).join('');
 if(extensionId!==PROTOCOL.extension_id||JSON.stringify(protocol)!==JSON.stringify(PROTOCOL))throw new Error('A identidade fixa da extensão mudou no pacote.');
-const referenced=[manifest.background?.service_worker,manifest.action?.default_popup,...Object.values(manifest.icons||{})];
-for(const html of [manifest.action?.default_popup].filter(Boolean))for(const match of text(html).matchAll(/(?:src|href)=["']([^"']+)["']/g))if(!/^(?:[a-z]+:|#)/i.test(match[1]))referenced.push(match[1]);
-for(const name of referenced)if(typeof name!=='string'||name.startsWith('/')||name.includes('..')||!files[name])throw new Error('Arquivo referenciado pelo manifesto ausente da pasta principal: '+name);
+for(const prefix of ['','chrome/']){
+ const selectedManifest=JSON.parse(text(prefix+'manifest.json'));
+ const referenced=[selectedManifest.background?.service_worker,selectedManifest.action?.default_popup,...Object.values(selectedManifest.icons||{})];
+ for(const html of [selectedManifest.action?.default_popup].filter(Boolean))for(const match of text(prefix+html).matchAll(/(?:src|href)=["']([^"']+)["']/g))if(!/^(?:[a-z]+:|#)/i.test(match[1]))referenced.push(match[1]);
+ for(const js of ['service-worker.js','popup.js'])for(const match of text(prefix+js).matchAll(/from\s+["']\.\/([^"']+)["']/g))referenced.push(match[1]);
+ for(const name of referenced)if(typeof name!=='string'||name.startsWith('/')||name.includes('..')||!files[prefix+name])throw new Error('Arquivo referenciado pela extensão ausente: '+prefix+name);
+}
 const output=path.join(repo,'public','downloads');await mkdir(output,{recursive:true});
 if(await realpath(output)!==output)throw new Error('Destino do pacote fora do repositório.');
 const bytes=zipSync(files,{level:9}),filename=path.join(output,'forge-slicer-extension.zip');

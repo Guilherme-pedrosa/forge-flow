@@ -6,6 +6,8 @@ Escolha o STL ou 3MF no cadastro e use **Fatiar neste computador**. O conector e
 
 O popup verifica a ligação entre extensão e conector. A página precisa também poder falar com a extensão: as origens exatas aceitas são `https://elevare3d.com.br`, `https://elevare3d.lovable.app` e o preview deste projeto. Se o popup está conectado e a página não, atualize o pacote na mesma pasta, clique em **Recarregar** na extensão em `chrome://extensions`, atualize a página do Forge e use **Verificar extensão novamente**. Não é necessário reinstalar um conector saudável para essa atualização. A fila de fatiamento da empresa é uma opção separada e só é consultada quando escolhida; a indisponibilidade dessa fila não informa o estado da extensão local.
 
+O pacote mantém a raiz e a subpasta histórica `chrome/` com todos os mesmos arquivos da extensão 1.0.2. A raiz é a opção recomendada; quem já carregou `chrome/` pode manter essa localização ao substituir o pacote inteiro. O gerador e os testes recusam arquivos divergentes entre as duas pastas, inclusive scripts e protocolos. Use somente uma localização por navegador. O instalador do conector permanece na raiz. A recarga da extensão fica a cargo do usuário quando estiver disponível; atualizar os arquivos não comprova que uma sessão aberta do Chrome já os recarregou.
+
 A versão 1.0.2 acrescenta A2L ao conector nativo. Para essa atualização, execute o instalador do pacote novo e recarregue a extensão; instalações antigas continuam atendendo à A1 até a atualização.
 
 ## Instalação
@@ -13,7 +15,7 @@ A versão 1.0.2 acrescenta A2L ao conector nativo. Para essa atualização, exec
 1. Baixe `/downloads/forge-slicer-extension.zip` no Forge e extraia o pacote para uma pasta permanente.
 2. Requisitos atuais: Windows, Node.js 22+ e Bambu Studio oficial **2.8.2.61**. Confira o instalador com `node install-slicer-extension.mjs --review`; esse comando apenas descreve os caminhos e as duas chaves de registro do usuário.
 3. Execute `node install-slicer-extension.mjs`. O instalador verifica o motor offline, protege a pasta local e registra o conector do usuário no Chrome e Edge. Não cria serviço, tarefa de inicialização ou servidor de rede.
-4. Abra `chrome://extensions`, ative o modo do desenvolvedor, escolha **Carregar sem compactação** e selecione a pasta extraída do pacote, a mesma que contém `manifest.json`. No Edge, use `edge://extensions`.
+4. Abra `chrome://extensions`, ative o modo do desenvolvedor, escolha **Carregar sem compactação** e selecione preferencialmente a pasta extraída do pacote, a mesma que contém `manifest.json` e o instalador. A subpasta `chrome/` é uma cópia completa e compatível para instalações antigas. No Edge, use `edge://extensions`.
 5. Use **Verificar conexão** na extensão e abra o cadastro no Forge.
 
 A identificação fixa é `lkalcgppeejlaioplgipmmgdcpncofck`. A chave pública do manifesto mantém essa identidade nas instalações locais; o conector só aceita essa extensão. O LEIA-ME do pacote também contém os passos de remoção, limitados ao conector e às chaves HKCU criadas por ele.
