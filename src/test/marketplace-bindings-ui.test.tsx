@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MarketplaceBindings } from "@/components/marketplace/MarketplaceBindings";
 import Marketplaces from "@/pages/integracoes/Marketplaces";
@@ -55,6 +55,13 @@ function mount(accountId = "account-a", productOptions = products, initialIdenti
   const result = render(view(accountId));
   return { ...result, client, changeAccount: (account: string) => result.rerender(view(account)) };
 }
+function mountWorkspace() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  render(<QueryClientProvider client={client}><MemoryRouter initialEntries={["/comercial/mercado-livre/pedidos"]} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><Routes><Route path="/comercial/mercado-livre/:area" element={<Marketplaces />} /></Routes></MemoryRouter></QueryClientProvider>);
+  return client;
+}
+const readOnlyRpcs = new Set(["integrador_bridge_binding", "read_marketplace_automation"]);
+const mutationCalls = () => mock.rpc.mock.calls.filter(([name]) => !readOnlyRpcs.has(name));
 const createButton = () => screen.getByRole("button", { name: "Cadastrar vínculo" });
 async function ready() { await waitFor(() => expect(createButton()).toBeEnabled()); }
 function fill(values: { item?: string; variant?: string; sku?: string; product?: string } = {}) {
@@ -68,6 +75,7 @@ beforeEach(() => {
   mock.rpc.mockReset(); mock.toast.mockReset();
   mock.rpc.mockImplementation(async (_name: string, args: Record<string, unknown>) => {
     if (_name === "integrador_bridge_binding") return { configured: false, enabled: false, approved_seller_ids: [] };
+    if (_name === "read_marketplace_automation") return { policy: { configured: false, revision: "not_configured", orders_auto: false, stock_auto: false, price_auto: false, safety_stock: 0, listing_type_default: "gold_special", interval_minutes: 15 }, status: { last_success_at: null, last_run_at: null, next_run_at: null, last_error: null, pending_jobs: 0, running_jobs: 0, failed_jobs: 0, needs_review_actions: [] } };
     const existing = mock.rows.find(item => item.account_id === args.p_account_id && item.external_item_id === args.p_external_item_id && item.external_variant_id === args.p_external_variant_id && item.external_sku === args.p_external_sku);
     if (existing) { existing.product_id = String(args.p_product_id); if (args.p_requires_manual_review != null) existing.requires_manual_review = !!args.p_requires_manual_review; }
     else mock.rows.push(row({ id: `binding-${mock.rows.length + 1}`, account_id: String(args.p_account_id), external_item_id: String(args.p_external_item_id), external_variant_id: String(args.p_external_variant_id), external_sku: String(args.p_external_sku), product_id: String(args.p_product_id), requires_manual_review: !!args.p_requires_manual_review }));
@@ -247,29 +255,32 @@ describe("marketplace bindings independent of orders", () => {
   });
   it("opens the linked internal sale directly from an imported marketplace order", async () => {
     mock.orders = [{ id: "marketplace-order", account_id: "account-a", tenant_id: "tenant-a", external_order_id: "ML-123", external_status: "paid", normalized_state: "paid", total: 20, reported_total: 20, shipping_deadline_at: "2026-10-12T17:00:00-03:00", internal_order_id: "sale / 123", needs_review: false, items: [{ id: "line", product_id: "product-a", description: "Produto A", quantity: 1, unit_price: 20, external_item_id: "MLB123", external_variant_id: "", external_sku: "PA" }] }];
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-    render(<QueryClientProvider client={client}><MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><Marketplaces /></MemoryRouter></QueryClientProvider>);
+    mountWorkspace();
     const inbox = await screen.findByRole("region", { name: "Pedidos recebidos" });
     expect(await within(inbox).findByRole("link", { name: "Abrir pedido" })).toHaveAttribute("href", "/comercial/pedidos?pedido=sale%20%2F%20123");
-    expect(screen.getByText("Vínculos de anúncios", { selector: "summary" }).closest("details")).not.toHaveAttribute("open");
-    expect(screen.getByRole("button", { name: "Cadastrar vínculo" })).not.toBeVisible();
+    expect(screen.queryByRole("button", { name: "Cadastrar vínculo" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("link", { name: "Anúncios" }));
+    const bindingsSummary = await screen.findByText("Vínculos de anúncios", { selector: "summary" });
+    expect(bindingsSummary.closest("details")).not.toHaveAttribute("open");
+    fireEvent.click(bindingsSummary);
+    expect(await screen.findByRole("button", { name: "Cadastrar vínculo" })).toBeVisible();
+    expect(mutationCalls()).toHaveLength(0);
   });
   it("requires personalised orders to be checked in the linked sale instead of confirming from the inbox", async () => {
     mock.rows = [row({ requires_manual_review: true })];
     mock.orders = [{ id: "marketplace-order", account_id: "account-a", tenant_id: "tenant-a", external_order_id: "ML-123", external_status: "paid", normalized_state: "paid", total: 20, reported_total: 20, shipping_deadline_at: "2026-10-12T17:00:00-03:00", internal_order_id: "personalized / 1", needs_review: false, items: [{ id: "line", product_id: "product-a", description: "Placa com nome", quantity: 1, unit_price: 20, external_item_id: "MLB123", external_variant_id: "BLUE", external_sku: "SKU-A" }] }];
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-    render(<QueryClientProvider client={client}><MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><Marketplaces /></MemoryRouter></QueryClientProvider>);
+    mountWorkspace();
     const inbox = await screen.findByRole("region", { name: "Pedidos recebidos" });
     expect(await within(inbox).findByText(/Este anúncio exige conferência e está fora da organização automática e em lote/)).toBeInTheDocument();
     expect(within(inbox).getByRole("link", { name: "Conferir em Pedidos" })).toHaveAttribute("href", "/comercial/pedidos?pedido=personalized%20%2F%201");
     expect(within(inbox).queryByRole("button", { name: "Organizar pedido" })).not.toBeInTheDocument();
-    expect(mock.rpc.mock.calls.filter(([name]) => name !== "integrador_bridge_binding")).toHaveLength(0);
+    expect(mutationCalls()).toHaveLength(0);
+    expect(mock.rows).toEqual([row({ requires_manual_review: true })]);
   });
   it("disables inbox confirmation while an old unflagged binding cache is revalidated", async () => {
     mock.rows = [row()];
     mock.orders = [{ id: "marketplace-order", account_id: "account-a", tenant_id: "tenant-a", external_order_id: "ML-123", external_status: "paid", normalized_state: "paid", total: 20, reported_total: 20, shipping_deadline_at: "2026-10-12T17:00:00-03:00", internal_order_id: "sale-1", needs_review: false, items: [{ id: "line", product_id: "product-a", description: "Placa com nome", quantity: 1, unit_price: 20, external_item_id: "MLB123", external_variant_id: "BLUE", external_sku: "SKU-A" }] }];
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-    render(<QueryClientProvider client={client}><MemoryRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}><Marketplaces /></MemoryRouter></QueryClientProvider>);
+    const client = mountWorkspace();
     const button = await screen.findByRole("button", { name: "Organizar pedido" });
     await waitFor(() => expect(button).toBeEnabled());
     let finish: () => void = () => {};
@@ -278,9 +289,10 @@ describe("marketplace bindings independent of orders", () => {
     const refresh = client.invalidateQueries({ queryKey: ["marketplace_review_bindings"] });
     await waitFor(() => expect(button).toBeDisabled());
     fireEvent.click(button);
-    expect(mock.rpc.mock.calls.filter(([name]) => name !== "integrador_bridge_binding")).toHaveLength(0);
+    expect(mutationCalls()).toHaveLength(0);
     finish(); await refresh;
     expect(await screen.findByRole("link", { name: "Conferir em Pedidos" })).toHaveAttribute("href", "/comercial/pedidos?pedido=sale-1");
     expect(screen.queryByRole("button", { name: "Organizar pedido" })).not.toBeInTheDocument();
+    expect(mutationCalls()).toHaveLength(0);
   });
 });
