@@ -136,10 +136,14 @@ function ProductImportCalculation({ estimate, error, onCalculated, existingMater
 
   async function selectCreatedFilament(itemId: string) {
     const target = registration;
-    if (!alive.current || !target || currentSource.current !== target.source) return;
+    if (!alive.current || !target) return;
+    if (currentSource.current !== target.source) {
+      setRegistration(current => current?.source === target.source ? null : current);
+      return;
+    }
     await invalidateInventoryPricing(qc);
     if (!alive.current) return;
-    if (currentSource.current !== target.source) { setRegistration(null); return; }
+    if (currentSource.current !== target.source) { setRegistration(current => current?.source === target.source ? null : current); return; }
     const refreshed = qc.getQueryData<Awaited<ReturnType<typeof loadPricingFilaments>>>(["import-pricing-filaments", profile?.tenant_id]);
     if (!refreshed?.some(item => item.id === itemId))
       throw new Error("O filamento foi salvo, mas não foi possível atualizar a lista. Tente novamente para selecioná-lo.");
